@@ -1,4 +1,4 @@
-[gd_scene load_steps=24 format=3 uid="uid://vgwrcfy1qawf"]
+[gd_scene load_steps=25 format=3 uid="uid://vgwrcfy1qawf"]
 
 [ext_resource type="Script" uid="uid://b0rbp7jukmxlq" path="res://scripts/builder.gd" id="1_jybm7"]
 [ext_resource type="Environment" uid="uid://jbptgqvstei3" path="res://scenes/main-environment.tres" id="1_yndf3"]
@@ -23,6 +23,12 @@
 [ext_resource type="FontFile" uid="uid://d0cxd77jybrcn" path="res://fonts/lilita_one_regular.ttf" id="16_vlub6"]
 [ext_resource type="Texture2D" uid="uid://bng0d1sou7c8a" path="res://sprites/coin.png" id="17_cjamx"]
 
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_jscy8"]
+albedo_color = Color(0.470588, 1, 0.513726, 1)
+emission_enabled = true
+emission = Color(0, 0, 1, 1)
+emission_energy_multiplier = 9.0
+
 [sub_resource type="LabelSettings" id="LabelSettings_q176i"]
 font = ExtResource("16_vlub6")
 font_size = 24
@@ -41,8 +47,23 @@ cash_display = NodePath("../CanvasLayer/Control/Cash")
 
 [node name="Selector" type="Node3D" parent="Builder"]
 
+[node name="CSGCombiner3D" type="CSGCombiner3D" parent="Builder/Selector"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0)
+material_override = SubResource("StandardMaterial3D_jscy8")
+
+[node name="CSGCylinder3D" type="CSGCylinder3D" parent="Builder/Selector/CSGCombiner3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+radius = 0.02
+height = 1.1
+sides = 9
+
+[node name="CSGSphere3D" type="CSGSphere3D" parent="Builder/Selector/CSGCombiner3D"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
+radius = 0.05
+
 [node name="Sprite" type="Sprite3D" parent="Builder/Selector"]
 transform = Transform3D(1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, 0, 0.06, 0)
+visible = false
 texture = ExtResource("4_wr1wv")
 
 [node name="Container" type="Node3D" parent="Builder/Selector"]

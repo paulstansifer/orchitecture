@@ -128,7 +128,7 @@ func update_cash():
 
 func load_map():
 	print("Loading map...")
-		
+	
 	gridmap.clear()
 	
 	map = ResourceLoader.load("user://map.res")

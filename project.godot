@@ -109,6 +109,10 @@ quit={
 ]
 }
 
+[input_devices]
+
+pointing/android/enable_pan_and_scale_gestures=true
+
 [rendering]
 
 anti_aliasing/quality/msaa_3d=2
