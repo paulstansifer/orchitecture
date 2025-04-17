@@ -56,7 +56,7 @@ func _process(delta):
 
 	var gridmap_position = Vector3(round(world_position.x), 0, round(world_position.z))
 
-	selector.position = lerp(selector.position, gridmap_position, min(delta * 50, 1.0))
+	# selector.position = lerp(selector.position, gridmap_position, min(delta * 50, 1.0))
 
 	action_build(gridmap_position)
 	action_demolish(gridmap_position)
