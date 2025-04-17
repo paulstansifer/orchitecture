@@ -44,8 +44,7 @@ func _process(delta):
 	action_rotate() # Rotates selection 90 degrees
 	action_structure_toggle() # Toggles between structures
 	
-	action_save() # Saving
-	action_load() # Loading
+	accept_actions()
 	
 	# Map position based on mouse
 	
@@ -124,7 +123,7 @@ func update_cash():
 
 # Saving/load
 
-func action_save():
+func accept_actions():
 	if Input.is_action_just_pressed("save"):
 		print("Saving map...")
 		
@@ -140,8 +139,7 @@ func action_save():
 			map.structures.append(data_structure)
 			
 		ResourceSaver.save(map, "user://map.res")
-	
-func action_load():
+
 	if Input.is_action_just_pressed("load"):
 		print("Loading map...")
 		
@@ -154,3 +152,7 @@ func action_load():
 			gridmap.set_cell_item(Vector3i(cell.position.x, 0, cell.position.y), cell.structure, cell.orientation)
 			
 		update_cash()
+
+	if Input.is_action_just_pressed("quit"):
+		get_tree().quit()
+		
