@@ -37,6 +37,8 @@ func _ready():
 	update_structure()
 	update_cash()
 
+	load_map()
+
 func _process(delta):
 	
 	# Controls
@@ -53,8 +55,9 @@ func _process(delta):
 		view_camera.project_ray_normal(get_viewport().get_mouse_position()))
 
 	var gridmap_position = Vector3(round(world_position.x), 0, round(world_position.z))
-	selector.position = lerp(selector.position, gridmap_position, delta * 40)
-	
+
+	selector.position = lerp(selector.position, gridmap_position, min(delta * 50, 1.0))
+
 	action_build(gridmap_position)
 	action_demolish(gridmap_position)
 
@@ -123,6 +126,19 @@ func update_cash():
 
 # Saving/load
 
+func load_map():
+	print("Loading map...")
+		
+	gridmap.clear()
+	
+	map = ResourceLoader.load("user://map.res")
+	if not map:
+		map = DataMap.new()
+	for cell in map.structures:
+		gridmap.set_cell_item(Vector3i(cell.position.x, 0, cell.position.y), cell.structure, cell.orientation)
+		
+	update_cash()
+
 func accept_actions():
 	if Input.is_action_just_pressed("save"):
 		print("Saving map...")
@@ -141,18 +157,7 @@ func accept_actions():
 		ResourceSaver.save(map, "user://map.res")
 
 	if Input.is_action_just_pressed("load"):
-		print("Loading map...")
-		
-		gridmap.clear()
-		
-		map = ResourceLoader.load("user://map.res")
-		if not map:
-			map = DataMap.new()
-		for cell in map.structures:
-			gridmap.set_cell_item(Vector3i(cell.position.x, 0, cell.position.y), cell.structure, cell.orientation)
-			
-		update_cash()
+		load_map()
 
 	if Input.is_action_just_pressed("quit"):
 		get_tree().quit()
-		
