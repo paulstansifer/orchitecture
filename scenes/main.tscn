@@ -47,9 +47,10 @@ texture = ExtResource("4_wr1wv")
 
 [node name="Container" type="Node3D" parent="Builder/Selector"]
 
-[node name="View" type="Node3D" parent="."]
+[node name="View" type="Node3D" parent="." node_paths=PackedStringArray("camera_child")]
 transform = Transform3D(0.707107, -0.40558, 0.579228, 0, 0.819152, 0.573576, -0.707107, -0.40558, 0.579228, 0, 0, 0)
 script = ExtResource("8_yovpv")
+camera_child = NodePath("Camera")
 
 [node name="Camera" type="Camera3D" parent="View"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 30)
