@@ -13,8 +13,15 @@ struct WallGrid {
     x_walls: OnReady<Gd<GridMap>>,
     z_walls: OnReady<Gd<GridMap>>,
 
+    drag_start: Option<Vector3>,
+
     #[export]
     cursor: Option<Gd<Node3D>>,
+    #[export]
+    drag_from_cursor: Option<Gd<Node3D>>,
+
+    #[export]
+    drag_helper: Option<Gd<Node3D>>,
 
     #[export]
     view_camera: Option<Gd<Camera3D>>,
@@ -30,13 +37,18 @@ impl INode3D for WallGrid {
         Self {
             x_walls: OnReady::new(|| GridMap::new_alloc()),
             z_walls: OnReady::new(|| GridMap::new_alloc()),
+            drag_start: None,
+
+            // Exports
             cursor: None,
+            drag_from_cursor: None,
+            drag_helper: None,
             view_camera: None,
             base,
         }
     }
 
-    fn input(&mut self, _event: Gd<InputEvent>) {
+    fn input(&mut self, event: Gd<InputEvent>) {
         let plane = Plane::new(Vector3::UP, 0.0);
 
         let mouse_pos = self.base().get_viewport().unwrap().get_mouse_position();
@@ -49,8 +61,21 @@ impl INode3D for WallGrid {
             None => return,
         };
 
-        let snapped_pos = world_position.round();
+        let cur_pos_snapped = world_position.round();
 
-        self.cursor.as_mut().unwrap().set_position(snapped_pos);
+        self.cursor.as_mut().unwrap().set_position(cur_pos_snapped);
+
+        if event.is_action_pressed("build") {
+            self.drag_start = Some(cur_pos_snapped);
+            self.drag_from_cursor
+                .as_mut()
+                .unwrap()
+                .set_position(cur_pos_snapped);
+            self.drag_from_cursor.as_mut().unwrap().show();
+        }
+
+        if event.is_action_released("build") {
+            self.drag_from_cursor.as_mut().unwrap().hide();
+        }
     }
 }
