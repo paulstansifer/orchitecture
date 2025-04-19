@@ -2,21 +2,20 @@ extends Node3D
 
 @export var structures: Array[Structure] = []
 
-var map:DataMap
+var map: DataMap
 
-var index:int = 0 # Index of structure being built
+var index: int = 0 # Index of structure being built
 
-@export var selector:Node3D # The 'cursor'
-@export var selector_container:Node3D # Node that holds a preview of the structure
-@export var view_camera:Camera3D # Used for raycasting mouse
-@export var gridmap:GridMap
-@export var cash_display:Label
-@export var wallgrid:WallGrid
+@export var selector: Node3D # The 'cursor'
+@export var selector_container: Node3D # Node that holds a preview of the structure
+@export var view_camera: Camera3D # Used for raycasting mouse
+@export var gridmap: GridMap
+@export var cash_display: Label
+@export var wallgrid: WallGrid
 
-var plane:Plane # Used for raycasting mouse
+var plane: Plane # Used for raycasting mouse
 
 func _ready():
-	
 	map = DataMap.new()
 	plane = Plane(Vector3.UP, Vector3.ZERO)
 	
@@ -26,7 +25,6 @@ func _ready():
 	var mesh_library = MeshLibrary.new()
 	
 	for structure in structures:
-		
 		var id = mesh_library.get_last_unused_item_id()
 		
 		mesh_library.create_item(id)
@@ -40,13 +38,8 @@ func _ready():
 
 	load_map()
 
-func _process(delta):
-	
+func _process(_delta):
 	# Controls
-	
-	action_rotate() # Rotates selection 90 degrees
-	action_structure_toggle() # Toggles between structures
-	
 	accept_actions()
 	
 	# Map position based on mouse
@@ -57,17 +50,15 @@ func _process(delta):
 
 	var gridmap_position = Vector3(round(world_position.x), 0, round(world_position.z))
 
-	# selector.position = lerp(selector.position, gridmap_position, min(delta * 50, 1.0))
+	# TODO
 
-	action_build(gridmap_position)
-	action_demolish(gridmap_position)
-
+	
 # Retrieve the mesh from a PackedScene, used for dynamically creating a MeshLibrary
 
 func get_mesh(packed_scene):
-	var scene_state:SceneState = packed_scene.get_state()
+	var scene_state: SceneState = packed_scene.get_state()
 	for i in range(scene_state.get_node_count()):
-		if(scene_state.get_node_type(i) == "MeshInstance3D"):
+		if (scene_state.get_node_type(i) == "MeshInstance3D"):
 			for j in scene_state.get_node_property_count(i):
 				var prop_name = scene_state.get_node_property_name(i, j)
 				if prop_name == "mesh":
@@ -75,42 +66,7 @@ func get_mesh(packed_scene):
 					
 					return prop_value.duplicate()
 
-# Build (place) a structure
-
-func action_build(gridmap_position):
-	if Input.is_action_just_pressed("build"):
-		
-		var previous_tile = gridmap.get_cell_item(gridmap_position)
-		gridmap.set_cell_item(gridmap_position, index, gridmap.get_orthogonal_index_from_basis(selector.basis))
-		
-		if previous_tile != index:
-			map.cash -= structures[index].price
-			update_cash()
-
-# Demolish (remove) a structure
-
-func action_demolish(gridmap_position):
-	if Input.is_action_just_pressed("demolish"):
-		gridmap.set_cell_item(gridmap_position, -1)
-
-# Rotates the 'cursor' 90 degrees
-
-func action_rotate():
-	if Input.is_action_just_pressed("rotate"):
-		selector.rotate_y(deg_to_rad(90))
-
-# Toggle between structures to build
-
-func action_structure_toggle():
-	if Input.is_action_just_pressed("structure_next"):
-		index = wrap(index + 1, 0, structures.size())
-	
-	if Input.is_action_just_pressed("structure_previous"):
-		index = wrap(index - 1, 0, structures.size())
-
-	update_structure()
-
-# Update the structure visual in the 'cursor'
+# Update the structure visual in the 'cursor' (obsolete)
 
 func update_structure():
 	# Clear previous structure preview in selector
@@ -146,8 +102,7 @@ func accept_actions():
 		
 		map.structures.clear()
 		for cell in gridmap.get_used_cells():
-			
-			var data_structure:DataStructure = DataStructure.new()
+			var data_structure: DataStructure = DataStructure.new()
 			
 			data_structure.position = Vector2i(cell.x, cell.z)
 			data_structure.orientation = gridmap.get_cell_item_orientation(cell)

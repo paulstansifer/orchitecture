@@ -1,3 +1,5 @@
+use core::f32;
+
 use godot::prelude::*;
 
 struct MyExtension;
@@ -7,6 +9,8 @@ unsafe impl ExtensionLibrary for MyExtension {}
 
 use godot::classes::{GridMap, INode3D, InputEvent, Node3D};
 
+// `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
+// snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
 #[derive(GodotClass)]
 #[class(base=Node3D)]
 struct WallGrid {
@@ -31,14 +35,35 @@ struct WallGrid {
 
 #[godot_api]
 impl WallGrid {
-    pub fn paint_region(&mut self, from: Vector3, to: Vector3) {
+    // The user has dragged bewteen `from` and `to`
+    pub fn paint_wall(&mut self, from: Vector3, to: Vector3) {
         let x_diff = to.x - from.x;
         let z_diff = to.z - from.z;
 
         let x_drag = x_diff.abs() > z_diff;
 
-        // TODO: use set_cell to actually pain stuff (need to add the MeshInstance3Ds to the
+        // TODO: use set_cell to actually paint stuff (need to add the MeshInstance3Ds to the
         // GridMaps first)
+    }
+
+    // GDScript doesn't have `Option<>`, so we define a flag value
+    pub fn nowhere(&self) -> Vector3 {
+        Vector3::new(f32::MIN, f32::MIN, f32::MIN)
+    }
+
+    pub fn mouse_to_3d_location(&self) -> Vector3 {
+        let plane = Plane::new(Vector3::UP, 0.0);
+
+        let mouse_pos = self.base().get_viewport().unwrap().get_mouse_position();
+        let camera = self.view_camera.as_ref().unwrap();
+
+        match plane.intersect_ray(
+            camera.project_ray_origin(mouse_pos),
+            camera.project_ray_normal(mouse_pos),
+        ) {
+            Some(pos) => pos,
+            None => self.nowhere(),
+        }
     }
 }
 
@@ -59,20 +84,13 @@ impl INode3D for WallGrid {
         }
     }
 
+    // This is in change of displaying the helper graphics (later, this should be moved to GDScript)
     fn input(&mut self, event: Gd<InputEvent>) {
-        let plane = Plane::new(Vector3::UP, 0.0);
-
-        let mouse_pos = self.base().get_viewport().unwrap().get_mouse_position();
-        let camera = self.view_camera.as_ref().unwrap();
-        let world_position = match plane.intersect_ray(
-            camera.project_ray_origin(mouse_pos),
-            camera.project_ray_normal(mouse_pos),
-        ) {
-            Some(pos) => pos,
-            None => return,
-        };
-
-        let cur_pos_snapped = world_position.round();
+        let cur_pos = self.mouse_to_3d_location();
+        if cur_pos == self.nowhere() {
+            return;
+        }
+        let cur_pos_snapped = cur_pos.round();
 
         self.cursor.as_mut().unwrap().set_position(cur_pos_snapped);
 

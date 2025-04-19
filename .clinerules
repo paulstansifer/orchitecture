@@ -1,0 +1,16 @@
+# Project
+
+This is a construction-oriented game.
+
+## Tech Stack
+- Godot
+- GDScript, particularly for code that interacts with the Godot scene tree
+- Rust, particularly for complex tasks
+- GitHub for version control
+
+## Project Structure
+/scripts            # Scripts written in GDScript
+/rust-scripts
+  /src              # Scripts written in Rust
+/scenes/main.tscn   # The main scene of the game
+
