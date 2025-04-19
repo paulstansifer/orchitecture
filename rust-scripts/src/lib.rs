@@ -30,10 +30,21 @@ struct WallGrid {
 }
 
 #[godot_api]
+impl WallGrid {
+    pub fn paint_region(&mut self, from: Vector3, to: Vector3) {
+        let x_diff = to.x - from.x;
+        let z_diff = to.z - from.z;
+
+        let x_drag = x_diff.abs() > z_diff;
+
+        // TODO: use set_cell to actually pain stuff (need to add the MeshInstance3Ds to the
+        // GridMaps first)
+    }
+}
+
+#[godot_api]
 impl INode3D for WallGrid {
     fn init(base: Base<Node3D>) -> Self {
-        godot_print!("Hello, WallGrid!"); // Prints to the Godot console
-
         Self {
             x_walls: OnReady::new(|| GridMap::new_alloc()),
             z_walls: OnReady::new(|| GridMap::new_alloc()),

@@ -11,6 +11,7 @@ var index:int = 0 # Index of structure being built
 @export var view_camera:Camera3D # Used for raycasting mouse
 @export var gridmap:GridMap
 @export var cash_display:Label
+@export var wallgrid:WallGrid
 
 var plane:Plane # Used for raycasting mouse
 
