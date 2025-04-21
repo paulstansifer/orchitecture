@@ -16,6 +16,7 @@ var index: int = 0 # Index of structure being built
 @onready var wall_mesh = ResourceLoader.load("models/wall.tscn")
 @onready var door_mesh = ResourceLoader.load("models/door.tscn")
 
+var cur_y: int = 0 # The current layer to interact with
 var plane: Plane # Used for raycasting mouse
 var drag_start: Vector3
 
@@ -71,6 +72,18 @@ func _process(_delta):
 	if Input.is_action_just_released("build"):
 		self.wallgrid.paint_wall(drag_start, world_position)
 
+	if Input.is_action_just_pressed("y_layer_up"):
+		cur_y += 1
+		if cur_y > 10:
+			cur_y = 10
+		plane.d = cur_y
+
+	if Input.is_action_just_pressed("y_layer_down"):
+		cur_y -= 1
+		if cur_y < 0:
+			cur_y = 0
+		plane.d = cur_y
+
 
 # Retrieve the mesh from a PackedScene, used for dynamically creating a MeshLibrary
 
@@ -111,7 +124,7 @@ func load_map():
 	if not map:
 		map = DataMap.new()
 	for cell in map.structures:
-		gridmap.set_cell_item(Vector3i(cell.position.x, 0, cell.position.y), cell.structure, cell.orientation)
+		gridmap.set_cell_item(Vector3i(cell.position.x, cur_y, cell.position.y), cell.structure, cell.orientation)
 		
 	update_cash()
 

@@ -53,12 +53,10 @@ impl WallGrid {
         let end = to.floor().cast_int();
 
         if x_drag {
-            //let x_walls = self.x_walls.bind();
             for x in i32::min(start.x, end.x)..=i32::max(start.x, end.x) {
                 self.x_walls.set_cell_item(Vector3i::new(x, 0, start.z), 0);
             }
         } else {
-            //let z_walls = self.z_walls.bind();
             for z in i32::min(start.z, end.z)..=i32::max(start.z, end.z) {
                 self.z_walls.set_cell_item(Vector3i::new(start.x, 0, z), 0);
             }
