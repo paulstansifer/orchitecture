@@ -6,7 +6,8 @@ var map: DataMap
 
 var index: int = 0 # Index of structure being built
 
-@export var selector: Node3D # The 'cursor'
+@export var drag_start_helper: Node3D
+@export var mouse_helper: Node3D # The 'cursor'
 @export var selector_container: Node3D # Node that holds a preview of the structure
 @export var view_camera: Camera3D # Used for raycasting mouse
 @export var gridmap: GridMap
@@ -68,10 +69,15 @@ func _process(_delta):
 		view_camera.project_ray_origin(get_viewport().get_mouse_position()),
 		view_camera.project_ray_normal(get_viewport().get_mouse_position()))
 
+	mouse_helper.position = world_position.round()
+
 	if Input.is_action_just_pressed("build"):
+		drag_start_helper.position = world_position.round()
+		drag_start_helper.show()
 		drag_start = world_position
 
 	if Input.is_action_just_released("build"):
+		drag_start_helper.hide()
 		self.wallgrid.paint_wall(drag_start, world_position)
 
 	if Input.is_action_just_pressed("y_layer_up"):

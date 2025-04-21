@@ -30,6 +30,20 @@ emission_enabled = true
 emission = Color(0, 0, 1, 1)
 emission_energy_multiplier = 9.0
 
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_y6deb"]
+render_priority = 0
+shader = ExtResource("23_pm3ni")
+shader_parameter/gridlineOnEvery = 1.0
+shader_parameter/lineThickness = 0.01
+shader_parameter/originOffset = Vector2(0, 0)
+shader_parameter/color = Color(0, 0, 0, 0.5)
+shader_parameter/fade_inner_radius = 4.0
+shader_parameter/fade_outer_radius = 6.0
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_og1vs"]
+material = SubResource("ShaderMaterial_y6deb")
+size = Vector2(128, 128)
+
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_pm3ni"]
 albedo_color = Color(0.449668, 1, 0.562291, 1)
 emission_enabled = true
@@ -41,26 +55,14 @@ font = ExtResource("16_vlub6")
 font_size = 24
 shadow_color = Color(0, 0, 0, 0.392157)
 
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_y6deb"]
-render_priority = 0
-shader = ExtResource("23_pm3ni")
-shader_parameter/gridlineOnEvery = 1.0
-shader_parameter/lineThickness = 0.01
-shader_parameter/originOffset = Vector2(0, 0)
-shader_parameter/color = Color(0, 0, 0, 0.5)
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_og1vs"]
-material = SubResource("ShaderMaterial_y6deb")
-size = Vector2(16, 16)
-
 [node name="Main" type="Node3D"]
 
 [node name="WallGrid" type="WallGrid" parent="." node_paths=PackedStringArray("x_walls", "z_walls", "cursor", "drag_from_cursor", "drag_helper", "view_camera")]
 x_walls = NodePath("x gridmap")
 z_walls = NodePath("z gridmap")
-cursor = NodePath("../Builder/selector")
-drag_from_cursor = NodePath("../drag from cursor")
-drag_helper = NodePath("../Builder/selector")
+cursor = NodePath("../Builder/mouse helper")
+drag_from_cursor = NodePath("../drag start helper")
+drag_helper = NodePath("../Builder/mouse helper")
 view_camera = NodePath("../View/Camera")
 
 [node name="x gridmap" type="GridMap" parent="WallGrid"]
@@ -69,55 +71,60 @@ cell_size = Vector3(1, 1, 1)
 [node name="z gridmap" type="GridMap" parent="WallGrid"]
 cell_size = Vector3(1, 1, 1)
 
-[node name="drag from cursor" type="Node3D" parent="."]
+[node name="drag start helper" type="Node3D" parent="."]
 visible = false
 
-[node name="CSGCombiner3D" type="CSGCombiner3D" parent="drag from cursor"]
+[node name="CSGCombiner3D" type="CSGCombiner3D" parent="drag start helper"]
 material_override = SubResource("StandardMaterial3D_jscy8")
 cast_shadow = 0
 
-[node name="CSGCylinder3D" type="CSGCylinder3D" parent="drag from cursor/CSGCombiner3D"]
+[node name="CSGCylinder3D" type="CSGCylinder3D" parent="drag start helper/CSGCombiner3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
 radius = 0.02
 height = 1.1
 sides = 9
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="drag from cursor/CSGCombiner3D"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="drag start helper/CSGCombiner3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
 radius = 0.05
 
-[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("selector", "selector_container", "view_camera", "gridmap", "cash_display", "wallgrid")]
+[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "selector_container", "view_camera", "gridmap", "cash_display", "wallgrid")]
 script = ExtResource("1_jybm7")
 structures = Array[ExtResource("2_54v6r")]([ExtResource("2_bwyku"), ExtResource("3_o6o81"), ExtResource("3_6fpyf"), ExtResource("7_kqu4g"), ExtResource("8_1swhv"), ExtResource("4_b632v"), ExtResource("8_4il2q"), ExtResource("5_v5o2m"), ExtResource("6_f4603"), ExtResource("10_84or2"), ExtResource("12_8obn7"), ExtResource("13_ut2cy"), ExtResource("9_ifw7y"), ExtResource("10_vaeah"), ExtResource("13_t5d2v")])
-selector = NodePath("selector")
-selector_container = NodePath("selector/Container")
+drag_start_helper = NodePath("../drag start helper")
+mouse_helper = NodePath("mouse helper")
+selector_container = NodePath("mouse helper/Container")
 view_camera = NodePath("../View/Camera")
 gridmap = NodePath("../GridMap")
 cash_display = NodePath("../CanvasLayer/Control/Cash")
 wallgrid = NodePath("../WallGrid")
 
-[node name="selector" type="Node3D" parent="Builder"]
+[node name="mouse helper" type="Node3D" parent="Builder"]
 
-[node name="CSGCombiner3D" type="CSGCombiner3D" parent="Builder/selector"]
+[node name="grid helper" type="MeshInstance3D" parent="Builder/mouse helper"]
+mesh = SubResource("PlaneMesh_og1vs")
+skeleton = NodePath("../../..")
+
+[node name="CSGCombiner3D" type="CSGCombiner3D" parent="Builder/mouse helper"]
 material_override = SubResource("StandardMaterial3D_pm3ni")
 cast_shadow = 0
 
-[node name="CSGCylinder3D" type="CSGCylinder3D" parent="Builder/selector/CSGCombiner3D"]
+[node name="CSGCylinder3D" type="CSGCylinder3D" parent="Builder/mouse helper/CSGCombiner3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
 radius = 0.02
 height = 1.1
 sides = 9
 
-[node name="CSGSphere3D" type="CSGSphere3D" parent="Builder/selector/CSGCombiner3D"]
+[node name="CSGSphere3D" type="CSGSphere3D" parent="Builder/mouse helper/CSGCombiner3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
 radius = 0.05
 
-[node name="Sprite" type="Sprite3D" parent="Builder/selector"]
+[node name="Sprite" type="Sprite3D" parent="Builder/mouse helper"]
 transform = Transform3D(1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, 0, 0.06, 0)
 visible = false
 texture = ExtResource("4_wr1wv")
 
-[node name="Container" type="Node3D" parent="Builder/selector"]
+[node name="Container" type="Node3D" parent="Builder/mouse helper"]
 
 [node name="View" type="Node3D" parent="." node_paths=PackedStringArray("camera_child")]
 transform = Transform3D(0.707107, -0.40558, 0.579228, 0, 0.819152, 0.573576, -0.707107, -0.40558, 0.579228, 0, 0, 0)
@@ -167,6 +174,3 @@ text = "$10,000"
 label_settings = SubResource("LabelSettings_q176i")
 
 [node name="drag preview" type="Node3D" parent="."]
-
-[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
-mesh = SubResource("PlaneMesh_og1vs")

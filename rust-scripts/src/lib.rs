@@ -146,28 +146,4 @@ impl INode3D for WallGrid {
             base,
         }
     }
-
-    // This is in change of displaying the helper graphics (later, this should be moved to GDScript)
-    fn input(&mut self, event: Gd<InputEvent>) {
-        let cur_pos = self.mouse_to_3d_location();
-        if cur_pos == Self::nowhere() {
-            return;
-        }
-        let cur_pos_snapped = cur_pos.round();
-
-        self.cursor.as_mut().unwrap().set_position(cur_pos_snapped);
-
-        if event.is_action_pressed("build") {
-            self.drag_start = Some(cur_pos_snapped);
-            self.drag_from_cursor
-                .as_mut()
-                .unwrap()
-                .set_position(cur_pos_snapped);
-            self.drag_from_cursor.as_mut().unwrap().show();
-        }
-
-        if event.is_action_released("build") {
-            self.drag_from_cursor.as_mut().unwrap().hide();
-        }
-    }
 }
