@@ -1,23 +1,20 @@
 extends Node3D
 
-var camera_position:Vector3
-var camera_rotation:Vector3
-var camera_dist:float = 30
+var camera_position: Vector3
+var camera_rotation: Vector3
+var camera_dist: float = 30
 
 @export var camera_child: Camera3D
 
 @onready var camera = $Camera
 
 func _ready():
-	
 	camera_rotation = rotation_degrees # Initial rotation
 	
 	pass
 
 func _process(delta):
-	
 	# Set position and rotation to targets
-	
 	position = position.lerp(camera_position, delta * 8)
 	rotation_degrees = rotation_degrees.lerp(camera_rotation, delta * 6)
 	camera_child.position.z = lerpf(camera_child.position.z, camera_dist, delta * 6)
@@ -27,9 +24,7 @@ func _process(delta):
 # Handle input
 
 func handle_input(_delta):
-	
 	# Rotation
-	
 	var input := Vector3.ZERO
 	
 	input.x = Input.get_axis("camera_left", "camera_right")
@@ -51,10 +46,8 @@ func handle_input(_delta):
 
 
 func _input(event):
-	
 	# Rotate camera using mouse (hold 'middle' mouse button)
-	
 	if event is InputEventMouseMotion:
 		if Input.is_action_pressed("camera_rotate"):
-			camera_rotation += Vector3(0, -event.relative.x / 10, 0)
+			camera_rotation += Vector3(0, -event.relative.x / 5, 0)
 			camera_position.y += event.relative.y / 100
