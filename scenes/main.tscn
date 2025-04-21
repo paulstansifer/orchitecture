@@ -35,14 +35,14 @@ render_priority = 0
 shader = ExtResource("23_pm3ni")
 shader_parameter/gridlineOnEvery = 1.0
 shader_parameter/lineThickness = 0.01
-shader_parameter/originOffset = Vector2(0, 0)
 shader_parameter/color = Color(0, 0, 0, 0.5)
 shader_parameter/fade_inner_radius = 4.0
 shader_parameter/fade_outer_radius = 6.0
+shader_parameter/uv_scale = 1.0
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_og1vs"]
 material = SubResource("ShaderMaterial_y6deb")
-size = Vector2(128, 128)
+size = Vector2(16, 16)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_pm3ni"]
 albedo_color = Color(0.449668, 1, 0.562291, 1)
