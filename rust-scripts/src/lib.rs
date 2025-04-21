@@ -9,13 +9,20 @@ unsafe impl ExtensionLibrary for MyExtension {}
 
 use godot::classes::{GridMap, INode3D, InputEvent, MeshLibrary, Node3D};
 
+enum Dir {
+    X,
+    Z,
+}
+
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
 // snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
 #[derive(GodotClass)]
 #[class(base=Node3D)]
 struct WallGrid {
-    x_walls: OnReady<Gd<GridMap>>,
-    z_walls: OnReady<Gd<GridMap>>,
+    #[export]
+    x_walls: Option<Gd<GridMap>>,
+    #[export]
+    z_walls: Option<Gd<GridMap>>,
 
     drag_start: Option<Vector3>,
 
@@ -35,10 +42,24 @@ struct WallGrid {
 
 #[godot_api]
 impl WallGrid {
+    fn gm(&self, dir: Dir) -> &GridMap {
+        match dir {
+            Dir::X => self.x_walls.as_ref().unwrap(),
+            Dir::Z => self.z_walls.as_ref().unwrap(),
+        }
+    }
+
+    fn gm_mut(&mut self, dir: Dir) -> &mut GridMap {
+        match dir {
+            Dir::X => self.x_walls.as_mut().unwrap(),
+            Dir::Z => self.z_walls.as_mut().unwrap(),
+        }
+    }
+
     #[func]
     pub fn set_mesh_library(&mut self, mesh_library: Gd<MeshLibrary>) {
-        self.x_walls.set_mesh_library(&mesh_library);
-        self.z_walls.set_mesh_library(&mesh_library);
+        self.gm_mut(Dir::X).set_mesh_library(&mesh_library);
+        self.gm_mut(Dir::Z).set_mesh_library(&mesh_library);
     }
 
     #[func]
@@ -54,11 +75,13 @@ impl WallGrid {
 
         if x_drag {
             for x in i32::min(start.x, end.x)..=i32::max(start.x, end.x) {
-                self.x_walls.set_cell_item(Vector3i::new(x, 0, start.z), 0);
+                self.gm_mut(Dir::X)
+                    .set_cell_item(Vector3i::new(x, 0, start.z), 0);
             }
         } else {
             for z in i32::min(start.z, end.z)..=i32::max(start.z, end.z) {
-                self.z_walls.set_cell_item(Vector3i::new(start.x, 0, z), 0);
+                self.gm_mut(Dir::Z)
+                    .set_cell_item(Vector3i::new(start.x, 0, z), 0);
             }
         }
     }
@@ -90,8 +113,8 @@ impl WallGrid {
 impl INode3D for WallGrid {
     fn init(base: Base<Node3D>) -> Self {
         Self {
-            x_walls: OnReady::new(|| GridMap::new_alloc()),
-            z_walls: OnReady::new(|| GridMap::new_alloc()),
+            x_walls: None,
+            z_walls: None,
             drag_start: None,
 
             // Exports

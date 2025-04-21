@@ -42,10 +42,19 @@ shadow_color = Color(0, 0, 0, 0.392157)
 
 [node name="Main" type="Node3D"]
 
-[node name="WallGrid" type="WallGrid" parent="." node_paths=PackedStringArray("cursor", "drag_from_cursor", "view_camera")]
+[node name="WallGrid" type="WallGrid" parent="." node_paths=PackedStringArray("x_walls", "z_walls", "cursor", "drag_from_cursor", "drag_helper", "view_camera")]
+x_walls = NodePath("x gridmap")
+z_walls = NodePath("z gridmap")
 cursor = NodePath("../Builder/selector")
 drag_from_cursor = NodePath("../drag from cursor")
+drag_helper = NodePath("../Builder/selector")
 view_camera = NodePath("../View/Camera")
+
+[node name="x gridmap" type="GridMap" parent="WallGrid"]
+cell_size = Vector3(1, 1, 1)
+
+[node name="z gridmap" type="GridMap" parent="WallGrid"]
+cell_size = Vector3(1, 1, 1)
 
 [node name="drag from cursor" type="Node3D" parent="."]
 visible = false
