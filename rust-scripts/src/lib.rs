@@ -1,4 +1,5 @@
 use core::f32;
+use std::f32::consts::TAU;
 
 use godot::prelude::*;
 
@@ -9,9 +10,19 @@ unsafe impl ExtensionLibrary for MyExtension {}
 
 use godot::classes::{GridMap, INode3D, InputEvent, MeshLibrary, Node3D};
 
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum Dir {
     X,
     Z,
+}
+
+impl Dir {
+    fn basis(self) -> Basis {
+        match self {
+            Dir::X => Basis::IDENTITY,
+            Dir::Z => Basis::IDENTITY.rotated(Vector3::UP, TAU / 4.0),
+        }
+    }
 }
 
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
@@ -68,20 +79,30 @@ impl WallGrid {
         let x_diff = to.x - from.x;
         let z_diff = to.z - from.z;
 
-        let x_drag = x_diff.abs() > z_diff;
+        let d = if x_diff.abs() > z_diff {
+            Dir::X
+        } else {
+            Dir::Z
+        };
 
         let start = from.floor().cast_int();
         let end = to.floor().cast_int();
 
-        if x_drag {
+        let orientation = self.gm(Dir::X).get_orthogonal_index_from_basis(d.basis());
+
+        if d == Dir::X {
             for x in i32::min(start.x, end.x)..=i32::max(start.x, end.x) {
                 self.gm_mut(Dir::X)
-                    .set_cell_item(Vector3i::new(x, 0, start.z), 0);
+                    .set_cell_item_ex(Vector3i::new(x, 0, start.z), 0)
+                    .orientation(orientation)
+                    .done();
             }
         } else {
             for z in i32::min(start.z, end.z)..=i32::max(start.z, end.z) {
                 self.gm_mut(Dir::Z)
-                    .set_cell_item(Vector3i::new(start.x, 0, z), 0);
+                    .set_cell_item_ex(Vector3i::new(start.x, 0, z), 0)
+                    .orientation(orientation)
+                    .done();
             }
         }
     }
