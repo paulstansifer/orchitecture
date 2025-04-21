@@ -79,28 +79,28 @@ impl WallGrid {
         let x_diff = to.x - from.x;
         let z_diff = to.z - from.z;
 
-        let d = if x_diff.abs() > z_diff {
+        let d = if x_diff.abs() > z_diff.abs() {
             Dir::X
         } else {
             Dir::Z
         };
 
-        let start = from.floor().cast_int();
-        let end = to.floor().cast_int();
+        let start = from.round().cast_int();
+        let end = to.round().cast_int();
 
         let orientation = self.gm(Dir::X).get_orthogonal_index_from_basis(d.basis());
 
         if d == Dir::X {
-            for x in i32::min(start.x, end.x)..=i32::max(start.x, end.x) {
+            for x in i32::min(start.x, end.x)..i32::max(start.x, end.x) {
                 self.gm_mut(Dir::X)
-                    .set_cell_item_ex(Vector3i::new(x, 0, start.z), 0)
+                    .set_cell_item_ex(Vector3i::new(x, start.y, start.z - 1), 0)
                     .orientation(orientation)
                     .done();
             }
         } else {
-            for z in i32::min(start.z, end.z)..=i32::max(start.z, end.z) {
+            for z in i32::min(start.z, end.z)..i32::max(start.z, end.z) {
                 self.gm_mut(Dir::Z)
-                    .set_cell_item_ex(Vector3i::new(start.x, 0, z), 0)
+                    .set_cell_item_ex(Vector3i::new(start.x - 1, start.y, z), 0)
                     .orientation(orientation)
                     .done();
             }
