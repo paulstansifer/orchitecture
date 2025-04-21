@@ -13,7 +13,11 @@ var index: int = 0 # Index of structure being built
 @export var cash_display: Label
 @export var wallgrid: WallGrid
 
+@onready var wall_mesh = ResourceLoader.load("models/wall.tscn")
+@onready var door_mesh = ResourceLoader.load("models/door.tscn")
+
 var plane: Plane # Used for raycasting mouse
+var drag_start: Vector3
 
 func _ready():
 	map = DataMap.new()
@@ -33,6 +37,19 @@ func _ready():
 		
 	gridmap.mesh_library = mesh_library
 	
+	# WallGrid MeshLibrary
+	var wallgrid_mesh_library = MeshLibrary.new()
+
+	var wall_id = wallgrid_mesh_library.get_last_unused_item_id()
+	wallgrid_mesh_library.create_item(wall_id)
+	wallgrid_mesh_library.set_item_mesh(wall_id, get_mesh(wall_mesh))
+
+	var door_id = wallgrid_mesh_library.get_last_unused_item_id()
+	wallgrid_mesh_library.create_item(door_id)
+	wallgrid_mesh_library.set_item_mesh(door_id, get_mesh(door_mesh))
+
+	wallgrid.set_mesh_library(wallgrid_mesh_library)
+	
 	update_structure()
 	update_cash()
 
@@ -48,11 +65,13 @@ func _process(_delta):
 		view_camera.project_ray_origin(get_viewport().get_mouse_position()),
 		view_camera.project_ray_normal(get_viewport().get_mouse_position()))
 
-	var gridmap_position = Vector3(round(world_position.x), 0, round(world_position.z))
+	if Input.is_action_just_pressed("build"):
+		drag_start = world_position
 
-	# TODO
+	if Input.is_action_just_released("build"):
+		self.wallgrid.paint_wall(drag_start, world_position)
 
-	
+
 # Retrieve the mesh from a PackedScene, used for dynamically creating a MeshLibrary
 
 func get_mesh(packed_scene):

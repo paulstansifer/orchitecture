@@ -3,10 +3,10 @@
 This is a construction-oriented game.
 
 ## Tech Stack
-- Godot
-- GDScript, particularly for code that interacts with the Godot scene tree
-- Rust, particularly for complex tasks
-- GitHub for version control
+  - Godot
+  - GDScript, particularly for code that interacts with the Godot scene tree
+  - Rust, particularly for complex tasks
+  - GitHub for version control
 
 ## Project Structure
 /scripts            # Scripts written in GDScript
@@ -14,3 +14,6 @@ This is a construction-oriented game.
   /src              # Scripts written in Rust
 /scenes/main.tscn   # The main scene of the game
 
+## Compiling
+  - to check that GDScript files build, run `/snap/bin/godot-4 --check-only --script <path to script> --display-driver headless`
+  - to check that the Rust files build, run `(cd rust-scripts && cargo build)`
