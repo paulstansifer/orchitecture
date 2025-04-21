@@ -1,4 +1,4 @@
-[gd_scene load_steps=26 format=3 uid="uid://vgwrcfy1qawf"]
+[gd_scene load_steps=29 format=3 uid="uid://vgwrcfy1qawf"]
 
 [ext_resource type="Script" uid="uid://b0rbp7jukmxlq" path="res://scripts/builder.gd" id="1_jybm7"]
 [ext_resource type="Environment" uid="uid://jbptgqvstei3" path="res://scenes/main-environment.tres" id="1_yndf3"]
@@ -22,6 +22,7 @@
 [ext_resource type="Resource" uid="uid://bqb6g3t0tebno" path="res://structures/building-garage.tres" id="13_ut2cy"]
 [ext_resource type="FontFile" uid="uid://d0cxd77jybrcn" path="res://fonts/lilita_one_regular.ttf" id="16_vlub6"]
 [ext_resource type="Texture2D" uid="uid://bng0d1sou7c8a" path="res://sprites/coin.png" id="17_cjamx"]
+[ext_resource type="Shader" uid="uid://df3ajyyv7gmtw" path="res://scenes/grid.gdshader" id="23_pm3ni"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_jscy8"]
 albedo_color = Color(1, 0.798906, 0.8985, 1)
@@ -39,6 +40,18 @@ emission_energy_multiplier = 9.0
 font = ExtResource("16_vlub6")
 font_size = 24
 shadow_color = Color(0, 0, 0, 0.392157)
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_y6deb"]
+render_priority = 0
+shader = ExtResource("23_pm3ni")
+shader_parameter/gridlineOnEvery = 1.0
+shader_parameter/lineThickness = 0.01
+shader_parameter/originOffset = Vector2(0, 0)
+shader_parameter/color = Color(0, 0, 0, 0.5)
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_og1vs"]
+material = SubResource("ShaderMaterial_y6deb")
+size = Vector2(16, 16)
 
 [node name="Main" type="Node3D"]
 
@@ -154,3 +167,6 @@ text = "$10,000"
 label_settings = SubResource("LabelSettings_q176i")
 
 [node name="drag preview" type="Node3D" parent="."]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("PlaneMesh_og1vs")

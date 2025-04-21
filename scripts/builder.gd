@@ -44,10 +44,12 @@ func _ready():
 	var wall_id = wallgrid_mesh_library.get_last_unused_item_id()
 	wallgrid_mesh_library.create_item(wall_id)
 	wallgrid_mesh_library.set_item_mesh(wall_id, get_mesh(wall_mesh))
+	wallgrid_mesh_library.set_item_mesh_transform(wall_id, Transform3D().translated(Vector3(0, 0, 0.5)))
 
 	var door_id = wallgrid_mesh_library.get_last_unused_item_id()
 	wallgrid_mesh_library.create_item(door_id)
 	wallgrid_mesh_library.set_item_mesh(door_id, get_mesh(door_mesh))
+	wallgrid_mesh_library.set_item_mesh_transform(door_id, Transform3D().translated(Vector3(0, 0, 0.5)))
 
 	wallgrid.set_mesh_library(wallgrid_mesh_library)
 	
