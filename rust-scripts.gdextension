@@ -6,8 +6,8 @@ reloadable = true
 [libraries]
 linux.debug.x86_64 =     "res://rust-scripts/target/debug/librust_scripts.so"
 linux.release.x86_64 =   "res://rust-scripts/target/release/librust_scripts.so"
-windows.debug.x86_64 =   "res://rust-scripts/target/debug/rust_scripts.dll"
-windows.release.x86_64 = "res://rust-scripts/target/release/rust_scripts.dll"
+windows.debug.x86_64 =   "res://rust-scripts/target/x86_64-pc-windows-gnu/debug/rust_scripts.dll"
+windows.release.x86_64 = "res://rust-scripts/target/x86_64-pc-windows-gnu/release/rust_scripts.dll"
 macos.debug =            "res://rust-scripts/target/debug/librust_scripts.dylib"
 macos.release =          "res://rust-scripts/target/release/librust_scripts.dylib"
 macos.debug.arm64 =      "res://rust-scripts/target/debug/librust_scripts.dylib"
