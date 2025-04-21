@@ -14,8 +14,8 @@ var index: int = 0 # Index of structure being built
 @export var cash_display: Label
 @export var wallgrid: WallGrid
 
-@onready var wall_mesh = ResourceLoader.load("models/wall.tscn")
-@onready var door_mesh = ResourceLoader.load("models/door.tscn")
+@export var wall_meshes: Array[Structure]
+
 
 var cur_y: int = 0 # The current layer to interact with
 var plane: Plane # Used for raycasting mouse
@@ -24,36 +24,43 @@ var drag_start: Vector3
 func _ready():
 	map = DataMap.new()
 	plane = Plane(Vector3.UP, Vector3.ZERO)
-	
+
 	# Create new MeshLibrary dynamically, can also be done in the editor
 	# See: https://docs.godotengine.org/en/stable/tutorials/3d/using_gridmaps.html
-	
+
 	var mesh_library = MeshLibrary.new()
-	
+
 	for structure in structures:
 		var id = mesh_library.get_last_unused_item_id()
-		
+
 		mesh_library.create_item(id)
 		mesh_library.set_item_mesh(id, get_mesh(structure.model))
 		mesh_library.set_item_mesh_transform(id, Transform3D())
-		
+
 	gridmap.mesh_library = mesh_library
-	
+
 	# WallGrid MeshLibrary
 	var wallgrid_mesh_library = MeshLibrary.new()
 
-	var wall_id = wallgrid_mesh_library.get_last_unused_item_id()
-	wallgrid_mesh_library.create_item(wall_id)
-	wallgrid_mesh_library.set_item_mesh(wall_id, get_mesh(wall_mesh))
-	wallgrid_mesh_library.set_item_mesh_transform(wall_id, Transform3D().translated(Vector3(0, 0, 0.5)))
-
-	var door_id = wallgrid_mesh_library.get_last_unused_item_id()
-	wallgrid_mesh_library.create_item(door_id)
-	wallgrid_mesh_library.set_item_mesh(door_id, get_mesh(door_mesh))
-	wallgrid_mesh_library.set_item_mesh_transform(door_id, Transform3D().translated(Vector3(0, 0, 0.5)))
+	var dir_access = DirAccess.open("res://buildables")
+	if dir_access != null:
+		dir_access.list_dir_begin()
+		var file_name = dir_access.get_next()
+		while file_name != "":
+			if file_name.ends_with(".tres"):
+				var buildable_resource = ResourceLoader.load("res://buildables/" + file_name) as Structure
+				if buildable_resource != null:
+					var id = wallgrid_mesh_library.get_last_unused_item_id()
+					wallgrid_mesh_library.create_item(id)
+					wallgrid_mesh_library.set_item_mesh(id, get_mesh(buildable_resource.model))
+					wallgrid_mesh_library.set_item_mesh_transform(id, Transform3D().translated(Vector3(0, 0, 0.5)))
+					buildable_resource.id = id
+					wall_meshes.append(buildable_resource)
+			file_name = dir_access.get_next()
+		dir_access.list_dir_end()
 
 	wallgrid.set_mesh_library(wallgrid_mesh_library)
-	
+
 	update_structure()
 	update_cash()
 
