@@ -1,10 +1,8 @@
 extends Node3D
 
-@export var structures: Array[Structure] = []
 
 var map: DataMap
 
-var index: int = 0 # Index of structure being built
 
 @export var drag_start_helper: Node3D
 @export var mouse_helper: Node3D # The 'cursor'
@@ -24,20 +22,6 @@ var drag_start: Vector3
 func _ready():
 	map = DataMap.new()
 	plane = Plane(Vector3.UP, Vector3.ZERO)
-
-	# Create new MeshLibrary dynamically, can also be done in the editor
-	# See: https://docs.godotengine.org/en/stable/tutorials/3d/using_gridmaps.html
-
-	var mesh_library = MeshLibrary.new()
-
-	for structure in structures:
-		var id = mesh_library.get_last_unused_item_id()
-
-		mesh_library.create_item(id)
-		mesh_library.set_item_mesh(id, get_mesh(structure.model))
-		mesh_library.set_item_mesh_transform(id, Transform3D())
-
-	gridmap.mesh_library = mesh_library
 
 	# WallGrid MeshLibrary
 	var wallgrid_mesh_library = MeshLibrary.new()
@@ -60,9 +44,6 @@ func _ready():
 		dir_access.list_dir_end()
 
 	wallgrid.set_mesh_library(wallgrid_mesh_library)
-
-	update_structure()
-	update_cash()
 
 	load_map()
 
@@ -113,52 +94,20 @@ func get_mesh(packed_scene):
 					
 					return prop_value.duplicate()
 
-# Update the structure visual in the 'cursor' (obsolete)
-
-func update_structure():
-	# Clear previous structure preview in selector
-	for n in selector_container.get_children():
-		selector_container.remove_child(n)
-		
-	# Create new structure preview in selector
-	var _model = structures[index].model.instantiate()
-	selector_container.add_child(_model)
-	_model.position.y += 0.25
-	
-func update_cash():
-	cash_display.text = "$" + str(map.cash)
 
 # Saving/load
 
 func load_map():
 	print("Loading map...")
-	
-	gridmap.clear()
-	
-	map = ResourceLoader.load("user://map.res")
-	if not map:
-		map = DataMap.new()
-	for cell in map.structures:
-		gridmap.set_cell_item(Vector3i(cell.position.x, cur_y, cell.position.y), cell.structure, cell.orientation)
-		
-	update_cash()
+	#TODO
+
+func save_map():
+	print("Saving map...")
+	#TODO:
 
 func accept_actions():
 	if Input.is_action_just_pressed("save"):
-		print("Saving map...")
-		
-		map.structures.clear()
-		for cell in gridmap.get_used_cells():
-			var data_structure: DataStructure = DataStructure.new()
-			
-			data_structure.position = Vector2i(cell.x, cell.z)
-			data_structure.orientation = gridmap.get_cell_item_orientation(cell)
-			data_structure.structure = gridmap.get_cell_item(cell)
-			
-			map.structures.append(data_structure)
-			
-		ResourceSaver.save(map, "user://map.res")
-
+		save_map()
 	if Input.is_action_just_pressed("load"):
 		load_map()
 
