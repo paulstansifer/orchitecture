@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="Structure" load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://models/door.tscn" id="1_hxv7q"]
+[ext_resource type="Script" path="res://scripts/structure.gd" id="2_qqj0w"]
+
+[resource]
+script = ExtResource("2_qqj0w")
+model = ExtResource("1_hxv7q")
+price = 0

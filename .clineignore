@@ -9,7 +9,6 @@ models/*
 *.import
 *.png
 *.res
-*.tres
 *.tmp
 *.fla
 
