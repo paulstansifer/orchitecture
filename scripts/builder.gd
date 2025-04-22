@@ -12,9 +12,7 @@ var map: DataMap
 @export var cash_display: Label
 @export var wallgrid: WallGrid
 
-@export var wall_meshes: Array[Structure]
-
-
+var wall_meshes: Array[Structure]
 var cur_y: int = 0 # The current layer to interact with
 var plane: Plane # Used for raycasting mouse
 var drag_start: Vector3
