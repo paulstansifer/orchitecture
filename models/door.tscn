@@ -6,11 +6,11 @@ normal_enabled = true
 
 [sub_resource type="BoxMesh" id="BoxMesh_2nb6v"]
 material = SubResource("StandardMaterial3D_ngj6w")
-size = Vector3(1, 0.2, 0.2)
+size = Vector3(1.2, 0.2, 0.2)
 
 [sub_resource type="BoxMesh" id="BoxMesh_aiugh"]
 material = SubResource("StandardMaterial3D_ngj6w")
-size = Vector3(0.2, 1, 0.2)
+size = Vector3(0.2, 1.2, 0.2)
 
 [node name="Node3D" type="Node3D"]
 
