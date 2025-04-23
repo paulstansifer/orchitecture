@@ -11,6 +11,7 @@ models/*
 *.res
 *.tmp
 *.fla
+*.bin
 
 *.gltf
 *.scad

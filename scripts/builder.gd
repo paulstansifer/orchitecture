@@ -12,7 +12,10 @@ var map: DataMap
 @export var cash_display: Label
 @export var wallgrid: WallGrid
 
+@onready var buildable_buttons: Control = get_node("../CanvasLayer/Control/BuildableButtons")
+
 var wall_meshes: Array[Structure]
+var selected_mesh_id: int = 0
 var cur_y: int = 0 # The current layer to interact with
 var plane: Plane # Used for raycasting mouse
 var drag_start: Vector3
@@ -44,6 +47,29 @@ func _ready():
 
 	wallgrid.set_mesh_library(wallgrid_mesh_library)
 
+	# Create buttons for each buildable
+	for buildable in wall_meshes:
+		print("ID", buildable.id)
+		var button = Button.new()
+
+		# Create a SubViewport to render the mesh
+		var sub_viewport = SubViewport.new()
+		sub_viewport.size = Vector2i(64, 64)
+		button.add_child(sub_viewport)
+
+		# Add the mesh to the SubViewport
+		var mesh_instance = MeshInstance3D.new()
+		mesh_instance.mesh = wallgrid_mesh_library.get_item_mesh(buildable.id).duplicate()
+		sub_viewport.add_child(mesh_instance)
+
+		# Create a ViewportTexture from the SubViewport
+		var viewport_texture = ViewportTexture.new()
+		viewport_texture.viewport_path = sub_viewport.get_path()
+		button.icon = viewport_texture
+
+		button.connect("pressed", _on_buildable_button_pressed.bind(buildable.id))
+		buildable_buttons.add_child(button)
+
 	load_map()
 
 func _process(_delta):
@@ -65,7 +91,7 @@ func _process(_delta):
 
 	if Input.is_action_just_released("build"):
 		drag_start_helper.hide()
-		self.wallgrid.paint_wall(drag_start, world_position)
+		self.wallgrid.paint_wall(drag_start, world_position, selected_mesh_id)
 
 	if Input.is_action_just_pressed("y_layer_up"):
 		cur_y += 1
@@ -112,3 +138,7 @@ func accept_actions():
 
 	if Input.is_action_just_pressed("quit"):
 		get_tree().quit()
+
+func _on_buildable_button_pressed(id):
+	print("Button pressed! ID: ", id)
+	selected_mesh_id = id
