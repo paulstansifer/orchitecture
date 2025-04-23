@@ -29,13 +29,14 @@ func _ready():
 		dir_access.list_dir_begin()
 		var file_name = dir_access.get_next()
 		while file_name != "":
-			if file_name.ends_with(".tres"):
-				var buildable_resource = ResourceLoader.load("res://buildables/" + file_name) as Structure
-				if buildable_resource != null:
+			if file_name.ends_with(".gltf"):
+				var model = ResourceLoader.load("res://buildables/" + file_name) as PackedScene
+				if model != null:
+					var buildable_resource = Structure.new()
 					var id = wallgrid_mesh_library.get_last_unused_item_id()
 					wallgrid_mesh_library.create_item(id)
-					wallgrid_mesh_library.set_item_mesh(id, get_mesh(buildable_resource.model))
-					wallgrid_mesh_library.set_item_mesh_transform(id, Transform3D().translated(Vector3(0, 0, 0.5)))
+					wallgrid_mesh_library.set_item_mesh(id, get_mesh(model))
+					wallgrid_mesh_library.set_item_mesh_transform(id, Transform3D().rotated(Vector3.RIGHT, -TAU / 4).translated(Vector3(-.5, -.5, .5)))
 					buildable_resource.id = id
 					wall_meshes.append(buildable_resource)
 			file_name = dir_access.get_next()

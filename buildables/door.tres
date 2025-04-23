@@ -1,9 +1,10 @@
-[gd_resource type="Resource" script_class="Structure" load_steps=3 format=3]
+[gd_resource type="Resource" script_class="Structure" load_steps=3 format=3 uid="uid://ppudxkh4imti"]
 
-[ext_resource type="PackedScene" path="res://models/door.tscn" id="1_hxv7q"]
-[ext_resource type="Script" path="res://scripts/structure.gd" id="2_qqj0w"]
+[ext_resource type="PackedScene" uid="uid://dxys160wu465w" path="res://models/doorway.glb" id="1_hxv7q"]
+[ext_resource type="Script" uid="uid://cnx4s1q0php4k" path="res://scripts/structure.gd" id="2_qqj0w"]
 
 [resource]
 script = ExtResource("2_qqj0w")
 model = ExtResource("1_hxv7q")
+id = 0
 price = 0

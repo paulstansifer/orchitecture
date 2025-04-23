@@ -12,6 +12,9 @@ models/*
 *.tmp
 *.fla
 
+*.gltf
+*.scad
+
 .vscode/*
 .godot/*
 
