@@ -5,7 +5,7 @@ shader_type spatial;
 render_mode blend_mix, unshaded;
 
 uniform float gridlineOnEvery = 1.0;
-uniform float lineThickness = .01;
+uniform float lineThickness = .05;
 uniform vec4 color: source_color = vec4(0.0, 0.7, 1.0, 1.0);
 uniform float fade_inner_radius = 4.0;
 uniform float fade_outer_radius = 6.0;
