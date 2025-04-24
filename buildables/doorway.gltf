@@ -4,6 +4,7 @@
         "generator": "Open Asset Import Library (assimp v5.3.0)"
     },
     "extensionsUsed": [
+        "KHR_materials_specular",
         "KHR_materials_volume",
         "FB_ngon_encoding"
     ],
@@ -12,7 +13,7 @@
             "bufferView": 0,
             "byteOffset": 0,
             "componentType": 5126,
-            "count": 44,
+            "count": 132,
             "type": "VEC3",
             "max": [
                 1.100000023841858,
@@ -28,11 +29,28 @@
         {
             "bufferView": 1,
             "byteOffset": 0,
+            "componentType": 5126,
+            "count": 132,
+            "type": "VEC3",
+            "max": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "min": [
+                -1.0,
+                -1.0,
+                -1.0
+            ]
+        },
+        {
+            "bufferView": 2,
+            "byteOffset": 0,
             "componentType": 5125,
             "count": 252,
             "type": "SCALAR",
             "max": [
-                43
+                131
             ],
             "min": [
                 0
@@ -41,7 +59,7 @@
     ],
     "buffers": [
         {
-            "byteLength": 1536,
+            "byteLength": 4176,
             "uri": "doorway.bin"
         }
     ],
@@ -49,40 +67,51 @@
         {
             "buffer": 0,
             "byteOffset": 0,
-            "byteLength": 528,
+            "byteLength": 1584,
             "target": 34962
         },
         {
             "buffer": 0,
-            "byteOffset": 528,
+            "byteOffset": 1584,
+            "byteLength": 1584,
+            "target": 34962
+        },
+        {
+            "buffer": 0,
+            "byteOffset": 3168,
             "byteLength": 1008,
             "target": 34963
         }
     ],
     "materials": [
         {
-            "name": "material",
+            "name": "DefaultMaterial",
             "pbrMetallicRoughness": {
-                "baseColorFactor": [
-                    0.6000000238418579,
-                    0.6000000238418579,
-                    0.6000000238418579,
-                    1.0
-                ],
                 "metallicFactor": 0.0
             },
-            "doubleSided": true
+            "extensions": {
+                "KHR_materials_specular": {
+                    "specularFactor": 1.0,
+                    "specularColorFactor": [
+                        1.0,
+                        1.0,
+                        1.0
+                    ]
+                }
+            }
         }
     ],
     "meshes": [
         {
+            "name": "OpenSCAD_Model",
             "primitives": [
                 {
                     "mode": 4,
                     "material": 0,
-                    "indices": 1,
+                    "indices": 2,
                     "attributes": {
-                        "POSITION": 0
+                        "POSITION": 0,
+                        "NORMAL": 1
                     }
                 }
             ]
@@ -90,7 +119,12 @@
     ],
     "nodes": [
         {
-            "name": "<OFFRoot>",
+            "children": [
+                1
+            ]
+        },
+        {
+            "name": "OpenSCAD_Model",
             "mesh": 0
         }
     ],
