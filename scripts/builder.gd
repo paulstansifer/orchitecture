@@ -1,6 +1,5 @@
 extends Node3D
 
-
 var map: DataMap
 
 
@@ -41,6 +40,7 @@ func _ready():
 					wallgrid_mesh_library.set_item_mesh(id, get_mesh(model))
 					wallgrid_mesh_library.set_item_mesh_transform(id, Transform3D().rotated(Vector3.RIGHT, -TAU / 4).translated(Vector3(-.5, -.5, .5)))
 					buildable_resource.id = id
+					buildable_resource.name = file_name
 					wall_meshes.append(buildable_resource)
 			file_name = dir_access.get_next()
 		dir_access.list_dir_end()
@@ -49,23 +49,9 @@ func _ready():
 
 	# Create buttons for each buildable
 	for buildable in wall_meshes:
-		print("ID", buildable.id)
 		var button = Button.new()
 
-		# Create a SubViewport to render the mesh
-		var sub_viewport = SubViewport.new()
-		sub_viewport.size = Vector2i(64, 64)
-		button.add_child(sub_viewport)
-
-		# Add the mesh to the SubViewport
-		var mesh_instance = MeshInstance3D.new()
-		mesh_instance.mesh = wallgrid_mesh_library.get_item_mesh(buildable.id).duplicate()
-		sub_viewport.add_child(mesh_instance)
-
-		# Create a ViewportTexture from the SubViewport
-		var viewport_texture = ViewportTexture.new()
-		viewport_texture.viewport_path = sub_viewport.get_path()
-		button.icon = viewport_texture
+		button.text = buildable.name
 
 		button.connect("pressed", _on_buildable_button_pressed.bind(buildable.id))
 		buildable_buttons.add_child(button)

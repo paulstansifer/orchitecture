@@ -7,3 +7,4 @@ class_name Structure
 
 @export_subgroup("Gameplay")
 @export var price: int # Price of the structure when building
+@export var name: String
