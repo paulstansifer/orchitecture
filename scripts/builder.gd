@@ -61,23 +61,6 @@ func _ready():
 func _process(_delta):
 	# Controls
 	accept_actions()
-	
-	# Map position based on mouse
-	
-	var world_position = plane.intersects_ray(
-		view_camera.project_ray_origin(get_viewport().get_mouse_position()),
-		view_camera.project_ray_normal(get_viewport().get_mouse_position()))
-
-	mouse_helper.position = world_position.round()
-
-	if Input.is_action_just_pressed("build"):
-		drag_start_helper.position = world_position.round()
-		drag_start_helper.show()
-		drag_start = world_position
-
-	if Input.is_action_just_released("build"):
-		drag_start_helper.hide()
-		self.wallgrid.paint_wall(drag_start, world_position, selected_mesh_id)
 
 	if Input.is_action_just_pressed("y_layer_up"):
 		cur_y += 1
@@ -90,6 +73,27 @@ func _process(_delta):
 		if cur_y < 0:
 			cur_y = 0
 		plane.d = cur_y
+	
+	# Map position based on mouse
+	
+	var world_position = plane.intersects_ray(
+		view_camera.project_ray_origin(get_viewport().get_mouse_position()),
+		view_camera.project_ray_normal(get_viewport().get_mouse_position()))
+
+	if not world_position:
+		return
+
+	mouse_helper.position = world_position.round()
+
+	if Input.is_action_just_pressed("build"):
+		drag_start_helper.position = world_position.round()
+		drag_start_helper.show()
+		drag_start = world_position
+
+	if Input.is_action_just_released("build"):
+		drag_start_helper.hide()
+		self.wallgrid.paint_wall(drag_start, world_position, selected_mesh_id)
+
 
 
 # Retrieve the mesh from a PackedScene, used for dynamically creating a MeshLibrary
