@@ -118,6 +118,7 @@ camera_child = NodePath("Camera")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 30)
 environment = ExtResource("1_yndf3")
 fov = 20.0
+far = 1000.0
 
 [node name="GridMap" type="GridMap" parent="."]
 cell_size = Vector3(1, 1, 1)
@@ -129,6 +130,7 @@ cell_center_z = false
 transform = Transform3D(-0.422618, -0.694272, 0.582563, 0, 0.642788, 0.766044, -0.906308, 0.323744, -0.271654, 0, 0, 0)
 shadow_enabled = true
 shadow_opacity = 0.75
+directional_shadow_blend_splits = true
 
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 
