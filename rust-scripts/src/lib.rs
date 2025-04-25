@@ -10,7 +10,7 @@ unsafe impl ExtensionLibrary for MyExtension {}
 
 use godot::classes::{GridMap, INode3D, InputEvent, MeshLibrary, Node3D};
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum Dir {
     X,
     Y,
@@ -75,6 +75,32 @@ impl WallGrid {
         }
     }
 
+    pub fn set_cell_item_dir(
+        &mut self,
+        which_grid: Option<Dir>,
+        dir: Dir,
+        position: Vector3i,
+        item: i32,
+    ) {
+        let orientation = self.gm(Dir::X).get_orthogonal_index_from_basis(dir.basis());
+        match which_grid {
+            Some(gd) => {
+                self.gm_mut(gd)
+                    .set_cell_item_ex(position, item)
+                    .orientation(orientation)
+                    .done();
+            }
+            None => {
+                self.room
+                    .as_mut()
+                    .unwrap()
+                    .set_cell_item_ex(position, item)
+                    .orientation(orientation)
+                    .done();
+            }
+        }
+    }
+
     #[func]
     pub fn set_mesh_library(&mut self, mesh_library: Gd<MeshLibrary>) {
         self.gm_mut(Dir::X).set_mesh_library(&mesh_library);
@@ -98,21 +124,23 @@ impl WallGrid {
         let start = from.round().cast_int();
         let end = to.round().cast_int();
 
-        let orientation = self.gm(Dir::X).get_orthogonal_index_from_basis(d.basis());
-
         if d == Dir::X {
             for x in i32::min(start.x, end.x)..i32::max(start.x, end.x) {
-                self.gm_mut(Dir::X)
-                    .set_cell_item_ex(Vector3i::new(x, start.y, start.z - 1), selected_mesh_id)
-                    .orientation(orientation)
-                    .done();
+                self.set_cell_item_dir(
+                    Some(Dir::X),
+                    d,
+                    Vector3i::new(x, start.y, start.z - 1),
+                    selected_mesh_id,
+                );
             }
         } else {
             for z in i32::min(start.z, end.z)..i32::max(start.z, end.z) {
-                self.gm_mut(Dir::Z)
-                    .set_cell_item_ex(Vector3i::new(start.x - 1, start.y, z), selected_mesh_id)
-                    .orientation(orientation)
-                    .done();
+                self.set_cell_item_dir(
+                    Some(Dir::Z),
+                    d,
+                    Vector3i::new(start.x - 1, start.y, z),
+                    selected_mesh_id,
+                );
             }
         }
     }
@@ -124,9 +152,12 @@ impl WallGrid {
 
         for x in i32::min(start.x, end.x)..i32::max(start.x, end.x) {
             for z in i32::min(start.z, end.z)..i32::max(start.z, end.z) {
-                self.gm_mut(Dir::Y)
-                    .set_cell_item_ex(Vector3i::new(x, start.y, z), selected_mesh_id)
-                    .done();
+                self.set_cell_item_dir(
+                    Some(Dir::Y),
+                    Dir::Z,
+                    Vector3i::new(x, start.y, z),
+                    selected_mesh_id,
+                );
             }
         }
     }
@@ -156,10 +187,7 @@ impl WallGrid {
     #[func]
     pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: i32) {
         let pos = location.round().cast_int();
-        self.room
-            .as_mut()
-            .unwrap()
-            .set_cell_item(pos, selected_mesh_id);
+        self.set_cell_item_dir(None, Dir::Z, pos, selected_mesh_id);
     }
 }
 
