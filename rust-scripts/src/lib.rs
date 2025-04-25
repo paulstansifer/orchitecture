@@ -38,6 +38,8 @@ struct WallGrid {
     y_floors: Option<Gd<GridMap>>,
     #[export]
     z_walls: Option<Gd<GridMap>>,
+    #[export]
+    room: Option<Gd<GridMap>>,
 
     drag_start: Option<Vector3>,
 
@@ -81,7 +83,7 @@ impl WallGrid {
 
     #[func]
     // The user has dragged something wall-like bewteen `from` and `to`
-    pub fn paint_wall(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
+    pub fn wall_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
         let x_diff = to.x - from.x;
         let z_diff = to.z - from.z;
 
@@ -114,7 +116,7 @@ impl WallGrid {
     }
 
     #[func]
-    pub fn paint_floor(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
+    pub fn floor_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
         let start = from.round().cast_int();
         let end = to.round().cast_int();
 
@@ -148,6 +150,15 @@ impl WallGrid {
             None => Self::nowhere(),
         }
     }
+
+    #[func]
+    pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: i32) {
+        let pos = location.round().cast_int();
+        self.room
+            .as_mut()
+            .unwrap()
+            .set_cell_item(pos, selected_mesh_id);
+    }
 }
 
 #[godot_api]
@@ -157,6 +168,7 @@ impl INode3D for WallGrid {
             x_walls: None,
             y_floors: None,
             z_walls: None,
+            room: None,
             drag_start: None,
 
             // Exports

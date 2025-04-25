@@ -13,7 +13,7 @@ var map: DataMap
 
 @onready var buildable_buttons: Control = get_node("../CanvasLayer/Control/BuildableButtons")
 
-var selected_mesh_id: int = 0
+var selected_structure: Structure = null
 var cur_y: int = 0 # The current layer to interact with
 var plane: Plane # Used for raycasting mouse
 var drag_start: Vector3
@@ -40,7 +40,7 @@ func _ready():
 
 		button.text = buildable.name
 
-		button.connect("pressed", _on_buildable_button_pressed.bind(buildable.id))
+		button.connect("pressed", _on_buildable_button_pressed.bind(buildable))
 		buildable_buttons.add_child(button)
 
 	load_map()
@@ -79,7 +79,8 @@ func _process(_delta):
 
 	if Input.is_action_just_released("build"):
 		drag_start_helper.hide()
-		self.wallgrid.paint_wall(drag_start, world_position, selected_mesh_id)
+		if selected_structure != null:
+			self.wallgrid.wall_drag(drag_start, world_position, selected_structure.id)
 
 
 # Retrieve the mesh from a PackedScene, used for dynamically creating a MeshLibrary
@@ -114,6 +115,6 @@ func accept_actions():
 	if Input.is_action_just_pressed("quit"):
 		get_tree().quit()
 
-func _on_buildable_button_pressed(id):
-	print("Button pressed! ID: ", id)
-	selected_mesh_id = id
+func _on_buildable_button_pressed(structure: Structure):
+	print("Button pressed! Structure: ", structure)
+	selected_structure = structure
