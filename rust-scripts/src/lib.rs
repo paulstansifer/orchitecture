@@ -13,6 +13,7 @@ use godot::classes::{GridMap, INode3D, InputEvent, MeshLibrary, Node3D};
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Dir {
     X,
+    Y,
     Z,
 }
 
@@ -20,6 +21,7 @@ impl Dir {
     fn basis(self) -> Basis {
         match self {
             Dir::X => Basis::IDENTITY,
+            Dir::Y => Basis::IDENTITY.rotated(Vector3::FORWARD, TAU / 4.0),
             Dir::Z => Basis::IDENTITY.rotated(Vector3::UP, TAU / 4.0),
         }
     }
@@ -32,6 +34,8 @@ impl Dir {
 struct WallGrid {
     #[export]
     x_walls: Option<Gd<GridMap>>,
+    #[export]
+    y_floors: Option<Gd<GridMap>>,
     #[export]
     z_walls: Option<Gd<GridMap>>,
 
@@ -56,6 +60,7 @@ impl WallGrid {
     fn gm(&self, dir: Dir) -> &GridMap {
         match dir {
             Dir::X => self.x_walls.as_ref().unwrap(),
+            Dir::Y => self.y_floors.as_ref().unwrap(),
             Dir::Z => self.z_walls.as_ref().unwrap(),
         }
     }
@@ -63,6 +68,7 @@ impl WallGrid {
     fn gm_mut(&mut self, dir: Dir) -> &mut GridMap {
         match dir {
             Dir::X => self.x_walls.as_mut().unwrap(),
+            Dir::Y => self.y_floors.as_mut().unwrap(),
             Dir::Z => self.z_walls.as_mut().unwrap(),
         }
     }
@@ -135,6 +141,7 @@ impl INode3D for WallGrid {
     fn init(base: Base<Node3D>) -> Self {
         Self {
             x_walls: None,
+            y_floors: None,
             z_walls: None,
             drag_start: None,
 
