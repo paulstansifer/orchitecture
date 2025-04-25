@@ -80,7 +80,7 @@ impl WallGrid {
     }
 
     #[func]
-    // The user has dragged bewteen `from` and `to`
+    // The user has dragged something wall-like bewteen `from` and `to`
     pub fn paint_wall(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
         let x_diff = to.x - from.x;
         let z_diff = to.z - from.z;
@@ -108,6 +108,20 @@ impl WallGrid {
                 self.gm_mut(Dir::Z)
                     .set_cell_item_ex(Vector3i::new(start.x - 1, start.y, z), selected_mesh_id)
                     .orientation(orientation)
+                    .done();
+            }
+        }
+    }
+
+    #[func]
+    pub fn paint_floor(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
+        let start = from.round().cast_int();
+        let end = to.round().cast_int();
+
+        for x in i32::min(start.x, end.x)..i32::max(start.x, end.x) {
+            for z in i32::min(start.z, end.z)..i32::max(start.z, end.z) {
+                self.gm_mut(Dir::Y)
+                    .set_cell_item_ex(Vector3i::new(x, start.y, z), selected_mesh_id)
                     .done();
             }
         }
