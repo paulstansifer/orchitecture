@@ -33,6 +33,8 @@ func _ready():
 		wallgrid_mesh_library.create_item(id)
 		wallgrid_mesh_library.set_item_mesh(id, get_mesh(ResourceLoader.load(structure.model_file)))
 		wallgrid_mesh_library.set_item_mesh_transform(id, Transform3D().rotated(Vector3.RIGHT, -TAU / 4).translated(Vector3(-.5, -.5, .5)))
+		if structure.name == "wall":
+			selected_structure = structure
 
 	# Create buttons for each buildable
 	for buildable in game_config.buildables:
@@ -73,14 +75,24 @@ func _process(_delta):
 	mouse_helper.position = world_position.round()
 
 	if Input.is_action_just_pressed("build"):
-		drag_start_helper.position = world_position.round()
-		drag_start_helper.show()
-		drag_start = world_position
+		match selected_structure.placement_style:
+			Globals.PlacementStyle.ROOM_PLOP:
+				self.wallgrid.room_plop(world_position.round(), selected_structure.id)
+			Globals.PlacementStyle.WALL_PLOP:
+				print("TODO")
+			_:
+				drag_start_helper.position = world_position.round()
+				drag_start_helper.show()
+				drag_start = world_position
 
 	if Input.is_action_just_released("build"):
 		drag_start_helper.hide()
 		if selected_structure != null:
-			self.wallgrid.wall_drag(drag_start, world_position, selected_structure.id)
+			match selected_structure.placement_style:
+				Globals.PlacementStyle.WALL_DRAG:
+					self.wallgrid.wall_drag(drag_start, world_position, selected_structure.id)
+				Globals.PlacementStyle.FLOOR_DRAG:
+					self.wallgrid.floor_drag(drag_start, world_position, selected_structure.id)
 
 
 # Retrieve the mesh from a PackedScene, used for dynamically creating a MeshLibrary
@@ -116,5 +128,4 @@ func accept_actions():
 		get_tree().quit()
 
 func _on_buildable_button_pressed(structure: Structure):
-	print("Button pressed! Structure: ", structure)
 	selected_structure = structure

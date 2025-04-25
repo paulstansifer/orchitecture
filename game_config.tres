@@ -7,7 +7,7 @@
 script = ExtResource("1_xppy2")
 price = 0
 name = "desk"
-placement_style = 3
+placement_style = 2
 model_file = "res://buildables/desk.gltf"
 
 [sub_resource type="Resource" id="Resource_hruu6"]

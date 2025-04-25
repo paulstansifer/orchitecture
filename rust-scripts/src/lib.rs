@@ -78,7 +78,9 @@ impl WallGrid {
     #[func]
     pub fn set_mesh_library(&mut self, mesh_library: Gd<MeshLibrary>) {
         self.gm_mut(Dir::X).set_mesh_library(&mesh_library);
+        self.gm_mut(Dir::Y).set_mesh_library(&mesh_library);
         self.gm_mut(Dir::Z).set_mesh_library(&mesh_library);
+        self.room.as_mut().unwrap().set_mesh_library(&mesh_library);
     }
 
     #[func]
