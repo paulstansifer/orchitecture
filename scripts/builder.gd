@@ -1,13 +1,8 @@
 extends Node3D
 
-var map: DataMap
-
-
 @export var drag_start_helper: Node3D
 @export var mouse_helper: Node3D # The 'cursor'
-@export var selector_container: Node3D # Node that holds a preview of the structure
 @export var view_camera: Camera3D # Used for raycasting mouse
-@export var gridmap: GridMap
 @export var cash_display: Label
 @export var wallgrid: WallGrid
 
@@ -19,7 +14,6 @@ var plane: Plane # Used for raycasting mouse
 var drag_start: Vector3
 
 func _ready():
-	map = DataMap.new()
 	plane = Plane(Vector3.UP, Vector3.ZERO)
 
 	# WallGrid MeshLibrary

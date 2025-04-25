@@ -1,11 +1,9 @@
-[gd_scene load_steps=13 format=3 uid="uid://vgwrcfy1qawf"]
+[gd_scene load_steps=11 format=3 uid="uid://vgwrcfy1qawf"]
 
 [ext_resource type="Script" uid="uid://b0rbp7jukmxlq" path="res://scripts/builder.gd" id="1_jybm7"]
 [ext_resource type="Environment" uid="uid://jbptgqvstei3" path="res://scenes/main-environment.tres" id="1_yndf3"]
-[ext_resource type="Texture2D" uid="uid://cbk07cxgshg26" path="res://sprites/selector.png" id="4_wr1wv"]
 [ext_resource type="Script" uid="uid://dwid2ts3ka71a" path="res://scripts/view.gd" id="8_yovpv"]
 [ext_resource type="FontFile" uid="uid://d0cxd77jybrcn" path="res://fonts/lilita_one_regular.ttf" id="16_vlub6"]
-[ext_resource type="Texture2D" uid="uid://bng0d1sou7c8a" path="res://sprites/coin.png" id="17_cjamx"]
 [ext_resource type="Shader" uid="uid://df3ajyyv7gmtw" path="res://scenes/grid.gdshader" id="23_pm3ni"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_jscy8"]
@@ -80,13 +78,11 @@ sides = 9
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
 radius = 0.05
 
-[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "selector_container", "view_camera", "gridmap", "cash_display", "wallgrid")]
+[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "view_camera", "cash_display", "wallgrid")]
 script = ExtResource("1_jybm7")
 drag_start_helper = NodePath("../drag start helper")
 mouse_helper = NodePath("mouse helper")
-selector_container = NodePath("mouse helper/Container")
 view_camera = NodePath("../View/Camera")
-gridmap = NodePath("../GridMap")
 cash_display = NodePath("../CanvasLayer/Control/Cash")
 wallgrid = NodePath("../WallGrid")
 
@@ -110,13 +106,6 @@ sides = 9
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
 radius = 0.05
 
-[node name="Sprite" type="Sprite3D" parent="Builder/mouse helper"]
-transform = Transform3D(1, 0, 0, 0, -4.37114e-08, -1, 0, 1, -4.37114e-08, 0, 0.06, 0)
-visible = false
-texture = ExtResource("4_wr1wv")
-
-[node name="Container" type="Node3D" parent="Builder/mouse helper"]
-
 [node name="View" type="Node3D" parent="." node_paths=PackedStringArray("camera_child")]
 transform = Transform3D(0.707107, -0.40558, 0.579228, 0, 0.819152, 0.573576, -0.707107, -0.40558, 0.579228, 0, 0, 0)
 script = ExtResource("8_yovpv")
@@ -127,12 +116,6 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 30)
 environment = ExtResource("1_yndf3")
 fov = 20.0
 far = 1000.0
-
-[node name="GridMap" type="GridMap" parent="."]
-cell_size = Vector3(1, 1, 1)
-cell_center_x = false
-cell_center_y = false
-cell_center_z = false
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 transform = Transform3D(-0.422618, -0.694272, 0.582563, 0, 0.642788, 0.766044, -0.906308, 0.323744, -0.271654, 0, 0, 0)
@@ -147,15 +130,6 @@ layout_mode = 3
 anchors_preset = 0
 offset_right = 40.0
 offset_bottom = 40.0
-
-[node name="CashIcon" type="TextureRect" parent="CanvasLayer/Control"]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 24.0
-offset_right = 148.0
-offset_bottom = 152.0
-scale = Vector2(0.3, 0.3)
-texture = ExtResource("17_cjamx")
 
 [node name="Cash" type="Label" parent="CanvasLayer/Control"]
 layout_mode = 0

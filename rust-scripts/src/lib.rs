@@ -8,7 +8,7 @@ struct MyExtension;
 #[gdextension]
 unsafe impl ExtensionLibrary for MyExtension {}
 
-use godot::classes::{GridMap, INode3D, InputEvent, MeshLibrary, Node3D};
+use godot::classes::{GridMap, INode3D, MeshLibrary, Node3D};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum Dir {
@@ -40,19 +40,6 @@ struct WallGrid {
     z_walls: Option<Gd<GridMap>>,
     #[export]
     room: Option<Gd<GridMap>>,
-
-    drag_start: Option<Vector3>,
-
-    #[export]
-    cursor: Option<Gd<Node3D>>,
-    #[export]
-    drag_from_cursor: Option<Gd<Node3D>>,
-
-    #[export]
-    drag_helper: Option<Gd<Node3D>>,
-
-    #[export]
-    view_camera: Option<Gd<Camera3D>>,
 
     base: Base<Node3D>,
 }
@@ -167,22 +154,6 @@ impl WallGrid {
         Vector3::new(f32::MIN, f32::MIN, f32::MIN)
     }
 
-    // deprecated; do this sort of stuff in GDScript
-    pub fn mouse_to_3d_location(&self) -> Vector3 {
-        let plane = Plane::new(Vector3::UP, 0.0);
-
-        let mouse_pos = self.base().get_viewport().unwrap().get_mouse_position();
-        let camera = self.view_camera.as_ref().unwrap();
-
-        match plane.intersect_ray(
-            camera.project_ray_origin(mouse_pos),
-            camera.project_ray_normal(mouse_pos),
-        ) {
-            Some(pos) => pos,
-            None => Self::nowhere(),
-        }
-    }
-
     #[func]
     pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: i32) {
         let pos = location.round().cast_int();
@@ -198,13 +169,7 @@ impl INode3D for WallGrid {
             y_floors: None,
             z_walls: None,
             room: None,
-            drag_start: None,
 
-            // Exports
-            cursor: None,
-            drag_from_cursor: None,
-            drag_helper: None,
-            view_camera: None,
             base,
         }
     }
