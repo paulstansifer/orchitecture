@@ -75,28 +75,35 @@ impl WallGrid {
         }
     }
 
-    pub fn set_cell_item_dir(
+    pub fn set_range_item_dir(
         &mut self,
         which_grid: Option<Dir>,
         dir: Dir,
-        position: Vector3i,
+        position1: Vector3i,
+        position2: Vector3i,
         item: i32,
     ) {
         let orientation = self.gm(Dir::X).get_orthogonal_index_from_basis(dir.basis());
-        match which_grid {
-            Some(gd) => {
-                self.gm_mut(gd)
+
+        let start_x = i32::min(position1.x, position2.x);
+        let end_x = i32::max(position1.x, position2.x);
+        let start_y = i32::min(position1.y, position2.y);
+        let end_y = i32::max(position1.y, position2.y);
+        let start_z = i32::min(position1.z, position2.z);
+        let end_z = i32::max(position1.z, position2.z);
+
+        for x in start_x..=end_x {
+            for y in start_y..=end_y {
+                for z in start_z..=end_z {
+                    let position = Vector3i::new(x, y, z);
+                    match which_grid {
+                        Some(gd) => self.gm_mut(gd),
+                        None => self.room.as_mut().unwrap(),
+                    }
                     .set_cell_item_ex(position, item)
                     .orientation(orientation)
                     .done();
-            }
-            None => {
-                self.room
-                    .as_mut()
-                    .unwrap()
-                    .set_cell_item_ex(position, item)
-                    .orientation(orientation)
-                    .done();
+                }
             }
         }
     }
@@ -121,45 +128,37 @@ impl WallGrid {
             Dir::Z
         };
 
-        let start = from.round().cast_int();
-        let end = to.round().cast_int();
+        let from_i = from.round().cast_int();
+        let to_i = to.round().cast_int();
 
-        if d == Dir::X {
-            for x in i32::min(start.x, end.x)..i32::max(start.x, end.x) {
-                self.set_cell_item_dir(
-                    Some(Dir::X),
-                    d,
-                    Vector3i::new(x, start.y, start.z - 1),
-                    selected_mesh_id,
-                );
-            }
+        let start = Vector3i::coord_min(from_i, to_i) - Vector3i::new(1, 0, 1);
+        let end = Vector3i::coord_max(from_i, to_i) - Vector3i::new(1, 0, 1);
+
+        let start = start
+            + if d == Dir::X {
+                Vector3i::new(1, 0, 0)
+            } else {
+                Vector3i::new(0, 0, 1)
+            };
+
+        let end = if d == Dir::X {
+            Vector3i::new(end.x, start.y, start.z)
         } else {
-            for z in i32::min(start.z, end.z)..i32::max(start.z, end.z) {
-                self.set_cell_item_dir(
-                    Some(Dir::Z),
-                    d,
-                    Vector3i::new(start.x - 1, start.y, z),
-                    selected_mesh_id,
-                );
-            }
-        }
+            Vector3i::new(start.x, start.y, end.z)
+        };
+
+        self.set_range_item_dir(Some(d), d, start, end, selected_mesh_id);
     }
 
     #[func]
     pub fn floor_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
-        let start = from.round().cast_int();
-        let end = to.round().cast_int();
+        let from_i = from.round().cast_int();
+        let to_i = to.round().cast_int();
 
-        for x in i32::min(start.x, end.x)..i32::max(start.x, end.x) {
-            for z in i32::min(start.z, end.z)..i32::max(start.z, end.z) {
-                self.set_cell_item_dir(
-                    Some(Dir::Y),
-                    Dir::Z,
-                    Vector3i::new(x, start.y, z),
-                    selected_mesh_id,
-                );
-            }
-        }
+        let start = Vector3i::coord_min(from_i, to_i);
+        let end = Vector3i::coord_max(from_i, to_i) - Vector3i::new(1, 0, 1);
+
+        self.set_range_item_dir(Some(Dir::Y), Dir::Z, start, end, selected_mesh_id);
     }
 
     #[func]
@@ -187,7 +186,7 @@ impl WallGrid {
     #[func]
     pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: i32) {
         let pos = location.round().cast_int();
-        self.set_cell_item_dir(None, Dir::Z, pos, selected_mesh_id);
+        self.set_range_item_dir(None, Dir::Z, pos, pos, selected_mesh_id);
     }
 }
 
