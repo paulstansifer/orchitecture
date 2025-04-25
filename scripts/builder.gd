@@ -13,7 +13,6 @@ var map: DataMap
 
 @onready var buildable_buttons: Control = get_node("../CanvasLayer/Control/BuildableButtons")
 
-var wall_meshes: Array[Structure]
 var selected_mesh_id: int = 0
 var cur_y: int = 0 # The current layer to interact with
 var plane: Plane # Used for raycasting mouse
@@ -25,30 +24,18 @@ func _ready():
 
 	# WallGrid MeshLibrary
 	var wallgrid_mesh_library = MeshLibrary.new()
-
-	var dir_access = DirAccess.open("res://buildables")
-	if dir_access != null:
-		dir_access.list_dir_begin()
-		var file_name = dir_access.get_next()
-		while file_name != "":
-			if file_name.ends_with(".gltf"):
-				var model = ResourceLoader.load("res://buildables/" + file_name) as PackedScene
-				if model != null:
-					var buildable_resource = Structure.new()
-					var id = wallgrid_mesh_library.get_last_unused_item_id()
-					wallgrid_mesh_library.create_item(id)
-					wallgrid_mesh_library.set_item_mesh(id, get_mesh(model))
-					wallgrid_mesh_library.set_item_mesh_transform(id, Transform3D().rotated(Vector3.RIGHT, -TAU / 4).translated(Vector3(-.5, -.5, .5)))
-					buildable_resource.id = id
-					buildable_resource.name = file_name
-					wall_meshes.append(buildable_resource)
-			file_name = dir_access.get_next()
-		dir_access.list_dir_end()
-
 	wallgrid.set_mesh_library(wallgrid_mesh_library)
 
+	var game_config: GameConfig = ResourceLoader.load("res://game_config.tres")
+	for structure in game_config.buildables:
+		var id = wallgrid_mesh_library.get_last_unused_item_id()
+		structure.id = id
+		wallgrid_mesh_library.create_item(id)
+		wallgrid_mesh_library.set_item_mesh(id, get_mesh(ResourceLoader.load(structure.model_file)))
+		wallgrid_mesh_library.set_item_mesh_transform(id, Transform3D().rotated(Vector3.RIGHT, -TAU / 4).translated(Vector3(-.5, -.5, .5)))
+
 	# Create buttons for each buildable
-	for buildable in wall_meshes:
+	for buildable in game_config.buildables:
 		var button = Button.new()
 
 		button.text = buildable.name
@@ -95,10 +82,9 @@ func _process(_delta):
 		self.wallgrid.paint_wall(drag_start, world_position, selected_mesh_id)
 
 
-
 # Retrieve the mesh from a PackedScene, used for dynamically creating a MeshLibrary
 
-func get_mesh(packed_scene):
+func get_mesh(packed_scene: PackedScene):
 	var scene_state: SceneState = packed_scene.get_state()
 	for i in range(scene_state.get_node_count()):
 		if (scene_state.get_node_type(i) == "MeshInstance3D"):
@@ -106,7 +92,6 @@ func get_mesh(packed_scene):
 				var prop_name = scene_state.get_node_property_name(i, j)
 				if prop_name == "mesh":
 					var prop_value = scene_state.get_node_property_value(i, j)
-					
 					return prop_value.duplicate()
 
 

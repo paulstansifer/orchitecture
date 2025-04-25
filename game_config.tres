@@ -1,0 +1,36 @@
+[gd_resource type="Resource" script_class="GameConfig" load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/structure.gd" id="1_xppy2"]
+[ext_resource type="Script" path="res://scripts/game_config.gd" id="2_0avye"]
+
+[sub_resource type="Resource" id="Resource_x27pt"]
+script = ExtResource("1_xppy2")
+price = 0
+name = "desk"
+placement_style = 3
+model_file = "res://buildables/desk.gltf"
+
+[sub_resource type="Resource" id="Resource_hruu6"]
+script = ExtResource("1_xppy2")
+price = 0
+name = "doorway"
+placement_style = 0
+model_file = "res://buildables/doorway.gltf"
+
+[sub_resource type="Resource" id="Resource_w8frl"]
+script = ExtResource("1_xppy2")
+price = 0
+name = "floor"
+placement_style = 1
+model_file = "res://buildables/floor.gltf"
+
+[sub_resource type="Resource" id="Resource_guim5"]
+script = ExtResource("1_xppy2")
+price = 0
+name = "wall"
+placement_style = 0
+model_file = "res://buildables/wall.gltf"
+
+[resource]
+script = ExtResource("2_0avye")
+buildables = Array[ExtResource("1_xppy2")]([SubResource("Resource_x27pt"), SubResource("Resource_hruu6"), SubResource("Resource_w8frl"), SubResource("Resource_guim5")])
