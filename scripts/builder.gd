@@ -40,23 +40,24 @@ func _ready():
 		buildable_buttons.add_child(button)
 
 	load_map()
+	
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Controls
 	accept_actions()
 	
-	if event.is_action_pressed("y_layer_up"):
+	if event.is_action_pressed("layer up"):
 		cur_y += 1
 		if cur_y > 10:
 			cur_y = 10
 		plane.d = cur_y
 
-	if event.is_action_pressed("y_layer_down"):
+	if event.is_action_pressed("layer down"):
 		cur_y -= 1
 		if cur_y < 0:
 			cur_y = 0
 		plane.d = cur_y
-		
+			
 	if event.is_action_pressed("undo"):
 		wallgrid.undo()
 	

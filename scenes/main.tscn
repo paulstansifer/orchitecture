@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3 uid="uid://vgwrcfy1qawf"]
+[gd_scene load_steps=13 format=3 uid="uid://vgwrcfy1qawf"]
 
 [ext_resource type="Script" uid="uid://b0rbp7jukmxlq" path="res://scripts/builder.gd" id="1_jybm7"]
 [ext_resource type="Environment" uid="uid://jbptgqvstei3" path="res://scenes/main-environment.tres" id="1_yndf3"]
@@ -15,12 +15,8 @@ emission_energy_multiplier = 9.0
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_y6deb"]
 render_priority = 0
 shader = ExtResource("23_pm3ni")
-shader_parameter/gridlineOnEvery = 1.0
-shader_parameter/lineThickness = 0.01
-shader_parameter/color = Color(0, 0, 0, 0.5)
 shader_parameter/fade_inner_radius = 4.0
 shader_parameter/fade_outer_radius = 6.0
-shader_parameter/uv_scale = 1.0
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_og1vs"]
 material = SubResource("ShaderMaterial_y6deb")
@@ -36,6 +32,13 @@ emission_energy_multiplier = 9.0
 font = ExtResource("16_vlub6")
 font_size = 24
 shadow_color = Color(0, 0, 0, 0.392157)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_tbgi4"]
+albedo_color = Color(0.176471, 0.4, 0.47451, 1)
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_tefeu"]
+material = SubResource("StandardMaterial3D_tbgi4")
+size = Vector2(1000, 1000)
 
 [node name="Main" type="Node3D"]
 
@@ -149,3 +152,7 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="drag preview" type="Node3D" parent="."]
+
+[node name="ground" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+mesh = SubResource("PlaneMesh_tefeu")
