@@ -41,23 +41,23 @@ func _ready():
 
 	load_map()
 
-func _process(_delta):
+func _unhandled_input(event: InputEvent) -> void:
 	# Controls
 	accept_actions()
-
-	if Input.is_action_just_pressed("y_layer_up"):
+	
+	if event.is_action_pressed("y_layer_up"):
 		cur_y += 1
 		if cur_y > 10:
 			cur_y = 10
 		plane.d = cur_y
 
-	if Input.is_action_just_pressed("y_layer_down"):
+	if event.is_action_pressed("y_layer_down"):
 		cur_y -= 1
 		if cur_y < 0:
 			cur_y = 0
 		plane.d = cur_y
 		
-	if Input.is_action_just_pressed("undo"):
+	if event.is_action_pressed("undo"):
 		wallgrid.undo()
 	
 	# Map position based on mouse
@@ -71,7 +71,7 @@ func _process(_delta):
 
 	mouse_helper.position = world_position.round()
 
-	if Input.is_action_just_pressed("build"):
+	if event.is_action_pressed("build"):
 		match selected_structure.placement_style:
 			Globals.PlacementStyle.ROOM_PLOP:
 				self.wallgrid.room_plop(world_position.round(), selected_structure.id)
@@ -82,7 +82,7 @@ func _process(_delta):
 				drag_start_helper.show()
 				drag_start = world_position
 
-	if Input.is_action_just_released("build"):
+	if event.is_action_released("build"):
 		drag_start_helper.hide()
 		if selected_structure != null:
 			match selected_structure.placement_style:
@@ -116,12 +116,12 @@ func save_map():
 	#TODO:
 
 func accept_actions():
-	if Input.is_action_just_pressed("save"):
+	if Input.is_action_pressed("save"):
 		save_map()
-	if Input.is_action_just_pressed("load"):
+	if Input.is_action_pressed("load"):
 		load_map()
 
-	if Input.is_action_just_pressed("quit"):
+	if Input.is_action_pressed("quit"):
 		get_tree().quit()
 
 func _on_buildable_button_pressed(structure: Structure):

@@ -11,7 +11,6 @@ config_version=5
 [application]
 
 config/name="Starter Kit City Builder"
-config/tags=PackedStringArray("starterkit")
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.4", "Forward Plus")
 boot_splash/bg_color=Color(0.92549, 0.92549, 0.960784, 1)
