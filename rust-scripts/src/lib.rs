@@ -27,6 +27,17 @@ impl Dir {
     }
 }
 
+struct ParticularCell {
+    pos: Vector3i,
+    mesh_id: i32,
+    orientation: i32,
+}
+
+struct UndoRecord {
+    grid: Option<Dir>,
+    changed: Vec<ParticularCell>,
+}
+
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
 // snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
 #[derive(GodotClass)]
@@ -40,6 +51,8 @@ struct WallGrid {
     z_walls: Option<Gd<GridMap>>,
     #[export]
     room: Option<Gd<GridMap>>,
+
+    undo_record: Vec<UndoRecord>,
 
     base: Base<Node3D>,
 }
@@ -79,10 +92,30 @@ impl WallGrid {
         let start_z = i32::min(position1.z, position2.z);
         let end_z = i32::max(position1.z, position2.z);
 
+        let mut changed_cells: Vec<ParticularCell> = Vec::new();
+
         for x in start_x..=end_x {
             for y in start_y..=end_y {
                 for z in start_z..=end_z {
                     let position = Vector3i::new(x, y, z);
+
+                    let old_item = match which_grid {
+                        Some(gd) => self.gm(gd),
+                        None => self.room.as_ref().unwrap(),
+                    }
+                    .get_cell_item(position);
+                    let old_orientation = match which_grid {
+                        Some(gd) => self.gm(gd),
+                        None => self.room.as_ref().unwrap(),
+                    }
+                    .get_cell_item_orientation(position);
+
+                    changed_cells.push(ParticularCell {
+                        pos: position,
+                        mesh_id: old_item,
+                        orientation: old_orientation,
+                    });
+
                     match which_grid {
                         Some(gd) => self.gm_mut(gd),
                         None => self.room.as_mut().unwrap(),
@@ -92,6 +125,13 @@ impl WallGrid {
                     .done();
                 }
             }
+        }
+
+        if !changed_cells.is_empty() {
+            self.undo_record.push(UndoRecord {
+                grid: which_grid,
+                changed: changed_cells,
+            });
         }
     }
 
@@ -169,6 +209,8 @@ impl INode3D for WallGrid {
             y_floors: None,
             z_walls: None,
             room: None,
+
+            undo_record: Vec::new(),
 
             base,
         }
