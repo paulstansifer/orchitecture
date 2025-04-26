@@ -199,6 +199,22 @@ impl WallGrid {
         let pos = location.round().cast_int();
         self.set_range_item_dir(None, Dir::Z, pos, pos, selected_mesh_id);
     }
+
+    #[func]
+    pub fn undo(&mut self) {
+        if let Some(undo_record) = self.undo_record.pop() {
+            let which_grid = undo_record.grid;
+            for cell in undo_record.changed {
+                match which_grid {
+                    Some(gd) => self.gm_mut(gd),
+                    None => self.room.as_mut().unwrap(),
+                }
+                .set_cell_item_ex(cell.pos, cell.mesh_id)
+                .orientation(cell.orientation)
+                .done();
+            }
+        }
+    }
 }
 
 #[godot_api]

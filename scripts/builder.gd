@@ -56,6 +56,9 @@ func _process(_delta):
 		if cur_y < 0:
 			cur_y = 0
 		plane.d = cur_y
+		
+	if Input.is_action_just_pressed("undo"):
+		wallgrid.undo()
 	
 	# Map position based on mouse
 	
