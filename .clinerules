@@ -2,6 +2,9 @@
 
 This is a construction-oriented game.
 
+## Notes
+  - `replace_in_file` always seems to fail due to a "diff edit mismatch". Use `write_to_file` instead.
+
 ## Tech Stack
   - Godot
   - GDScript, particularly for code that interacts with the Godot scene tree
