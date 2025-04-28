@@ -65,6 +65,41 @@ impl<T> Chunk<T> {
             data: [const { None }; 256],
         }
     }
+    fn iter(&self) -> impl Iterator<Item = (SmallCoordinates, &T)> {
+        self.data.iter().enumerate().filter_map(|(i, item)| {
+            item.as_ref().map(|value| {
+                let slot = match i % 4 {
+                    0 => Slot::Room,
+                    1 => Slot::XWall,
+                    2 => Slot::YFloor,
+                    3 => Slot::ZWall,
+                    _ => unreachable!(),
+                };
+                let x = ((i / 4) % 4) as u8;
+                let y = ((i / 16) % 4) as u8;
+                let z = (i / 64) as u8;
+                (SmallCoordinates { x, y, z, slot }, value)
+            })
+        })
+    }
+
+    fn iter_mut(&mut self) -> impl Iterator<Item = (SmallCoordinates, &mut T)> {
+        self.data.iter_mut().enumerate().filter_map(|(i, item)| {
+            item.as_mut().map(|value| {
+                let slot = match i % 4 {
+                    0 => Slot::Room,
+                    1 => Slot::XWall,
+                    2 => Slot::YFloor,
+                    3 => Slot::ZWall,
+                    _ => unreachable!(),
+                };
+                let x = ((i / 4) % 4) as u8;
+                let y = ((i / 16) % 4) as u8;
+                let z = (i / 64) as u8;
+                (SmallCoordinates { x, y, z, slot }, value)
+            })
+        })
+    }
 }
 
 impl<T> Index<SmallCoordinates> for Chunk<T> {
@@ -122,6 +157,32 @@ impl<T> Sparse3D<T> {
         let chunk = self.get_or_create_chunk(bc);
         chunk[sc] = Some(value);
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Vector3i, Slot, &T)> {
+        self.chunks.iter().flat_map(|(bc, chunk)| {
+            chunk.iter().map(move |(sc, value)| {
+                let loc = Vector3i::new(
+                    bc.x * 4 + sc.x as i32,
+                    bc.y * 4 + sc.y as i32,
+                    bc.z * 4 + sc.z as i32,
+                );
+                (loc, sc.slot, value)
+            })
+        })
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Vector3i, Slot, &mut T)> {
+        self.chunks.iter_mut().flat_map(|(bc, chunk)| {
+            chunk.iter_mut().map(move |(sc, value)| {
+                let loc = Vector3i::new(
+                    bc.x * 4 + sc.x as i32,
+                    bc.y * 4 + sc.y as i32,
+                    bc.z * 4 + sc.z as i32,
+                );
+                (loc, sc.slot, value)
+            })
+        })
+    }
 }
 
 pub struct Sparse3DIterator<'a, T> {
@@ -137,62 +198,6 @@ impl<'a, T> Sparse3DIterator<'a, T> {
             current_chunk: None,
             small_coords_index: 0,
         }
-    }
-}
-
-impl<'a, T> Iterator for Sparse3DIterator<'a, T> {
-    type Item = (Vector3i, Slot, &'a T);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.current_chunk.is_none() {
-                self.current_chunk = self.big_coords_iter.next();
-                self.small_coords_index = 0;
-
-                if self.current_chunk.is_none() {
-                    return None;
-                }
-            }
-
-            let (big_coords, chunk) = self.current_chunk.unwrap();
-            if self.small_coords_index >= 256 {
-                self.current_chunk = None;
-                continue;
-            }
-
-            let slot = match self.small_coords_index % 4 {
-                0 => Slot::Room,
-                1 => Slot::XWall,
-                2 => Slot::YFloor,
-                3 => Slot::ZWall,
-                _ => unreachable!(),
-            };
-            let x = ((self.small_coords_index / 4) % 4) as u8;
-            let y = ((self.small_coords_index / 16) % 4) as u8;
-            let z = (self.small_coords_index / 64) as u8;
-
-            self.small_coords_index += 1;
-
-            let small_coords = SmallCoordinates { x, y, z, slot };
-
-            if let Some(value) = &chunk[small_coords] {
-                let loc = Vector3i::new(
-                    big_coords.x * 4 + x as i32,
-                    big_coords.y * 4 + y as i32,
-                    big_coords.z * 4 + z as i32,
-                );
-                return Some((loc, slot, value));
-            }
-        }
-    }
-}
-
-impl<'a, T> IntoIterator for &'a Sparse3D<T> {
-    type Item = (Vector3i, Slot, &'a T);
-    type IntoIter = Sparse3DIterator<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        Sparse3DIterator::new(&self.chunks)
     }
 }
 
@@ -238,7 +243,7 @@ mod tests {
         grid.set(Vector3i::new(-1, 5, 0), Slot::YFloor, 20);
         grid.set(Vector3i::new(4, 0, 0), Slot::ZWall, 30);
 
-        let items: std::collections::HashSet<_> = (&grid).into_iter().collect();
+        let items: std::collections::HashSet<_> = grid.iter().collect();
 
         let expected: std::collections::HashSet<_> = vec![
             (Vector3i::new(1, 2, 3), Slot::XWall, &10),

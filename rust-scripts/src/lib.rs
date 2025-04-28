@@ -193,6 +193,23 @@ impl WallGrid {
             }
         }
     }
+
+    #[func]
+    pub fn update_visibility(&mut self, focus_location: Vector3, camera_location: Vector3) {
+        let view_direction = (focus_location.cast_int() - camera_location.cast_int()).sign();
+        for (pos, _slot, mesh_instance) in self.contents.iter_mut() {
+            // let diff = focus_location - pos.cast_float();
+            // let dir = (focus_location - camera_location).sign();
+            // let check = Vector3::new(diff.x * dir.x, diff.y * dir.y, diff.z * dir.z);
+
+            //if check.x > 0.0 && check.y > 0.0 && check.z > 0.0 {
+            if (focus_location.cast_int() - pos).sign() == view_direction {
+                mesh_instance.hide();
+            } else {
+                mesh_instance.show();
+            }
+        }
+    }
 }
 
 #[godot_api]

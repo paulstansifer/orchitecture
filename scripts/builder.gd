@@ -72,6 +72,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	mouse_helper.position = world_position.round()
 
+	wallgrid.update_visibility(world_position, view_camera.global_position)
+
 	if event.is_action_pressed("build"):
 		match selected_structure.placement_style:
 			Globals.PlacementStyle.ROOM_PLOP:
