@@ -12,6 +12,7 @@ models/*
 *.tmp
 *.fla
 *.bin
+*.ttf
 
 *.gltf
 
@@ -19,3 +20,4 @@ models/*
 .godot/*
 
 LICENSE.md
+license.txt
