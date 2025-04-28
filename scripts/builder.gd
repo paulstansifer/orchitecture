@@ -16,19 +16,19 @@ var drag_start: Vector3
 func _ready():
 	plane = Plane(Vector3.UP, Vector3.ZERO)
 
-	# WallGrid MeshLibrary
-	var wallgrid_mesh_library = MeshLibrary.new()
-	wallgrid.set_mesh_library(wallgrid_mesh_library)
+	var mesh_library = MeshLibrary.new()
 
 	var game_config: GameConfig = ResourceLoader.load("res://game_config.tres")
 	for structure in game_config.buildables:
-		var id = wallgrid_mesh_library.get_last_unused_item_id()
+		var id = mesh_library.get_last_unused_item_id()
 		structure.id = id
-		wallgrid_mesh_library.create_item(id)
-		wallgrid_mesh_library.set_item_mesh(id, get_mesh(ResourceLoader.load(structure.model_file)))
-		wallgrid_mesh_library.set_item_mesh_transform(id, Transform3D().rotated(Vector3.RIGHT, -TAU / 4).translated(Vector3(-.5, -.5, .5)))
+		mesh_library.create_item(id)
+		mesh_library.set_item_mesh(id, get_mesh(ResourceLoader.load(structure.model_file)))
+		# mesh_library.set_item_mesh_transform(id, Transform3D().rotated(Vector3.RIGHT, -TAU / 4).translated(Vector3(-.5, -.5, .5)))
 		if structure.name == "wall":
 			selected_structure = structure
+
+	wallgrid.set_mesh_library(mesh_library)
 
 	# Create buttons for each buildable
 	for buildable in game_config.buildables:
@@ -104,6 +104,7 @@ func get_mesh(packed_scene: PackedScene):
 				if prop_name == "mesh":
 					var prop_value = scene_state.get_node_property_value(i, j)
 					return prop_value.duplicate()
+	assert(false)
 
 
 # Saving/load

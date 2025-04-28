@@ -4,18 +4,26 @@ shader_type spatial;
 
 render_mode blend_mix, unshaded;
 
-uniform float fade_inner_radius = 2.0;
-uniform float fade_outer_radius = 3.5;
+uniform float gridlineOnEvery = 1.0;
+uniform float lineThickness = .05;
+uniform vec4 color: source_color = vec4(0.0, 0.7, 1.0, 1.0);
+uniform float fade_inner_radius = 4.0;
+uniform float fade_outer_radius = 6.0;
+uniform float uv_scale = 1.0; // Add UV scale
+
+void vertex() {
+	// No transformation needed here
+}
 
 void fragment() {
 	vec2 pointWorld = (UV - vec2(0.5, 0.5)) * 16.0; // Use scaled UV coordinates
-	
-	float xpos = max(mod(pointWorld.x, 1.0), 1.0-mod(pointWorld.x, 1.0));
-	float ypos = max(mod(pointWorld.y, 1.0), 1.0-mod(pointWorld.y, 1.0));
-	
-	float dist = length(pointWorld);
-	float fade = 1.0-smoothstep(fade_inner_radius, fade_outer_radius, dist);
-	
-	ALBEDO = vec3(0.7, 0.7, 0.0);
-	ALPHA = smoothstep(0.97, 0.99, max(xpos, ypos)) * fade * 0.5;
+
+	float distance = length(pointWorld);
+	float fade = smoothstep(fade_inner_radius, fade_outer_radius, distance);
+
+	float thick = lineThickness / gridlineOnEvery;
+	vec2 df = fract(pointWorld / gridlineOnEvery + thick / 2.0);
+	float grid = step(thick, df.x) * step(thick, df.y);
+	ALBEDO = color.rgb;
+	ALPHA = (1.0 - grid) * color.a * (1.0 - fade);
 }

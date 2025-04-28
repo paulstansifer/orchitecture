@@ -1,5 +1,5 @@
-use core::f32;
 use std::f32::consts::TAU;
+use std::ops::DerefMut;
 
 use godot::prelude::*;
 
@@ -8,7 +8,10 @@ struct MyExtension;
 #[gdextension]
 unsafe impl ExtensionLibrary for MyExtension {}
 
-use godot::classes::{GridMap, INode3D, MeshLibrary, Node3D};
+use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
+mod sparse3d;
+
+use sparse3d::{Slot, Sparse3D};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum Dir {
@@ -17,24 +20,14 @@ enum Dir {
     Z,
 }
 
-impl Dir {
-    fn basis(self) -> Basis {
-        match self {
-            Dir::X => Basis::IDENTITY,
-            Dir::Y => Basis::IDENTITY.rotated(Vector3::FORWARD, TAU / 4.0),
-            Dir::Z => Basis::IDENTITY.rotated(Vector3::UP, TAU / 4.0),
-        }
-    }
-}
-
 struct ParticularCell {
     pos: Vector3i,
-    mesh_id: i32,
-    orientation: i32,
+    slot: Slot,
+    mi: Option<Gd<MeshInstance3D>>,
+    replacer_mi: Option<Gd<MeshInstance3D>>,
 }
 
 struct UndoRecord {
-    grid: Option<Dir>,
     changed: Vec<ParticularCell>,
 }
 
@@ -43,14 +36,9 @@ struct UndoRecord {
 #[derive(GodotClass)]
 #[class(base=Node3D)]
 struct WallGrid {
-    #[export]
-    x_walls: Option<Gd<GridMap>>,
-    #[export]
-    y_floors: Option<Gd<GridMap>>,
-    #[export]
-    z_walls: Option<Gd<GridMap>>,
-    #[export]
-    room: Option<Gd<GridMap>>,
+    mesh_library: Option<Gd<MeshLibrary>>,
+    contents: Sparse3D<Gd<MeshInstance3D>>,
+    container: Gd<Node3D>,
 
     undo_record: Vec<UndoRecord>,
 
@@ -59,32 +47,19 @@ struct WallGrid {
 
 #[godot_api]
 impl WallGrid {
-    fn gm(&self, dir: Dir) -> &GridMap {
-        match dir {
-            Dir::X => self.x_walls.as_ref().unwrap(),
-            Dir::Y => self.y_floors.as_ref().unwrap(),
-            Dir::Z => self.z_walls.as_ref().unwrap(),
-        }
-    }
-
-    fn gm_mut(&mut self, dir: Dir) -> &mut GridMap {
-        match dir {
-            Dir::X => self.x_walls.as_mut().unwrap(),
-            Dir::Y => self.y_floors.as_mut().unwrap(),
-            Dir::Z => self.z_walls.as_mut().unwrap(),
-        }
+    #[func]
+    pub fn set_mesh_library(&mut self, mesh_library: Gd<MeshLibrary>) {
+        self.mesh_library = Some(mesh_library);
     }
 
     pub fn set_range_item_dir(
         &mut self,
-        which_grid: Option<Dir>,
         dir: Dir,
         position1: Vector3i,
         position2: Vector3i,
+        slot: Slot,
         item: i32,
     ) {
-        let orientation = self.gm(Dir::X).get_orthogonal_index_from_basis(dir.basis());
-
         let start_x = i32::min(position1.x, position2.x);
         let end_x = i32::max(position1.x, position2.x);
         let start_y = i32::min(position1.y, position2.y);
@@ -94,53 +69,57 @@ impl WallGrid {
 
         let mut changed_cells: Vec<ParticularCell> = Vec::new();
 
+        let container: &mut Node3D = self.container.deref_mut();
+        let mesh_library = self.mesh_library.as_ref().unwrap();
+
         for x in start_x..=end_x {
             for y in start_y..=end_y {
                 for z in start_z..=end_z {
                     let position = Vector3i::new(x, y, z);
 
-                    let old_item = match which_grid {
-                        Some(gd) => self.gm(gd),
-                        None => self.room.as_ref().unwrap(),
+                    let old_mesh = self.contents.take(position, slot);
+
+                    match old_mesh {
+                        Some(ref old_mesh) => {
+                            container.remove_child(old_mesh);
+                        }
+                        None => {}
                     }
-                    .get_cell_item(position);
-                    let old_orientation = match which_grid {
-                        Some(gd) => self.gm(gd),
-                        None => self.room.as_ref().unwrap(),
-                    }
-                    .get_cell_item_orientation(position);
+
+                    let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
+                    mesh_instance.set_mesh(&mesh_library.get_item_mesh(item).unwrap());
+                    let xform = Transform3D::IDENTITY
+                        .rotated(Vector3::RIGHT, -TAU / 4.0)
+                        .rotated(Vector3::UP, TAU / 2.0);
+                    let xform = match dir {
+                        Dir::X => xform,
+                        Dir::Y => xform.rotated(Vector3::UP, TAU / -4.0), //xform.rotated(Vector3::FORWARD, TAU / 4.0),
+                        Dir::Z => xform.rotated(Vector3::UP, TAU / -4.0),
+                    };
+
+                    let xform =
+                        xform.translated(position.cast_float() + Vector3::new(1.0, 0.0, 1.0));
+                    mesh_instance.set_transform(xform);
+
+                    container.add_child(&mesh_instance);
 
                     changed_cells.push(ParticularCell {
                         pos: position,
-                        mesh_id: old_item,
-                        orientation: old_orientation,
+                        slot,
+                        mi: old_mesh,
+                        replacer_mi: Some(mesh_instance.clone()),
                     });
 
-                    match which_grid {
-                        Some(gd) => self.gm_mut(gd),
-                        None => self.room.as_mut().unwrap(),
-                    }
-                    .set_cell_item_ex(position, item)
-                    .orientation(orientation)
-                    .done();
+                    self.contents.set(position, slot, mesh_instance);
                 }
             }
         }
 
         if !changed_cells.is_empty() {
             self.undo_record.push(UndoRecord {
-                grid: which_grid,
                 changed: changed_cells,
             });
         }
-    }
-
-    #[func]
-    pub fn set_mesh_library(&mut self, mesh_library: Gd<MeshLibrary>) {
-        self.gm_mut(Dir::X).set_mesh_library(&mesh_library);
-        self.gm_mut(Dir::Y).set_mesh_library(&mesh_library);
-        self.gm_mut(Dir::Z).set_mesh_library(&mesh_library);
-        self.room.as_mut().unwrap().set_mesh_library(&mesh_library);
     }
 
     #[func]
@@ -168,13 +147,13 @@ impl WallGrid {
                 Vector3i::new(0, 0, 1)
             };
 
-        let end = if d == Dir::X {
-            Vector3i::new(end.x, start.y, start.z)
+        if d == Dir::X {
+            let end = Vector3i::new(end.x, start.y, start.z);
+            self.set_range_item_dir(d, start, end, Slot::XWall, selected_mesh_id);
         } else {
-            Vector3i::new(start.x, start.y, end.z)
-        };
-
-        self.set_range_item_dir(Some(d), d, start, end, selected_mesh_id);
+            let end = Vector3i::new(start.x, start.y, end.z);
+            self.set_range_item_dir(d, start, end, Slot::ZWall, selected_mesh_id);
+        }
     }
 
     #[func]
@@ -185,33 +164,32 @@ impl WallGrid {
         let start = Vector3i::coord_min(from_i, to_i);
         let end = Vector3i::coord_max(from_i, to_i) - Vector3i::new(1, 0, 1);
 
-        self.set_range_item_dir(Some(Dir::Y), Dir::Z, start, end, selected_mesh_id);
-    }
-
-    #[func]
-    // GDScript doesn't have `Option<>`, so we define a flag value
-    pub fn nowhere() -> Vector3 {
-        Vector3::new(f32::MIN, f32::MIN, f32::MIN)
+        self.set_range_item_dir(Dir::Y, start, end, Slot::YFloor, selected_mesh_id);
     }
 
     #[func]
     pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: i32) {
         let pos = location.round().cast_int();
-        self.set_range_item_dir(None, Dir::Z, pos, pos, selected_mesh_id);
+        self.set_range_item_dir(Dir::Z, pos, pos, Slot::Room, selected_mesh_id);
     }
 
     #[func]
     pub fn undo(&mut self) {
         if let Some(undo_record) = self.undo_record.pop() {
-            let which_grid = undo_record.grid;
             for cell in undo_record.changed {
-                match which_grid {
-                    Some(gd) => self.gm_mut(gd),
-                    None => self.room.as_mut().unwrap(),
+                let position = cell.pos;
+                let slot = cell.slot;
+
+                if let Some(ref new_mesh) = cell.replacer_mi {
+                    self.container.remove_child(new_mesh);
                 }
-                .set_cell_item_ex(cell.pos, cell.mesh_id)
-                .orientation(cell.orientation)
-                .done();
+
+                if let Some(ref mesh) = cell.mi {
+                    self.container.add_child(mesh);
+                    self.contents.set(position, slot, mesh.clone());
+                } else {
+                    self.contents.take(position, slot);
+                }
             }
         }
     }
@@ -220,13 +198,13 @@ impl WallGrid {
 #[godot_api]
 impl INode3D for WallGrid {
     fn init(base: Base<Node3D>) -> Self {
+        let container = Node3D::new_alloc();
+        base.to_gd().add_child(&container);
         Self {
-            x_walls: None,
-            y_floors: None,
-            z_walls: None,
-            room: None,
-
             undo_record: Vec::new(),
+            mesh_library: None,
+            contents: Sparse3D::new(),
+            container: container,
 
             base,
         }
