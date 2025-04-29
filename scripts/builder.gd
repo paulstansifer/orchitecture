@@ -32,6 +32,8 @@ func _ready():
 
 	# Create buttons for each buildable
 	for buildable in game_config.buildables:
+		if buildable.placement_style == Globals.PlacementStyle.DO_NOT_PLACE:
+			continue
 		var button = Button.new()
 
 		button.text = buildable.name

@@ -42,11 +42,7 @@ size = Vector2(1000, 1000)
 
 [node name="Main" type="Node3D"]
 
-[node name="WallGrid" type="WallGrid" parent="." node_paths=PackedStringArray("x_walls", "y_floors", "z_walls", "room")]
-x_walls = NodePath("")
-y_floors = NodePath("")
-z_walls = NodePath("")
-room = NodePath("")
+[node name="WallGrid" type="WallGrid" parent="."]
 
 [node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "view_camera", "cash_display", "wallgrid")]
 script = ExtResource("1_jybm7")

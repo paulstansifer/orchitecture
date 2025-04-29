@@ -8,7 +8,7 @@ struct MyExtension;
 #[gdextension]
 unsafe impl ExtensionLibrary for MyExtension {}
 
-use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
+use godot::classes::{INode3D, Material, MeshInstance3D, MeshLibrary, Node3D};
 mod sparse3d;
 
 use sparse3d::{Slot, Sparse3D};
@@ -23,13 +23,17 @@ enum Dir {
 struct ParticularCell {
     pos: Vector3i,
     slot: Slot,
-    mi: Option<Gd<MeshInstance3D>>,
-    replacer_mi: Option<Gd<MeshInstance3D>>,
+    mi: Option<(i32, Gd<MeshInstance3D>)>,
+    replacer_mi: Option<(i32, Gd<MeshInstance3D>)>,
 }
 
 struct UndoRecord {
     changed: Vec<ParticularCell>,
 }
+
+// HACK: we should be passed this information
+const WALL_ID: i32 = 3;
+const CUT_WALL_ID: i32 = 5;
 
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
 // snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
@@ -37,8 +41,9 @@ struct UndoRecord {
 #[class(base=Node3D)]
 struct WallGrid {
     mesh_library: Option<Gd<MeshLibrary>>,
-    contents: Sparse3D<Gd<MeshInstance3D>>,
+    contents: Sparse3D<(i32, Gd<MeshInstance3D>)>,
     container: Gd<Node3D>,
+    temp_container: Gd<Node3D>,
 
     undo_record: Vec<UndoRecord>,
 
@@ -81,7 +86,7 @@ impl WallGrid {
 
                     match old_mesh {
                         Some(ref old_mesh) => {
-                            container.remove_child(old_mesh);
+                            container.remove_child(&old_mesh.1);
                         }
                         None => {}
                     }
@@ -107,10 +112,10 @@ impl WallGrid {
                         pos: position,
                         slot,
                         mi: old_mesh,
-                        replacer_mi: Some(mesh_instance.clone()),
+                        replacer_mi: Some((item, mesh_instance.clone())),
                     });
 
-                    self.contents.set(position, slot, mesh_instance);
+                    self.contents.set(position, slot, (item, mesh_instance));
                 }
             }
         }
@@ -181,11 +186,11 @@ impl WallGrid {
                 let slot = cell.slot;
 
                 if let Some(ref new_mesh) = cell.replacer_mi {
-                    self.container.remove_child(new_mesh);
+                    self.container.remove_child(&new_mesh.1);
                 }
 
                 if let Some(ref mesh) = cell.mi {
-                    self.container.add_child(mesh);
+                    self.container.add_child(&mesh.1);
                     self.contents.set(position, slot, mesh.clone());
                 } else {
                     self.contents.take(position, slot);
@@ -196,17 +201,39 @@ impl WallGrid {
 
     #[func]
     pub fn update_visibility(&mut self, focus_location: Vector3, camera_location: Vector3) {
-        let view_direction = (focus_location.cast_int() - camera_location.cast_int()).sign();
-        for (pos, _slot, mesh_instance) in self.contents.iter_mut() {
-            // let diff = focus_location - pos.cast_float();
-            // let dir = (focus_location - camera_location).sign();
-            // let check = Vector3::new(diff.x * dir.x, diff.y * dir.y, diff.z * dir.z);
+        let cut_wall = self
+            .mesh_library
+            .as_ref()
+            .unwrap()
+            .get_item_mesh(CUT_WALL_ID)
+            .unwrap();
 
-            //if check.x > 0.0 && check.y > 0.0 && check.z > 0.0 {
-            if (focus_location.cast_int() - pos).sign() == view_direction {
-                mesh_instance.hide();
+        // Clear the old cut walls:
+        self.temp_container.propagate_call("queue_free");
+        let new_temp_container = Node3D::new_alloc();
+        self.base_mut().add_child(&new_temp_container);
+        self.temp_container = new_temp_container;
+
+        let view_direction = (focus_location - camera_location).sign().round().cast_int();
+        let effective_focus_location = focus_location.round().cast_int()
+            + Vector3i::new(view_direction.x, 0, view_direction.z);
+
+        let last_y_layer = Vector3i::new(view_direction.x, 0, view_direction.z);
+        for (pos, _slot, mesh_instance) in self.contents.iter_mut() {
+            if (effective_focus_location - pos).sign() == view_direction {
+                mesh_instance.1.hide();
+            } else if mesh_instance.0 == WALL_ID
+                && (effective_focus_location - pos).sign() == last_y_layer
+            {
+                mesh_instance.1.hide();
+
+                let mut cut_wall_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
+
+                cut_wall_instance.set_transform(mesh_instance.1.get_transform());
+                cut_wall_instance.set_mesh(&cut_wall);
+                self.temp_container.add_child(&cut_wall_instance);
             } else {
-                mesh_instance.show();
+                mesh_instance.1.show();
             }
         }
     }
@@ -217,11 +244,15 @@ impl INode3D for WallGrid {
     fn init(base: Base<Node3D>) -> Self {
         let container = Node3D::new_alloc();
         base.to_gd().add_child(&container);
+        let temp_container = Node3D::new_alloc();
+        base.to_gd().add_child(&temp_container);
+
         Self {
             undo_record: Vec::new(),
             mesh_library: None,
             contents: Sparse3D::new(),
             container: container,
+            temp_container: temp_container,
 
             base,
         }

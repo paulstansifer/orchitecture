@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::ops::{Index, IndexMut};
 
-use godot::builtin::real_consts::TAU;
-use godot::builtin::{Basis, Vector3, Vector3i};
+use godot::builtin::Vector3i;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Slot {
@@ -10,17 +9,6 @@ pub enum Slot {
     XWall,
     YFloor,
     ZWall,
-}
-
-impl Slot {
-    pub fn basis(self) -> Basis {
-        match self {
-            Slot::XWall => Basis::IDENTITY,
-            Slot::YFloor => Basis::IDENTITY.rotated(Vector3::FORWARD, TAU / 4.0),
-            Slot::ZWall => Basis::IDENTITY.rotated(Vector3::UP, TAU / 4.0),
-            Slot::Room => Basis::IDENTITY,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -182,22 +170,6 @@ impl<T> Sparse3D<T> {
                 (loc, sc.slot, value)
             })
         })
-    }
-}
-
-pub struct Sparse3DIterator<'a, T> {
-    big_coords_iter: std::collections::hash_map::Iter<'a, BigCoordinates, Chunk<T>>,
-    current_chunk: Option<(&'a BigCoordinates, &'a Chunk<T>)>,
-    small_coords_index: usize,
-}
-
-impl<'a, T> Sparse3DIterator<'a, T> {
-    fn new(chunks: &'a HashMap<BigCoordinates, Chunk<T>>) -> Self {
-        Sparse3DIterator {
-            big_coords_iter: chunks.iter(),
-            current_chunk: None,
-            small_coords_index: 0,
-        }
     }
 }
 
