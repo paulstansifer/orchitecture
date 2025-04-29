@@ -1,7 +1,6 @@
 use std::f32::consts::TAU;
 use std::ops::DerefMut;
 
-use godot::classes::geometry_instance_3d::ShadowCastingSetting;
 use godot::prelude::*;
 
 struct MyExtension;
@@ -34,7 +33,7 @@ struct UndoRecord {
 
 // HACK: we should be passed this information
 const WALL_ID: i32 = 3;
-const FLOOR_ID: i32 = 2;
+const _FLOOR_ID: i32 = 2;
 const CUT_WALL_ID: i32 = 5;
 const DOORWAY_ID: i32 = 1;
 const CUT_DOORWAY_ID: i32 = 6;
@@ -231,27 +230,16 @@ impl WallGrid {
 
         let view_direction = (focus_location - camera_location).sign().round().cast_int();
         let effective_focus_location = focus_location.round().cast_int()
-            + Vector3i::new(view_direction.x, 0, view_direction.z);
+            + Vector3i::new(view_direction.x * 2, 0, view_direction.z * 2);
 
         let last_y_layer = Vector3i::new(view_direction.x, 0, view_direction.z);
         for (pos, _slot, mesh_instance) in self.contents.iter_mut() {
             if (effective_focus_location - pos).sign() == view_direction {
-                if mesh_instance.0 == FLOOR_ID {
-                    // HACK: floors disappear completely...
-                    mesh_instance.1.hide();
-                } else {
-                    // ...everything else is invisible, but still casts a shadow:
-                    mesh_instance
-                        .1
-                        .set_cast_shadows_setting(ShadowCastingSetting::SHADOWS_ONLY);
-                }
+                mesh_instance.1.hide();
             } else if (mesh_instance.0 == WALL_ID || mesh_instance.0 == DOORWAY_ID)
                 && (effective_focus_location - pos).sign() == last_y_layer
             {
-                // Walls (and doorways) are shown, but cut-off.
-                mesh_instance
-                    .1
-                    .set_cast_shadows_setting(ShadowCastingSetting::SHADOWS_ONLY);
+                mesh_instance.1.hide();
 
                 let mut cut_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
 
@@ -263,9 +251,6 @@ impl WallGrid {
                 }
                 self.temp_container.add_child(&cut_instance);
             } else {
-                mesh_instance
-                    .1
-                    .set_cast_shadows_setting(ShadowCastingSetting::ON);
                 mesh_instance.1.show();
             }
         }
