@@ -24,7 +24,6 @@ func _ready():
 		structure.id = id
 		mesh_library.create_item(id)
 		mesh_library.set_item_mesh(id, get_mesh(ResourceLoader.load(structure.model_file)))
-		# mesh_library.set_item_mesh_transform(id, Transform3D().rotated(Vector3.RIGHT, -TAU / 4).translated(Vector3(-.5, -.5, .5)))
 		if structure.name == "wall":
 			selected_structure = structure
 

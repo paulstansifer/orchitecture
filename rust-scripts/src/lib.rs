@@ -140,7 +140,12 @@ impl WallGrid {
         };
 
         let from_i = from.round().cast_int();
-        let to_i = to.round().cast_int();
+        let mut to_i = from_i;
+        if d == Dir::X {
+            to_i.x = to.x.round() as i32;
+        } else {
+            to_i.z = to.z.round() as i32;
+        }
 
         let start = Vector3i::coord_min(from_i, to_i) - Vector3i::new(1, 0, 1);
         let end = Vector3i::coord_max(from_i, to_i) - Vector3i::new(1, 0, 1);
@@ -152,13 +157,13 @@ impl WallGrid {
                 Vector3i::new(0, 0, 1)
             };
 
-        if d == Dir::X {
-            let end = Vector3i::new(end.x, start.y, start.z);
-            self.set_range_item_dir(d, start, end, Slot::XWall, selected_mesh_id);
+        let slot = if d == Dir::X {
+            Slot::XWall
         } else {
-            let end = Vector3i::new(start.x, start.y, end.z);
-            self.set_range_item_dir(d, start, end, Slot::ZWall, selected_mesh_id);
-        }
+            Slot::ZWall
+        };
+
+        self.set_range_item_dir(d, start, end, slot, selected_mesh_id);
     }
 
     #[func]
