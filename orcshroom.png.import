@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://3levxoui376j"
-path="res://.godot/imported/splash-screen.png-ae6c8b07e185ee8a074576008d9ccc5a.ctex"
+uid="uid://hyxf5wqyifps"
+path="res://.godot/imported/orcshroom.png-25284aa05c17d68f53d6a60b61e7e17e.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://splash-screen.png"
-dest_files=["res://.godot/imported/splash-screen.png-ae6c8b07e185ee8a074576008d9ccc5a.ctex"]
+source_file="res://orcshroom.png"
+dest_files=["res://.godot/imported/orcshroom.png-25284aa05c17d68f53d6a60b61e7e17e.ctex"]
 
 [params]
 

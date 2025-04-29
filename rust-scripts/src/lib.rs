@@ -1,6 +1,7 @@
 use std::f32::consts::TAU;
 use std::ops::DerefMut;
 
+use godot::classes::geometry_instance_3d::ShadowCastingSetting;
 use godot::prelude::*;
 
 struct MyExtension;
@@ -8,7 +9,7 @@ struct MyExtension;
 #[gdextension]
 unsafe impl ExtensionLibrary for MyExtension {}
 
-use godot::classes::{INode3D, Material, MeshInstance3D, MeshLibrary, Node3D};
+use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
 mod sparse3d;
 
 use sparse3d::{Slot, Sparse3D};
@@ -33,7 +34,10 @@ struct UndoRecord {
 
 // HACK: we should be passed this information
 const WALL_ID: i32 = 3;
+const FLOOR_ID: i32 = 2;
 const CUT_WALL_ID: i32 = 5;
+const DOORWAY_ID: i32 = 1;
+const CUT_DOORWAY_ID: i32 = 6;
 
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
 // snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
@@ -98,7 +102,7 @@ impl WallGrid {
                         .rotated(Vector3::UP, TAU / 2.0);
                     let xform = match dir {
                         Dir::X => xform,
-                        Dir::Y => xform.rotated(Vector3::UP, TAU / -4.0), //xform.rotated(Vector3::FORWARD, TAU / 4.0),
+                        Dir::Y => xform.rotated(Vector3::UP, TAU / -4.0),
                         Dir::Z => xform.rotated(Vector3::UP, TAU / -4.0),
                     };
 
@@ -212,6 +216,12 @@ impl WallGrid {
             .unwrap()
             .get_item_mesh(CUT_WALL_ID)
             .unwrap();
+        let cut_doorway = self
+            .mesh_library
+            .as_ref()
+            .unwrap()
+            .get_item_mesh(CUT_DOORWAY_ID)
+            .unwrap();
 
         // Clear the old cut walls:
         self.temp_container.propagate_call("queue_free");
@@ -226,18 +236,36 @@ impl WallGrid {
         let last_y_layer = Vector3i::new(view_direction.x, 0, view_direction.z);
         for (pos, _slot, mesh_instance) in self.contents.iter_mut() {
             if (effective_focus_location - pos).sign() == view_direction {
-                mesh_instance.1.hide();
-            } else if mesh_instance.0 == WALL_ID
+                if mesh_instance.0 == FLOOR_ID {
+                    // HACK: floors disappear completely...
+                    mesh_instance.1.hide();
+                } else {
+                    // ...everything else is invisible, but still casts a shadow:
+                    mesh_instance
+                        .1
+                        .set_cast_shadows_setting(ShadowCastingSetting::SHADOWS_ONLY);
+                }
+            } else if (mesh_instance.0 == WALL_ID || mesh_instance.0 == DOORWAY_ID)
                 && (effective_focus_location - pos).sign() == last_y_layer
             {
-                mesh_instance.1.hide();
+                // Walls (and doorways) are shown, but cut-off.
+                mesh_instance
+                    .1
+                    .set_cast_shadows_setting(ShadowCastingSetting::SHADOWS_ONLY);
 
-                let mut cut_wall_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
+                let mut cut_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
 
-                cut_wall_instance.set_transform(mesh_instance.1.get_transform());
-                cut_wall_instance.set_mesh(&cut_wall);
-                self.temp_container.add_child(&cut_wall_instance);
+                cut_instance.set_transform(mesh_instance.1.get_transform());
+                if mesh_instance.0 == DOORWAY_ID {
+                    cut_instance.set_mesh(&cut_doorway);
+                } else {
+                    cut_instance.set_mesh(&cut_wall);
+                }
+                self.temp_container.add_child(&cut_instance);
             } else {
+                mesh_instance
+                    .1
+                    .set_cast_shadows_setting(ShadowCastingSetting::ON);
                 mesh_instance.1.show();
             }
         }
