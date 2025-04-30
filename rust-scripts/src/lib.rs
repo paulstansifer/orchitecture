@@ -44,6 +44,8 @@ const WALL_ID: i32 = 3;
 const RAILING_ID: i32 = 4;
 const CUT_WALL_ID: i32 = 5;
 const CUT_DOORWAY_ID: i32 = 6;
+const STAIRS_ID: i32 = 7;
+const CUT_STAIRS_ID: i32 = 8;
 
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
 // snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
@@ -204,7 +206,7 @@ impl WallGrid {
 
     #[func]
     pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: i32) {
-        let pos = location.round().cast_int();
+        let pos = location.round().cast_int() - Vector3i::new(1, 0, 1);
         self.set_range_item_dir(Dir::Z, pos, pos, Slot::Room, selected_mesh_id);
     }
 
@@ -223,8 +225,8 @@ impl WallGrid {
         let mut file = GFile::open("user://room.txt", ModeFlags::READ).unwrap();
         let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
 
-        self.contents = crate::serialization::deserialize_sparse3d(&serialized, |c, slot| {
-            let id = crate::serialization::deserialize(c);
+        self.contents = deserialize_sparse3d(&serialized, |c, slot| {
+            let id = deserialize(c);
             let mesh_library = self.mesh_library.as_ref().unwrap();
             let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
             mesh_instance.set_mesh(&mesh_library.get_item_mesh(id).unwrap());
@@ -282,6 +284,12 @@ impl WallGrid {
             .unwrap()
             .get_item_mesh(CUT_DOORWAY_ID)
             .unwrap();
+        let cut_stairs = self
+            .mesh_library
+            .as_ref()
+            .unwrap()
+            .get_item_mesh(CUT_STAIRS_ID)
+            .unwrap();
 
         // Clear the old cut walls:
         self.temp_container.propagate_call("queue_free");
@@ -297,7 +305,9 @@ impl WallGrid {
         for (pos, _slot, mesh_instance) in self.contents.iter_mut() {
             if (effective_focus_location - pos).sign() == view_direction {
                 mesh_instance.1.hide();
-            } else if (mesh_instance.0 == WALL_ID || mesh_instance.0 == DOORWAY_ID)
+            } else if (mesh_instance.0 == WALL_ID
+                || mesh_instance.0 == DOORWAY_ID
+                || mesh_instance.0 == STAIRS_ID)
                 && (effective_focus_location - pos).sign() == last_y_layer
             {
                 mesh_instance.1.hide();
@@ -307,6 +317,8 @@ impl WallGrid {
                 cut_instance.set_transform(mesh_instance.1.get_transform());
                 if mesh_instance.0 == DOORWAY_ID {
                     cut_instance.set_mesh(&cut_doorway);
+                } else if mesh_instance.0 == STAIRS_ID {
+                    cut_instance.set_mesh(&cut_stairs);
                 } else {
                     cut_instance.set_mesh(&cut_wall);
                 }

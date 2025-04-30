@@ -1,6 +1,6 @@
 use godot::builtin::Vector3i;
 
-use crate::sparse3d::Slot;
+use crate::{sparse3d::Slot, STAIRS_ID};
 
 // HACK: we should be passed this information
 const DESK_ID: i32 = 0;
@@ -13,6 +13,7 @@ pub fn serialize_slot(id: i32, slot: Slot) -> char {
     let idx = if slot == Slot::XWall { 0 } else { 1 };
     match id {
         DESK_ID => 'D',
+        STAIRS_ID => 'S',
         WALL_ID => ['-', '|'][idx],
         FLOOR_ID => ['#', '#'][idx],
         DOORWAY_ID => ['=', ':'][idx],
@@ -24,6 +25,7 @@ pub fn serialize_slot(id: i32, slot: Slot) -> char {
 pub fn deserialize(c: char) -> i32 {
     match c {
         'D' => DESK_ID,
+        'S' => STAIRS_ID,
         '-' | '|' => WALL_ID,
         '#' => FLOOR_ID,
         '=' | ':' => DOORWAY_ID,

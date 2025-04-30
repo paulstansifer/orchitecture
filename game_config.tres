@@ -52,6 +52,20 @@ name = "doorway-cut-y-pos"
 placement_style = -1
 model_file = "res://buildables/doorway-cut-y-pos.gltf"
 
+[sub_resource type="Resource" id="Resource_stairs"]
+script = ExtResource("1_xppy2")
+price = 0
+name = "stairs"
+placement_style = 2
+model_file = "res://buildables/stairs.gltf"
+
+[sub_resource type="Resource" id="Resource_stairs_cut_y_pos"]
+script = ExtResource("1_xppy2")
+price = 0
+name = "stairs-cut-y-pos"
+placement_style = -1
+model_file = "res://buildables/stairs-cut-y-pos.gltf"
+
 [resource]
 script = ExtResource("2_0avye")
-buildables = Array[ExtResource("1_xppy2")]([SubResource("Resource_x27pt"), SubResource("Resource_hruu6"), SubResource("Resource_w8frl"), SubResource("Resource_guim5"), SubResource("Resource_railing"), SubResource("Resource_wall_cut_y_pos"), SubResource("Resource_doorway_cut_y_pos")])
+buildables = Array[ExtResource("1_xppy2")]([SubResource("Resource_x27pt"), SubResource("Resource_hruu6"), SubResource("Resource_w8frl"), SubResource("Resource_guim5"), SubResource("Resource_railing"), SubResource("Resource_wall_cut_y_pos"), SubResource("Resource_doorway_cut_y_pos"), SubResource("Resource_stairs"), SubResource("Resource_stairs_cut_y_pos")])
