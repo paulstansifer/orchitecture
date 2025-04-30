@@ -1,6 +1,8 @@
+use core::panic;
 use std::f32::consts::TAU;
 use std::ops::DerefMut;
 
+use godot::classes::file_access::ModeFlags;
 use godot::prelude::*;
 
 struct MyExtension;
@@ -32,11 +34,36 @@ struct UndoRecord {
 }
 
 // HACK: we should be passed this information
-const WALL_ID: i32 = 3;
-const _FLOOR_ID: i32 = 2;
-const CUT_WALL_ID: i32 = 5;
+const DESK_ID: i32 = 0;
 const DOORWAY_ID: i32 = 1;
+const FLOOR_ID: i32 = 2;
+const WALL_ID: i32 = 3;
+const RAILING_ID: i32 = 4;
+const CUT_WALL_ID: i32 = 5;
 const CUT_DOORWAY_ID: i32 = 6;
+
+fn serialize_slot(id: i32, slot: Slot) -> char {
+    let idx = if slot == Slot::XWall { 0 } else { 1 };
+    match id {
+        DESK_ID => 'D',
+        WALL_ID => ['-', '|'][idx],
+        FLOOR_ID => ['#', '#'][idx],
+        DOORWAY_ID => ['=', ':'][idx],
+        RAILING_ID => ['…', '⋮'][idx],
+        _ => panic!(),
+    }
+}
+
+fn deserialize(c: char) -> i32 {
+    match c {
+        'D' => DESK_ID,
+        '-' | '|' => WALL_ID,
+        '#' => FLOOR_ID,
+        '=' | ':' => DOORWAY_ID,
+        '…' | '⋮' => RAILING_ID,
+        _ => panic!(),
+    }
+}
 
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
 // snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
@@ -187,14 +214,53 @@ impl WallGrid {
     }
 
     #[func]
+    pub fn save(&self) {
+        let serialized = self
+            .contents
+            .serialize(|(id, _mesh), slot| serialize_slot(*id, slot));
+        let mut file = GFile::open("user://room.txt", ModeFlags::WRITE).unwrap();
+        file.write_gstring(&serialized).unwrap();
+        godot_print!("Saved to {}", file.path_absolute());
+    }
+
+    #[func]
+    pub fn load(&mut self) {
+        let mut file = GFile::open("user://room.txt", ModeFlags::READ).unwrap();
+        let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
+
+        self.contents = Sparse3D::deserialize(&serialized, |c, slot| {
+            let id = deserialize(c);
+            let mesh_library = self.mesh_library.as_ref().unwrap();
+            let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
+            mesh_instance.set_mesh(&mesh_library.get_item_mesh(id).unwrap());
+
+            Ok::<(i32, godot::prelude::Gd<MeshInstance3D>), ()>((id, mesh_instance))
+        })
+        .unwrap();
+
+        self.container.propagate_call("queue_free");
+        let container = Node3D::new_alloc();
+        self.base_mut().add_child(&container);
+        self.container = container;
+
+        for (pos, slot, mesh_instance) in self.contents.iter_mut() {
+            mesh_instance.1.set_transform(
+                Transform3D::IDENTITY.translated(pos.cast_float() + Vector3::new(1.0, 0.0, 1.0)),
+            );
+            self.container.add_child(&mesh_instance.1);
+        }
+    }
+
+    #[func]
     pub fn undo(&mut self) {
         if let Some(undo_record) = self.undo_record.pop() {
-            for cell in undo_record.changed {
+            for mut cell in undo_record.changed {
                 let position = cell.pos;
                 let slot = cell.slot;
 
-                if let Some(ref new_mesh) = cell.replacer_mi {
+                if let Some(ref mut new_mesh) = cell.replacer_mi {
                     self.container.remove_child(&new_mesh.1);
+                    new_mesh.1.queue_free();
                 }
 
                 if let Some(ref mesh) = cell.mi {

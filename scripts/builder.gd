@@ -116,15 +116,11 @@ func load_map():
 	print("Loading map...")
 	#TODO
 
-func save_map():
-	print("Saving map...")
-	#TODO:
-
 func accept_actions():
 	if Input.is_action_pressed("save"):
-		save_map()
+		wallgrid.save()
 	if Input.is_action_pressed("load"):
-		load_map()
+		wallgrid.load()
 
 	if Input.is_action_pressed("quit"):
 		get_tree().quit()

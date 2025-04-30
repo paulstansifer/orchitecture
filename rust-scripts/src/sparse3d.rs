@@ -44,6 +44,14 @@ fn split_coords(loc: Vector3i, slot: Slot) -> (BigCoordinates, SmallCoordinates)
     (big_coords, small_coords)
 }
 
+fn combine_coords(bc: BigCoordinates, sc: SmallCoordinates) -> Vector3i {
+    Vector3i::new(
+        bc.x * 4 + sc.x as i32,
+        bc.y * 4 + sc.y as i32,
+        bc.z * 4 + sc.z as i32,
+    )
+}
+
 struct Chunk<T> {
     data: [Option<T>; 256],
 }
@@ -171,6 +179,114 @@ impl<T> Sparse3D<T> {
                 (loc, sc.slot, value)
             })
         })
+    }
+
+    pub fn bounding_box(&self) -> (Vector3i, Vector3i) {
+        if self.chunks.is_empty() {
+            return (Vector3i::ZERO, Vector3i::ZERO);
+        }
+
+        let mut min = Vector3i::new(i32::MAX, i32::MAX, i32::MAX);
+        let mut max = Vector3i::new(i32::MIN, i32::MIN, i32::MIN);
+
+        for (bc, chunk) in &self.chunks {
+            for (sc, _) in chunk.iter() {
+                let coord = combine_coords(*bc, sc);
+                min = Vector3i::coord_min(min, coord);
+                max = Vector3i::coord_max(max, coord);
+            }
+        }
+        (min, max)
+    }
+
+    // TODO: When we can't summarize as a single character, use a '?', and stick map of coordinates
+    // to ID and rotation at the end.
+    pub fn serialize(&self, f: fn(&T, Slot) -> char) -> String {
+        let mut serialized = String::new();
+        let (min, max) = self.bounding_box();
+        for y in min.y..=max.y {
+            for z in min.z..=max.z {
+                for x in min.x..=max.x {
+                    for slot in [Slot::Room, Slot::ZWall] {
+                        if let Some(value) = self.get(Vector3i::new(x, y, z), slot) {
+                            serialized.push(f(value, slot))
+                        } else {
+                            serialized.push(' ');
+                        }
+                    }
+                }
+                serialized.push_str("\n");
+                for x in min.x..=max.x {
+                    for slot in [Slot::XWall, Slot::YFloor] {
+                        if let Some(value) = self.get(Vector3i::new(x, y, z), slot) {
+                            serialized.push(f(value, slot))
+                        } else {
+                            serialized.push(' ');
+                        }
+                    }
+                }
+                serialized.push_str("\n");
+            }
+
+            serialized.push_str("\n~~~~~~");
+        }
+
+        serialized
+    }
+
+    pub fn deserialize<F, E>(lines: &str, mut f: F) -> Result<Self, E>
+    where
+        F: FnMut(char, Slot) -> Result<T, E>,
+    {
+        let mut grid = Sparse3D::new();
+        let mut y = 0;
+        let mut z = 0;
+
+        for line in lines.lines() {
+            if line.starts_with("~~~~~~") {
+                y += 1;
+                z = 0;
+                continue;
+            }
+            if line.is_empty() {
+                continue;
+            }
+
+            let chars: Vec<char> = line.chars().collect();
+            let mut x: usize = 0; // Everything gets nonnegative indices, and that's fine.
+
+            while x < chars.len() {
+                if chars[x] != ' ' {
+                    let slot = match x % 2 {
+                        0 => Slot::Room,
+                        1 => Slot::ZWall,
+                        _ => unreachable!(),
+                    };
+                    grid.set(Vector3i::new(x as i32 / 2, y, z), slot, f(chars[x], slot)?);
+                }
+                x += 1;
+            }
+
+            if let Some(next_line) = lines.lines().nth(1) {
+                let chars: Vec<char> = next_line.chars().collect();
+                let mut x = 0;
+                while x < chars.len() {
+                    if chars[x] != ' ' {
+                        let slot = match x % 2 {
+                            0 => Slot::XWall,
+                            1 => Slot::YFloor,
+                            _ => unreachable!(),
+                        };
+                        grid.set(Vector3i::new(x as i32 / 2, y, z), slot, f(chars[x], slot)?);
+                    }
+                    x += 1;
+                }
+            }
+
+            z += 1;
+        }
+
+        Ok(grid)
     }
 }
 

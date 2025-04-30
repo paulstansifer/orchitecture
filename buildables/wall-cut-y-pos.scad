@@ -3,6 +3,7 @@ intersection() {
     translate([-0.1,-0.1,-0.1])
     cube([1.2, .2, 1.2], false);
 
+    color([0.5, 0.5, 0.5])
     translate([-.15,-.15,.25])
     scale([1/10,1/10, 1/13])
     union() {
