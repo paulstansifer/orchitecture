@@ -123,6 +123,13 @@ offset_bottom = 600.0
 grow_horizontal = 2
 grow_vertical = 2
 
+[node name="RichTextLabel" type="RichTextLabel" parent="CanvasLayer/Control/BuildableButtons"]
+custom_minimum_size = Vector2(600, 50)
+layout_mode = 2
+text = "Ctrl-drag to delete structures. Ctrl-S/Ctrl-L to save/load.
+Mousewheel to change focus floor. Middle-drag+WASD to adjust view.
+"
+
 [node name="drag preview" type="Node3D" parent="."]
 
 [node name="ground" type="MeshInstance3D" parent="."]
