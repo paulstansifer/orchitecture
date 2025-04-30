@@ -11,8 +11,10 @@ struct MyExtension;
 unsafe impl ExtensionLibrary for MyExtension {}
 
 use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
+mod serialization;
 mod sparse3d;
 
+use serialization::{deserialize, deserialize_sparse3d, serialize_slot, serialize_sparse3d};
 use sparse3d::{Slot, Sparse3D};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -41,29 +43,6 @@ const WALL_ID: i32 = 3;
 const RAILING_ID: i32 = 4;
 const CUT_WALL_ID: i32 = 5;
 const CUT_DOORWAY_ID: i32 = 6;
-
-fn serialize_slot(id: i32, slot: Slot) -> char {
-    let idx = if slot == Slot::XWall { 0 } else { 1 };
-    match id {
-        DESK_ID => 'D',
-        WALL_ID => ['-', '|'][idx],
-        FLOOR_ID => ['#', '#'][idx],
-        DOORWAY_ID => ['=', ':'][idx],
-        RAILING_ID => ['…', '⋮'][idx],
-        _ => panic!(),
-    }
-}
-
-fn deserialize(c: char) -> i32 {
-    match c {
-        'D' => DESK_ID,
-        '-' | '|' => WALL_ID,
-        '#' => FLOOR_ID,
-        '=' | ':' => DOORWAY_ID,
-        '…' | '⋮' => RAILING_ID,
-        _ => panic!(),
-    }
-}
 
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
 // snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
@@ -215,9 +194,9 @@ impl WallGrid {
 
     #[func]
     pub fn save(&self) {
-        let serialized = self
-            .contents
-            .serialize(|(id, _mesh), slot| serialize_slot(*id, slot));
+        let serialized = serialize_sparse3d(&self.contents, |(id, _mesh), slot| {
+            serialize_slot(*id, slot)
+        });
         let mut file = GFile::open("user://room.txt", ModeFlags::WRITE).unwrap();
         file.write_gstring(&serialized).unwrap();
         godot_print!("Saved to {}", file.path_absolute());
@@ -228,8 +207,8 @@ impl WallGrid {
         let mut file = GFile::open("user://room.txt", ModeFlags::READ).unwrap();
         let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
 
-        self.contents = Sparse3D::deserialize(&serialized, |c, slot| {
-            let id = deserialize(c);
+        self.contents = crate::serialization::deserialize_sparse3d(&serialized, |c, slot| {
+            let id = crate::serialization::deserialize(c);
             let mesh_library = self.mesh_library.as_ref().unwrap();
             let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
             mesh_instance.set_mesh(&mesh_library.get_item_mesh(id).unwrap());
