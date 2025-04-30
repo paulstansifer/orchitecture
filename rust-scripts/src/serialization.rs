@@ -62,7 +62,7 @@ pub fn serialize_sparse3d<T>(
             serialized.push_str("\n");
         }
 
-        serialized.push_str("\n~~~~~~");
+        serialized.push_str("~~~~~~\n");
     }
 
     serialized
@@ -79,44 +79,42 @@ where
     let mut y = 0;
     let mut z = 0;
 
-    for line in lines.lines() {
+    let mut lines_it = lines.lines();
+
+    loop {
+        let line = match lines_it.next() {
+            Some(line) => line,
+            None => break,
+        };
+
         if line.starts_with("~~~~~~") {
             y += 1;
             z = 0;
             continue;
         }
-        if line.is_empty() {
-            continue;
-        }
+        let top_line = line.chars().collect::<Vec<_>>();
+        let bottom_line = lines_it
+            .next()
+            .expect("Lines must come in pairs")
+            .chars()
+            .collect::<Vec<_>>();
+        assert!(top_line.len() == bottom_line.len());
 
-        let chars: Vec<char> = line.chars().collect();
-        let mut x: usize = 0; // Everything gets nonnegative indices, and that's fine.
+        for x in 0..top_line.len() / 2 {
+            let zwall_ch = top_line[x * 2 + 1];
+            let room_ch = top_line[x * 2];
+            let floor_ch = bottom_line[x * 2 + 1];
+            let xwall_ch = bottom_line[x * 2];
 
-        while x < chars.len() {
-            if chars[x] != ' ' {
-                let slot = match x % 2 {
-                    0 => Slot::Room,
-                    1 => Slot::ZWall,
-                    _ => unreachable!(),
-                };
-                grid.set(Vector3i::new(x as i32 / 2, y, z), slot, f(chars[x], slot)?);
-            }
-            x += 1;
-        }
-
-        if let Some(next_line) = lines.lines().nth(1) {
-            let chars: Vec<char> = next_line.chars().collect();
-            let mut x = 0;
-            while x < chars.len() {
-                if chars[x] != ' ' {
-                    let slot = match x % 2 {
-                        0 => Slot::XWall,
-                        1 => Slot::YFloor,
-                        _ => unreachable!(),
-                    };
-                    grid.set(Vector3i::new(x as i32 / 2, y, z), slot, f(chars[x], slot)?);
+            for (ch, slot) in [
+                (zwall_ch, Slot::ZWall),
+                (room_ch, Slot::Room),
+                (floor_ch, Slot::YFloor),
+                (xwall_ch, Slot::XWall),
+            ] {
+                if ch != ' ' {
+                    grid.set(Vector3i::new(x as i32, y, z), slot, f(ch, slot)?);
                 }
-                x += 1;
             }
         }
 

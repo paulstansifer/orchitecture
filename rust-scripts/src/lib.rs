@@ -13,6 +13,7 @@ unsafe impl ExtensionLibrary for MyExtension {}
 use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
 mod serialization;
 mod sparse3d;
+mod structure;
 
 use serialization::{deserialize, deserialize_sparse3d, serialize_slot, serialize_sparse3d};
 use sparse3d::{Slot, Sparse3D};
@@ -59,6 +60,20 @@ struct WallGrid {
     base: Base<Node3D>,
 }
 
+// `Room` allows multiple orientations, but all other slots only allow a single orientation.
+fn slot_transform(slot: Slot) -> Transform3D {
+    let xform = Transform3D::IDENTITY
+        .rotated(Vector3::RIGHT, -TAU / 4.0)
+        .rotated(Vector3::UP, TAU / 2.0);
+    (match slot {
+        Slot::Room => xform,
+        Slot::XWall => xform,
+        Slot::YFloor => xform.rotated(Vector3::UP, TAU / -4.0),
+        Slot::ZWall => xform.rotated(Vector3::UP, -TAU / 4.0),
+    })
+    .translated(Vector3::new(1.0, 0.0, 1.0))
+}
+
 #[godot_api]
 impl WallGrid {
     #[func]
@@ -102,18 +117,9 @@ impl WallGrid {
 
                     let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
                     mesh_instance.set_mesh(&mesh_library.get_item_mesh(item).unwrap());
-                    let xform = Transform3D::IDENTITY
-                        .rotated(Vector3::RIGHT, -TAU / 4.0)
-                        .rotated(Vector3::UP, TAU / 2.0);
-                    let xform = match dir {
-                        Dir::X => xform,
-                        Dir::Y => xform.rotated(Vector3::UP, TAU / -4.0),
-                        Dir::Z => xform.rotated(Vector3::UP, TAU / -4.0),
-                    };
 
-                    let xform =
-                        xform.translated(position.cast_float() + Vector3::new(1.0, 0.0, 1.0));
-                    mesh_instance.set_transform(xform);
+                    mesh_instance
+                        .set_transform(slot_transform(slot).translated(position.cast_float()));
 
                     container.add_child(&mesh_instance);
 
@@ -223,9 +229,9 @@ impl WallGrid {
         self.container = container;
 
         for (pos, slot, mesh_instance) in self.contents.iter_mut() {
-            mesh_instance.1.set_transform(
-                Transform3D::IDENTITY.translated(pos.cast_float() + Vector3::new(1.0, 0.0, 1.0)),
-            );
+            mesh_instance
+                .1
+                .set_transform(slot_transform(slot).translated(pos.cast_float()));
             self.container.add_child(&mesh_instance.1);
         }
     }

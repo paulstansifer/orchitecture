@@ -28,6 +28,7 @@ func _ready():
 			selected_structure = structure
 
 	wallgrid.set_mesh_library(mesh_library)
+	
 
 	# Create buttons for each buildable
 	for buildable in game_config.buildables:
@@ -74,6 +75,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	mouse_helper.position = world_position.round()
 
 	wallgrid.update_visibility(world_position, view_camera.global_position)
+	
+	var build_id = selected_structure.id
+	if event.is_action_pressed("negate_modifier"):
+		build_id = -1  # HACK: flag value for deletion
 
 	if event.is_action_pressed("build"):
 		match selected_structure.placement_style:
