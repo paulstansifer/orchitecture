@@ -77,13 +77,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	wallgrid.update_visibility(world_position, view_camera.global_position)
 	
 	var build_id = selected_structure.id
-	if event.is_action_pressed("negate_modifier"):
+	
+	
+	if Input.is_action_pressed("negate_modifier"):
 		build_id = -1  # HACK: flag value for deletion
 
 	if event.is_action_pressed("build"):
 		match selected_structure.placement_style:
 			Globals.PlacementStyle.ROOM_PLOP:
-				self.wallgrid.room_plop(world_position.round(), selected_structure.id)
+				self.wallgrid.room_plop(world_position.round(), build_id)
 			Globals.PlacementStyle.WALL_PLOP:
 				print("TODO")
 			_:
@@ -96,9 +98,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if selected_structure != null:
 			match selected_structure.placement_style:
 				Globals.PlacementStyle.WALL_DRAG:
-					self.wallgrid.wall_drag(drag_start, world_position, selected_structure.id)
+					self.wallgrid.wall_drag(drag_start, world_position, build_id)
 				Globals.PlacementStyle.FLOOR_DRAG:
-					self.wallgrid.floor_drag(drag_start, world_position, selected_structure.id)
+					self.wallgrid.floor_drag(drag_start, world_position, build_id)
 
 
 # Retrieve the mesh from a PackedScene, used for dynamically creating a MeshLibrary

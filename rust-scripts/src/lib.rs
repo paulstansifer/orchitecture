@@ -115,22 +115,32 @@ impl WallGrid {
                         None => {}
                     }
 
-                    let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
-                    mesh_instance.set_mesh(&mesh_library.get_item_mesh(item).unwrap());
+                    if item == -1 {
+                        changed_cells.push(ParticularCell {
+                            pos: position,
+                            slot,
+                            mi: old_mesh,
+                            replacer_mi: None,
+                        });
+                        self.contents.take(position, slot);
+                    } else {
+                        let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
+                        mesh_instance.set_mesh(&mesh_library.get_item_mesh(item).unwrap());
 
-                    mesh_instance
-                        .set_transform(slot_transform(slot).translated(position.cast_float()));
+                        mesh_instance
+                            .set_transform(slot_transform(slot).translated(position.cast_float()));
 
-                    container.add_child(&mesh_instance);
+                        container.add_child(&mesh_instance);
 
-                    changed_cells.push(ParticularCell {
-                        pos: position,
-                        slot,
-                        mi: old_mesh,
-                        replacer_mi: Some((item, mesh_instance.clone())),
-                    });
+                        changed_cells.push(ParticularCell {
+                            pos: position,
+                            slot,
+                            mi: old_mesh,
+                            replacer_mi: Some((item, mesh_instance.clone())),
+                        });
 
-                    self.contents.set(position, slot, (item, mesh_instance));
+                        self.contents.set(position, slot, (item, mesh_instance));
+                    }
                 }
             }
         }
