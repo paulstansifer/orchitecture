@@ -1,4 +1,3 @@
-use core::panic;
 use std::f32::consts::TAU;
 use std::ops::DerefMut;
 
@@ -28,8 +27,8 @@ enum Dir {
 struct ParticularCell {
     pos: Vector3i,
     slot: Slot,
-    mi: Option<(i32, Gd<MeshInstance3D>)>,
-    replacer_mi: Option<(i32, Gd<MeshInstance3D>)>,
+    mi: Option<Cell>,
+    replacer_mi: Option<Cell>,
 }
 
 struct UndoRecord {
@@ -47,13 +46,26 @@ const CUT_DOORWAY_ID: i32 = 6;
 const STAIRS_ID: i32 = 7;
 const CUT_STAIRS_ID: i32 = 8;
 
+#[derive(Clone)]
+struct VantageEvaluation {
+    symmetry: f32,
+    interest: f32,
+}
+
+#[derive(Clone)]
+struct Cell {
+    id: i32,
+    mesh: Gd<MeshInstance3D>,
+    evaluation: Option<VantageEvaluation>,
+}
+
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
 // snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
 #[derive(GodotClass)]
 #[class(base=Node3D)]
 struct WallGrid {
     mesh_library: Option<Gd<MeshLibrary>>,
-    contents: Sparse3D<(i32, Gd<MeshInstance3D>)>,
+    contents: Sparse3D<Cell>,
     container: Gd<Node3D>,
     temp_container: Gd<Node3D>,
 
@@ -85,7 +97,7 @@ impl WallGrid {
 
     pub fn set_range_item_dir(
         &mut self,
-        dir: Dir,
+        _dir: Dir,
         position1: Vector3i,
         position2: Vector3i,
         slot: Slot,
@@ -108,11 +120,11 @@ impl WallGrid {
                 for z in start_z..=end_z {
                     let position = Vector3i::new(x, y, z);
 
-                    let old_mesh = self.contents.take(position, slot);
+                    let old_cell = self.contents.take(position, slot);
 
-                    match old_mesh {
-                        Some(ref old_mesh) => {
-                            container.remove_child(&old_mesh.1);
+                    match old_cell {
+                        Some(ref old_cell) => {
+                            container.remove_child(&old_cell.mesh);
                         }
                         None => {}
                     }
@@ -121,7 +133,7 @@ impl WallGrid {
                         changed_cells.push(ParticularCell {
                             pos: position,
                             slot,
-                            mi: old_mesh,
+                            mi: old_cell,
                             replacer_mi: None,
                         });
                         self.contents.take(position, slot);
@@ -134,14 +146,20 @@ impl WallGrid {
 
                         container.add_child(&mesh_instance);
 
+                        let new_cell = Cell {
+                            id: item,
+                            mesh: mesh_instance.clone(),
+                            evaluation: None,
+                        };
+
                         changed_cells.push(ParticularCell {
                             pos: position,
                             slot,
-                            mi: old_mesh,
-                            replacer_mi: Some((item, mesh_instance.clone())),
+                            mi: old_cell,
+                            replacer_mi: Some(new_cell.clone()),
                         });
 
-                        self.contents.set(position, slot, (item, mesh_instance));
+                        self.contents.set(position, slot, new_cell);
                     }
                 }
             }
@@ -212,9 +230,8 @@ impl WallGrid {
 
     #[func]
     pub fn save(&self, filename: GString) {
-        let serialized = serialize_sparse3d(&self.contents, |(id, _mesh), slot| {
-            serialize_slot(*id, slot)
-        });
+        let serialized =
+            serialize_sparse3d(&self.contents, |cell, slot| serialize_slot(cell.id, slot));
         let mut file = GFile::open(&filename, ModeFlags::WRITE).unwrap();
         file.write_gstring(&serialized).unwrap();
         godot_print!("Saved to {}", file.path_absolute());
@@ -225,13 +242,17 @@ impl WallGrid {
         let mut file = GFile::open(&filename, ModeFlags::READ).unwrap();
         let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
 
-        self.contents = deserialize_sparse3d(&serialized, |c, slot| {
+        self.contents = deserialize_sparse3d(&serialized, |c, _slot| {
             let id = deserialize(c);
             let mesh_library = self.mesh_library.as_ref().unwrap();
             let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
             mesh_instance.set_mesh(&mesh_library.get_item_mesh(id).unwrap());
 
-            Ok::<(i32, godot::prelude::Gd<MeshInstance3D>), ()>((id, mesh_instance))
+            Ok::<Cell, ()>(Cell {
+                id,
+                mesh: mesh_instance,
+                evaluation: None,
+            })
         })
         .unwrap();
 
@@ -240,11 +261,10 @@ impl WallGrid {
         self.base_mut().add_child(&container);
         self.container = container;
 
-        for (pos, slot, mesh_instance) in self.contents.iter_mut() {
-            mesh_instance
-                .1
+        for (pos, slot, cell) in self.contents.iter_mut() {
+            cell.mesh
                 .set_transform(slot_transform(slot).translated(pos.cast_float()));
-            self.container.add_child(&mesh_instance.1);
+            self.container.add_child(&cell.mesh);
         }
     }
 
@@ -255,14 +275,14 @@ impl WallGrid {
                 let position = cell.pos;
                 let slot = cell.slot;
 
-                if let Some(ref mut new_mesh) = cell.replacer_mi {
-                    self.container.remove_child(&new_mesh.1);
-                    new_mesh.1.queue_free();
+                if let Some(ref mut new_cell) = cell.replacer_mi {
+                    self.container.remove_child(&new_cell.mesh);
+                    new_cell.mesh.queue_free();
                 }
 
-                if let Some(ref mesh) = cell.mi {
-                    self.container.add_child(&mesh.1);
-                    self.contents.set(position, slot, mesh.clone());
+                if let Some(ref old_cell) = cell.mi {
+                    self.container.add_child(&old_cell.mesh);
+                    self.contents.set(position, slot, old_cell.clone());
                 } else {
                     self.contents.take(position, slot);
                 }
@@ -302,29 +322,27 @@ impl WallGrid {
             + Vector3i::new(view_direction.x * 2, 0, view_direction.z * 2);
 
         let last_y_layer = Vector3i::new(view_direction.x, 0, view_direction.z);
-        for (pos, _slot, mesh_instance) in self.contents.iter_mut() {
+        for (pos, _slot, cell) in self.contents.iter_mut() {
             if (effective_focus_location - pos).sign() == view_direction {
-                mesh_instance.1.hide();
-            } else if (mesh_instance.0 == WALL_ID
-                || mesh_instance.0 == DOORWAY_ID
-                || mesh_instance.0 == STAIRS_ID)
+                cell.mesh.hide();
+            } else if (cell.id == WALL_ID || cell.id == DOORWAY_ID || cell.id == STAIRS_ID)
                 && (effective_focus_location - pos).sign() == last_y_layer
             {
-                mesh_instance.1.hide();
+                cell.mesh.hide();
 
                 let mut cut_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
 
-                cut_instance.set_transform(mesh_instance.1.get_transform());
-                if mesh_instance.0 == DOORWAY_ID {
+                cut_instance.set_transform(cell.mesh.get_transform());
+                if cell.id == DOORWAY_ID {
                     cut_instance.set_mesh(&cut_doorway);
-                } else if mesh_instance.0 == STAIRS_ID {
+                } else if cell.id == STAIRS_ID {
                     cut_instance.set_mesh(&cut_stairs);
                 } else {
                     cut_instance.set_mesh(&cut_wall);
                 }
                 self.temp_container.add_child(&cut_instance);
             } else {
-                mesh_instance.1.show();
+                cell.mesh.show();
             }
         }
     }
