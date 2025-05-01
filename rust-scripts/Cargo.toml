@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-godot = "0.2.4"
 
 [lib]
 crate-type = ["cdylib"] # Compile this crate to a dynamic C library.
+
+[dependencies.godot]
+version = "0.2.4"
+features = ["experimental-wasm", "lazy-function-tables"]
