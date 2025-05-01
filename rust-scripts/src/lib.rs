@@ -14,6 +14,7 @@ mod serialization;
 mod sparse3d;
 mod structure;
 
+use serde::{Deserialize, Serialize};
 use serialization::{deserialize, deserialize_sparse3d, serialize_slot, serialize_sparse3d};
 use sparse3d::{Slot, Sparse3D};
 
@@ -46,15 +47,21 @@ const CUT_DOORWAY_ID: i32 = 6;
 const STAIRS_ID: i32 = 7;
 const CUT_STAIRS_ID: i32 = 8;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 struct VantageEvaluation {
     symmetry: f32,
     interest: f32,
 }
 
-#[derive(Clone)]
+// Must manually set this up while assembling the scene
+fn unset_mesh() -> Gd<MeshInstance3D> {
+    MeshInstance3D::new_alloc()
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 struct Cell {
     id: i32,
+    #[serde(skip, default = "unset_mesh")]
     mesh: Gd<MeshInstance3D>,
     evaluation: Option<VantageEvaluation>,
 }
@@ -226,6 +233,12 @@ impl WallGrid {
     pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: i32) {
         let pos = location.round().cast_int() - Vector3i::new(1, 0, 1);
         self.set_range_item_dir(Dir::Z, pos, pos, Slot::Room, selected_mesh_id);
+        if selected_mesh_id == DESK_ID {
+            self.contents.get_mut(pos, Slot::Room).unwrap().evaluation = Some(VantageEvaluation {
+                symmetry: 0.5,
+                interest: 0.5,
+            });
+        }
     }
 
     #[func]
@@ -266,6 +279,7 @@ impl WallGrid {
                 .set_transform(slot_transform(slot).translated(pos.cast_float()));
             self.container.add_child(&cell.mesh);
         }
+        godot_print!("Loaded from {}", file.path_absolute());
     }
 
     #[func]

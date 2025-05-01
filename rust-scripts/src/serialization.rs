@@ -1,6 +1,6 @@
 use godot::builtin::Vector3i;
 
-use crate::{sparse3d::Slot, STAIRS_ID};
+use crate::{sparse3d::Slot, Cell, STAIRS_ID};
 
 // HACK: we should be passed this information
 const DESK_ID: i32 = 0;
@@ -34,9 +34,46 @@ pub fn deserialize(c: char) -> i32 {
     }
 }
 
-pub fn serialize_sparse3d<T>(
-    grid: &crate::sparse3d::Sparse3D<T>,
-    f: fn(&T, Slot) -> char,
+fn extended_serialize_at(pos: Vector3i, slot: Slot, cell: &Cell) -> Option<String> {
+    if cell.evaluation.is_none() {
+        return None;
+    }
+    Some(format!(
+        "({},{},{},{})={}\n",
+        pos.x,
+        pos.y,
+        pos.z,
+        serde_json::to_string(&slot).unwrap(),
+        serde_json::to_string(cell).unwrap()
+    ))
+}
+
+fn extended_deserialize_at(line: &str) -> (Vector3i, Slot, Cell) {
+    let parts: Vec<&str> = line.split('=').collect();
+    if parts.len() != 2 {
+        panic!("Invalid extended serialization format");
+    }
+
+    let coords: Vec<&str> = parts[0]
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .split(',')
+        .collect();
+
+    let pos = Vector3i::new(
+        coords[0].parse::<i32>().unwrap(),
+        coords[1].parse::<i32>().unwrap(),
+        coords[2].parse::<i32>().unwrap(),
+    );
+    let slot: Slot = serde_json::from_str(coords[3]).unwrap();
+    let cell: Cell = serde_json::from_str(parts[1]).unwrap();
+
+    (pos, slot, cell)
+}
+
+pub fn serialize_sparse3d(
+    grid: &crate::sparse3d::Sparse3D<Cell>,
+    f: fn(&Cell, Slot) -> char,
 ) -> String {
     let mut serialized = String::new();
     let (min, max) = grid.bounding_box();
@@ -55,7 +92,7 @@ pub fn serialize_sparse3d<T>(
             for x in min.x..=max.x {
                 for slot in [Slot::XWall, Slot::YFloor] {
                     if let Some(value) = grid.get(Vector3i::new(x, y, z), slot) {
-                        serialized.push(f(value, slot))
+                        serialized.push(f(value, slot));
                     } else {
                         serialized.push(' ');
                     }
@@ -64,18 +101,24 @@ pub fn serialize_sparse3d<T>(
             serialized.push_str("\n");
         }
 
-        serialized.push_str("~~~~~~\n");
+        serialized.push_str("~~~~~\n");
+    }
+    serialized.push_str("~*~*~\n");
+    for (pos, slot, cell) in grid.iter() {
+        if let Some(extended_ser) = extended_serialize_at(pos - min, slot, cell) {
+            serialized.push_str(&extended_ser);
+        }
     }
 
     serialized
 }
 
-pub fn deserialize_sparse3d<T, F, E>(
+pub fn deserialize_sparse3d<F, E>(
     lines: &str,
     mut f: F,
-) -> Result<crate::sparse3d::Sparse3D<T>, E>
+) -> Result<crate::sparse3d::Sparse3D<Cell>, E>
 where
-    F: FnMut(char, Slot) -> Result<T, E>,
+    F: FnMut(char, Slot) -> Result<Cell, E>,
 {
     let mut grid = crate::sparse3d::Sparse3D::new();
     let mut y = 0;
@@ -89,11 +132,21 @@ where
             None => break,
         };
 
-        if line.starts_with("~~~~~~") {
+        if line.starts_with("~~~~~") {
             y += 1;
             z = 0;
             continue;
         }
+
+        if line.starts_with("~*~*~") {
+            // Start of evaluated cells data
+            for line in lines_it {
+                let (pos, slot, cell) = extended_deserialize_at(line);
+                grid.set(pos, slot, cell);
+            }
+            break;
+        }
+
         let top_line = line.chars().collect::<Vec<_>>();
         let bottom_line = lines_it
             .next()

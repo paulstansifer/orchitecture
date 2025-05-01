@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use std::ops::{Index, IndexMut};
 
 use godot::builtin::Vector3i;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Slot {
     Room,
     XWall,
@@ -52,6 +53,7 @@ fn combine_coords(bc: BigCoordinates, sc: SmallCoordinates) -> Vector3i {
     )
 }
 
+#[derive(Debug)]
 struct Chunk<T> {
     data: [Option<T>; 256],
 }
@@ -97,6 +99,10 @@ impl<T> Chunk<T> {
             })
         })
     }
+
+    fn size(&self) -> usize {
+        self.data.iter().filter(|item| item.is_some()).count()
+    }
 }
 
 impl<T> Index<SmallCoordinates> for Chunk<T> {
@@ -114,8 +120,27 @@ impl<T> IndexMut<SmallCoordinates> for Chunk<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct Sparse3D<T> {
     chunks: HashMap<BigCoordinates, Chunk<T>>,
+}
+
+impl<T> PartialEq for Sparse3D<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        if self.size() != other.size() {
+            return false;
+        }
+        for (pos, slot, value) in self.iter() {
+            if other.get(pos, slot) != Some(value) {
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 impl<T> Sparse3D<T> {
@@ -123,6 +148,10 @@ impl<T> Sparse3D<T> {
         Sparse3D {
             chunks: HashMap::new(),
         }
+    }
+
+    pub fn size(&self) -> usize {
+        self.chunks.iter().map(|(_, chunk)| chunk.size()).sum()
     }
 
     fn get_or_create_chunk(&mut self, chunk_coords: BigCoordinates) -> &mut Chunk<T> {
