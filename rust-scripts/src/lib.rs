@@ -211,18 +211,18 @@ impl WallGrid {
     }
 
     #[func]
-    pub fn save(&self) {
+    pub fn save(&self, filename: GString) {
         let serialized = serialize_sparse3d(&self.contents, |(id, _mesh), slot| {
             serialize_slot(*id, slot)
         });
-        let mut file = GFile::open("user://room.txt", ModeFlags::WRITE).unwrap();
+        let mut file = GFile::open(&filename, ModeFlags::WRITE).unwrap();
         file.write_gstring(&serialized).unwrap();
         godot_print!("Saved to {}", file.path_absolute());
     }
 
     #[func]
-    pub fn load(&mut self) {
-        let mut file = GFile::open("user://room.txt", ModeFlags::READ).unwrap();
+    pub fn load(&mut self, filename: GString) {
+        let mut file = GFile::open(&filename, ModeFlags::READ).unwrap();
         let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
 
         self.contents = deserialize_sparse3d(&serialized, |c, slot| {

@@ -3,10 +3,12 @@ extends Node3D
 @export var drag_start_helper: Node3D
 @export var mouse_helper: Node3D # The 'cursor'
 @export var view_camera: Camera3D # Used for raycasting mouse
-@export var cash_display: Label
 @export var wallgrid: WallGrid
 
-@onready var buildable_buttons: Control = get_node("../CanvasLayer/Control/BuildableButtons")
+@export var buildable_buttons: Control
+@export var filename: TextEdit
+@export var save: Button
+@export var load: Button
 
 var selected_structure: Structure = null
 var cur_y: int = 0 # The current layer to interact with
@@ -40,6 +42,9 @@ func _ready():
 
 		button.connect("pressed", _on_buildable_button_pressed.bind(buildable))
 		buildable_buttons.add_child(button)
+		
+	save.connect("pressed", save_button)
+	load.connect("pressed", load_button)
 
 	load_map()
 	
@@ -119,15 +124,17 @@ func get_mesh(packed_scene: PackedScene):
 
 # Saving/load
 
+func save_button():
+	wallgrid.save(filename.text)
+
+func load_button():
+	wallgrid.load(filename.text)
+
 func load_map():
 	print("Loading map...")
 	#TODO
 
 func accept_actions():
-	if Input.is_action_pressed("save"):
-		wallgrid.save()
-	if Input.is_action_pressed("load"):
-		wallgrid.load()
 
 	if Input.is_action_pressed("quit"):
 		get_tree().quit()

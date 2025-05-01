@@ -42,12 +42,16 @@ size = Vector2(1000, 1000)
 
 [node name="WallGrid" type="WallGrid" parent="."]
 
-[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "view_camera", "wallgrid")]
+[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "view_camera", "wallgrid", "buildable_buttons", "filename", "save", "load")]
 script = ExtResource("1_jybm7")
 drag_start_helper = NodePath("drag start helper")
 mouse_helper = NodePath("mouse helper")
 view_camera = NodePath("../View/Camera")
 wallgrid = NodePath("../WallGrid")
+buildable_buttons = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons")
+filename = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons/TextEdit")
+save = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons/save button")
+load = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons/load button")
 
 [node name="drag start helper" type="Node3D" parent="Builder"]
 visible = false
@@ -107,28 +111,44 @@ directional_shadow_blend_splits = true
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 
 [node name="Control" type="Control" parent="CanvasLayer"]
+custom_minimum_size = Vector2(0, 75)
 layout_mode = 3
-anchors_preset = 0
-offset_right = 40.0
-offset_bottom = 40.0
-
-[node name="BuildableButtons" type="HBoxContainer" parent="CanvasLayer/Control"]
-layout_mode = 1
-anchors_preset = 15
+anchors_preset = 12
+anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 8.0
-offset_top = 583.0
-offset_right = 1011.0
-offset_bottom = 600.0
 grow_horizontal = 2
-grow_vertical = 2
+grow_vertical = 0
 
-[node name="RichTextLabel" type="RichTextLabel" parent="CanvasLayer/Control/BuildableButtons"]
-custom_minimum_size = Vector2(600, 50)
+[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control"]
+layout_mode = 0
+offset_right = 1078.0
+offset_bottom = 62.0
+
+[node name="BuildableButtons" type="HBoxContainer" parent="CanvasLayer/Control/VBoxContainer"]
 layout_mode = 2
-text = "Ctrl-drag to delete structures. Ctrl-S/Ctrl-L to save/load.
-Mousewheel to change focus floor. Middle-drag+WASD to adjust view.
+
+[node name="load button" type="Button" parent="CanvasLayer/Control/VBoxContainer/BuildableButtons"]
+layout_mode = 2
+text = "LOAD"
+
+[node name="save button" type="Button" parent="CanvasLayer/Control/VBoxContainer/BuildableButtons"]
+layout_mode = 2
+text = "SAVE"
+
+[node name="TextEdit" type="TextEdit" parent="CanvasLayer/Control/VBoxContainer/BuildableButtons"]
+custom_minimum_size = Vector2(200, 25)
+layout_mode = 2
+text = "room.txt"
+emoji_menu_enabled = false
+scroll_fit_content_height = true
+scroll_fit_content_width = true
+
+[node name="RichTextLabel" type="RichTextLabel" parent="CanvasLayer/Control/VBoxContainer"]
+custom_minimum_size = Vector2(0, 25)
+layout_mode = 2
+size_flags_vertical = 8
+text = "Ctrl-drag to delete structures. Ctrl-S/Ctrl-L to save/load. Mousewheel to change focus floor. Middle-drag+WASD to adjust view.
 "
 
 [node name="drag preview" type="Node3D" parent="."]
