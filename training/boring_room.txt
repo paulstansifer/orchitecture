@@ -45,4 +45,4 @@
    # # # # # # #
 ~~~~~
 ~*~*~
-(-1,0,-5,"Room")={"id":0,"evaluation":{"symmetry":0.5,"interest":0.5}}
+(-1,0,-5,"Room")={"id":0,"evaluation":{"symmetry":1.0,"interest":0.0}}
