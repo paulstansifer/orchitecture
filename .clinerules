@@ -4,6 +4,7 @@ This is a construction-oriented game.
 
 ## Notes
   - `replace_in_file` always seems to fail due to a "diff edit mismatch". Use `write_to_file` instead.
+  - Please don't add comments explaining why a code change is being made.
 
 ## Tech Stack
   - Godot
@@ -20,3 +21,4 @@ This is a construction-oriented game.
 ## Compiling
   - to check that GDScript files build, run `/snap/bin/godot-4 --check-only --script <path to script> --display-driver headless`
   - to check that the Rust files build, run `(cd rust-scripts && cargo build)`
+  - to run Rust tests, run `(cd rust-scripts && cargo test)`
