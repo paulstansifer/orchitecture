@@ -1,5 +1,6 @@
 rust-scripts/target/*
 rust-scripts/Cargo.lock
+export/
 
 *.uid
 
@@ -15,6 +16,8 @@ models/*
 *.ttf
 
 *.gltf
+
+training/
 
 .vscode/*
 .godot/*

@@ -126,6 +126,8 @@ func get_mesh(packed_scene: PackedScene):
 
 func save_command():
 	wallgrid.save(filename.text)
+	var content = FileAccess.get_file_as_bytes(filename.text)
+	JavaScriptBridge.download_buffer(content, filename.text)
 
 func load_command():
 	wallgrid.load(filename.text)
