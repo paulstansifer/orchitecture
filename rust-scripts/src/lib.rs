@@ -11,6 +11,7 @@ unsafe impl ExtensionLibrary for MyExtension {}
 
 use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
 mod qnn;
+mod qnn_translate;
 mod serialization;
 mod sparse3d;
 mod structure;

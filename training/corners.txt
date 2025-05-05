@@ -94,4 +94,4 @@
    # # # # # #
 ~~~~~
 ~*~*~
-(4,0,5,"Room")={"id":0,"evaluation":{"symmetry":0.5,"interest":0.5}}
+(4,0,5,"Room")={"id":0,"evaluation":{"symmetry":0.6,"interest":0.6}}
