@@ -41,9 +41,9 @@ struct UndoRecord {
 // HACK: we should be passed this information
 const DESK_ID: i32 = 0;
 const DOORWAY_ID: i32 = 1;
-const FLOOR_ID: i32 = 2;
+const _FLOOR_ID: i32 = 2;
 const WALL_ID: i32 = 3;
-const RAILING_ID: i32 = 4;
+const _RAILING_ID: i32 = 4;
 const CUT_WALL_ID: i32 = 5;
 const CUT_DOORWAY_ID: i32 = 6;
 const STAIRS_ID: i32 = 7;
@@ -65,6 +65,13 @@ struct Cell {
     id: i32,
     #[serde(skip, default = "unset_mesh")]
     mesh: Gd<MeshInstance3D>,
+    evaluation: Option<VantageEvaluation>,
+}
+
+// Safe to use outside of Godot
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+struct OfflineCell {
+    id: i32,
     evaluation: Option<VantageEvaluation>,
 }
 
@@ -245,8 +252,11 @@ impl WallGrid {
 
     #[func]
     pub fn save(&self, filename: GString) {
-        let serialized =
-            serialize_sparse3d(&self.contents, |cell, slot| serialize_slot(cell.id, slot));
+        let serialized = serialize_sparse3d(
+            &self.contents,
+            |cell, slot| serialize_slot(cell.id, slot),
+            serialization::cell_needs_extended,
+        );
         let mut file = GFile::open(&filename, ModeFlags::WRITE).unwrap();
         file.write_gstring(&serialized).unwrap();
         godot_print!("Saved to {}", file.path_absolute());
@@ -303,6 +313,13 @@ impl WallGrid {
                     self.contents.take(position, slot);
                 }
             }
+        }
+    }
+
+    #[func]
+    pub fn dont_actually_call_me() {
+        if false {
+            qnn::train(); // Otherwise, we get warnings for things not used in the library.
         }
     }
 
@@ -382,4 +399,9 @@ impl INode3D for WallGrid {
             base,
         }
     }
+}
+
+#[allow(dead_code)]
+fn main() {
+    qnn::train();
 }

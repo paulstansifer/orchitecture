@@ -1,4 +1,7 @@
 use crate::sparse3d::{Slot, Sparse3D};
+use burn::backend::wgpu::WgpuDevice;
+use burn::data::dataloader::batcher::Batcher;
+use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
 use burn::tensor::{Float, Int, TensorData};
 use godot::builtin::Vector3i;
@@ -6,7 +9,7 @@ use std::error::Error;
 
 const INPUT_CHANNELS: usize = 16; // 16 colors
 
-type Gpu = burn::backend::Wgpu<f32, i32>;
+type Gpu = burn::backend::Autodiff<burn::backend::Wgpu<f32, i32>>;
 
 // Returns a 5D index into the voxels. Each grid cell is represented by a 2x2x2 cluster of voxels,
 // with each slot occupying a particular position.
@@ -17,7 +20,7 @@ fn grid_coord_to_voxel_coord(
     channel: usize,
     device: &Device<Gpu>,
 ) -> [std::ops::Range<usize>; 5] {
-    let adj_vec = pos - min * 2;
+    let adj_vec = (pos - min) * 2;
     let vox_vec = adj_vec
         + match slot {
             Slot::Room => Vector3i::new(0, 0, 0),
@@ -30,6 +33,94 @@ fn grid_coord_to_voxel_coord(
     let z = vox_vec.z as usize;
 
     [0..1, channel..channel + 1, x..x + 1, y..y + 1, z..z + 1]
+}
+
+#[derive(Clone, Debug)]
+pub struct GroundTruth {
+    pub voxels: Tensor<Gpu, 5, Float>,
+    pub scores: Tensor<Gpu, 1, Float>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GroundTruthBatcher {}
+
+impl burn::data::dataloader::batcher::Batcher<GroundTruth, GroundTruth> for GroundTruthBatcher {
+    fn batch(&self, ds: Vec<GroundTruth>) -> GroundTruth {
+        let mut voxels: Vec<Tensor<Gpu, 5, Float>> = Vec::new();
+        let mut scores: Vec<Tensor<Gpu, 1, Float>> = Vec::new();
+
+        for gt in ds {
+            voxels.push(gt.voxels);
+            scores.push(gt.scores);
+        }
+
+        let voxels = Tensor::cat(voxels, 0);
+        let scores = Tensor::cat(scores, 0);
+        GroundTruth { voxels, scores }
+    }
+}
+
+use std::{fs, path::Path};
+
+pub fn load_training_data(
+    directory: &str,
+) -> (InMemDataset<GroundTruth>, InMemDataset<GroundTruth>) {
+    let path = Path::new(directory);
+    let mut training_data = Vec::new();
+
+    for entry in fs::read_dir(path).expect("Failed to read directory") {
+        let entry = entry.expect("Failed to read entry");
+        let path = entry.path();
+
+        if path.extension().map_or(false, |ext| ext == "txt") {
+            let content = fs::read_to_string(&path).expect("Failed to read file");
+            let sparse_data =
+                crate::serialization::deserialize_sparse3d::<crate::OfflineCell, _, ()>(
+                    &content,
+                    |c, _slot| {
+                        let id = crate::serialization::deserialize(c);
+                        Ok(crate::OfflineCell {
+                            id,
+                            evaluation: None,
+                        })
+                    },
+                )
+                .expect("Failed to deserialize");
+
+            training_data.push(sparse3d_at_vantage(&sparse_data));
+        }
+    }
+    let mut rng = rand::rng();
+    use rand::seq::SliceRandom;
+    training_data.shuffle(&mut rng);
+
+    let split_index = (training_data.len() as f32 * 0.66).ceil() as usize;
+    let (train_data, test_data) = training_data.split_at(split_index);
+
+    (
+        InMemDataset::new(train_data.to_vec()),
+        InMemDataset::new(test_data.to_vec()),
+    )
+}
+
+// Just handles a single datum, but the tensors could hold a batch
+pub fn sparse3d_at_vantage(sparse_data: &Sparse3D<crate::OfflineCell>) -> GroundTruth {
+    for (pos, _slot, cell) in sparse_data.iter() {
+        if let Some(eval) = &cell.evaluation {
+            let tensor = sparse3d_to_tensor(
+                sparse_data,
+                /*center_coord=*/ pos,
+                |cell| cell.id as usize,
+            )
+            .unwrap();
+
+            return GroundTruth {
+                voxels: tensor,
+                scores: Tensor::from_data(TensorData::from([eval.symmetry]), &Default::default()),
+            };
+        }
+    }
+    panic!("No vantage found!")
 }
 
 /// Converts a region of Sparse3D data centered around a coordinate to a Tensor,
@@ -84,7 +175,6 @@ pub fn sparse3d_to_tensor<T>(
 mod tests {
     use super::*;
     use crate::sparse3d::Sparse3D;
-    use burn::tensor::TensorData; // Use TensorData
 
     // Commented out as it depends on a CNN model not provided
     // #[test]
