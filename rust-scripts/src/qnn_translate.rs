@@ -1,15 +1,13 @@
 use crate::sparse3d::{Slot, Sparse3D};
-use burn::backend::wgpu::WgpuDevice;
-use burn::data::dataloader::batcher::Batcher;
 use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
-use burn::tensor::{Float, Int, TensorData};
+use burn::tensor::{Float, TensorData};
 use godot::builtin::Vector3i;
 use std::error::Error;
 
 const INPUT_CHANNELS: usize = 16; // 16 colors
 
-type Gpu = burn::backend::Autodiff<burn::backend::Wgpu<f32, i32>>;
+type Gpu = burn::backend::Autodiff<burn::backend::NdArray<f32, i32>>;
 
 // Returns a 5D index into the voxels. Each grid cell is represented by a 2x2x2 cluster of voxels,
 // with each slot occupying a particular position.
@@ -18,7 +16,6 @@ fn grid_coord_to_voxel_coord(
     min: Vector3i,
     slot: Slot,
     channel: usize,
-    device: &Device<Gpu>,
 ) -> [std::ops::Range<usize>; 5] {
     let adj_vec = (pos - min) * 2;
     let vox_vec = adj_vec
@@ -158,7 +155,7 @@ pub fn sparse3d_to_tensor<T>(
                         assert!(channel < INPUT_CHANNELS);
                         // Right now, we're using a one-hot representation of grid elements
                         voxels = voxels.slice_assign(
-                            grid_coord_to_voxel_coord(grid_pos, min_coord, slot, channel, &device),
+                            grid_coord_to_voxel_coord(grid_pos, min_coord, slot, channel),
                             // A single 1.0, in five dimensions:
                             Tensor::<Gpu, 5, Float>::ones([1, 1, 1, 1, 1], &device),
                         );

@@ -1,19 +1,16 @@
-use std::path::PathBuf;
-
 use burn::{
-    backend::wgpu::WgpuDevice,
-    data::dataloader::batcher::Batcher,
+    backend::ndarray::NdArrayDevice,
     nn::{
         conv::{Conv3d, Conv3dConfig},
         Dropout, DropoutConfig, Linear, LinearConfig, PaddingConfig3d, Relu,
     },
     optim::AdamConfig,
     prelude::*,
-    record::{DefaultFileRecorder, FileRecorder, HalfPrecisionSettings},
+    record::{DefaultFileRecorder, HalfPrecisionSettings},
     train::RegressionOutput,
 };
 
-type Gpu = burn::backend::Autodiff<burn::backend::Wgpu<f32, i32>>;
+type Gpu = burn::backend::Autodiff<burn::backend::NdArray<f32, i32>>;
 
 #[derive(Module, Debug, Clone)]
 pub struct Cnn {
@@ -97,7 +94,6 @@ impl Cnn {
 }
 
 use burn::train::TrainOutput;
-use serde::de;
 
 use crate::qnn_translate::{load_training_data, GroundTruth, GroundTruthBatcher};
 
@@ -138,7 +134,7 @@ fn create_artifact_dir(artifact_dir: &str) {
 }
 
 pub fn train() {
-    let device: WgpuDevice = Default::default();
+    let device: NdArrayDevice = Default::default();
     let config = TrainingConfig::new(AdamConfig::new());
     let artifact_dir = "/tmp/artifacts/";
     create_artifact_dir(artifact_dir);
@@ -169,7 +165,7 @@ pub fn train() {
         // .metric_valid_numeric(burn::train::metric::AccuracyMetric::new())
         .metric_train_numeric(burn::train::metric::LossMetric::new())
         .metric_valid_numeric(burn::train::metric::LossMetric::new())
-        // .with_file_checkpointer(burn::record::CompactRecorder::new())
+        .with_file_checkpointer(burn::record::CompactRecorder::new())
         .devices(vec![device.clone()])
         .num_epochs(config.num_epochs)
         .summary()
@@ -179,7 +175,15 @@ pub fn train() {
             config.learning_rate,
         );
 
+    println!("================");
+    println!(" Learner set up");
+    println!("================");
+
     let model_trained: Cnn = learner.fit(dataloader_train, dataloader_test);
+
+    println!("================");
+    println!(" Model trained");
+    println!("================");
 
     <Cnn as Module<Gpu>>::save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
         model_trained,
