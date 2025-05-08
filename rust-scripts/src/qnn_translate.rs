@@ -69,13 +69,13 @@ pub fn load_training_data(
     let path = Path::new(directory);
     let mut training_data = Vec::new();
 
-    let structures = structure::load_structures();
+    let structures = structure::load_structure_info();
     let mut structures_by_char = HashMap::new();
     for (id, structure) in structures.iter().enumerate() {
-        if let Some(x_char) = structure.info.x_char {
+        if let Some(x_char) = structure.x_char {
             structures_by_char.insert(x_char, id as i32);
         }
-        if let Some(z_char) = structure.info.z_char {
+        if let Some(z_char) = structure.z_char {
             structures_by_char.insert(z_char, id as i32);
         }
     }
@@ -128,7 +128,7 @@ pub fn sparse3d_at_vantage(sparse_data: &Sparse3D<OfflineCell>) -> GroundTruth {
 
             return GroundTruth {
                 voxels: tensor,
-                scores: Tensor::from_data(TensorData::from([eval.symmetry]), &Default::default()),
+                scores: Tensor::from_data(TensorData::from([eval.interest]), &Default::default()),
             };
         }
     }

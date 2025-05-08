@@ -43,10 +43,14 @@ impl Structure {
     }
 }
 
+pub fn load_structure_info() -> Vec<StructureInfo> {
+    let json_content = include_str!("../../structures.json");
+    serde_json::from_str(json_content).unwrap()
+}
+
 pub fn load_structures() -> Vec<Structure> {
     let meshes = load_meshes();
-    let json_content = include_str!("../../structures.json");
-    let infos: Vec<StructureInfo> = serde_json::from_str(json_content).unwrap();
+    let infos = load_structure_info();
     let mut structures = vec![];
 
     for info in infos {

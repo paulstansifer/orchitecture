@@ -146,7 +146,7 @@ pub fn train() {
 
     let batcher = GroundTruthBatcher {};
 
-    let (train_data, test_data) = load_training_data("training");
+    let (train_data, test_data) = load_training_data("../training");
 
     let dataloader_train = burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
         .batch_size(config.batch_size)
