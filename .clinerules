@@ -4,7 +4,7 @@ This is a construction-oriented game.
 
 ## Notes
   - `replace_in_file` always seems to fail due to a "diff edit mismatch". Use `write_to_file` instead.
-  - Please don't add comments explaining why a code change is being made.
+  - Please don't add comments like "// Added this line" that only explain the current change.
 
 ## Tech Stack
   - Godot

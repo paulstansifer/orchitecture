@@ -1,8 +1,9 @@
 use godot::builtin::Vector3i;
 use serde::{Deserialize, Serialize};
 
-use crate::{sparse3d::Slot, Cell, OfflineCell};
-
+use crate::sparse3d::Slot;
+use crate::wall_grid::Cell;
+use crate::wall_grid::OfflineCell;
 // HACK: we should be passed this information
 const DESK_ID: i32 = 0;
 const DOORWAY_ID: i32 = 1;

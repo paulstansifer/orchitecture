@@ -1,4 +1,5 @@
 use crate::sparse3d::{Slot, Sparse3D};
+use crate::wall_grid::OfflineCell;
 use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
 use burn::tensor::{Float, TensorData};
@@ -71,18 +72,17 @@ pub fn load_training_data(
 
         if path.extension().map_or(false, |ext| ext == "txt") {
             let content = fs::read_to_string(&path).expect("Failed to read file");
-            let sparse_data =
-                crate::serialization::deserialize_sparse3d::<crate::OfflineCell, _, ()>(
-                    &content,
-                    |c, _slot| {
-                        let id = crate::serialization::deserialize(c);
-                        Ok(crate::OfflineCell {
-                            id,
-                            evaluation: None,
-                        })
-                    },
-                )
-                .expect("Failed to deserialize");
+            let sparse_data = crate::serialization::deserialize_sparse3d::<OfflineCell, _, ()>(
+                &content,
+                |c, _slot| {
+                    let id = crate::serialization::deserialize(c);
+                    Ok(OfflineCell {
+                        id,
+                        evaluation: None,
+                    })
+                },
+            )
+            .expect("Failed to deserialize");
 
             training_data.push(sparse3d_at_vantage(&sparse_data));
         }
@@ -101,7 +101,7 @@ pub fn load_training_data(
 }
 
 // Just handles a single datum, but the tensors could hold a batch
-pub fn sparse3d_at_vantage(sparse_data: &Sparse3D<crate::OfflineCell>) -> GroundTruth {
+pub fn sparse3d_at_vantage(sparse_data: &Sparse3D<OfflineCell>) -> GroundTruth {
     for (pos, _slot, cell) in sparse_data.iter() {
         if let Some(eval) = &cell.evaluation {
             let tensor = sparse3d_to_tensor(
