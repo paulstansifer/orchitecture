@@ -10,6 +10,7 @@ struct MyExtension;
 unsafe impl ExtensionLibrary for MyExtension {}
 
 use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
+mod mesh_management;
 mod qnn;
 mod qnn_translate;
 mod serialization;
@@ -19,6 +20,7 @@ mod structure;
 use serde::{Deserialize, Serialize};
 use serialization::{deserialize, deserialize_sparse3d, serialize_slot, serialize_sparse3d};
 use sparse3d::{Slot, Sparse3D};
+use structure::Structure;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum Dir {
@@ -40,14 +42,6 @@ struct UndoRecord {
 
 // HACK: we should be passed this information
 const DESK_ID: i32 = 0;
-const DOORWAY_ID: i32 = 1;
-const _FLOOR_ID: i32 = 2;
-const WALL_ID: i32 = 3;
-const _RAILING_ID: i32 = 4;
-const CUT_WALL_ID: i32 = 5;
-const CUT_DOORWAY_ID: i32 = 6;
-const STAIRS_ID: i32 = 7;
-const CUT_STAIRS_ID: i32 = 8;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 struct VantageEvaluation {
@@ -80,7 +74,9 @@ struct OfflineCell {
 #[derive(GodotClass)]
 #[class(base=Node3D)]
 struct WallGrid {
-    mesh_library: Option<Gd<MeshLibrary>>,
+    structures: Vec<Structure>,
+
+    mesh_library: Gd<MeshLibrary>,
     contents: Sparse3D<Cell>,
     container: Gd<Node3D>,
     temp_container: Gd<Node3D>,
@@ -107,8 +103,18 @@ fn slot_transform(slot: Slot) -> Transform3D {
 #[godot_api]
 impl WallGrid {
     #[func]
-    pub fn set_mesh_library(&mut self, mesh_library: Gd<MeshLibrary>) {
-        self.mesh_library = Some(mesh_library);
+    fn get_structures(&self) -> Array<GString> {
+        let mut res = Array::new();
+
+        for structure in &self.structures {
+            let mut name = structure.info.main_mesh.clone();
+            if let Some(dot_index) = name.find('.') {
+                name.truncate(dot_index);
+            }
+            res.push(&name);
+        }
+
+        res
     }
 
     pub fn set_range_item_dir(
@@ -117,7 +123,7 @@ impl WallGrid {
         position1: Vector3i,
         position2: Vector3i,
         slot: Slot,
-        item: i32,
+        item: Option<i32>,
     ) {
         let start_x = i32::min(position1.x, position2.x);
         let end_x = i32::max(position1.x, position2.x);
@@ -129,7 +135,6 @@ impl WallGrid {
         let mut changed_cells: Vec<ParticularCell> = Vec::new();
 
         let container: &mut Node3D = self.container.deref_mut();
-        let mesh_library = self.mesh_library.as_ref().unwrap();
 
         for x in start_x..=end_x {
             for y in start_y..=end_y {
@@ -145,17 +150,9 @@ impl WallGrid {
                         None => {}
                     }
 
-                    if item == -1 {
-                        changed_cells.push(ParticularCell {
-                            pos: position,
-                            slot,
-                            mi: old_cell,
-                            replacer_mi: None,
-                        });
-                        self.contents.take(position, slot);
-                    } else {
+                    if let Some(item) = item {
                         let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
-                        mesh_instance.set_mesh(&mesh_library.get_item_mesh(item).unwrap());
+                        mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(item).unwrap());
 
                         mesh_instance
                             .set_transform(slot_transform(slot).translated(position.cast_float()));
@@ -176,6 +173,14 @@ impl WallGrid {
                         });
 
                         self.contents.set(position, slot, new_cell);
+                    } else {
+                        changed_cells.push(ParticularCell {
+                            pos: position,
+                            slot,
+                            mi: old_cell,
+                            replacer_mi: None,
+                        });
+                        self.contents.take(position, slot);
                     }
                 }
             }
@@ -189,8 +194,33 @@ impl WallGrid {
     }
 
     #[func]
+    pub fn click(&mut self, position: Vector3, selected_mesh_id: i32, remove: bool) {
+        match self.structures[selected_mesh_id as usize]
+            .info
+            .placement_style
+        {
+            structure::PlacementStyle::RoomPlop => {
+                self.room_plop(position, (!remove).then_some(selected_mesh_id))
+            }
+            _ => {}
+        }
+    }
+
+    #[func]
+    pub fn drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32, remove: bool) {
+        let id = (!remove).then_some(selected_mesh_id);
+        match self.structures[selected_mesh_id as usize]
+            .info
+            .placement_style
+        {
+            structure::PlacementStyle::WallDrag => self.wall_drag(from, to, id),
+            structure::PlacementStyle::FloorDrag => self.floor_drag(from, to, id),
+            _ => {}
+        }
+    }
+
     // The user has dragged something wall-like bewteen `from` and `to`
-    pub fn wall_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
+    pub fn wall_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: Option<i32>) {
         let x_diff = to.x - from.x;
         let z_diff = to.z - from.z;
 
@@ -227,8 +257,7 @@ impl WallGrid {
         self.set_range_item_dir(d, start, end, slot, selected_mesh_id);
     }
 
-    #[func]
-    pub fn floor_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32) {
+    pub fn floor_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: Option<i32>) {
         let from_i = from.round().cast_int();
         let to_i = to.round().cast_int();
 
@@ -238,11 +267,10 @@ impl WallGrid {
         self.set_range_item_dir(Dir::Y, start, end, Slot::YFloor, selected_mesh_id);
     }
 
-    #[func]
-    pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: i32) {
+    pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: Option<i32>) {
         let pos = location.round().cast_int() - Vector3i::new(1, 0, 1);
         self.set_range_item_dir(Dir::Z, pos, pos, Slot::Room, selected_mesh_id);
-        if selected_mesh_id == DESK_ID {
+        if selected_mesh_id == Some(DESK_ID) {
             self.contents.get_mut(pos, Slot::Room).unwrap().evaluation = Some(VantageEvaluation {
                 symmetry: 0.5,
                 interest: 0.5,
@@ -269,9 +297,8 @@ impl WallGrid {
 
         self.contents = deserialize_sparse3d(&serialized, |c, _slot| {
             let id = deserialize(c);
-            let mesh_library = self.mesh_library.as_ref().unwrap();
             let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
-            mesh_instance.set_mesh(&mesh_library.get_item_mesh(id).unwrap());
+            mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(id).unwrap());
 
             Ok::<Cell, ()>(Cell {
                 id,
@@ -325,25 +352,6 @@ impl WallGrid {
 
     #[func]
     pub fn update_visibility(&mut self, focus_location: Vector3, camera_location: Vector3) {
-        let cut_wall = self
-            .mesh_library
-            .as_ref()
-            .unwrap()
-            .get_item_mesh(CUT_WALL_ID)
-            .unwrap();
-        let cut_doorway = self
-            .mesh_library
-            .as_ref()
-            .unwrap()
-            .get_item_mesh(CUT_DOORWAY_ID)
-            .unwrap();
-        let cut_stairs = self
-            .mesh_library
-            .as_ref()
-            .unwrap()
-            .get_item_mesh(CUT_STAIRS_ID)
-            .unwrap();
-
         // Clear the old cut walls:
         self.temp_container.propagate_call("queue_free");
         let new_temp_container = Node3D::new_alloc();
@@ -358,26 +366,30 @@ impl WallGrid {
         for (pos, _slot, cell) in self.contents.iter_mut() {
             if (effective_focus_location - pos).sign() == view_direction {
                 cell.mesh.hide();
-            } else if (cell.id == WALL_ID || cell.id == DOORWAY_ID || cell.id == STAIRS_ID)
-                && (effective_focus_location - pos).sign() == last_y_layer
-            {
+            } else if (effective_focus_location - pos).sign() == last_y_layer {
                 cell.mesh.hide();
 
                 let mut cut_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
 
                 cut_instance.set_transform(cell.mesh.get_transform());
-                if cell.id == DOORWAY_ID {
-                    cut_instance.set_mesh(&cut_doorway);
-                } else if cell.id == STAIRS_ID {
-                    cut_instance.set_mesh(&cut_stairs);
-                } else {
-                    cut_instance.set_mesh(&cut_wall);
-                }
+                cut_instance.set_mesh(&self.mesh_library.get_item_mesh(cell.id + 1000).unwrap());
+
                 self.temp_container.add_child(&cut_instance);
             } else {
                 cell.mesh.show();
             }
         }
+    }
+
+    #[func]
+    fn get_ready_to_quit(&mut self) {
+        self.structures.clear();
+
+        for (_, _, cell) in self.contents.iter_mut() {
+            cell.mesh.queue_free();
+        }
+        self.container.queue_free();
+        self.temp_container.queue_free();
     }
 }
 
@@ -389,9 +401,28 @@ impl INode3D for WallGrid {
         let temp_container = Node3D::new_alloc();
         base.to_gd().add_child(&temp_container);
 
+        let structures = structure::load_structures();
+
+        let mut mesh_library = MeshLibrary::new_gd();
+
+        for (id, structure) in structures.iter().enumerate() {
+            mesh_library.create_item(id as i32);
+            mesh_library.create_item(id as i32 + 1000);
+            mesh_library.set_item_mesh(id as i32, &structure.mesh);
+            if let Some(ref cut_mesh) = structure.y_cut_mesh {
+                // HACK; negative numbers for the cutaway versions:
+                mesh_library.set_item_mesh(id as i32 + 1000, cut_mesh);
+            } else {
+                // HACK: instead of doing a lookup, just always replace the mesh (but sometimes
+                // with the same mesh).
+                mesh_library.set_item_mesh(id as i32 + 1000, &structure.mesh);
+            }
+        }
+
         Self {
+            structures,
             undo_record: Vec::new(),
-            mesh_library: None,
+            mesh_library,
             contents: Sparse3D::new(),
             container: container,
             temp_container: temp_container,

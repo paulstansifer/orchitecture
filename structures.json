@@ -1,0 +1,44 @@
+[
+    {
+        "main_mesh": "desk.gltf",
+        "y_cut_mesh": null,
+        "placement_style": "RoomPlop",
+        "x_char": "D",
+        "y_char": "D"
+    },
+    {
+        "main_mesh": "doorway.gltf",
+        "y_cut_mesh": "doorway-cut-y-pos.gltf",
+        "placement_style": "WallDrag",
+        "x_char": "=",
+        "y_char": ":"
+    },
+    {
+        "main_mesh": "floor.gltf",
+        "y_cut_mesh": null,
+        "placement_style": "FloorDrag",
+        "x_char": "#",
+        "y_char": "#"
+    },
+    {
+        "main_mesh": "stairs.gltf",
+        "y_cut_mesh": "stairs-cut-y-pos.gltf",
+        "placement_style": "WallPlop",
+        "x_char": "S",
+        "y_char": "S"
+    },
+    {
+        "main_mesh": "wall.gltf",
+        "y_cut_mesh": "wall-cut-y-pos.gltf",
+        "placement_style": "WallDrag",
+        "x_char": "-",
+        "y_char": "|"
+    },
+    {
+        "main_mesh": "railing.gltf",
+        "y_cut_mesh": null,
+        "placement_style": "WallDrag",
+        "x_char": "…",
+        "y_char": "⋮"
+    }
+]

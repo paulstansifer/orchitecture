@@ -1,55 +1,57 @@
-use core::panic;
+use std::collections::HashMap;
 
-use godot::prelude::*;
+use godot::{classes::Mesh, prelude::*};
+use serde::{Deserialize, Serialize};
 
-#[derive(Var, Export)]
-#[godot(via=i64)]
-enum PlacmentStyle {
-    DoNotPlace,
+use crate::mesh_management::load_meshes;
+
+#[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum PlacementStyle {
     WallDrag,
     FloorDrag,
     RoomPlop,
     WallPlop,
 }
 
-impl GodotConvert for PlacmentStyle {
-    type Via = i64;
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct StructureInfo {
+    pub main_mesh: String,
+    pub y_cut_mesh: Option<String>,
+    pub placement_style: PlacementStyle,
+    pub x_char: Option<char>,
+    pub y_char: Option<char>,
 }
-impl ToGodot for PlacmentStyle {
-    type ToVia<'v> = i64;
-    fn to_godot(&self) -> i64 {
-        match self {
-            PlacmentStyle::DoNotPlace => 0,
-            PlacmentStyle::WallDrag => 1,
-            PlacmentStyle::FloorDrag => 2,
-            PlacmentStyle::RoomPlop => 3,
-            PlacmentStyle::WallPlop => 4,
-        }
-    }
+
+pub struct Structure {
+    pub info: StructureInfo,
+    pub mesh: Gd<Mesh>,
+    pub y_cut_mesh: Option<Gd<Mesh>>,
 }
-impl FromGodot for PlacmentStyle {
-    fn try_from_godot(value: i64) -> Result<Self, ConvertError> {
-        match value {
-            0 => Ok(PlacmentStyle::DoNotPlace),
-            1 => Ok(PlacmentStyle::WallDrag),
-            2 => Ok(PlacmentStyle::FloorDrag),
-            3 => Ok(PlacmentStyle::RoomPlop),
-            4 => Ok(PlacmentStyle::WallPlop),
-            _ => panic!("bad enum"),
+
+impl Structure {
+    pub fn new(info: StructureInfo, meshes: &HashMap<String, Gd<Mesh>>) -> Structure {
+        let main_mesh = meshes.get(&info.main_mesh).unwrap().clone();
+        let y_cut_mesh = info
+            .y_cut_mesh
+            .as_ref()
+            .map(|name| meshes.get(name).unwrap().clone());
+        Structure {
+            info,
+            mesh: main_mesh,
+            y_cut_mesh,
         }
     }
 }
 
-#[derive(GodotClass)]
-#[class(base=Resource,no_init)]
-struct Buildable {
-    #[export]
-    model_file: GString,
-    #[export]
-    id: i32,
-    #[export]
-    name: GString,
-    #[export]
-    placement_style: PlacmentStyle,
-    base: Base<Resource>,
+pub fn load_structures() -> Vec<Structure> {
+    let meshes = load_meshes();
+    let json_content = include_str!("../../structures.json");
+    let infos: Vec<StructureInfo> = serde_json::from_str(json_content).unwrap();
+    let mut structures = vec![];
+
+    for info in infos {
+        structures.push(Structure::new(info, &meshes));
+    }
+
+    structures
 }
