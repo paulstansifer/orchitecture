@@ -91,12 +91,12 @@ func _unhandled_input(event: InputEvent) -> void:
 # Saving/load
 
 func save_command():
-	wallgrid.save(filename.text)
-	var content = FileAccess.get_file_as_bytes(filename.text)
+	wallgrid.save("training/" + filename.text)
+	var content = FileAccess.get_file_as_bytes("training/" + filename.text)
 	JavaScriptBridge.download_buffer(content, filename.text)
 
 func load_command():
-	wallgrid.load(filename.text)
+	wallgrid.load("training/" + filename.text)
 
 
 func accept_actions():

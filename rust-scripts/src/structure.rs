@@ -19,7 +19,7 @@ pub struct StructureInfo {
     pub y_cut_mesh: Option<String>,
     pub placement_style: PlacementStyle,
     pub x_char: Option<char>,
-    pub y_char: Option<char>,
+    pub z_char: Option<char>,
 }
 
 pub struct Structure {

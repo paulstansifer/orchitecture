@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 use std::ops::DerefMut;
 
@@ -13,7 +14,7 @@ use crate::sparse3d::{Slot, Sparse3D};
 use crate::structure::{self, Structure};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-enum Dir {
+pub enum Dir {
     X,
     Y,
     Z,
@@ -270,10 +271,16 @@ impl WallGrid {
 
     #[func]
     pub fn save(&self, filename: GString) {
+        let mut structures_by_id = HashMap::new();
+        for (id, structure) in self.structures.iter().enumerate() {
+            structures_by_id.insert(id as i32, structure.info.clone());
+        }
+
         let serialized = serialization::serialize_sparse3d(
             &self.contents,
-            |cell, slot| serialization::serialize_slot(cell.id, slot),
+            |cell, slot, structures| serialization::serialize_slot(cell.id, slot, structures),
             serialization::cell_needs_extended,
+            &structures_by_id,
         );
         let mut file = GFile::open(&filename, ModeFlags::WRITE).unwrap();
         file.write_gstring(&serialized).unwrap();
@@ -285,17 +292,31 @@ impl WallGrid {
         let mut file = GFile::open(&filename, ModeFlags::READ).unwrap();
         let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
 
-        self.contents = serialization::deserialize_sparse3d(&serialized, |c, _slot| {
-            let id = serialization::deserialize(c);
-            let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
-            mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(id).unwrap());
+        let mut structures_by_char = HashMap::new();
+        for (id, structure) in self.structures.iter().enumerate() {
+            if let Some(x_char) = structure.info.x_char {
+                structures_by_char.insert(x_char, id as i32);
+            }
+            if let Some(z_char) = structure.info.z_char {
+                structures_by_char.insert(z_char, id as i32);
+            }
+        }
 
-            Ok::<Cell, ()>(Cell {
-                id,
-                mesh: mesh_instance,
-                evaluation: None,
-            })
-        })
+        self.contents = serialization::deserialize_sparse3d(
+            &serialized,
+            |c, _slot, structures_by_char| {
+                let id = serialization::deserialize(c, structures_by_char);
+                let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
+                mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(id).unwrap());
+
+                Ok::<Cell, ()>(Cell {
+                    id,
+                    mesh: mesh_instance,
+                    evaluation: None,
+                })
+            },
+            &structures_by_char,
+        )
         .unwrap();
 
         self.container.propagate_call("queue_free");

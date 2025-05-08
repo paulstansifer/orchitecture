@@ -4,7 +4,10 @@ use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
 use burn::tensor::{Float, TensorData};
 use godot::builtin::Vector3i;
+use std::collections::HashMap;
 use std::error::Error;
+
+use crate::structure::{self};
 
 const INPUT_CHANNELS: usize = 16; // 16 colors
 
@@ -66,6 +69,17 @@ pub fn load_training_data(
     let path = Path::new(directory);
     let mut training_data = Vec::new();
 
+    let structures = structure::load_structures();
+    let mut structures_by_char = HashMap::new();
+    for (id, structure) in structures.iter().enumerate() {
+        if let Some(x_char) = structure.info.x_char {
+            structures_by_char.insert(x_char, id as i32);
+        }
+        if let Some(z_char) = structure.info.z_char {
+            structures_by_char.insert(z_char, id as i32);
+        }
+    }
+
     for entry in fs::read_dir(path).expect("Failed to read directory") {
         let entry = entry.expect("Failed to read entry");
         let path = entry.path();
@@ -74,13 +88,14 @@ pub fn load_training_data(
             let content = fs::read_to_string(&path).expect("Failed to read file");
             let sparse_data = crate::serialization::deserialize_sparse3d::<OfflineCell, _, ()>(
                 &content,
-                |c, _slot| {
-                    let id = crate::serialization::deserialize(c);
+                |c, _slot, structures_by_char| {
+                    let id = crate::serialization::deserialize(c, structures_by_char);
                     Ok(OfflineCell {
                         id,
                         evaluation: None,
                     })
                 },
+                &structures_by_char,
             )
             .expect("Failed to deserialize");
 
