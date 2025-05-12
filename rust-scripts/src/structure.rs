@@ -28,6 +28,29 @@ pub struct Structure {
     pub y_cut_mesh: Option<Gd<Mesh>>,
 }
 
+// Rooms: 4 compass directions (4 walls), and up/down (2 floors)
+// Walls: 4 compass directions (2 walls, 2 rooms), plus forward/backward x up/down (4 floors)
+// Floors: Up/down (rooms), 4 compass x up/down (8 walls)
+
+// pub enum SlotOffset {}
+
+// pub struct Offset {
+//     cell: Vector3i,
+//     slot: SlotOffset,
+// }
+
+// struct Pattern {
+//     sub_pats: Vec<(Offset, ())>,
+// }
+
+// pub struct OrderedMeshRules {
+//     ordered_rules: Vec<(Pattern, crate::mesh_management::MeshId)>,
+// }
+
+// pub struct MeshRules {
+//     coexistenting_rules: Vec<OrderedMeshRules>,
+// }
+
 impl Structure {
     pub fn new(info: StructureInfo, meshes: &HashMap<String, Gd<Mesh>>) -> Structure {
         let main_mesh = meshes.get(&info.main_mesh).unwrap().clone();
