@@ -2,7 +2,7 @@ use godot::builtin::Vector3i;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::sparse3d::Slot;
+use crate::sparse3d::{RelSlot, SlotLocation};
 use crate::structure::StructureInfo;
 use crate::wall_grid::Cell;
 
@@ -10,11 +10,13 @@ pub fn cell_needs_extended(c: &Cell) -> bool {
     c.evaluation.is_some()
 }
 
-pub fn serialize_slot(id: i32, slot: Slot, structures: &HashMap<i32, StructureInfo>) -> char {
+pub fn serialize_slot(id: i32, slot: RelSlot, structures: &HashMap<i32, StructureInfo>) -> char {
     let structure_info = structures.get(&id).unwrap();
     match slot {
-        Slot::XWall => structure_info.x_char.unwrap_or(' '),
-        Slot::ZWall | _ => structure_info.z_char.unwrap_or(' '),
+        RelSlot::XLoWall | RelSlot::XHiWall => structure_info.x_char.unwrap_or(' '),
+        RelSlot::ZLoWall | RelSlot::ZHiWall | RelSlot::Floor | RelSlot::Ceiling | RelSlot::Room => {
+            structure_info.z_char.unwrap_or(' ')
+        }
     }
 }
 
@@ -24,7 +26,7 @@ pub fn deserialize(c: char, structures: &HashMap<char, i32>) -> i32 {
         .unwrap_or_else(|| panic!("Unknown character for deserialization: {}", c))
 }
 
-fn extended_serialize_at<T: Serialize>(pos: Vector3i, slot: Slot, cell: &T) -> String {
+fn extended_serialize_at<T: Serialize>(pos: Vector3i, slot: RelSlot, cell: &T) -> String {
     format!(
         "({},{},{},{})={}\n",
         pos.x,
@@ -35,7 +37,7 @@ fn extended_serialize_at<T: Serialize>(pos: Vector3i, slot: Slot, cell: &T) -> S
     )
 }
 
-fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (Vector3i, Slot, T) {
+fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (Vector3i, RelSlot, T) {
     let parts: Vec<&str> = line.split('=').collect();
     if parts.len() != 2 {
         panic!("Invalid extended serialization format");
@@ -52,7 +54,7 @@ fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (Vector3i, 
         coords[1].parse::<i32>().unwrap(),
         coords[2].parse::<i32>().unwrap(),
     );
-    let slot: Slot = serde_json::from_str(coords[3]).unwrap();
+    let slot: RelSlot = serde_json::from_str(coords[3]).unwrap();
     let cell: T = serde_json::from_str(parts[1]).unwrap();
 
     (pos, slot, cell)
@@ -60,7 +62,7 @@ fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (Vector3i, 
 
 pub fn serialize_sparse3d(
     grid: &crate::sparse3d::Sparse3D<Cell>,
-    f: fn(&Cell, Slot, &HashMap<i32, StructureInfo>) -> char,
+    f: fn(&Cell, RelSlot, &HashMap<i32, StructureInfo>) -> char,
     cell_needs_extended: fn(&Cell) -> bool,
     structures: &HashMap<i32, StructureInfo>,
 ) -> String {
@@ -69,8 +71,9 @@ pub fn serialize_sparse3d(
     for y in min.y..=max.y {
         for z in min.z..=max.z {
             for x in min.x..=max.x {
-                for slot in [Slot::YFloor, Slot::ZWall] {
-                    if let Some(value) = grid.get(Vector3i::new(x, y, z), slot) {
+                for slot in [RelSlot::Floor, RelSlot::ZLoWall] {
+                    let loc = SlotLocation::new(x, y, z, slot);
+                    if let Some(value) = grid.get(loc) {
                         serialized.push(f(value, slot, structures))
                     } else {
                         serialized.push(' ');
@@ -79,8 +82,9 @@ pub fn serialize_sparse3d(
             }
             serialized.push_str("\n");
             for x in min.x..=max.x {
-                for slot in [Slot::XWall, Slot::Room] {
-                    if let Some(value) = grid.get(Vector3i::new(x, y, z), slot) {
+                for slot in [RelSlot::XLoWall, RelSlot::Room] {
+                    let loc = SlotLocation::new(x, y, z, slot);
+                    if let Some(value) = grid.get(loc) {
                         serialized.push(f(value, slot, structures));
                     } else {
                         serialized.push(' ');
@@ -93,9 +97,9 @@ pub fn serialize_sparse3d(
         serialized.push_str("~~~~~\n");
     }
     serialized.push_str("~*~*~\n");
-    for (pos, slot, cell) in grid.iter() {
+    for (loc, cell) in grid.iter() {
         if cell_needs_extended(cell) {
-            let extended_ser = extended_serialize_at(pos - min, slot, cell);
+            let extended_ser = extended_serialize_at(loc.cube - min, loc.rel_slot, cell);
             serialized.push_str(&extended_ser);
         }
     }
@@ -109,7 +113,7 @@ pub fn deserialize_sparse3d<'a, T, F, E>(
     structures_by_char: &HashMap<char, i32>,
 ) -> Result<crate::sparse3d::Sparse3D<T>, E>
 where
-    F: FnMut(char, Slot, &HashMap<char, i32>) -> Result<T, E>,
+    F: FnMut(char, RelSlot, &HashMap<char, i32>) -> Result<T, E>,
     T: Deserialize<'a> + Serialize,
 {
     let mut grid = crate::sparse3d::Sparse3D::new();
@@ -134,7 +138,8 @@ where
             // Start of evaluated cells data
             for line in lines_it {
                 let (pos, slot, cell) = extended_deserialize_at(line);
-                grid.set(pos, slot, cell);
+                let loc = SlotLocation::new(pos.x, pos.y, pos.z, slot);
+                grid.set(loc, cell);
             }
             break;
         }
@@ -159,17 +164,14 @@ where
             let xwall_ch = bottom_line[x * 2];
 
             for (ch, slot) in [
-                (zwall_ch, Slot::ZWall),
-                (room_ch, Slot::Room),
-                (floor_ch, Slot::YFloor),
-                (xwall_ch, Slot::XWall),
+                (zwall_ch, RelSlot::ZLoWall),
+                (room_ch, RelSlot::Room),
+                (floor_ch, RelSlot::Floor),
+                (xwall_ch, RelSlot::XLoWall),
             ] {
                 if ch != ' ' {
-                    grid.set(
-                        Vector3i::new(x as i32, y, z),
-                        slot,
-                        f(ch, slot, structures_by_char)?,
-                    );
+                    let loc = SlotLocation::new(x as i32, y, z, slot);
+                    grid.set(loc, f(ch, slot, structures_by_char)?);
                 }
             }
         }

@@ -1,4 +1,4 @@
-use crate::sparse3d::{Slot, Sparse3D};
+use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
 use crate::wall_grid::OfflineCell;
 use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
@@ -18,16 +18,17 @@ type Gpu = burn::backend::Autodiff<burn::backend::NdArray<f32, i32>>;
 fn grid_coord_to_voxel_coord(
     pos: Vector3i,
     min: Vector3i,
-    slot: Slot,
+    rel_slot: RelSlot,
     channel: usize,
 ) -> [std::ops::Range<usize>; 5] {
     let adj_vec = (pos - min) * 2;
     let vox_vec = adj_vec
-        + match slot {
-            Slot::Room => Vector3i::new(0, 0, 0),
-            Slot::ZWall => Vector3i::new(0, 0, 1),
-            Slot::YFloor => Vector3i::new(0, 1, 0),
-            Slot::XWall => Vector3i::new(1, 0, 0),
+        + match rel_slot {
+            // Match on RelSlot
+            RelSlot::Room => Vector3i::new(0, 0, 0),
+            RelSlot::ZLoWall | RelSlot::ZHiWall => Vector3i::new(0, 0, 1),
+            RelSlot::Floor | RelSlot::Ceiling => Vector3i::new(0, 1, 0),
+            RelSlot::XLoWall | RelSlot::XHiWall => Vector3i::new(1, 0, 0),
         };
     let x = vox_vec.x as usize;
     let y = vox_vec.y as usize;
@@ -117,11 +118,11 @@ pub fn load_training_data(
 
 // Just handles a single datum, but the tensors could hold a batch
 pub fn sparse3d_at_vantage(sparse_data: &Sparse3D<OfflineCell>) -> GroundTruth {
-    for (pos, _slot, cell) in sparse_data.iter() {
+    for (loc, cell) in sparse_data.iter() {
         if let Some(eval) = &cell.evaluation {
             let tensor = sparse3d_to_tensor(
                 sparse_data,
-                /*center_coord=*/ pos,
+                /*center_coord=*/ loc.cube,
                 |cell| cell.id as usize,
             )
             .unwrap();
@@ -162,10 +163,16 @@ pub fn sparse3d_to_tensor<T>(
     for grid_x in min_coord.x..=max_coord.x {
         for grid_y in min_coord.y..=max_coord.y {
             for grid_z in min_coord.z..=max_coord.z {
-                for slot in [Slot::Room, Slot::XWall, Slot::YFloor, Slot::ZWall] {
+                for slot in [
+                    RelSlot::Room,
+                    RelSlot::XLoWall,
+                    RelSlot::Floor,
+                    RelSlot::ZLoWall,
+                ] {
                     let grid_pos = Vector3i::new(grid_x, grid_y, grid_z);
+                    let slot_location = SlotLocation::new(grid_x, grid_y, grid_z, slot);
 
-                    if let Some(ref cell) = sparse_data.get(grid_pos, slot) {
+                    if let Some(ref cell) = sparse_data.get(slot_location) {
                         let channel = embedding(cell);
                         assert!(channel < INPUT_CHANNELS);
                         // Right now, we're using a one-hot representation of grid elements
@@ -211,10 +218,10 @@ mod tests {
     fn test_sparse3d_to_tensor() -> Result<(), Box<dyn Error>> {
         let mut sparse_data: Sparse3D<usize> = Sparse3D::new();
         // Add some dummy data to the sparse grid
-        sparse_data.set(Vector3i::new(0, 0, 0), Slot::Room, 5);
-        sparse_data.set(Vector3i::new(1, 0, 0), Slot::XWall, 10);
-        sparse_data.set(Vector3i::new(0, 1, 0), Slot::YFloor, 2);
-        sparse_data.set(Vector3i::new(0, 0, 1), Slot::ZWall, 11);
+        sparse_data.set(SlotLocation::new(0, 0, 0, RelSlot::Room), 5);
+        sparse_data.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), 10);
+        sparse_data.set(SlotLocation::new(0, 1, 0, RelSlot::Floor), 2);
+        sparse_data.set(SlotLocation::new(0, 0, 1, RelSlot::ZLoWall), 11);
 
         // Convert a region around (0, 0, 0) to a tensor
         let center_coord = Vector3i::new(0, 0, 0);

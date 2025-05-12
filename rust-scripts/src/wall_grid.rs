@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::qnn;
 use crate::serialization;
-use crate::sparse3d::{Slot, Sparse3D};
+use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
 use crate::structure::{self, Structure};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
@@ -22,7 +22,7 @@ pub enum Dir {
 
 struct ParticularCell {
     pos: Vector3i,
-    slot: Slot,
+    slot: RelSlot,
     mi: Option<Cell>,
     replacer_mi: Option<Cell>,
 }
@@ -78,15 +78,15 @@ pub struct WallGrid {
 }
 
 // `Room` allows multiple orientations, but all other slots only allow a single orientation.
-fn slot_transform(slot: Slot) -> Transform3D {
+fn slot_transform(slot: RelSlot) -> Transform3D {
     let xform = Transform3D::IDENTITY
         .rotated(Vector3::RIGHT, -TAU / 4.0)
         .rotated(Vector3::UP, TAU / 2.0);
     (match slot {
-        Slot::Room => xform,
-        Slot::XWall => xform,
-        Slot::YFloor => xform.rotated(Vector3::UP, TAU / -4.0),
-        Slot::ZWall => xform.rotated(Vector3::UP, -TAU / 4.0),
+        RelSlot::Room => xform,
+        RelSlot::XLoWall | RelSlot::XHiWall => xform,
+        RelSlot::Floor | RelSlot::Ceiling => xform.rotated(Vector3::UP, TAU / -4.0),
+        RelSlot::ZLoWall | RelSlot::ZHiWall => xform.rotated(Vector3::UP, -TAU / 4.0),
     })
     .translated(Vector3::new(1.0, 0.0, 1.0))
 }
@@ -113,7 +113,7 @@ impl WallGrid {
         _dir: Dir,
         position1: Vector3i,
         position2: Vector3i,
-        slot: Slot,
+        slot: RelSlot,
         item: Option<i32>,
     ) {
         let start_x = i32::min(position1.x, position2.x);
@@ -131,8 +131,9 @@ impl WallGrid {
             for y in start_y..=end_y {
                 for z in start_z..=end_z {
                     let position = Vector3i::new(x, y, z);
+                    let loc = SlotLocation::new(x, y, z, slot);
 
-                    let old_cell = self.contents.take(position, slot);
+                    let old_cell = self.contents.take(loc);
 
                     match old_cell {
                         Some(ref old_cell) => {
@@ -163,7 +164,7 @@ impl WallGrid {
                             replacer_mi: Some(new_cell.clone()),
                         });
 
-                        self.contents.set(position, slot, new_cell);
+                        self.contents.set(loc, new_cell);
                     } else {
                         changed_cells.push(ParticularCell {
                             pos: position,
@@ -171,7 +172,7 @@ impl WallGrid {
                             mi: old_cell,
                             replacer_mi: None,
                         });
-                        self.contents.take(position, slot);
+                        self.contents.take(loc);
                     }
                 }
             }
@@ -240,9 +241,9 @@ impl WallGrid {
             };
 
         let slot = if d == Dir::X {
-            Slot::XWall
+            RelSlot::XLoWall
         } else {
-            Slot::ZWall
+            RelSlot::ZLoWall
         };
 
         self.set_range_item_dir(d, start, end, slot, selected_mesh_id);
@@ -255,14 +256,15 @@ impl WallGrid {
         let start = Vector3i::coord_min(from_i, to_i);
         let end = Vector3i::coord_max(from_i, to_i) - Vector3i::new(1, 0, 1);
 
-        self.set_range_item_dir(Dir::Y, start, end, Slot::YFloor, selected_mesh_id);
+        self.set_range_item_dir(Dir::Y, start, end, RelSlot::Floor, selected_mesh_id);
     }
 
     pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: Option<i32>) {
         let pos = location.round().cast_int() - Vector3i::new(1, 0, 1);
-        self.set_range_item_dir(Dir::Z, pos, pos, Slot::Room, selected_mesh_id);
+        self.set_range_item_dir(Dir::Z, pos, pos, RelSlot::Room, selected_mesh_id);
         if selected_mesh_id == Some(DESK_ID) {
-            self.contents.get_mut(pos, Slot::Room).unwrap().evaluation = Some(VantageEvaluation {
+            let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
+            self.contents.get_mut(loc).unwrap().evaluation = Some(VantageEvaluation {
                 symmetry: 0.5,
                 interest: 0.5,
             });
@@ -324,9 +326,9 @@ impl WallGrid {
         self.base_mut().add_child(&container);
         self.container = container;
 
-        for (pos, slot, cell) in self.contents.iter_mut() {
+        for (loc, cell) in self.contents.iter_mut() {
             cell.mesh
-                .set_transform(slot_transform(slot).translated(pos.cast_float()));
+                .set_transform(slot_transform(loc.rel_slot).translated(loc.cube.cast_float()));
             self.container.add_child(&cell.mesh);
         }
         godot_print!("Loaded from {}", file.path_absolute());
@@ -345,10 +347,11 @@ impl WallGrid {
                 }
 
                 if let Some(ref old_cell) = cell.mi {
-                    self.container.add_child(&old_cell.mesh);
-                    self.contents.set(position, slot, old_cell.clone());
+                    let loc = SlotLocation::new(position.x, position.y, position.z, slot);
+                    self.contents.set(loc, old_cell.clone());
                 } else {
-                    self.contents.take(position, slot);
+                    let loc = SlotLocation::new(position.x, position.y, position.z, slot);
+                    self.contents.take(loc);
                 }
             }
         }
@@ -374,10 +377,10 @@ impl WallGrid {
             + Vector3i::new(view_direction.x * 2, 0, view_direction.z * 2);
 
         let last_y_layer = Vector3i::new(view_direction.x, 0, view_direction.z);
-        for (pos, _slot, cell) in self.contents.iter_mut() {
-            if (effective_focus_location - pos).sign() == view_direction {
+        for (loc, cell) in self.contents.iter_mut() {
+            if (effective_focus_location - loc.cube).sign() == view_direction {
                 cell.mesh.hide();
-            } else if (effective_focus_location - pos).sign() == last_y_layer {
+            } else if (effective_focus_location - loc.cube).sign() == last_y_layer {
                 cell.mesh.hide();
 
                 let mut cut_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
@@ -396,7 +399,7 @@ impl WallGrid {
     fn get_ready_to_quit(&mut self) {
         self.structures.clear();
 
-        for (_, _, cell) in self.contents.iter_mut() {
+        for (_, cell) in self.contents.iter_mut() {
             cell.mesh.queue_free();
         }
         self.container.queue_free();
