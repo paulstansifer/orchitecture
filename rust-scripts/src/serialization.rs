@@ -69,7 +69,7 @@ pub fn serialize_sparse3d(
     for y in min.y..=max.y {
         for z in min.z..=max.z {
             for x in min.x..=max.x {
-                for slot in [Slot::Room, Slot::ZWall] {
+                for slot in [Slot::YFloor, Slot::ZWall] {
                     if let Some(value) = grid.get(Vector3i::new(x, y, z), slot) {
                         serialized.push(f(value, slot, structures))
                     } else {
@@ -79,7 +79,7 @@ pub fn serialize_sparse3d(
             }
             serialized.push_str("\n");
             for x in min.x..=max.x {
-                for slot in [Slot::XWall, Slot::YFloor] {
+                for slot in [Slot::XWall, Slot::Room] {
                     if let Some(value) = grid.get(Vector3i::new(x, y, z), slot) {
                         serialized.push(f(value, slot, structures));
                     } else {
@@ -145,12 +145,17 @@ where
             .expect("Lines must come in pairs")
             .chars()
             .collect::<Vec<_>>();
-        assert!(top_line.len() == bottom_line.len());
+        assert!(
+            top_line.len() == bottom_line.len(),
+            "{:?} != {:?}",
+            top_line,
+            bottom_line
+        );
 
         for x in 0..top_line.len() / 2 {
             let zwall_ch = top_line[x * 2 + 1];
-            let room_ch = top_line[x * 2];
-            let floor_ch = bottom_line[x * 2 + 1];
+            let floor_ch = top_line[x * 2];
+            let room_ch = bottom_line[x * 2 + 1];
             let xwall_ch = bottom_line[x * 2];
 
             for (ch, slot) in [

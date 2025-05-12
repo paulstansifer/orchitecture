@@ -3,15 +3,15 @@
         "main_mesh": "desk.gltf",
         "y_cut_mesh": null,
         "placement_style": "RoomPlop",
-        "x_char": "D",
-        "z_char": "D"
+        "x_char": "V",
+        "z_char": "V"
     },
     {
         "main_mesh": "doorway.gltf",
         "y_cut_mesh": "doorway-cut-y-pos.gltf",
         "placement_style": "WallDrag",
-        "x_char": "=",
-        "z_char": ":"
+        "x_char": "D",
+        "z_char": "D"
     },
     {
         "main_mesh": "floor.gltf",
@@ -38,7 +38,7 @@
         "main_mesh": "railing.gltf",
         "y_cut_mesh": null,
         "placement_style": "WallDrag",
-        "x_char": "…",
-        "z_char": "⋮"
+        "x_char": "R",
+        "z_char": "R"
     }
 ]
