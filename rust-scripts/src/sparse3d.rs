@@ -32,7 +32,7 @@ pub enum RelSlot {
 }
 
 impl RelSlot {
-    fn absolute_offset(&self) -> Vector3i {
+    fn absolute_offset(self) -> Vector3i {
         match self {
             RelSlot::XHiWall => Vector3i::new(1, 0, 0),
             RelSlot::Ceiling => Vector3i::new(0, 1, 0),
@@ -41,7 +41,7 @@ impl RelSlot {
         }
     }
 
-    fn as_absolute_slot(&self) -> Slot {
+    fn as_absolute_slot(self) -> Slot {
         match self {
             RelSlot::XLoWall | RelSlot::XHiWall => Slot::XWall,
             RelSlot::Floor | RelSlot::Ceiling => Slot::YFloor,
@@ -56,6 +56,18 @@ impl RelSlot {
             Slot::YFloor => RelSlot::Floor,
             Slot::ZWall => RelSlot::ZLoWall,
             Slot::Room => RelSlot::Room,
+        }
+    }
+
+    pub fn direction_of_neighbor(self) -> Vector3i {
+        match self {
+            RelSlot::XHiWall => Vector3i::new(1, 0, 0),
+            RelSlot::Ceiling => Vector3i::new(0, 1, 0),
+            RelSlot::ZHiWall => Vector3i::new(0, 0, 1),
+            RelSlot::XLoWall => Vector3i::new(-1, 0, 0),
+            RelSlot::Floor => Vector3i::new(0, -1, 0),
+            RelSlot::ZLoWall => Vector3i::new(0, 0, -1),
+            RelSlot::Room => panic!(),
         }
     }
 }

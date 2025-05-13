@@ -8,10 +8,10 @@ use godot::prelude::*;
 use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
 use serde::{Deserialize, Serialize};
 
-use crate::qnn;
 use crate::serialization;
 use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
 use crate::structure::{self, Structure};
+use crate::{example_structures, qnn};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Dir {
@@ -93,6 +93,48 @@ fn slot_transform(slot: RelSlot) -> Transform3D {
 
 #[godot_api]
 impl WallGrid {
+    pub fn to_offline(&self) -> Sparse3D<OfflineCell> {
+        let mut offline_grid = Sparse3D::new();
+        for (loc, cell) in self.contents.iter() {
+            offline_grid.set(
+                loc,
+                OfflineCell {
+                    id: cell.id,
+                    evaluation: cell.evaluation.clone(),
+                },
+            );
+        }
+        offline_grid
+    }
+
+    pub fn from_offline(&mut self, offline_grid: Sparse3D<OfflineCell>) {
+        self.contents = Sparse3D::new();
+        for (loc, offline_cell) in offline_grid.iter() {
+            let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
+            mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(offline_cell.id).unwrap());
+
+            self.contents.set(
+                loc,
+                Cell {
+                    id: offline_cell.id,
+                    mesh: mesh_instance,
+                    evaluation: offline_cell.evaluation.clone(),
+                },
+            );
+        }
+
+        self.container.propagate_call("queue_free");
+        let container = Node3D::new_alloc();
+        self.base_mut().add_child(&container);
+        self.container = container;
+
+        for (loc, cell) in self.contents.iter_mut() {
+            cell.mesh
+                .set_transform(slot_transform(loc.rel_slot).translated(loc.cube.cast_float()));
+            self.container.add_child(&cell.mesh);
+        }
+    }
+
     #[func]
     pub fn get_structures(&self) -> Array<GString> {
         let mut res = Array::new();
@@ -284,14 +326,24 @@ impl WallGrid {
             serialization::cell_needs_extended,
             &structures_by_id,
         );
-        let mut file = GFile::open(&filename, ModeFlags::WRITE).unwrap();
+        let path = GString::from("training/{0}").format(&filename.to_variant());
+
+        let mut file = GFile::open(&path, ModeFlags::WRITE).unwrap();
         file.write_gstring(&serialized).unwrap();
         godot_print!("Saved to {}", file.path_absolute());
     }
 
     #[func]
     pub fn load(&mut self, filename: GString) {
-        let mut file = GFile::open(&filename, ModeFlags::READ).unwrap();
+        if let Ok(idx) = filename.to_string().parse::<usize>() {
+            let new_map = example_structures::make_structures().remove(idx);
+            self.from_offline(new_map);
+            return;
+        }
+
+        let path = GString::from("training/{0}").format(&filename.to_variant());
+
+        let mut file = GFile::open(&path, ModeFlags::READ).unwrap();
         let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
 
         let mut structures_by_char = HashMap::new();
@@ -304,6 +356,7 @@ impl WallGrid {
             }
         }
 
+        // TODO: a lot of this duplicates `from_offline`; use that instead.
         self.contents = serialization::deserialize_sparse3d(
             &serialized,
             |c, _slot, structures_by_char| {

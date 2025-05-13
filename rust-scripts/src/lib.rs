@@ -5,6 +5,8 @@ struct MyExtension;
 #[gdextension]
 unsafe impl ExtensionLibrary for MyExtension {}
 
+mod build_helpers;
+mod example_structures;
 mod mesh_management;
 mod qnn;
 mod qnn_translate;
