@@ -79,16 +79,13 @@ pub struct WallGrid {
 
 // `Room` allows multiple orientations, but all other slots only allow a single orientation.
 fn slot_transform(slot: RelSlot) -> Transform3D {
-    let xform = Transform3D::IDENTITY
-        .rotated(Vector3::RIGHT, -TAU / 4.0)
-        .rotated(Vector3::UP, TAU / 2.0);
-    (match slot {
+    let xform = Transform3D::IDENTITY.rotated(Vector3::RIGHT, -TAU / 4.0);
+    match slot {
         RelSlot::Room => xform,
-        RelSlot::XLoWall | RelSlot::XHiWall => xform,
-        RelSlot::Floor | RelSlot::Ceiling => xform.rotated(Vector3::UP, TAU / -4.0),
-        RelSlot::ZLoWall | RelSlot::ZHiWall => xform.rotated(Vector3::UP, -TAU / 4.0),
-    })
-    .translated(Vector3::new(1.0, 0.0, 1.0))
+        RelSlot::XLoWall | RelSlot::XHiWall => xform.rotated(Vector3::UP, -TAU / 4.0),
+        RelSlot::Floor | RelSlot::Ceiling => xform.rotated(Vector3::UP, -TAU / 4.0),
+        RelSlot::ZLoWall | RelSlot::ZHiWall => xform,
+    }
 }
 
 #[godot_api]
@@ -272,20 +269,20 @@ impl WallGrid {
             to_i.z = to.z.round() as i32;
         }
 
-        let start = Vector3i::coord_min(from_i, to_i) - Vector3i::new(1, 0, 1);
-        let end = Vector3i::coord_max(from_i, to_i) - Vector3i::new(1, 0, 1);
+        let start = Vector3i::coord_min(from_i, to_i);
+        let end = Vector3i::coord_max(from_i, to_i);
 
-        let start = start
-            + if d == Dir::X {
+        let end = end
+            - if d == Dir::X {
                 Vector3i::new(1, 0, 0)
             } else {
                 Vector3i::new(0, 0, 1)
             };
 
         let slot = if d == Dir::X {
-            RelSlot::XLoWall
-        } else {
             RelSlot::ZLoWall
+        } else {
+            RelSlot::XLoWall
         };
 
         self.set_range_item_dir(d, start, end, slot, selected_mesh_id);
@@ -302,7 +299,7 @@ impl WallGrid {
     }
 
     pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: Option<i32>) {
-        let pos = location.round().cast_int() - Vector3i::new(1, 0, 1);
+        let pos = location.round().cast_int();
         self.set_range_item_dir(Dir::Z, pos, pos, RelSlot::Room, selected_mesh_id);
         if selected_mesh_id == Some(DESK_ID) {
             let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
@@ -326,7 +323,7 @@ impl WallGrid {
             serialization::cell_needs_extended,
             &structures_by_id,
         );
-        let path = GString::from("training/{0}").format(&filename.to_variant());
+        let path = GString::from(format!("training/{filename}"));
 
         let mut file = GFile::open(&path, ModeFlags::WRITE).unwrap();
         file.write_gstring(&serialized).unwrap();
@@ -341,7 +338,7 @@ impl WallGrid {
             return;
         }
 
-        let path = GString::from("training/{0}").format(&filename.to_variant());
+        let path = GString::from(format!("training/{filename}"));
 
         let mut file = GFile::open(&path, ModeFlags::READ).unwrap();
         let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
