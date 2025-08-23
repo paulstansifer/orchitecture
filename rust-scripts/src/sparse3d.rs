@@ -104,6 +104,17 @@ impl SlotLocation {
     }
 }
 
+impl std::ops::Add<Vector3i> for SlotLocation {
+    type Output = Self;
+
+    fn add(self, other: Vector3i) -> Self {
+        SlotLocation {
+            cube: self.cube + other,
+            rel_slot: self.rel_slot,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct BigCoordinates {
     x: i32,

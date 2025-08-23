@@ -3,7 +3,7 @@ use crate::wall_grid::OfflineCell;
 use godot::builtin::Vector3i;
 
 use crate::sparse3d::{RelSlot, Sparse3D};
-use crate::structure::{self, load_structure_info};
+use crate::structure::load_structure_info;
 
 fn v(x: i32, y: i32, z: i32) -> Vector3i {
     Vector3i::new(x, y, z)
@@ -24,7 +24,7 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
     // Like the plain room, but with pillars along both sides.
     let mut plain_pillar_room = Builder::new(&structures);
     plain_pillar_room.build_box(v(-3, 0, 0), v(3, 0, 14));
-    for i in (1..13).step_by(3) {
+    for i in (1..=13).step_by(3) {
         plain_pillar_room.build_box(v(-2, 0, i), v(-2, 0, i));
         plain_pillar_room.build_box(v(2, 0, i), v(2, 0, i));
     }
@@ -33,7 +33,7 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
     // A taller room with pillars: a little more interesting
     let mut tall_pillar_room = Builder::new(&structures);
     tall_pillar_room.build_box(v(-3, 0, 0), v(3, 3, 14));
-    for i in (1..13).step_by(3) {
+    for i in (1..=13).step_by(3) {
         tall_pillar_room.build_box(v(-2, 0, i), v(-2, 3, i));
         tall_pillar_room.build_box(v(2, 0, i), v(2, 3, i));
     }
@@ -45,11 +45,28 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
     nested_corners.build_union_boxes(&[
         (v(0, 0, 0), v(5, 0, 2)),
         (v(0, 0, 0), v(2, 0, 5)),
-        (v(0, 1, 0), v(11, 2, 5)),
-        (v(11, 1, 0), v(5, 2, 11)),
+        (v(-5, 1, 0), v(5, 2, 5)),
+        (v(-5, 1, 0), v(-1, 2, 11)),
     ]);
-    nested_corners.build_plane(v(0, 1, 5), v(5, 1, 5), RelSlot::ZHiWall, Some("railing"));
+    nested_corners.build_plane(v(0, 1, 0), v(0, 1, 5), RelSlot::XLoWall, Some("railing"));
     nested_corners.set_vantage(v(1, 0, 1), /*symmetry=*/ 0.6, /*interest=*/ 0.6);
+
+    let mut gallery = Builder::new(&structures);
+    gallery.build_box(v(-3, 0, 0), v(3, 3, 9));
+
+    // Two platforms:
+    gallery.build_box(v(-3, 0, 4), v(-2, 0, 9));
+    gallery.build_box(v(3, 0, 4), v(2, 0, 9));
+    // A bridge connecting the platforms:
+    gallery.build_plane(v(-1, 1, 6), v(1, 1, 6), RelSlot::Floor, None);
+    // Place railings all around the top surface:
+    gallery.wall_off_drops(v(-3, 1, 4), v(3, 1, 9), "railing");
+    // Doors into the rooms under the platforms:
+    gallery.build_plane(v(-3, 0, 4), v(-3, 0, 4), RelSlot::ZLoWall, Some("doorway"));
+    gallery.build_plane(v(3, 0, 4), v(3, 0, 4), RelSlot::ZLoWall, Some("doorway"));
+    gallery.build_plane(v(-1, 0, 6), v(-1, 0, 6), RelSlot::XLoWall, Some("doorway"));
+    gallery.build_plane(v(1, 0, 6), v(1, 0, 6), RelSlot::XHiWall, Some("doorway"));
+    gallery.set_vantage(v(0, 0, 1), /*symmetry=*/ 0.7, /*interest=*/ 0.7);
 
     vec![
         boring_room.get(),
@@ -57,5 +74,6 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
         plain_pillar_room.get(),
         tall_pillar_room.get(),
         nested_corners.get(),
+        gallery.get(),
     ]
 }

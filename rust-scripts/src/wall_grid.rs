@@ -90,6 +90,7 @@ fn slot_transform(slot: RelSlot) -> Transform3D {
 
 #[godot_api]
 impl WallGrid {
+    #[allow(dead_code)]
     pub fn to_offline(&self) -> Sparse3D<OfflineCell> {
         let mut offline_grid = Sparse3D::new();
         for (loc, cell) in self.contents.iter() {

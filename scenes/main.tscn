@@ -36,7 +36,7 @@ grow_amount = -0.352
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_tefeu"]
 material = SubResource("StandardMaterial3D_tbgi4")
-size = Vector2(1000, 1000)
+size = Vector2(0, 0)
 
 [node name="Main" type="Node3D"]
 

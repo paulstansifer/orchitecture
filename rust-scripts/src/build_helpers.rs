@@ -181,6 +181,43 @@ impl Builder {
         }
     }
 
+    pub fn wall_off_drops(&mut self, corner_a: Vector3i, corner_b: Vector3i, obj_name: &str) {
+        assert!(corner_a.y == corner_b.y);
+
+        let min = Vector3i::coord_min(corner_a, corner_b);
+        let max = Vector3i::coord_max(corner_a, corner_b);
+        let y = min.y;
+
+        let obj = OfflineCell {
+            id: *self.structures.get(obj_name).unwrap() as i32,
+            evaluation: None,
+        };
+
+        for x in min.x..=max.x {
+            for z in min.z..=max.z {
+                for slot in [
+                    RelSlot::XLoWall,
+                    RelSlot::XHiWall,
+                    RelSlot::ZLoWall,
+                    RelSlot::ZHiWall,
+                ] {
+                    let here = SlotLocation::new(x, y, z, RelSlot::Floor);
+                    let neighbor = here + slot.direction_of_neighbor();
+                    let separator = SlotLocation {
+                        rel_slot: slot,
+                        ..here
+                    };
+                    if self.map.get(here).is_some()
+                        && self.map.get(neighbor).is_none()
+                        && self.map.get(separator).is_none()
+                    {
+                        self.map.set(separator, obj.clone());
+                    }
+                }
+            }
+        }
+    }
+
     pub fn set_vantage(&mut self, loc: Vector3i, symmetry: f32, interest: f32) {
         self.map.set(
             SlotLocation::new(loc.x, loc.y, loc.z, RelSlot::Room),
