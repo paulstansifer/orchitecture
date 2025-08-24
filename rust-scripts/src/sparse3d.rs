@@ -31,6 +31,13 @@ pub enum RelSlot {
     ZLoWall,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Rotation {
+    Clockwise,
+    OneEighty,
+    CounterClockwise,
+}
+
 impl RelSlot {
     fn absolute_offset(self) -> Vector3i {
         match self {
@@ -70,6 +77,31 @@ impl RelSlot {
             RelSlot::Room => panic!(),
         }
     }
+    pub fn rotate(self, rotation: Rotation) -> Self {
+        match self {
+            RelSlot::Room | RelSlot::Floor | RelSlot::Ceiling => self,
+            RelSlot::XLoWall => match rotation {
+                Rotation::Clockwise => RelSlot::ZLoWall,
+                Rotation::OneEighty => RelSlot::XHiWall,
+                Rotation::CounterClockwise => RelSlot::ZHiWall,
+            },
+            RelSlot::XHiWall => match rotation {
+                Rotation::Clockwise => RelSlot::ZHiWall,
+                Rotation::OneEighty => RelSlot::XLoWall,
+                Rotation::CounterClockwise => RelSlot::ZLoWall,
+            },
+            RelSlot::ZLoWall => match rotation {
+                Rotation::Clockwise => RelSlot::XLoWall,
+                Rotation::OneEighty => RelSlot::ZHiWall,
+                Rotation::CounterClockwise => RelSlot::XHiWall,
+            },
+            RelSlot::ZHiWall => match rotation {
+                Rotation::Clockwise => RelSlot::XHiWall,
+                Rotation::OneEighty => RelSlot::ZLoWall,
+                Rotation::CounterClockwise => RelSlot::XLoWall,
+            },
+        }
+    }
 }
 
 impl SlotLocation {
@@ -101,6 +133,19 @@ impl SlotLocation {
             slot,
         };
         (big_coords, small_coords)
+    }
+
+    fn rotate(&self, rotation: Rotation) -> Self {
+        let new_coord = match rotation {
+            Rotation::Clockwise => Vector3i::new(-self.cube.z, self.cube.y, self.cube.x),
+            Rotation::CounterClockwise => Vector3i::new(self.cube.z, self.cube.y, -self.cube.x),
+            Rotation::OneEighty => Vector3i::new(-self.cube.x, -self.cube.y, -self.cube.z),
+        };
+
+        SlotLocation {
+            cube: new_coord,
+            rel_slot: self.rel_slot.rotate(rotation),
+        }
     }
 }
 
@@ -330,6 +375,16 @@ impl<T> Sparse3D<T> {
             }
         }
         (min, max)
+    }
+}
+
+impl<T: Clone> Sparse3D<T> {
+    pub fn rotate(&self, rotation: Rotation) -> Self {
+        let mut rotated = Sparse3D::<T>::new();
+        for (loc, value) in self.iter() {
+            rotated.set(loc.rotate(rotation), value.clone());
+        }
+        rotated
     }
 }
 
