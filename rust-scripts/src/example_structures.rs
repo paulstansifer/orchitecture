@@ -68,6 +68,10 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
     gallery.build_plane(v(1, 0, 6), v(1, 0, 6), RelSlot::XHiWall, Some("doorway"));
     gallery.set_vantage(v(0, 0, 1), /*symmetry=*/ 0.7, /*interest=*/ 0.7);
 
+    let mut bad_desk = Builder::new(&structures);
+    bad_desk.build_plane(v(8, 0, 8), v(8, 0, 8), RelSlot::Floor, None);
+    bad_desk.set_vantage(v(8, 0, 8), 1.0, 0.0);
+
     vec![
         boring_room.get(),
         plus_shaped_room.get(),
@@ -75,5 +79,11 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
         tall_pillar_room.get(),
         nested_corners.get(),
         gallery.get(),
+        bad_desk.clone().get(),
+        bad_desk
+            .clone()
+            .get()
+            .rotate(crate::sparse3d::Rotation::Clockwise),
+        bad_desk.get().rotate(crate::sparse3d::Rotation::OneEighty),
     ]
 }

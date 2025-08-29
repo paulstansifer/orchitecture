@@ -91,14 +91,14 @@ impl RelSlot {
                 Rotation::CounterClockwise => RelSlot::ZLoWall,
             },
             RelSlot::ZLoWall => match rotation {
-                Rotation::Clockwise => RelSlot::XLoWall,
+                Rotation::Clockwise => RelSlot::XHiWall,
                 Rotation::OneEighty => RelSlot::ZHiWall,
-                Rotation::CounterClockwise => RelSlot::XHiWall,
+                Rotation::CounterClockwise => RelSlot::XLoWall,
             },
             RelSlot::ZHiWall => match rotation {
-                Rotation::Clockwise => RelSlot::XHiWall,
+                Rotation::Clockwise => RelSlot::XLoWall,
                 Rotation::OneEighty => RelSlot::ZLoWall,
-                Rotation::CounterClockwise => RelSlot::XLoWall,
+                Rotation::CounterClockwise => RelSlot::XHiWall,
             },
         }
     }
@@ -139,7 +139,7 @@ impl SlotLocation {
         let new_coord = match rotation {
             Rotation::Clockwise => Vector3i::new(-self.cube.z, self.cube.y, self.cube.x),
             Rotation::CounterClockwise => Vector3i::new(self.cube.z, self.cube.y, -self.cube.x),
-            Rotation::OneEighty => Vector3i::new(-self.cube.x, -self.cube.y, -self.cube.z),
+            Rotation::OneEighty => Vector3i::new(-self.cube.x, self.cube.y, -self.cube.z),
         };
 
         SlotLocation {
@@ -200,7 +200,7 @@ fn combine_coords(bc: BigCoordinates, sc: SmallCoordinates) -> Vector3i {
     )
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Chunk<T> {
     data: [Option<T>; 256],
 }
@@ -267,7 +267,7 @@ impl<T> IndexMut<SmallCoordinates> for Chunk<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Sparse3D<T> {
     chunks: HashMap<BigCoordinates, Chunk<T>>,
 }

@@ -10,6 +10,7 @@ use crate::{
     wall_grid::OfflineCell,
 };
 
+#[derive(Clone)]
 pub struct Builder {
     map: Sparse3D<OfflineCell>,
     structures: HashMap<String, usize>,
