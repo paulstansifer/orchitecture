@@ -1,5 +1,5 @@
-use crate::build_helpers::*;
 use crate::wall_grid::OfflineCell;
+use crate::{build_helpers::*, llm_rooms};
 use godot::builtin::Vector3i;
 
 use crate::sparse3d::{RelSlot, Sparse3D};
@@ -72,18 +72,16 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
     bad_desk.build_plane(v(8, 0, 8), v(8, 0, 8), RelSlot::Floor, None);
     bad_desk.set_vantage(v(8, 0, 8), 1.0, 0.0);
 
-    vec![
+    let mut res = vec![
         boring_room.get(),
         plus_shaped_room.get(),
         plain_pillar_room.get(),
         tall_pillar_room.get(),
         nested_corners.get(),
         gallery.get(),
-        bad_desk.clone().get(),
-        bad_desk
-            .clone()
-            .get()
-            .rotate(crate::sparse3d::Rotation::Clockwise),
-        bad_desk.get().rotate(crate::sparse3d::Rotation::OneEighty),
-    ]
+    ];
+
+    res.append(&mut llm_rooms::rooms());
+
+    res
 }
