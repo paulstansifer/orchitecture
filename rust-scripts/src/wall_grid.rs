@@ -81,7 +81,7 @@ pub struct WallGrid {
 fn slot_transform(slot: RelSlot) -> Transform3D {
     let xform = Transform3D::IDENTITY.rotated(Vector3::RIGHT, -TAU / 4.0);
     match slot {
-        RelSlot::Room => xform,
+        RelSlot::Room => xform.rotated(Vector3::UP, -TAU / 4.0),
         RelSlot::XLoWall | RelSlot::XHiWall => xform.rotated(Vector3::UP, -TAU / 4.0),
         RelSlot::Floor | RelSlot::Ceiling => xform.rotated(Vector3::UP, -TAU / 4.0),
         RelSlot::ZLoWall | RelSlot::ZHiWall => xform,
