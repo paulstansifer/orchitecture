@@ -164,7 +164,7 @@ where
             let zwall_ch = bottom_line[x * 2 + 1];
 
             for (ch, slot) in [
-                (zwall_ch, RelSlot::ZLoWall),
+                (zwall_ch, RelSlot::ZHiWall),
                 (room_ch, RelSlot::Room),
                 (floor_ch, RelSlot::Floor),
                 (xwall_ch, RelSlot::XLoWall),

@@ -114,4 +114,4 @@
                           
 ~~~~~
 ~*~*~
-(7,0,4,"Room")={"id":0,"evaluation":{"symmetry":0.0,"interest":0.4}}
+(7,0,4,"Room")={"id":0,"evaluation":{"symmetry":0.1,"interest":0.4}}

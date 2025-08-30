@@ -17,6 +17,11 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
     boring_room.build_box(v(-3, 0, 0), v(3, 0, 14));
     boring_room.set_vantage(v(0, 0, 2), /*symmetry=*/ 1.0, /*interest=*/ 0.0);
 
+    let mut boring_room_with_alcove = Builder::new(&structures);
+    boring_room_with_alcove
+        .build_union_boxes(&[(v(-3, 0, 0), v(3, 0, 14)), (v(-2, 0, 2), v(-4, 0, 5))]);
+    boring_room_with_alcove.set_vantage(v(0, 0, 2), /*symmetry=*/ 0.7, /*interest=*/ 0.1);
+
     let mut plus_shaped_room = Builder::new(&structures);
     plus_shaped_room.build_union_boxes(&[(v(-2, 0, -7), v(2, 0, 7)), (v(-7, 0, -2), v(7, 0, 2))]);
     plus_shaped_room.set_vantage(v(0, 0, 0), /*symmetry=*/ 1.0, /*interest=*/ 0.1);
@@ -70,6 +75,7 @@ pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
 
     let mut res = vec![
         boring_room.get(),
+        boring_room_with_alcove.get(),
         plus_shaped_room.get(),
         plain_pillar_room.get(),
         tall_pillar_room.get(),
