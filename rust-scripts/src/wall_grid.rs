@@ -411,7 +411,8 @@ impl WallGrid {
     #[func]
     pub fn dont_actually_call_me() {
         if false {
-            qnn::train(); // Otherwise, we get warnings for things not used in the library.
+            // Otherwise, we get warnings for things not used in the library.
+            qnn::train::<burn::backend::NdArray>();
         }
     }
 

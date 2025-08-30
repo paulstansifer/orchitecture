@@ -1,5 +1,6 @@
 use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
 use crate::wall_grid::OfflineCell;
+use burn::backend::Autodiff;
 use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
 use burn::tensor::{Float, TensorData};
@@ -10,8 +11,6 @@ use std::error::Error;
 use crate::structure::{self};
 
 const INPUT_CHANNELS: usize = 16; // 16 colors
-
-type Gpu = burn::backend::Autodiff<burn::backend::NdArray<f32, i32>>;
 
 // Returns a 5D index into the voxels. Each grid cell is represented by a 2x2x2 cluster of voxels,
 // with each slot occupying a particular position.
@@ -38,18 +37,27 @@ fn grid_coord_to_voxel_coord(
 }
 
 #[derive(Clone, Debug)]
-pub struct GroundTruth {
-    pub voxels: Tensor<Gpu, 5, Float>,
-    pub scores: Tensor<Gpu, 1, Float>,
+pub struct GroundTruth<B: Backend> {
+    pub voxels: Tensor<B, 5, Float>,
+    pub scores: Tensor<B, 1, Float>,
+}
+
+fn convert_ground_truth<B: Backend>(gt: GroundTruth<B>) -> GroundTruth<Autodiff<B>> {
+    GroundTruth {
+        voxels: Tensor::from_inner(gt.voxels),
+        scores: Tensor::from_inner(gt.scores),
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct GroundTruthBatcher {}
 
-impl burn::data::dataloader::batcher::Batcher<GroundTruth, GroundTruth> for GroundTruthBatcher {
-    fn batch(&self, ds: Vec<GroundTruth>) -> GroundTruth {
-        let mut voxels: Vec<Tensor<Gpu, 5, Float>> = Vec::new();
-        let mut scores: Vec<Tensor<Gpu, 1, Float>> = Vec::new();
+impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, GroundTruth<B>>
+    for GroundTruthBatcher
+{
+    fn batch(&self, ds: Vec<GroundTruth<B>>, _device: &B::Device) -> GroundTruth<B> {
+        let mut voxels: Vec<Tensor<B, 5, Float>> = Vec::new();
+        let mut scores: Vec<Tensor<B, 1, Float>> = Vec::new();
 
         for gt in ds {
             voxels.push(gt.voxels);
@@ -64,9 +72,12 @@ impl burn::data::dataloader::batcher::Batcher<GroundTruth, GroundTruth> for Grou
 
 use std::{fs, path::Path};
 
-pub fn load_training_data(
+pub fn load_training_data<B: Backend>(
     directory: &str,
-) -> (InMemDataset<GroundTruth>, InMemDataset<GroundTruth>) {
+) -> (
+    InMemDataset<GroundTruth<Autodiff<B>>>,
+    InMemDataset<GroundTruth<B>>,
+) {
     let path = Path::new(directory);
     let mut training_data = Vec::new();
 
@@ -111,13 +122,19 @@ pub fn load_training_data(
     let (train_data, test_data) = training_data.split_at(split_index);
 
     (
-        InMemDataset::new(train_data.to_vec()),
+        InMemDataset::new(
+            train_data
+                .into_iter()
+                .cloned()
+                .map(convert_ground_truth)
+                .collect(),
+        ),
         InMemDataset::new(test_data.to_vec()),
     )
 }
 
 // Just handles a single datum, but the tensors could hold a batch
-pub fn sparse3d_at_vantage(sparse_data: &Sparse3D<OfflineCell>) -> GroundTruth {
+pub fn sparse3d_at_vantage<B: Backend>(sparse_data: &Sparse3D<OfflineCell>) -> GroundTruth<B> {
     for (loc, cell) in sparse_data.iter() {
         if let Some(eval) = &cell.evaluation {
             let tensor = sparse3d_to_tensor(
@@ -138,11 +155,11 @@ pub fn sparse3d_at_vantage(sparse_data: &Sparse3D<OfflineCell>) -> GroundTruth {
 
 /// Converts a region of Sparse3D data centered around a coordinate to a Tensor,
 /// expanding each Sparse3D cell into a 2x2x2 voxel block.
-pub fn sparse3d_to_tensor<T>(
+pub fn sparse3d_to_tensor<B: Backend, T>(
     sparse_data: &Sparse3D<T>,
     center_coord: Vector3i,
     embedding: fn(&T) -> usize,
-) -> Result<Tensor<Gpu, 5, Float>, Box<dyn Error>> {
+) -> Result<Tensor<B, 5, Float>, Box<dyn Error>> {
     let device = Default::default();
 
     let min_coord = center_coord - Vector3i::new(5, 2, 5);
@@ -157,7 +174,7 @@ pub fn sparse3d_to_tensor<T>(
         (size.z * 2) as usize,
     ]);
 
-    let mut voxels = Tensor::<Gpu, 5>::zeros(shape, &device);
+    let mut voxels = Tensor::<B, 5>::zeros(shape, &device);
 
     // Iterate through the Sparse3D coordinates within the bounding box
     for grid_x in min_coord.x..=max_coord.x {
@@ -179,7 +196,7 @@ pub fn sparse3d_to_tensor<T>(
                         voxels = voxels.slice_assign(
                             grid_coord_to_voxel_coord(grid_pos, min_coord, slot, channel),
                             // A single 1.0, in five dimensions:
-                            Tensor::<Gpu, 5, Float>::ones([1, 1, 1, 1, 1], &device),
+                            Tensor::<B, 5, Float>::ones([1, 1, 1, 1, 1], &device),
                         );
                     }
                 }
@@ -192,6 +209,8 @@ pub fn sparse3d_to_tensor<T>(
 
 #[cfg(test)]
 mod tests {
+    use burn::backend;
+
     use super::*;
     use crate::sparse3d::Sparse3D;
 
@@ -216,6 +235,8 @@ mod tests {
 
     #[test]
     fn test_sparse3d_to_tensor() -> Result<(), Box<dyn Error>> {
+        type B = backend::Autodiff<backend::NdArray<f32, i32>>;
+
         let mut sparse_data: Sparse3D<usize> = Sparse3D::new();
         // Add some dummy data to the sparse grid
         sparse_data.set(SlotLocation::new(0, 0, 0, RelSlot::Room), 5);
@@ -225,7 +246,7 @@ mod tests {
 
         // Convert a region around (0, 0, 0) to a tensor
         let center_coord = Vector3i::new(0, 0, 0);
-        let tensor = sparse3d_to_tensor(&sparse_data, center_coord, |id| *id)?;
+        let tensor = sparse3d_to_tensor::<B, _>(&sparse_data, center_coord, |id| *id)?;
 
         // Check the shape of the resulting tensor
         let expected_shape = Shape::new([1, INPUT_CHANNELS, 22, 12, 22]);
@@ -244,7 +265,7 @@ mod tests {
         );
 
         let tensor_way_far_away =
-            sparse3d_to_tensor(&sparse_data, Vector3i::new(50, 0, 0), |id| *id)?;
+            sparse3d_to_tensor::<B, _>(&sparse_data, Vector3i::new(50, 0, 0), |id| *id)?;
 
         assert_eq!(
             tensor_way_far_away.clone().sum().into_scalar(),

@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use burn::{
-    backend::ndarray::NdArrayDevice,
+    backend::Autodiff,
+    data::dataloader::DataLoader,
     nn::{
         conv::{Conv3d, Conv3dConfig},
         Dropout, DropoutConfig, Linear, LinearConfig, PaddingConfig3d, Relu,
@@ -7,23 +10,22 @@ use burn::{
     optim::AdamConfig,
     prelude::*,
     record::{DefaultFileRecorder, HalfPrecisionSettings},
+    tensor::backend::AutodiffBackend,
     train::RegressionOutput,
 };
 
-type Gpu = burn::backend::Autodiff<burn::backend::NdArray<f32, i32>>;
-
-#[derive(Module, Debug, Clone)]
-pub struct Cnn {
+#[derive(Module, Debug)]
+pub struct Cnn<B: Backend> {
     activation: Relu,
     dropout: Dropout,
-    conv1: Conv3d<Gpu>,
-    conv2: Conv3d<Gpu>,
-    fc1: Linear<Gpu>,
-    fc2: Linear<Gpu>,
+    conv1: Conv3d<B>,
+    conv2: Conv3d<B>,
+    fc1: Linear<B>,
+    fc2: Linear<B>,
 }
 
-impl Cnn {
-    pub fn new(device: &Device<Gpu>) -> Self {
+impl<B: Backend> Cnn<B> {
+    pub fn new(device: &<B as Backend>::Device) -> Self {
         let conv1 = Conv3dConfig::new([16, 32], [3, 3, 3])
             .with_padding(PaddingConfig3d::Same)
             .init(device);
@@ -52,7 +54,7 @@ impl Cnn {
         }
     }
 
-    pub fn forward(&self, x: Tensor<Gpu, 5>) -> Tensor<Gpu, 2> {
+    pub fn forward(&self, x: Tensor<B, 5>) -> Tensor<B, 2> {
         let x = self.conv1.forward(x);
         let x = self.activation.forward(x);
         let x = self.dropout.forward(x);
@@ -62,7 +64,7 @@ impl Cnn {
         let x = self.dropout.forward(x);
         let dims_left = x.dims().len() - 1;
 
-        let x: Tensor<Gpu, 2> = x.flatten(1, dims_left); // Flatten from the channel dimension onwards
+        let x: Tensor<B, 2> = x.flatten(1, dims_left); // Flatten from the channel dimension onwards
         let x = self.fc1.forward(x);
         let x = self.activation.forward(x);
         let x = self.dropout.forward(x);
@@ -72,9 +74,9 @@ impl Cnn {
 
     pub fn forward_classification(
         &self,
-        rooms: Tensor<Gpu, 5>,
-        targets: Tensor<Gpu, 1, Float>,
-    ) -> RegressionOutput<Gpu> {
+        rooms: Tensor<B, 5>,
+        targets: Tensor<B, 1, Float>,
+    ) -> RegressionOutput<B> {
         let output = self.forward(rooms);
         let batch_size = output.dims()[0];
 
@@ -97,16 +99,16 @@ use burn::train::TrainOutput;
 
 use crate::qnn_translate::{load_training_data, GroundTruth, GroundTruthBatcher};
 
-impl burn::train::TrainStep<GroundTruth, RegressionOutput<Gpu>> for Cnn {
-    fn step(&self, batch: GroundTruth) -> TrainOutput<RegressionOutput<Gpu>> {
+impl<B: AutodiffBackend> burn::train::TrainStep<GroundTruth<B>, RegressionOutput<B>> for Cnn<B> {
+    fn step(&self, batch: GroundTruth<B>) -> TrainOutput<RegressionOutput<B>> {
         let item = self.forward_classification(batch.voxels, batch.scores);
 
-        TrainOutput::new::<Gpu, Cnn>(self, item.loss.backward(), item)
+        TrainOutput::new::<B, Cnn<B>>(self, item.loss.backward(), item)
     }
 }
 
-impl burn::train::ValidStep<GroundTruth, RegressionOutput<Gpu>> for Cnn {
-    fn step(&self, batch: GroundTruth) -> RegressionOutput<Gpu> {
+impl<B: Backend> burn::train::ValidStep<GroundTruth<B>, RegressionOutput<B>> for Cnn<B> {
+    fn step(&self, batch: GroundTruth<B>) -> RegressionOutput<B> {
         self.forward_classification(batch.voxels, batch.scores)
     }
 }
@@ -133,8 +135,8 @@ fn create_artifact_dir(artifact_dir: &str) {
     println!("{artifact_dir} created successfully");
 }
 
-pub fn train() {
-    let device: NdArrayDevice = Default::default();
+pub fn train<B: Backend>() {
+    let device: <Autodiff<B> as Backend>::Device = Default::default();
     let config = TrainingConfig::new(AdamConfig::new());
     let artifact_dir = "/tmp/artifacts/";
     create_artifact_dir(artifact_dir);
@@ -142,23 +144,25 @@ pub fn train() {
         .save(format!("{artifact_dir}/config.json"))
         .expect("Config should be saved successfully");
 
-    Gpu::seed(config.seed);
+    B::seed(config.seed);
 
     let batcher = GroundTruthBatcher {};
 
-    let (train_data, test_data) = load_training_data("../training");
+    let (train_data, test_data) = load_training_data::<B>("../training");
 
-    let dataloader_train = burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
-        .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
-        .build(train_data);
+    let dataloader_train: Arc<dyn DataLoader<Autodiff<B>, GroundTruth<Autodiff<B>>>> =
+        burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
+            .batch_size(config.batch_size)
+            .shuffle(config.seed)
+            .num_workers(config.num_workers)
+            .build(train_data);
 
-    let dataloader_test = burn::data::dataloader::DataLoaderBuilder::new(batcher)
-        .batch_size(config.batch_size)
-        .shuffle(config.seed)
-        .num_workers(config.num_workers)
-        .build(test_data);
+    let dataloader_test: Arc<dyn DataLoader<B, GroundTruth<B>>> =
+        burn::data::dataloader::DataLoaderBuilder::new(batcher)
+            .batch_size(config.batch_size)
+            .shuffle(config.seed)
+            .num_workers(config.num_workers)
+            .build(test_data);
 
     let learner = burn::train::LearnerBuilder::new(artifact_dir)
         // .metric_train_numeric(burn::train::metric::AccuracyMetric::new())
@@ -170,8 +174,8 @@ pub fn train() {
         .num_epochs(config.num_epochs)
         .summary()
         .build(
-            Cnn::new(&device),
-            config.optimizer.init::<Gpu, Cnn>(),
+            Cnn::<Autodiff<B>>::new(&device),
+            config.optimizer.init(),
             config.learning_rate,
         );
 
@@ -179,16 +183,16 @@ pub fn train() {
     println!(" Learner set up");
     println!("================");
 
-    let model_trained: Cnn = learner.fit(dataloader_train, dataloader_test);
+    let model_trained = learner.fit(dataloader_train, dataloader_test);
 
     println!("================");
     println!(" Model trained");
     println!("================");
 
-    <Cnn as Module<Gpu>>::save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
-        model_trained,
-        format!("{artifact_dir}/model"),
-        &burn::record::CompactRecorder::new(),
-    )
-    .expect("Trained model should be saved successfully");
+    model_trained
+        .save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
+            format!("{artifact_dir}/model"),
+            &burn::record::CompactRecorder::new(),
+        )
+        .expect("Trained model should be saved successfully");
 }

@@ -18,5 +18,5 @@ mod wall_grid;
 
 #[allow(dead_code)]
 fn main() {
-    qnn::train();
+    qnn::train::<burn::backend::NdArray>();
 }
