@@ -144,18 +144,14 @@ where
             break;
         }
 
-        let top_line = line.chars().collect::<Vec<_>>();
-        let bottom_line = lines_it
-            .next()
-            .expect("Lines must come in pairs")
-            .chars()
-            .collect::<Vec<_>>();
-        assert!(
-            top_line.len() == bottom_line.len(),
-            "{:?} != {:?}",
-            top_line,
-            bottom_line
-        );
+        let mut top_line = line.chars().collect::<Vec<_>>();
+        let mut bottom_line = lines_it.next().unwrap_or("").chars().collect::<Vec<_>>();
+        while top_line.len() < bottom_line.len() {
+            top_line.push(' ');
+        }
+        while bottom_line.len() < top_line.len() {
+            bottom_line.push(' ');
+        }
 
         for x in 0..top_line.len() / 2 {
             let xwall_ch = top_line[x * 2];
