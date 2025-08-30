@@ -36,8 +36,8 @@ const DESK_ID: i32 = 0;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct VantageEvaluation {
-    pub symmetry: f32, // Made public
-    pub interest: f32, // Made public
+    pub symmetry: f32,
+    pub interest: f32,
 }
 
 // Must manually set this up while assembling the scene
@@ -61,7 +61,7 @@ pub struct OfflineCell {
 }
 
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
-// snapped to the coordinate grid. It uses one Godot `GridMap` per direction to store the models.
+// snapped to the coordinate grid.
 #[derive(GodotClass)]
 #[class(base=Node3D)]
 pub struct WallGrid {
@@ -77,7 +77,7 @@ pub struct WallGrid {
     base: Base<Node3D>,
 }
 
-// `Room` allows multiple orientations, but all other slots only allow a single orientation.
+// Fixup to get models into the right spot (necessary, since walls can be X or Y).
 fn slot_transform(slot: RelSlot) -> Transform3D {
     let xform = Transform3D::IDENTITY.rotated(Vector3::RIGHT, -TAU / 4.0);
     match slot {
@@ -476,7 +476,7 @@ impl INode3D for WallGrid {
             mesh_library.create_item(id as i32 + 1000);
             mesh_library.set_item_mesh(id as i32, &structure.mesh);
             if let Some(ref cut_mesh) = structure.y_cut_mesh {
-                // HACK; negative numbers for the cutaway versions:
+                // HACK; add 1000 for the cutaway versions:
                 mesh_library.set_item_mesh(id as i32 + 1000, cut_mesh);
             } else {
                 // HACK: instead of doing a lookup, just always replace the mesh (but sometimes
