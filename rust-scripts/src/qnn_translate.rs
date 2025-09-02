@@ -42,7 +42,7 @@ pub struct GroundTruth<B: Backend> {
     pub scores: Tensor<B, 1, Float>,
 }
 
-fn convert_ground_truth<B: Backend>(gt: GroundTruth<B>) -> GroundTruth<Autodiff<B>> {
+fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTruth<Autodiff<B>> {
     GroundTruth {
         voxels: Tensor::from_inner(gt.voxels),
         scores: Tensor::from_inner(gt.scores),
@@ -51,6 +51,15 @@ fn convert_ground_truth<B: Backend>(gt: GroundTruth<B>) -> GroundTruth<Autodiff<
 
 #[derive(Clone, Debug)]
 pub struct GroundTruthBatcher {}
+
+fn augment_datum(s: Sparse3D<OfflineCell>) -> Vec<Sparse3D<OfflineCell>> {
+    let mut res = vec![];
+    res.push(s.rotate(crate::sparse3d::Rotation::Clockwise));
+    res.push(s.rotate(crate::sparse3d::Rotation::CounterClockwise));
+    res.push(s.rotate(crate::sparse3d::Rotation::OneEighty));
+    res.push(s);
+    res
+}
 
 impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, GroundTruth<B>>
     for GroundTruthBatcher
@@ -74,12 +83,13 @@ use std::{fs, path::Path};
 
 pub fn load_training_data<B: Backend>(
     directory: &str,
+    seed: u64,
 ) -> (
     InMemDataset<GroundTruth<Autodiff<B>>>,
     InMemDataset<GroundTruth<B>>,
 ) {
     let path = Path::new(directory);
-    let mut training_data = Vec::new();
+    let mut all_sparse_data = Vec::new();
 
     let structures = structure::load_structure_info();
     let mut structures_by_char = HashMap::new();
@@ -111,26 +121,31 @@ pub fn load_training_data<B: Backend>(
             )
             .expect("Failed to deserialize");
 
-            training_data.push(sparse3d_at_vantage(&sparse_data));
+            all_sparse_data.push(sparse_data);
         }
     }
-    let mut rng = rand::rng();
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     use rand::seq::SliceRandom;
-    training_data.shuffle(&mut rng);
+    all_sparse_data.shuffle(&mut rng);
 
-    let split_index = (training_data.len() as f32 * 0.66).ceil() as usize;
-    let (train_data, test_data) = training_data.split_at(split_index);
+    let split_index = (all_sparse_data.len() as f32 * 0.66).ceil() as usize;
+    let (t_rooms, v_rooms) = all_sparse_data.split_at(split_index);
 
-    (
-        InMemDataset::new(
-            train_data
-                .into_iter()
-                .cloned()
-                .map(convert_ground_truth)
-                .collect(),
-        ),
-        InMemDataset::new(test_data.to_vec()),
-    )
+    // Currently unclear if augmentation is helping at all; investigate more!
+    let t_rooms = t_rooms.into_iter().cloned().map(augment_datum).flatten();
+    let v_rooms = v_rooms.into_iter().cloned().map(augment_datum).flatten();
+
+    let train_data = t_rooms
+        .map(|sparse_data| sparse3d_at_vantage(&sparse_data))
+        .map(convert_ground_truth_to_autodiff)
+        .collect();
+
+    let test_data = v_rooms
+        .map(|sparse_data| sparse3d_at_vantage(&sparse_data))
+        .collect();
+
+    (InMemDataset::new(train_data), InMemDataset::new(test_data))
 }
 
 // Just handles a single datum, but the tensors could hold a batch
