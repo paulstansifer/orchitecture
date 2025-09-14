@@ -20,14 +20,15 @@ fn grid_coord_to_voxel_coord(
     rel_slot: RelSlot,
     channel: usize,
 ) -> [std::ops::Range<usize>; 5] {
-    let adj_vec = (pos - min) * 2;
+    let adj_vec = (pos - min) * 2 + Vector3i::new(1, 1, 1);
     let vox_vec = adj_vec
         + match rel_slot {
             // Match on RelSlot
             RelSlot::Room => Vector3i::new(0, 0, 0),
-            RelSlot::ZLoWall | RelSlot::ZHiWall => Vector3i::new(0, 0, 1),
-            RelSlot::Floor | RelSlot::Ceiling => Vector3i::new(0, 1, 0),
-            RelSlot::XLoWall | RelSlot::XHiWall => Vector3i::new(1, 0, 0),
+            RelSlot::ZLoWall => Vector3i::new(0, 0, -1),
+            RelSlot::Floor => Vector3i::new(0, -1, 0),
+            RelSlot::XLoWall => Vector3i::new(-1, 0, 0),
+            _ => panic!("We're only using lo slots"),
         };
     let x = vox_vec.x as usize;
     let y = vox_vec.y as usize;
@@ -121,6 +122,10 @@ pub fn load_training_data<B: Backend>(
             )
             .expect("Failed to deserialize");
 
+            // println!("== {:?} ==", path);
+            // let gt: GroundTruth<B> = sparse3d_at_vantage(&sparse_data);
+            // print_voxels(&gt.voxels);
+
             all_sparse_data.push(sparse_data);
         }
     }
@@ -192,8 +197,8 @@ pub fn sparse3d_to_tensor<B: Backend, T>(
     let mut voxels = Tensor::<B, 5>::zeros(shape, &device);
 
     // Iterate through the Sparse3D coordinates within the bounding box
-    for grid_x in min_coord.x..=max_coord.x {
-        for grid_y in min_coord.y..=max_coord.y {
+    for grid_y in min_coord.y..=max_coord.y {
+        for grid_x in min_coord.x..=max_coord.x {
             for grid_z in min_coord.z..=max_coord.z {
                 for slot in [
                     RelSlot::Room,
@@ -220,6 +225,49 @@ pub fn sparse3d_to_tensor<B: Backend, T>(
     }
 
     Ok(voxels)
+}
+
+#[allow(dead_code)]
+pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
+    let [rooms, _channels, x_size, y_size, z_size] = voxels.dims();
+    use std::fmt::Write;
+    assert_eq!(rooms, 1);
+
+    for y in 0..y_size {
+        let mut has_anything = false;
+        let mut slice = String::new();
+        for x in 0..x_size {
+            for z in 0..z_size {
+                let mut hot_channel = None;
+
+                let voxel = voxels
+                    .clone()
+                    .slice(s![0, .., x, y, z])
+                    .into_data()
+                    .to_vec::<f32>()
+                    .unwrap();
+
+                for i in 0..voxel.len() {
+                    if voxel[i] > 0.0 {
+                        hot_channel = Some(i);
+                        break;
+                    }
+                }
+
+                if let Some(c) = hot_channel {
+                    has_anything = true;
+                    write!(slice, "{}", c).unwrap();
+                } else {
+                    write!(slice, " ").unwrap();
+                }
+            }
+            writeln!(slice).unwrap()
+        }
+        if has_anything {
+            println!("{}", slice);
+        }
+        println!("----")
+    }
 }
 
 #[cfg(test)]
