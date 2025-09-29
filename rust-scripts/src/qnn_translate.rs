@@ -12,29 +12,39 @@ use crate::structure::{self};
 
 const INPUT_CHANNELS: usize = 16; // 16 colors
 
+fn idx_to_range(idx: i32, expand: bool) -> std::ops::Range<usize> {
+    let idx = idx as usize;
+    if !expand {
+        idx..(idx + 1)
+    } else {
+        (idx - 1)..(idx + 2)
+    }
+}
+
 // Returns a 5D index into the voxels. Each grid cell is represented by a 2x2x2 cluster of voxels,
 // with each slot occupying a particular position.
 fn grid_coord_to_voxel_coord(
     pos: Vector3i,
     min: Vector3i,
-    rel_slot: RelSlot,
+    slot: RelSlot,
     channel: usize,
 ) -> [std::ops::Range<usize>; 5] {
+    use RelSlot::{Floor, Room, XLoWall, ZLoWall};
     let adj_vec = (pos - min) * 2 + Vector3i::new(1, 1, 1);
     let vox_vec = adj_vec
-        + match rel_slot {
+        + match slot {
             // Match on RelSlot
-            RelSlot::Room => Vector3i::new(0, 0, 0),
-            RelSlot::ZLoWall => Vector3i::new(0, 0, -1),
-            RelSlot::Floor => Vector3i::new(0, -1, 0),
-            RelSlot::XLoWall => Vector3i::new(-1, 0, 0),
+            Room => Vector3i::new(0, 0, 0),
+            ZLoWall => Vector3i::new(0, 0, -1),
+            Floor => Vector3i::new(0, -1, 0),
+            XLoWall => Vector3i::new(-1, 0, 0),
             _ => panic!("We're only using lo slots"),
         };
-    let x = vox_vec.x as usize;
-    let y = vox_vec.y as usize;
-    let z = vox_vec.z as usize;
+    let x = idx_to_range(vox_vec.x, slot == Floor || slot == ZLoWall);
+    let y = idx_to_range(vox_vec.y, false);
+    let z = idx_to_range(vox_vec.z, slot == Floor || slot == XLoWall);
 
-    [0..1, channel..channel + 1, x..x + 1, y..y + 1, z..z + 1]
+    [0..1, channel..channel + 1, x, y, z]
 }
 
 #[derive(Clone, Debug)]
@@ -189,14 +199,13 @@ pub fn sparse3d_to_tensor<B: Backend, T>(
     let shape = Shape::new([
         1_usize,
         INPUT_CHANNELS as usize,
-        (size.x * 2) as usize,
+        (size.x * 2) as usize + 1,
         (size.y * 2) as usize,
-        (size.z * 2) as usize,
+        (size.z * 2) as usize + 1,
     ]);
 
     let mut voxels = Tensor::<B, 5>::zeros(shape, &device);
 
-    // Iterate through the Sparse3D coordinates within the bounding box
     for grid_y in min_coord.y..=max_coord.y {
         for grid_x in min_coord.x..=max_coord.x {
             for grid_z in min_coord.z..=max_coord.z {
@@ -212,12 +221,12 @@ pub fn sparse3d_to_tensor<B: Backend, T>(
                     if let Some(ref cell) = sparse_data.get(slot_location) {
                         let channel = embedding(cell);
                         assert!(channel < INPUT_CHANNELS);
-                        // Right now, we're using a one-hot representation of grid elements
-                        voxels = voxels.slice_assign(
-                            grid_coord_to_voxel_coord(grid_pos, min_coord, slot, channel),
-                            // A single 1.0, in five dimensions:
-                            Tensor::<B, 5, Float>::ones([1, 1, 1, 1, 1], &device),
-                        );
+
+                        let voxel_slice =
+                            grid_coord_to_voxel_coord(grid_pos, min_coord, slot, channel);
+
+                        // Right now, we're using a one-hot representation (except allowing overlap)
+                        voxels = voxels.slice_fill(voxel_slice, 1.0);
                     }
                 }
             }
@@ -249,8 +258,11 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
 
                 for i in 0..voxel.len() {
                     if voxel[i] > 0.0 {
-                        hot_channel = Some(i);
-                        break;
+                        if hot_channel.is_some() {
+                            panic!(); //but maybe it's okay!
+                        } else {
+                            hot_channel = Some(i);
+                        }
                     }
                 }
 

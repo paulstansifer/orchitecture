@@ -36,7 +36,7 @@ impl<B: Backend> Cnn<B> {
 
         // Calculate the output size after pooling (example: 10/2 = 5, 22/2 = 11)
         // If the input was [16, 10, 22, 22], after two pooling layers it becomes [64, 2, 5, 5] (approx.)
-        let flattened_size = 64 * 12 * 22 * 22; // Example, adjust based on your layers
+        let flattened_size = 64 * 12 * 23 * 23; // Example, adjust based on your layers
 
         let fc1 = LinearConfig::new(flattened_size, 128).init(device);
         let fc2 = LinearConfig::new(128, 1).init(device); // Output a single score
