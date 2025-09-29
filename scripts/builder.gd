@@ -2,6 +2,7 @@ extends Node3D
 
 @export var drag_start_helper: Node3D
 @export var mouse_helper: Node3D # The 'cursor'
+@export var mouse_helper_room: Node3D # The 'cursor' for rooms
 @export var view_camera: Camera3D # Used for raycasting mouse
 @export var wallgrid: WallGrid
 
@@ -10,6 +11,7 @@ extends Node3D
 @export var save_button: Button
 @export var load_button: Button
 
+var cur_dir: int = 0
 var selected_structure_idx: int = 0
 var cur_y: int = 0 # The current layer to interact with
 var plane: Plane # Used for raycasting mouse
@@ -51,6 +53,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		if cur_y < 0:
 			cur_y = 0
 		plane.d = cur_y
+
+	if event.is_action_pressed("rotate_object"):
+		cur_dir = (cur_dir + 3) % 4
+		
 			
 	if event.is_action_pressed("undo"):
 		wallgrid.undo()
@@ -64,7 +70,16 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not world_position:
 		return
 
-	mouse_helper.position = world_position.round()
+	if wallgrid.structure_is_room_plop(selected_structure_idx):
+		mouse_helper.hide()
+		mouse_helper_room.show()
+		mouse_helper_room.rotation = Vector3(0, 0, 0)
+		mouse_helper_room.rotate_y(cur_dir * TAU / 4)
+		mouse_helper_room.position = world_position.round() + Vector3(0.5, 0, 0.5)
+	else:
+		mouse_helper_room.hide()
+		mouse_helper.show()
+		mouse_helper.position = world_position.round()
 
 	wallgrid.update_visibility(world_position, view_camera.global_position)
 	
@@ -73,7 +88,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		remove = true
 
 	if event.is_action_pressed("build"):
-		self.wallgrid.click(world_position, selected_structure_idx, remove)
+		self.wallgrid.click(world_position, selected_structure_idx, cur_dir, remove)
 
 		drag_start_helper.position = world_position.round()
 		drag_start_helper.show()

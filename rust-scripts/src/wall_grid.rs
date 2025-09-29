@@ -148,9 +148,14 @@ impl WallGrid {
         res
     }
 
+    #[func]
+    pub fn structure_is_room_plop(&self, id: i32) -> bool {
+        self.structures[id as usize].info.placement_style == structure::PlacementStyle::RoomPlop
+    }
+
     pub fn set_range_item_dir(
         &mut self,
-        _dir: Dir,
+        dir: i32, // only used for room items
         position1: Vector3i,
         position2: Vector3i,
         slot: RelSlot,
@@ -186,8 +191,15 @@ impl WallGrid {
                         let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
                         mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(item).unwrap());
 
-                        mesh_instance
-                            .set_transform(slot_transform(slot).translated(position.cast_float()));
+                        mesh_instance.set_transform(
+                            slot_transform(slot).translated(position.cast_float()),
+                            // TODO: orient room objects!
+                            /*if slot == RelSlot::Room {
+                                Some(dir)
+                            } else {
+                                None
+                            },*/
+                        );
 
                         container.add_child(&mesh_instance);
 
@@ -226,13 +238,13 @@ impl WallGrid {
     }
 
     #[func]
-    pub fn click(&mut self, position: Vector3, selected_mesh_id: i32, remove: bool) {
+    pub fn click(&mut self, position: Vector3, selected_mesh_id: i32, dir: i32, remove: bool) {
         match self.structures[selected_mesh_id as usize]
             .info
             .placement_style
         {
             structure::PlacementStyle::RoomPlop => {
-                self.room_plop(position, (!remove).then_some(selected_mesh_id))
+                self.room_plop(position, dir, (!remove).then_some(selected_mesh_id))
             }
             _ => {}
         }
@@ -286,7 +298,7 @@ impl WallGrid {
             RelSlot::XLoWall
         };
 
-        self.set_range_item_dir(d, start, end, slot, selected_mesh_id);
+        self.set_range_item_dir(0 /*ignored*/, start, end, slot, selected_mesh_id);
     }
 
     pub fn floor_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: Option<i32>) {
@@ -296,12 +308,12 @@ impl WallGrid {
         let start = Vector3i::coord_min(from_i, to_i);
         let end = Vector3i::coord_max(from_i, to_i) - Vector3i::new(1, 0, 1);
 
-        self.set_range_item_dir(Dir::Y, start, end, RelSlot::Floor, selected_mesh_id);
+        self.set_range_item_dir(0, start, end, RelSlot::Floor, selected_mesh_id);
     }
 
-    pub fn room_plop(&mut self, location: Vector3, selected_mesh_id: Option<i32>) {
+    pub fn room_plop(&mut self, location: Vector3, dir: i32, selected_mesh_id: Option<i32>) {
         let pos = location.round().cast_int();
-        self.set_range_item_dir(Dir::Z, pos, pos, RelSlot::Room, selected_mesh_id);
+        self.set_range_item_dir(dir, pos, pos, RelSlot::Room, selected_mesh_id);
         if selected_mesh_id == Some(DESK_ID) {
             let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
             self.contents.get_mut(loc).unwrap().evaluation = Some(VantageEvaluation {

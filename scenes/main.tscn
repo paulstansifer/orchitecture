@@ -42,10 +42,11 @@ size = Vector2(0, 0)
 
 [node name="WallGrid" type="WallGrid" parent="."]
 
-[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "view_camera", "wallgrid", "buildable_buttons", "filename", "save_button", "load_button")]
+[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "mouse_helper_room", "view_camera", "wallgrid", "buildable_buttons", "filename", "save_button", "load_button")]
 script = ExtResource("1_jybm7")
 drag_start_helper = NodePath("drag start helper")
 mouse_helper = NodePath("mouse helper")
+mouse_helper_room = NodePath("mouse helper - room")
 view_camera = NodePath("../View/Camera")
 wallgrid = NodePath("../WallGrid")
 buildable_buttons = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons")
@@ -89,6 +90,16 @@ sides = 9
 [node name="CSGSphere3D" type="CSGSphere3D" parent="Builder/mouse helper/CSGCombiner3D"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0)
 radius = 0.05
+
+[node name="mouse helper - room" type="Node3D" parent="Builder"]
+
+[node name="CSGCombiner3D" type="CSGCombiner3D" parent="Builder/mouse helper - room"]
+material_override = SubResource("StandardMaterial3D_pm3ni")
+
+[node name="CSGPolygon3D" type="CSGPolygon3D" parent="Builder/mouse helper - room/CSGCombiner3D"]
+transform = Transform3D(1, 0, 0, 0, 0.0540788, 0.998537, 0, -0.998537, 0.0540788, -0.5, 0.3, 0.5)
+polygon = PackedVector2Array(0.3, 0.2, 0.3, 0.5, 0.1, 0.5, 0.5, 0.8, 0.9, 0.5, 0.7, 0.5, 0.7, 0.2)
+depth = 0.1
 
 [node name="View" type="Node3D" parent="." node_paths=PackedStringArray("camera_child")]
 transform = Transform3D(0.707107, -0.40558, 0.579228, 0, 0.819152, 0.573576, -0.707107, -0.40558, 0.579228, 0, 0, 0)

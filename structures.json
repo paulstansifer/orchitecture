@@ -1,5 +1,6 @@
 [
     {
+        "name": "desk",
         "main_mesh": "desk.gltf",
         "y_cut_mesh": null,
         "placement_style": "RoomPlop",
@@ -7,6 +8,7 @@
         "z_char": "V"
     },
     {
+        "name": "doorway",
         "main_mesh": "doorway.gltf",
         "y_cut_mesh": "doorway-cut-y-pos.gltf",
         "placement_style": "WallDrag",
@@ -14,6 +16,7 @@
         "z_char": "D"
     },
     {
+        "name": "floor",
         "main_mesh": "floor.gltf",
         "y_cut_mesh": null,
         "placement_style": "FloorDrag",
@@ -21,13 +24,15 @@
         "z_char": "#"
     },
     {
+        "name": "stairs",
         "main_mesh": "stairs.gltf",
         "y_cut_mesh": "stairs-cut-y-pos.gltf",
-        "placement_style": "WallPlop",
+        "placement_style": "RoomPlop",
         "x_char": "S",
         "z_char": "S"
     },
     {
+        "name": "wall",
         "main_mesh": "wall.gltf",
         "y_cut_mesh": "wall-cut-y-pos.gltf",
         "placement_style": "WallDrag",
@@ -35,6 +40,7 @@
         "z_char": "|"
     },
     {
+        "name": "railing",
         "main_mesh": "railing.gltf",
         "y_cut_mesh": null,
         "placement_style": "WallDrag",
