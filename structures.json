@@ -16,6 +16,14 @@
         "z_char": "D"
     },
     {
+        "name": "window",
+        "main_mesh": "window.gltf",
+        "y_cut_mesh": "window-cut-y-pos.gltf",
+        "placement_style": "WallDrag",
+        "x_char": "W",
+        "z_char": "W"
+    },
+    {
         "name": "floor",
         "main_mesh": "floor.gltf",
         "y_cut_mesh": null,
@@ -46,5 +54,13 @@
         "placement_style": "WallDrag",
         "x_char": "R",
         "z_char": "R"
+    },
+    {
+        "name": "pillar",
+        "main_mesh": "pillar.gltf",
+        "y_cut_mesh": null,
+        "placement_style": "WallDrag",
+        "x_char": "P",
+        "z_char": "P"
     }
 ]
