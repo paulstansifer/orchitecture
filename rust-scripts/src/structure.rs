@@ -15,6 +15,7 @@ pub enum PlacementStyle {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct StructureInfo {
+    pub name: String,
     pub main_mesh: String,
     pub y_cut_mesh: Option<String>,
     pub placement_style: PlacementStyle,
