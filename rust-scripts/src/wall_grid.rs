@@ -70,7 +70,7 @@ pub struct WallGrid {
     mesh_library: Gd<MeshLibrary>,
     contents: Sparse3D<Cell>,
     container: Gd<Node3D>,
-    temp_container: Gd<Node3D>,
+    cut_container: Gd<Node3D>,
 
     undo_record: Vec<UndoRecord>,
 
@@ -431,10 +431,10 @@ impl WallGrid {
     #[func]
     pub fn update_visibility(&mut self, focus_location: Vector3, camera_location: Vector3) {
         // Clear the old cut walls:
-        self.temp_container.propagate_call("queue_free");
-        let new_temp_container = Node3D::new_alloc();
-        self.base_mut().add_child(&new_temp_container);
-        self.temp_container = new_temp_container;
+        self.cut_container.propagate_call("queue_free");
+        let new_cut_container = Node3D::new_alloc();
+        self.base_mut().add_child(&new_cut_container);
+        self.cut_container = new_cut_container;
 
         let view_direction = (focus_location - camera_location).sign().round().cast_int();
         let effective_focus_location = focus_location.round().cast_int()
@@ -452,7 +452,7 @@ impl WallGrid {
                 cut_instance.set_transform(cell.mesh.get_transform());
                 cut_instance.set_mesh(&self.mesh_library.get_item_mesh(cell.id + 1000).unwrap());
 
-                self.temp_container.add_child(&cut_instance);
+                self.cut_container.add_child(&cut_instance);
             } else {
                 cell.mesh.show();
             }
@@ -467,7 +467,7 @@ impl WallGrid {
             cell.mesh.queue_free();
         }
         self.container.queue_free();
-        self.temp_container.queue_free();
+        self.cut_container.queue_free();
     }
 }
 
@@ -476,8 +476,8 @@ impl INode3D for WallGrid {
     fn init(base: Base<Node3D>) -> Self {
         let container = Node3D::new_alloc();
         base.to_gd().add_child(&container);
-        let temp_container = Node3D::new_alloc();
-        base.to_gd().add_child(&temp_container);
+        let cut_container = Node3D::new_alloc();
+        base.to_gd().add_child(&cut_container);
 
         let structures = structure::load_structures();
 
@@ -503,7 +503,7 @@ impl INode3D for WallGrid {
             mesh_library,
             contents: Sparse3D::new(),
             container: container,
-            temp_container: temp_container,
+            cut_container: cut_container,
 
             base,
         }
