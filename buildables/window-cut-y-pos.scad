@@ -8,7 +8,7 @@ intersection() {
         rotate([90, 0, 0])
         {
             translate([.5, .5, 0])
-            cube([.9, .9, .3], center = true);
+            cube([.8, .8, .3], center = true);
         }
 
     }
