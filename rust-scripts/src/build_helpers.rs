@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use godot::builtin::Vector3i;
 
-use crate::sparse3d::RelSlot;
+use crate::sparse3d::{Facing, RelSlot};
 use crate::structure::StructureInfo;
 use crate::wall_grid::VantageEvaluation;
 use crate::{
@@ -34,26 +34,32 @@ impl Builder {
         self.map
     }
 
+    fn wall(&self) -> OfflineCell {
+        OfflineCell {
+            id: *self.structures.get("wall").unwrap() as i32,
+            facing: Facing::arbitrary(),
+            evaluation: None,
+        }
+    }
+    fn flat(&self) -> OfflineCell {
+        OfflineCell {
+            id: *self.structures.get("floor").unwrap() as i32,
+            facing: Facing::arbitrary(),
+            evaluation: None,
+        }
+    }
+
     pub fn build_box(&mut self, corner_a: Vector3i, corner_b: Vector3i) {
         let min = Vector3i::coord_min(corner_a, corner_b);
         let max = Vector3i::coord_max(corner_a, corner_b);
 
-        let wall = OfflineCell {
-            id: *self.structures.get("wall").unwrap() as i32,
-            evaluation: None,
-        };
-        let flat = OfflineCell {
-            id: *self.structures.get("floor").unwrap() as i32,
-            evaluation: None,
-        };
-
         for x in min.x..=max.x {
             for z in min.z..=max.z {
                 self.map
-                    .set(SlotLocation::new(x, min.y, z, RelSlot::Floor), flat.clone());
+                    .set(SlotLocation::new(x, min.y, z, RelSlot::Floor), self.flat());
                 self.map.set(
                     SlotLocation::new(x, max.y, z, RelSlot::Ceiling),
-                    flat.clone(),
+                    self.flat(),
                 );
             }
         }
@@ -62,11 +68,11 @@ impl Builder {
             for y in min.y..=max.y {
                 self.map.set(
                     SlotLocation::new(x, y, min.z, RelSlot::ZLoWall),
-                    wall.clone(),
+                    self.wall(),
                 );
                 self.map.set(
                     SlotLocation::new(x, y, max.z, RelSlot::ZHiWall),
-                    wall.clone(),
+                    self.wall(),
                 );
             }
         }
@@ -75,11 +81,11 @@ impl Builder {
             for z in min.z..=max.z {
                 self.map.set(
                     SlotLocation::new(min.x, y, z, RelSlot::XLoWall),
-                    wall.clone(),
+                    self.wall(),
                 );
                 self.map.set(
                     SlotLocation::new(max.x, y, z, RelSlot::XHiWall),
-                    wall.clone(),
+                    self.wall(),
                 );
             }
         }
@@ -100,15 +106,6 @@ impl Builder {
             }
         }
 
-        let wall = OfflineCell {
-            id: *self.structures.get("wall").unwrap() as i32,
-            evaluation: None,
-        };
-        let flat = OfflineCell {
-            id: *self.structures.get("floor").unwrap() as i32,
-            evaluation: None,
-        };
-
         for coord in inside_coords.iter() {
             for slot in [
                 RelSlot::XLoWall,
@@ -121,9 +118,9 @@ impl Builder {
                 let neighbor = *coord + slot.direction_of_neighbor();
                 if !inside_coords.contains(&neighbor) {
                     let cell = if slot == RelSlot::Floor || slot == RelSlot::Ceiling {
-                        flat.clone()
+                        self.flat()
                     } else {
-                        wall.clone()
+                        self.wall()
                     };
                     self.map
                         .set(SlotLocation::new(coord.x, coord.y, coord.z, slot), cell);
@@ -142,24 +139,15 @@ impl Builder {
         let mut obj = match slot {
             RelSlot::XLoWall | RelSlot::XHiWall => {
                 assert!(corner_a.x == corner_b.x);
-                OfflineCell {
-                    id: *self.structures.get("wall").unwrap() as i32,
-                    evaluation: None,
-                }
+                self.wall()
             }
             RelSlot::ZLoWall | RelSlot::ZHiWall => {
                 assert!(corner_a.z == corner_b.z);
-                OfflineCell {
-                    id: *self.structures.get("wall").unwrap() as i32,
-                    evaluation: None,
-                }
+                self.wall()
             }
             RelSlot::Floor | RelSlot::Ceiling => {
                 assert!(corner_a.y == corner_b.y);
-                OfflineCell {
-                    id: *self.structures.get("floor").unwrap() as i32,
-                    evaluation: None,
-                }
+                self.flat()
             }
             _ => {
                 panic!()
@@ -191,6 +179,7 @@ impl Builder {
 
         let obj = OfflineCell {
             id: *self.structures.get(obj_name).unwrap() as i32,
+            facing: Facing::arbitrary(),
             evaluation: None,
         };
 
@@ -224,6 +213,7 @@ impl Builder {
             SlotLocation::new(loc.x, loc.y, loc.z, RelSlot::Room),
             OfflineCell {
                 id: *self.structures.get("desk").unwrap() as i32,
+                facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation { interest, symmetry }),
             },
         );

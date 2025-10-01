@@ -9,7 +9,7 @@ use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
 use serde::{Deserialize, Serialize};
 
 use crate::serialization;
-use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
+use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
 use crate::structure::{self, Structure};
 use crate::{example_structures, qnn};
 
@@ -48,16 +48,34 @@ fn unset_mesh() -> Gd<MeshInstance3D> {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Cell {
     pub id: i32,
+    pub facing: crate::sparse3d::Facing,
     #[serde(skip, default = "unset_mesh")]
     pub mesh: Gd<MeshInstance3D>,
     pub evaluation: Option<VantageEvaluation>,
+}
+
+impl crate::sparse3d::Rotateable for Cell {
+    fn rotate(self, rotation: crate::sparse3d::Rotation) -> Self {
+        let mut new = self.clone();
+        new.facing = new.facing.rotate(rotation);
+        new
+    }
 }
 
 // Safe to use outside of Godot
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct OfflineCell {
     pub id: i32,
+    pub facing: crate::sparse3d::Facing,
     pub evaluation: Option<VantageEvaluation>,
+}
+
+impl crate::sparse3d::Rotateable for OfflineCell {
+    fn rotate(self, rotation: crate::sparse3d::Rotation) -> Self {
+        let mut new = self.clone();
+        new.facing = new.facing.rotate(rotation);
+        new
+    }
 }
 
 // `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
@@ -78,10 +96,14 @@ pub struct WallGrid {
 }
 
 // Fixup to get models into the right spot (necessary, since walls can be X or Y).
-fn slot_transform(slot: RelSlot) -> Transform3D {
+fn slot_transform(slot: RelSlot, facing: Facing) -> Transform3D {
     let xform = Transform3D::IDENTITY.rotated(Vector3::RIGHT, -TAU / 4.0);
     match slot {
-        RelSlot::Room => xform.rotated(Vector3::UP, -TAU / 4.0),
+        RelSlot::Room => xform
+            .rotated(Vector3::UP, -TAU / 4.0)
+            .translated(Vector3::new(-0.5, 0.0, -0.5))
+            .rotated(Vector3::UP, (1.0 - facing as u8 as f32) * (-TAU / 4.0))
+            .translated(Vector3::new(0.5, 0.0, 0.5)),
         RelSlot::XLoWall | RelSlot::XHiWall => xform.rotated(Vector3::UP, -TAU / 4.0),
         RelSlot::Floor | RelSlot::Ceiling => xform.rotated(Vector3::UP, -TAU / 4.0),
         RelSlot::ZLoWall | RelSlot::ZHiWall => xform,
@@ -98,6 +120,7 @@ impl WallGrid {
                 loc,
                 OfflineCell {
                     id: cell.id,
+                    facing: cell.facing,
                     evaluation: cell.evaluation.clone(),
                 },
             );
@@ -115,6 +138,7 @@ impl WallGrid {
                 loc,
                 Cell {
                     id: offline_cell.id,
+                    facing: offline_cell.facing,
                     mesh: mesh_instance,
                     evaluation: offline_cell.evaluation.clone(),
                 },
@@ -127,8 +151,9 @@ impl WallGrid {
         self.container = container;
 
         for (loc, cell) in self.contents.iter_mut() {
-            cell.mesh
-                .set_transform(slot_transform(loc.rel_slot).translated(loc.cube.cast_float()));
+            cell.mesh.set_transform(
+                slot_transform(loc.rel_slot, cell.facing).translated(loc.cube.cast_float()),
+            );
             self.container.add_child(&cell.mesh);
         }
     }
@@ -191,20 +216,17 @@ impl WallGrid {
                         let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
                         mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(item).unwrap());
 
+                        let facing = Facing::from_number(dir as u8);
+
                         mesh_instance.set_transform(
-                            slot_transform(slot).translated(position.cast_float()),
-                            // TODO: orient room objects!
-                            /*if slot == RelSlot::Room {
-                                Some(dir)
-                            } else {
-                                None
-                            },*/
+                            slot_transform(slot, facing).translated(position.cast_float()),
                         );
 
                         container.add_child(&mesh_instance);
 
                         let new_cell = Cell {
                             id: item,
+                            facing,
                             mesh: mesh_instance.clone(),
                             evaluation: None,
                         };
@@ -376,6 +398,7 @@ impl WallGrid {
 
                 Ok::<Cell, ()>(Cell {
                     id,
+                    facing: Facing::NegX, // TODO: we need to serialize this!
                     mesh: mesh_instance,
                     evaluation: None,
                 })
@@ -390,8 +413,9 @@ impl WallGrid {
         self.container = container;
 
         for (loc, cell) in self.contents.iter_mut() {
-            cell.mesh
-                .set_transform(slot_transform(loc.rel_slot).translated(loc.cube.cast_float()));
+            cell.mesh.set_transform(
+                slot_transform(loc.rel_slot, cell.facing).translated(loc.cube.cast_float()),
+            );
             self.container.add_child(&cell.mesh);
         }
         godot_print!("Loaded from {}", file.path_absolute());

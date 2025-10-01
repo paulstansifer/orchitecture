@@ -38,6 +38,47 @@ pub enum Rotation {
     CounterClockwise,
 }
 
+pub trait Rotateable {
+    fn rotate(self, rotation: Rotation) -> Self;
+}
+
+// Direction a Room object can face
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Facing {
+    NegX = 0, // TODO: verify that these are right; I picked them arbitrarily!
+    NegZ = 1,
+    PosX = 2,
+    PosZ = 3,
+}
+
+impl Facing {
+    pub fn from_number(n: u8) -> Facing {
+        match n % 4 {
+            0 => Facing::NegX,
+            1 => Facing::NegZ,
+            2 => Facing::PosX,
+            3 => Facing::PosZ,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn arbitrary() -> Facing {
+        Facing::from_number(0)
+    }
+}
+
+impl Rotateable for Facing {
+    fn rotate(self, rotation: Rotation) -> Self {
+        let current_val = self as u8;
+        let rotated_val = match rotation {
+            Rotation::Clockwise => current_val + 1,
+            Rotation::OneEighty => current_val + 2,
+            Rotation::CounterClockwise => current_val + 3,
+        };
+        Facing::from_number(rotated_val)
+    }
+}
+
 impl RelSlot {
     fn absolute_offset(self) -> Vector3i {
         match self {
@@ -77,7 +118,10 @@ impl RelSlot {
             RelSlot::Room => panic!(),
         }
     }
-    pub fn rotate(self, rotation: Rotation) -> Self {
+}
+
+impl Rotateable for RelSlot {
+    fn rotate(self, rotation: Rotation) -> Self {
         match self {
             RelSlot::Room | RelSlot::Floor | RelSlot::Ceiling => self,
             RelSlot::XLoWall => match rotation {
@@ -134,14 +178,15 @@ impl SlotLocation {
         };
         (big_coords, small_coords)
     }
+}
 
-    fn rotate(&self, rotation: Rotation) -> Self {
+impl Rotateable for SlotLocation {
+    fn rotate(self, rotation: Rotation) -> Self {
         let new_coord = match rotation {
             Rotation::Clockwise => Vector3i::new(-self.cube.z, self.cube.y, self.cube.x),
             Rotation::CounterClockwise => Vector3i::new(self.cube.z, self.cube.y, -self.cube.x),
             Rotation::OneEighty => Vector3i::new(-self.cube.x, self.cube.y, -self.cube.z),
         };
-
         SlotLocation {
             cube: new_coord,
             rel_slot: self.rel_slot.rotate(rotation),
@@ -272,10 +317,7 @@ pub struct Sparse3D<T> {
     chunks: HashMap<BigCoordinates, Chunk<T>>,
 }
 
-impl<T> PartialEq for Sparse3D<T>
-where
-    T: PartialEq,
-{
+impl<T: PartialEq> PartialEq for Sparse3D<T> {
     fn eq(&self, other: &Self) -> bool {
         if self.size() != other.size() {
             return false;
@@ -378,17 +420,17 @@ impl<T> Sparse3D<T> {
     }
 }
 
-impl<T: Clone> Sparse3D<T> {
-    pub fn rotate(&self, rotation: Rotation) -> Self {
+impl<T: Rotateable + Clone> Rotateable for Sparse3D<T> {
+    fn rotate(self, rotation: Rotation) -> Self {
         let mut rotated = Sparse3D::<T>::new();
         for (loc, value) in self.iter() {
-            rotated.set(loc.rotate(rotation), value.clone());
+            rotated.set(loc.rotate(rotation), value.clone().rotate(rotation));
         }
         rotated
     }
 }
 
-impl<T> Index<SlotLocation> for Sparse3D<T> {
+impl<T: Rotateable> Index<SlotLocation> for Sparse3D<T> {
     type Output = T;
 
     fn index(&self, loc: SlotLocation) -> &Self::Output {
@@ -396,7 +438,7 @@ impl<T> Index<SlotLocation> for Sparse3D<T> {
     }
 }
 
-impl<T> IndexMut<SlotLocation> for Sparse3D<T> {
+impl<T: Rotateable> IndexMut<SlotLocation> for Sparse3D<T> {
     fn index_mut(&mut self, loc: SlotLocation) -> &mut Self::Output {
         self.get_mut(loc).unwrap()
     }
@@ -408,36 +450,53 @@ mod tests {
     use crate::sparse3d::Sparse3D;
     use std::collections::HashSet;
 
+    #[derive(Clone, PartialEq, Debug, Eq, Hash)]
+    struct RotInt(i32);
+    impl super::Rotateable for RotInt {
+        fn rotate(self, _rotation: super::Rotation) -> Self {
+            self
+        }
+    }
+
     #[test]
     fn test_infinite_grid_indexing() {
-        let mut grid: Sparse3D<i32> = Sparse3D::new();
+        let mut grid: Sparse3D<RotInt> = Sparse3D::new();
 
         // Set some values
-        grid.set(SlotLocation::new(1, 2, 3, RelSlot::XLoWall), 10);
-        grid.set(SlotLocation::new(-1, 5, 0, RelSlot::XLoWall), 20);
-        grid.set(SlotLocation::new(4, 0, 0, RelSlot::XLoWall), 30); // Different chunk
+        grid.set(SlotLocation::new(1, 2, 3, RelSlot::XLoWall), RotInt(10));
+        grid.set(SlotLocation::new(-1, 5, 0, RelSlot::XLoWall), RotInt(20));
+        grid.set(SlotLocation::new(4, 0, 0, RelSlot::XLoWall), RotInt(30)); // Different chunk
 
         // Get the values using indexing
-        assert_eq!(grid[SlotLocation::new(1, 2, 3, RelSlot::XLoWall)], 10);
-        assert_eq!(grid[SlotLocation::new(-1, 5, 0, RelSlot::XLoWall)], 20);
-        assert_eq!(grid[SlotLocation::new(4, 0, 0, RelSlot::XLoWall)], 30);
+        assert_eq!(
+            grid[SlotLocation::new(1, 2, 3, RelSlot::XLoWall)],
+            RotInt(10)
+        );
+        assert_eq!(
+            grid[SlotLocation::new(-1, 5, 0, RelSlot::XLoWall)],
+            RotInt(20)
+        );
+        assert_eq!(
+            grid[SlotLocation::new(4, 0, 0, RelSlot::XLoWall)],
+            RotInt(30)
+        );
     }
 
     #[test]
     fn test_sparse_3d_iterator() {
-        let mut grid: Sparse3D<i32> = Sparse3D::new();
+        let mut grid: Sparse3D<RotInt> = Sparse3D::new();
 
         // Set some values
-        grid.set(SlotLocation::new(1, 2, 3, RelSlot::XLoWall), 10);
-        grid.set(SlotLocation::new(-1, 5, 0, RelSlot::Floor), 20);
-        grid.set(SlotLocation::new(4, 0, 0, RelSlot::ZLoWall), 30);
+        grid.set(SlotLocation::new(1, 2, 3, RelSlot::XLoWall), RotInt(10));
+        grid.set(SlotLocation::new(-1, 5, 0, RelSlot::Floor), RotInt(20));
+        grid.set(SlotLocation::new(4, 0, 0, RelSlot::ZLoWall), RotInt(30));
 
         let items: HashSet<_> = grid.iter().collect();
 
         let expected: HashSet<_> = vec![
-            (SlotLocation::new(1, 2, 3, RelSlot::XLoWall), &10),
-            (SlotLocation::new(-1, 5, 0, RelSlot::Floor), &20),
-            (SlotLocation::new(4, 0, 0, RelSlot::ZLoWall), &30),
+            (SlotLocation::new(1, 2, 3, RelSlot::XLoWall), &RotInt(10)),
+            (SlotLocation::new(-1, 5, 0, RelSlot::Floor), &RotInt(20)),
+            (SlotLocation::new(4, 0, 0, RelSlot::ZLoWall), &RotInt(30)),
         ]
         .into_iter()
         .collect();
