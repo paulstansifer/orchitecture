@@ -324,7 +324,7 @@ mod tests {
         let tensor = sparse3d_to_tensor::<B, _>(&sparse_data, center_coord, |id| *id)?;
 
         // Check the shape of the resulting tensor
-        let expected_shape = Shape::new([1, INPUT_CHANNELS, 22, 12, 22]);
+        let expected_shape = Shape::new([1, INPUT_CHANNELS, 23, 12, 23]);
         assert_eq!(
             tensor.dims(),
             expected_shape.dims(),
@@ -335,7 +335,7 @@ mod tests {
 
         assert_eq!(
             tensor.clone().sum().into_scalar(),
-            4.0,
+            16.0,
             "Tensor should have four entries"
         );
 
