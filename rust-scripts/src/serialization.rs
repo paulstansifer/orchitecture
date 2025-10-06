@@ -67,7 +67,7 @@ pub fn serialize_sparse3d(
     for y in min.y..=max.y {
         for z in min.z..=max.z {
             for x in min.x..=max.x {
-                for slot in [RelSlot::XLoWall, RelSlot::Floor] {
+                for slot in [RelSlot::Room, RelSlot::ZLoWall] {
                     let loc = SlotLocation::new(x, y, z, slot);
                     if let Some(value) = grid.get(loc) {
                         serialized.push(f(value, slot, structures))
@@ -78,7 +78,7 @@ pub fn serialize_sparse3d(
             }
             serialized.push_str("\n");
             for x in min.x..=max.x {
-                for slot in [RelSlot::Room, RelSlot::ZLoWall] {
+                for slot in [RelSlot::XLoWall, RelSlot::Floor] {
                     let loc = SlotLocation::new(x, y, z, slot);
                     if let Some(value) = grid.get(loc) {
                         serialized.push(f(value, slot, structures));
@@ -142,6 +142,13 @@ where
 
         let mut top_line = line.chars().collect::<Vec<_>>();
         let mut bottom_line = lines_it.next().unwrap_or("").chars().collect::<Vec<_>>();
+        if top_line.contains(&'#') || top_line.contains(&'|') {
+            panic!("Invalid room/zwall line: '{:?}'", top_line);
+        }
+        if bottom_line.contains(&'V') || bottom_line.contains(&'-') {
+            panic!("Invalid room/xwall line: '{:?}'", bottom_line);
+        }
+
         while top_line.len() < bottom_line.len() {
             top_line.push(' ');
         }
@@ -150,13 +157,13 @@ where
         }
 
         for x in 0..top_line.len() / 2 {
-            let xwall_ch = top_line[x * 2];
-            let floor_ch = top_line[x * 2 + 1];
-            let room_ch = bottom_line[x * 2];
-            let zwall_ch = bottom_line[x * 2 + 1];
+            let room_ch = top_line[x * 2];
+            let zwall_ch = top_line[x * 2 + 1];
+            let xwall_ch = bottom_line[x * 2];
+            let floor_ch = bottom_line[x * 2 + 1];
 
             for (ch, slot) in [
-                (zwall_ch, RelSlot::ZHiWall),
+                (zwall_ch, RelSlot::ZLoWall),
                 (room_ch, RelSlot::Room),
                 (floor_ch, RelSlot::Floor),
                 (xwall_ch, RelSlot::XLoWall),
