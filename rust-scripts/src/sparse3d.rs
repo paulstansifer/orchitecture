@@ -43,8 +43,9 @@ pub trait Rotateable {
 }
 
 // Direction a Room object can face
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Facing {
+    #[default]
     NegX = 0, // TODO: verify that these are right; I picked them arbitrarily!
     NegZ = 1,
     PosX = 2,

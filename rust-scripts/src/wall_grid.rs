@@ -48,6 +48,7 @@ fn unset_mesh() -> Gd<MeshInstance3D> {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Cell {
     pub id: i32,
+    #[serde(default)]
     pub facing: crate::sparse3d::Facing,
     #[serde(skip, default = "unset_mesh")]
     pub mesh: Gd<MeshInstance3D>,
@@ -66,6 +67,7 @@ impl crate::sparse3d::Rotateable for Cell {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct OfflineCell {
     pub id: i32,
+    #[serde(default)]
     pub facing: crate::sparse3d::Facing,
     pub evaluation: Option<VantageEvaluation>,
 }
@@ -355,7 +357,6 @@ impl WallGrid {
         let serialized = serialization::serialize_sparse3d(
             &self.contents,
             |cell, slot, structures| serialization::serialize_slot(cell.id, slot, structures),
-            serialization::cell_needs_extended,
             &structures_by_id,
         );
         let path = GString::from(format!("training/{filename}"));

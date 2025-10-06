@@ -6,10 +6,6 @@ use crate::sparse3d::{RelSlot, SlotLocation};
 use crate::structure::StructureInfo;
 use crate::wall_grid::Cell;
 
-pub fn cell_needs_extended(c: &Cell) -> bool {
-    c.evaluation.is_some()
-}
-
 pub fn serialize_slot(id: i32, slot: RelSlot, structures: &HashMap<i32, StructureInfo>) -> char {
     let structure_info = structures.get(&id).unwrap();
     match slot {
@@ -63,7 +59,7 @@ fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (Vector3i, 
 pub fn serialize_sparse3d(
     grid: &crate::sparse3d::Sparse3D<Cell>,
     f: fn(&Cell, RelSlot, &HashMap<i32, StructureInfo>) -> char,
-    cell_needs_extended: fn(&Cell) -> bool,
+    //cell_needs_extended: fn(&Cell) -> bool,
     structures: &HashMap<i32, StructureInfo>,
 ) -> String {
     let mut serialized = String::new();
@@ -98,7 +94,7 @@ pub fn serialize_sparse3d(
     }
     serialized.push_str("~*~*~\n");
     for (loc, cell) in grid.iter() {
-        if cell_needs_extended(cell) {
+        if loc.rel_slot == RelSlot::Room {
             let extended_ser = extended_serialize_at(loc.cube - min, loc.rel_slot, cell);
             serialized.push_str(&extended_ser);
         }
