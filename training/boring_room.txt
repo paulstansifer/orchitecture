@@ -2,7 +2,7 @@
 |# # # # # # #| 
                 
 |# # # # # # #| 
-        V       
+      V         
 |# # # # # # #| 
                 
 |# # # # # # #| 
@@ -45,4 +45,4 @@
                 
 ~~~~~
 ~*~*~
-(1,0,5,"Room")={"id":0,"evaluation":{"symmetry":1.0,"interest":0.0}}
+(3,0,2,"Room")={"id":0,"facing":"NegX","evaluation":{"symmetry":1.0,"interest":0.0}}

@@ -44,8 +44,8 @@
         "main_mesh": "wall.gltf",
         "y_cut_mesh": "wall-cut-y-pos.gltf",
         "placement_style": "WallDrag",
-        "x_char": "-",
-        "z_char": "|"
+        "x_char": "|",
+        "z_char": "-"
     },
     {
         "name": "railing",
