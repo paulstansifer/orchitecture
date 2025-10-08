@@ -4,13 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-burn = { version = "0.18", features = [
-    "train",
-    "tui",
-    "wgpu",
-    "autodiff",
-    "ndarray",
-] }
+burn = { version = "0.18", features = ["train", "wgpu", "autodiff", "ndarray"] }
 rand = "0.9.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"

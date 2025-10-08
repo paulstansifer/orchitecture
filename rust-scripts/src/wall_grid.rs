@@ -16,7 +16,7 @@ use crate::{example_structures, qnn};
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Dir {
     X,
-    Y,
+    // Y,  // TODO: `Dir` should probably be replaced with `Facing`
     Z,
 }
 

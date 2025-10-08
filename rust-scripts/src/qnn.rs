@@ -146,53 +146,50 @@ pub fn train<B: Backend>() {
 
     B::seed(config.seed);
 
-    let batcher = GroundTruthBatcher {};
+    for metric in [
+        crate::qnn_translate::Metric::Interest,
+        crate::qnn_translate::Metric::Symmetry,
+    ] {
+        let batcher = GroundTruthBatcher {};
 
-    let (train_data, test_data) = load_training_data::<B>("../training", config.seed);
+        let (train_data, test_data) = load_training_data::<B>("../training", config.seed, metric);
 
-    let dataloader_train: Arc<dyn DataLoader<Autodiff<B>, GroundTruth<Autodiff<B>>>> =
-        burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
-            .batch_size(config.batch_size)
-            .shuffle(config.seed)
-            .num_workers(config.num_workers)
-            .build(train_data);
+        let dataloader_train: Arc<dyn DataLoader<Autodiff<B>, GroundTruth<Autodiff<B>>>> =
+            burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
+                .batch_size(config.batch_size)
+                .shuffle(config.seed)
+                .num_workers(config.num_workers)
+                .build(train_data);
 
-    let dataloader_test: Arc<dyn DataLoader<B, GroundTruth<B>>> =
-        burn::data::dataloader::DataLoaderBuilder::new(batcher)
-            .batch_size(config.batch_size)
-            .shuffle(config.seed)
-            .num_workers(config.num_workers)
-            .build(test_data);
+        let dataloader_test: Arc<dyn DataLoader<B, GroundTruth<B>>> =
+            burn::data::dataloader::DataLoaderBuilder::new(batcher)
+                .batch_size(config.batch_size)
+                .shuffle(config.seed)
+                .num_workers(config.num_workers)
+                .build(test_data);
 
-    let learner = burn::train::LearnerBuilder::new(artifact_dir)
-        // .metric_train_numeric(burn::train::metric::AccuracyMetric::new())
-        // .metric_valid_numeric(burn::train::metric::AccuracyMetric::new())
-        .metric_train_numeric(burn::train::metric::LossMetric::new())
-        .metric_valid_numeric(burn::train::metric::LossMetric::new())
-        .with_file_checkpointer(burn::record::CompactRecorder::new())
-        .devices(vec![device.clone()])
-        .num_epochs(config.num_epochs)
-        .summary()
-        .build(
-            Cnn::<Autodiff<B>>::new(&device),
-            config.optimizer.init(),
-            config.learning_rate,
-        );
+        let learner = burn::train::LearnerBuilder::new(artifact_dir)
+            // .metric_train_numeric(burn::train::metric::AccuracyMetric::new())
+            // .metric_valid_numeric(burn::train::metric::AccuracyMetric::new())
+            .metric_train_numeric(burn::train::metric::LossMetric::new())
+            .metric_valid_numeric(burn::train::metric::LossMetric::new())
+            .with_file_checkpointer(burn::record::CompactRecorder::new())
+            .devices(vec![device.clone()])
+            .num_epochs(config.num_epochs)
+            .summary()
+            .build(
+                Cnn::<Autodiff<B>>::new(&device),
+                config.optimizer.init(),
+                config.learning_rate,
+            );
 
-    println!("================");
-    println!(" Learner set up");
-    println!("================");
+        let model_trained = learner.fit(dataloader_train, dataloader_test);
 
-    let model_trained = learner.fit(dataloader_train, dataloader_test);
-
-    println!("================");
-    println!(" Model trained");
-    println!("================");
-
-    model_trained
-        .save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
-            format!("{artifact_dir}/model"),
-            &burn::record::CompactRecorder::new(),
-        )
-        .expect("Trained model should be saved successfully");
+        model_trained
+            .save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
+                format!("{artifact_dir}/{metric}_model"),
+                &burn::record::CompactRecorder::new(),
+            )
+            .expect("Trained model should be saved successfully");
+    }
 }

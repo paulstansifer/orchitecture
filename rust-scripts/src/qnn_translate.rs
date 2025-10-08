@@ -12,6 +12,21 @@ use crate::structure::{self};
 
 const INPUT_CHANNELS: usize = 16; // 16 colors
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Metric {
+    Interest,
+    Symmetry,
+}
+
+impl std::fmt::Display for Metric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Metric::Interest => write!(f, "interest"),
+            Metric::Symmetry => write!(f, "symmetry"),
+        }
+    }
+}
+
 fn idx_to_range(idx: i32, expand: bool) -> std::ops::Range<usize> {
     let idx = idx as usize;
     if !expand {
@@ -99,6 +114,7 @@ use std::{fs, path::Path};
 pub fn load_training_data<B: Backend>(
     directory: &str,
     seed: u64,
+    metric: Metric,
 ) -> (
     InMemDataset<GroundTruth<Autodiff<B>>>,
     InMemDataset<GroundTruth<B>>,
@@ -157,19 +173,22 @@ pub fn load_training_data<B: Backend>(
     let v_rooms = v_rooms.into_iter().cloned().map(augment_datum).flatten();
 
     let train_data = t_rooms
-        .map(|sparse_data| sparse3d_at_vantage(&sparse_data))
+        .map(|sparse_data| sparse3d_at_vantage(&sparse_data, metric))
         .map(convert_ground_truth_to_autodiff)
         .collect();
 
     let test_data = v_rooms
-        .map(|sparse_data| sparse3d_at_vantage(&sparse_data))
+        .map(|sparse_data| sparse3d_at_vantage(&sparse_data, metric))
         .collect();
 
     (InMemDataset::new(train_data), InMemDataset::new(test_data))
 }
 
 // Just handles a single datum, but the tensors could hold a batch
-pub fn sparse3d_at_vantage<B: Backend>(sparse_data: &Sparse3D<OfflineCell>) -> GroundTruth<B> {
+pub fn sparse3d_at_vantage<B: Backend>(
+    sparse_data: &Sparse3D<OfflineCell>,
+    metric: Metric,
+) -> GroundTruth<B> {
     for (loc, cell) in sparse_data.iter() {
         if let Some(eval) = &cell.evaluation {
             let tensor = sparse3d_to_tensor(
@@ -178,10 +197,14 @@ pub fn sparse3d_at_vantage<B: Backend>(sparse_data: &Sparse3D<OfflineCell>) -> G
                 |cell| cell.id as usize,
             )
             .unwrap();
+            let val = match metric {
+                Metric::Interest => eval.interest,
+                Metric::Symmetry => eval.symmetry,
+            };
 
             return GroundTruth {
                 voxels: tensor,
-                scores: Tensor::from_data(TensorData::from([eval.interest]), &Default::default()),
+                scores: Tensor::from_data(TensorData::from([val]), &Default::default()),
             };
         }
     }
