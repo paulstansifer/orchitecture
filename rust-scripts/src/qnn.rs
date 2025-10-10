@@ -1,5 +1,7 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use burn::train::logger::FileMetricLogger;
 use burn::{
     backend::Autodiff,
     data::dataloader::DataLoader,
@@ -13,7 +15,6 @@ use burn::{
     tensor::backend::AutodiffBackend,
     train::RegressionOutput,
 };
-
 #[derive(Module, Debug)]
 pub struct Cnn<B: Backend> {
     activation: Relu,
@@ -169,14 +170,16 @@ pub fn train<B: Backend>() {
                 .build(test_data);
 
         let learner = burn::train::LearnerBuilder::new(artifact_dir)
-            // .metric_train_numeric(burn::train::metric::AccuracyMetric::new())
-            // .metric_valid_numeric(burn::train::metric::AccuracyMetric::new())
             .metric_train_numeric(burn::train::metric::LossMetric::new())
             .metric_valid_numeric(burn::train::metric::LossMetric::new())
+            .metric_loggers(
+                FileMetricLogger::new(format!("/tmp/logs/{metric}/train/")),
+                FileMetricLogger::new(format!("/tmp/logs/{metric}/valid/")),
+            )
             .with_file_checkpointer(burn::record::CompactRecorder::new())
             .devices(vec![device.clone()])
             .num_epochs(config.num_epochs)
-            .summary()
+            // .summary()
             .build(
                 Cnn::<Autodiff<B>>::new(&device),
                 config.optimizer.init(),
@@ -191,5 +194,44 @@ pub fn train<B: Backend>() {
                 &burn::record::CompactRecorder::new(),
             )
             .expect("Trained model should be saved successfully");
+
+        let mut train_curve = vec![];
+        let mut valid_curve = vec![];
+
+        for epoch in 1..=config.num_epochs {
+            for mode in ["train", "valid"] {
+                let csv_path =
+                    PathBuf::from(format!("/tmp/logs/{metric}/{mode}/epoch-{epoch}/Loss.log"));
+                let mut rdr = csv::Reader::from_path(csv_path).unwrap();
+                let mut total_loss = 0.0;
+                let mut count = 0;
+                for result in rdr.records() {
+                    let record = result.unwrap();
+                    let loss: f32 = record.get(0).unwrap().parse().unwrap();
+                    total_loss += loss;
+                    count += 1;
+                }
+                let average_loss = total_loss / count as f32;
+
+                if mode == "train" {
+                    train_curve.push((epoch as f32, average_loss));
+                } else {
+                    valid_curve.push((epoch as f32, average_loss));
+                }
+            }
+        }
+
+        println!(
+            "Final {metric} loss (t/v) {:.3} {:.3}",
+            train_curve.last().unwrap().1,
+            valid_curve.last().unwrap().1
+        );
+
+        use textplots::Plot;
+
+        textplots::Chart::new(100, 25, 0.0, config.num_epochs as f32)
+            .lineplot(&textplots::Shape::Lines(&train_curve))
+            .lineplot(&textplots::Shape::Lines(&valid_curve))
+            .display();
     }
 }
