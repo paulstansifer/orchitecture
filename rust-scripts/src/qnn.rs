@@ -27,7 +27,7 @@ pub struct Cnn<B: Backend> {
 
 impl<B: Backend> Cnn<B> {
     pub fn new(device: &<B as Backend>::Device) -> Self {
-        let conv1 = Conv3dConfig::new([16, 32], [3, 3, 3])
+        let conv1 = Conv3dConfig::new([qnn_translate::EMBEDDING_SIZE, 32], [3, 3, 3])
             .with_padding(PaddingConfig3d::Same)
             .init(device);
 
@@ -98,7 +98,7 @@ impl<B: Backend> Cnn<B> {
 
 use burn::train::TrainOutput;
 
-use crate::qnn_translate::{load_training_data, GroundTruth, GroundTruthBatcher};
+use crate::qnn_translate::{self, load_training_data, GroundTruth, GroundTruthBatcher};
 
 impl<B: AutodiffBackend> burn::train::TrainStep<GroundTruth<B>, RegressionOutput<B>> for Cnn<B> {
     fn step(&self, batch: GroundTruth<B>) -> TrainOutput<RegressionOutput<B>> {
@@ -117,7 +117,7 @@ impl<B: Backend> burn::train::ValidStep<GroundTruth<B>, RegressionOutput<B>> for
 #[derive(Config)]
 pub struct TrainingConfig {
     pub optimizer: burn::optim::AdamConfig,
-    #[config(default = 5)]
+    #[config(default = 10)]
     pub num_epochs: usize,
     #[config(default = 1)]
     pub batch_size: usize,
@@ -125,7 +125,7 @@ pub struct TrainingConfig {
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1.0e-4)]
+    #[config(default = 1.0e-5)]
     pub learning_rate: f64,
 }
 
@@ -227,11 +227,17 @@ pub fn train<B: Backend>() {
             valid_curve.last().unwrap().1
         );
 
-        use textplots::Plot;
+        use textplots::ColorPlot;
 
         textplots::Chart::new(100, 25, 0.0, config.num_epochs as f32)
-            .lineplot(&textplots::Shape::Lines(&train_curve))
-            .lineplot(&textplots::Shape::Lines(&valid_curve))
+            .linecolorplot(
+                &textplots::Shape::Lines(&train_curve),
+                rgb::RGB::new(255, 0, 0),
+            )
+            .linecolorplot(
+                &textplots::Shape::Lines(&valid_curve),
+                rgb::RGB::new(0, 255, 0),
+            )
             .display();
     }
 }

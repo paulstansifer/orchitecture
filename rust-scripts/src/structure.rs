@@ -12,6 +12,23 @@ pub enum PlacementStyle {
     RoomPlop,
     WallPlop,
 }
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+
+pub struct StructureEmbedding {
+    pub tall: f32,
+    pub passable: f32,
+    pub decorative: f32,
+    pub striated: f32,
+}
+
+impl StructureEmbedding {
+    fn dist(&self, other: &Self) -> f32 {
+        (self.tall - other.tall).abs()
+            + (self.passable - other.passable).abs()
+            + (self.decorative - other.decorative).abs()
+            + (self.striated - other.striated).abs()
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct StructureInfo {
@@ -21,6 +38,7 @@ pub struct StructureInfo {
     pub placement_style: PlacementStyle,
     pub x_char: Option<char>,
     pub z_char: Option<char>,
+    pub embedding: StructureEmbedding,
 }
 
 pub struct Structure {
@@ -69,7 +87,29 @@ impl Structure {
 
 pub fn load_structure_info() -> Vec<StructureInfo> {
     let json_content = include_str!("../../structures.json");
-    serde_json::from_str(json_content).unwrap()
+    let structures: Vec<StructureInfo> = serde_json::from_str(json_content).unwrap();
+
+    let mut min_dist = f32::MAX;
+    let mut closest_pair = (None, None);
+
+    for i in 0..structures.len() {
+        for j in (i + 1)..structures.len() {
+            let dist = structures[i].embedding.dist(&structures[j].embedding);
+            if dist < min_dist {
+                min_dist = dist;
+                closest_pair = (Some(&structures[i]), Some(&structures[j]));
+            }
+        }
+    }
+
+    if let (Some(s1), Some(s2)) = closest_pair {
+        println!(
+            "Closest structure embeddings: {} and {} with distance {}",
+            s1.name, s2.name, min_dist
+        );
+    }
+
+    structures
 }
 
 pub fn load_structures() -> Vec<Structure> {

@@ -5,7 +5,13 @@
         "y_cut_mesh": null,
         "placement_style": "RoomPlop",
         "x_char": "V",
-        "z_char": "V"
+        "z_char": "V",
+        "embedding": {
+            "tall": 0.3,
+            "passable": 0.5,
+            "decorative": 0.5,
+            "striated": 0.0
+        }
     },
     {
         "name": "doorway",
@@ -13,7 +19,13 @@
         "y_cut_mesh": "doorway-cut-y-pos.gltf",
         "placement_style": "WallDrag",
         "x_char": "D",
-        "z_char": "D"
+        "z_char": "D",
+        "embedding": {
+            "tall": 1.0,
+            "passable": 0.95,
+            "decorative": 0.0,
+            "striated": 0.0
+        }
     },
     {
         "name": "window",
@@ -21,7 +33,13 @@
         "y_cut_mesh": "window-cut-y-pos.gltf",
         "placement_style": "WallDrag",
         "x_char": "W",
-        "z_char": "W"
+        "z_char": "W",
+        "embedding": {
+            "tall": 1.0,
+            "passable": 0.0,
+            "decorative": 0.75,
+            "striated": 0.0
+        }
     },
     {
         "name": "floor",
@@ -29,7 +47,13 @@
         "y_cut_mesh": null,
         "placement_style": "FloorDrag",
         "x_char": "#",
-        "z_char": "#"
+        "z_char": "#",
+        "embedding": {
+            "tall": 0.0,
+            "passable": 1.0,
+            "decorative": 0.0,
+            "striated": 0.0
+        }
     },
     {
         "name": "stairs",
@@ -37,7 +61,13 @@
         "y_cut_mesh": "stairs-cut-y-pos.gltf",
         "placement_style": "RoomPlop",
         "x_char": "S",
-        "z_char": "S"
+        "z_char": "S",
+        "embedding": {
+            "tall": 1.0,
+            "passable": 1.0,
+            "decorative": 0.5,
+            "striated": 1.0
+        }
     },
     {
         "name": "wall",
@@ -45,7 +75,13 @@
         "y_cut_mesh": "wall-cut-y-pos.gltf",
         "placement_style": "WallDrag",
         "x_char": "|",
-        "z_char": "-"
+        "z_char": "-",
+        "embedding": {
+            "tall": 1.0,
+            "passable": 0.0,
+            "decorative": 0.0,
+            "striated": 0.0
+        }
     },
     {
         "name": "railing",
@@ -53,7 +89,13 @@
         "y_cut_mesh": null,
         "placement_style": "WallDrag",
         "x_char": "R",
-        "z_char": "R"
+        "z_char": "R",
+        "embedding": {
+            "tall": 0.3,
+            "passable": 0.0,
+            "decorative": 0.5,
+            "striated": 1.0
+        }
     },
     {
         "name": "pillar",
@@ -61,6 +103,12 @@
         "y_cut_mesh": null,
         "placement_style": "WallDrag",
         "x_char": "P",
-        "z_char": "P"
+        "z_char": "P",
+        "embedding": {
+            "tall": 1.0,
+            "passable": 0.8,
+            "decorative": 1.0,
+            "striated": 0.0
+        }
     }
 ]

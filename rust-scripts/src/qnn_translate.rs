@@ -8,9 +8,9 @@ use godot::builtin::Vector3i;
 use std::collections::HashMap;
 use std::error::Error;
 
-use crate::structure::{self};
+use crate::structure::{self, StructureInfo};
 
-const INPUT_CHANNELS: usize = 16; // 16 colors
+pub const EMBEDDING_SIZE: usize = 4; // Keep this in sync with structure.rs
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Metric {
@@ -79,14 +79,14 @@ fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTru
 pub struct GroundTruthBatcher {}
 
 fn augment_datum(s: Sparse3D<OfflineCell>) -> Vec<Sparse3D<OfflineCell>> {
-    use crate::sparse3d::Rotateable;
+    // use crate::sparse3d::Rotateable;
     let mut res = vec![];
-    res.push(s.clone().rotate(crate::sparse3d::Rotation::Clockwise));
-    res.push(
-        s.clone()
-            .rotate(crate::sparse3d::Rotation::CounterClockwise),
-    );
-    res.push(s.clone().rotate(crate::sparse3d::Rotation::OneEighty));
+    // res.push(s.clone().rotate(crate::sparse3d::Rotation::Clockwise));
+    // res.push(
+    //     s.clone()
+    //         .rotate(crate::sparse3d::Rotation::CounterClockwise),
+    // );
+    // res.push(s.clone().rotate(crate::sparse3d::Rotation::OneEighty));
     res.push(s);
     res
 }
@@ -173,12 +173,12 @@ pub fn load_training_data<B: Backend>(
     let v_rooms = v_rooms.into_iter().cloned().map(augment_datum).flatten();
 
     let train_data = t_rooms
-        .map(|sparse_data| sparse3d_at_vantage(&sparse_data, metric))
+        .map(|sparse_data| sparse3d_at_vantage(&sparse_data, metric, &structures))
         .map(convert_ground_truth_to_autodiff)
         .collect();
 
     let test_data = v_rooms
-        .map(|sparse_data| sparse3d_at_vantage(&sparse_data, metric))
+        .map(|sparse_data| sparse3d_at_vantage(&sparse_data, metric, &structures))
         .collect();
 
     (InMemDataset::new(train_data), InMemDataset::new(test_data))
@@ -188,14 +188,15 @@ pub fn load_training_data<B: Backend>(
 pub fn sparse3d_at_vantage<B: Backend>(
     sparse_data: &Sparse3D<OfflineCell>,
     metric: Metric,
+    structures: &Vec<StructureInfo>,
 ) -> GroundTruth<B> {
     for (loc, cell) in sparse_data.iter() {
         if let Some(eval) = &cell.evaluation {
-            let tensor = sparse3d_to_tensor(
-                sparse_data,
-                /*center_coord=*/ loc.cube,
-                |cell| cell.id as usize,
-            )
+            let tensor = sparse3d_to_tensor(sparse_data, /*center_coord=*/ loc.cube, |cell| {
+                let semb = &structures[cell.id as usize].embedding;
+
+                vec![semb.tall, semb.decorative, semb.passable, semb.striated]
+            })
             .unwrap();
             let val = match metric {
                 Metric::Interest => eval.interest,
@@ -213,11 +214,14 @@ pub fn sparse3d_at_vantage<B: Backend>(
 
 /// Converts a region of Sparse3D data centered around a coordinate to a Tensor,
 /// expanding each Sparse3D cell into a 2x2x2 voxel block.
-pub fn sparse3d_to_tensor<B: Backend, T>(
+pub fn sparse3d_to_tensor<B: Backend, T, F>(
     sparse_data: &Sparse3D<T>,
     center_coord: Vector3i,
-    embedding: fn(&T) -> usize,
-) -> Result<Tensor<B, 5, Float>, Box<dyn Error>> {
+    embedding: F,
+) -> Result<Tensor<B, 5, Float>, Box<dyn Error>>
+where
+    F: Fn(&T) -> Vec<f32>,
+{
     let device = Default::default();
 
     let min_coord = center_coord - Vector3i::new(5, 2, 5);
@@ -226,7 +230,7 @@ pub fn sparse3d_to_tensor<B: Backend, T>(
 
     let shape = Shape::new([
         1_usize,
-        INPUT_CHANNELS as usize,
+        EMBEDDING_SIZE as usize,
         (size.x * 2) as usize + 1,
         (size.y * 2) as usize,
         (size.z * 2) as usize + 1,
@@ -247,14 +251,13 @@ pub fn sparse3d_to_tensor<B: Backend, T>(
                     let slot_location = SlotLocation::new(grid_x, grid_y, grid_z, slot);
 
                     if let Some(ref cell) = sparse_data.get(slot_location) {
-                        let channel = embedding(cell);
-                        assert!(channel < INPUT_CHANNELS);
+                        let emb = embedding(cell);
 
-                        let voxel_slice =
-                            grid_coord_to_voxel_coord(grid_pos, min_coord, slot, channel);
-
-                        // Right now, we're using a one-hot representation (except allowing overlap)
-                        voxels = voxels.slice_fill(voxel_slice, 1.0);
+                        for channel in 0..EMBEDDING_SIZE {
+                            let voxel_slice =
+                                grid_coord_to_voxel_coord(grid_pos, min_coord, slot, channel);
+                            voxels = voxels.slice_fill(voxel_slice, emb[channel]);
+                        }
                     }
                 }
             }
@@ -324,7 +327,7 @@ mod tests {
     //     // Batch size of 1, 16 channels, depth 14, height 30, width 30
     //     let device = <Gpu as Backend>::Device::new(); // Modified backend initialization
     //     let input_data = Tensor::<Gpu, 5>::random(
-    //         [1, INPUT_CHANNELS as usize, INPUT_DEPTH as usize, INPUT_HEIGHT as usize, INPUT_WIDTH as usize],
+    //         [1, EMBEDDING_SIZE as usize, INPUT_DEPTH as usize, INPUT_HEIGHT as usize, INPUT_WIDTH as usize],
     //         burn::tensor::Distribution::Standard,
     //         &device,
     //     );
@@ -347,12 +350,14 @@ mod tests {
         sparse_data.set(SlotLocation::new(0, 1, 0, RelSlot::Floor), 2);
         sparse_data.set(SlotLocation::new(0, 0, 1, RelSlot::ZLoWall), 11);
 
+        let embedding = |id: &usize| vec![*id as f32, 0.0, 0.0, 0.0];
+
         // Convert a region around (0, 0, 0) to a tensor
         let center_coord = Vector3i::new(0, 0, 0);
-        let tensor = sparse3d_to_tensor::<B, _>(&sparse_data, center_coord, |id| *id)?;
+        let tensor = sparse3d_to_tensor::<B, _, _>(&sparse_data, center_coord, embedding)?;
 
         // Check the shape of the resulting tensor
-        let expected_shape = Shape::new([1, INPUT_CHANNELS, 23, 12, 23]);
+        let expected_shape = Shape::new([1, EMBEDDING_SIZE, 23, 12, 23]);
         assert_eq!(
             tensor.dims(),
             expected_shape.dims(),
@@ -368,7 +373,7 @@ mod tests {
         );
 
         let tensor_way_far_away =
-            sparse3d_to_tensor::<B, _>(&sparse_data, Vector3i::new(50, 0, 0), |id| *id)?;
+            sparse3d_to_tensor::<B, _, _>(&sparse_data, Vector3i::new(50, 0, 0), embedding)?;
 
         assert_eq!(
             tensor_way_far_away.clone().sum().into_scalar(),
