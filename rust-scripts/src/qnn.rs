@@ -125,7 +125,7 @@ pub struct TrainingConfig {
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1.0e-5)]
+    #[config(default = 1.0e-6)]
     pub learning_rate: f64,
 }
 
@@ -241,3 +241,5 @@ pub fn train<B: Backend>() {
             .display();
     }
 }
+
+pub struct Models {}
