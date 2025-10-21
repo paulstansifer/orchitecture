@@ -21,3 +21,5 @@ export/
 rust-scripts/target/
 
 .vscode/
+
+target/

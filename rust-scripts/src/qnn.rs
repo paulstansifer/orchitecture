@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use burn::nn::Sigmoid;
 use burn::train::logger::FileMetricLogger;
 use burn::{
     backend::Autodiff,
@@ -17,7 +18,8 @@ use burn::{
 };
 #[derive(Module, Debug)]
 pub struct Cnn<B: Backend> {
-    activation: Relu,
+    relu: Relu,
+    sigmoid: Sigmoid,
     dropout: Dropout,
     conv1: Conv3d<B>,
     conv2: Conv3d<B>,
@@ -43,10 +45,10 @@ impl<B: Backend> Cnn<B> {
         let fc2 = LinearConfig::new(128, 1).init(device); // Output a single score
 
         let dropout = DropoutConfig::new(0.3).init();
-        let activation = Relu::new();
 
         Self {
-            activation: activation.clone(),
+            relu: Relu::new(),
+            sigmoid: Sigmoid::new(),
             dropout,
             conv1,
             conv2,
@@ -57,20 +59,21 @@ impl<B: Backend> Cnn<B> {
 
     pub fn forward(&self, x: Tensor<B, 5>) -> Tensor<B, 2> {
         let x = self.conv1.forward(x);
-        let x = self.activation.forward(x);
+        let x = self.relu.forward(x);
         let x = self.dropout.forward(x);
 
         let x = self.conv2.forward(x);
-        let x = self.activation.forward(x);
+        let x = self.relu.forward(x);
         let x = self.dropout.forward(x);
         let dims_left = x.dims().len() - 1;
 
         let x: Tensor<B, 2> = x.flatten(1, dims_left); // Flatten from the channel dimension onwards
         let x = self.fc1.forward(x);
-        let x = self.activation.forward(x);
+        let x = self.relu.forward(x);
         let x = self.dropout.forward(x);
 
-        self.fc2.forward(x) // raw score
+        let x = self.fc2.forward(x); // raw score
+        self.sigmoid.forward(x)
     }
 
     pub fn forward_classification(
@@ -125,7 +128,7 @@ pub struct TrainingConfig {
     pub num_workers: usize,
     #[config(default = 42)]
     pub seed: u64,
-    #[config(default = 1.0e-6)]
+    #[config(default = 1.0e-5)]
     pub learning_rate: f64,
 }
 
@@ -229,7 +232,7 @@ pub fn train<B: Backend>() {
 
         use textplots::ColorPlot;
 
-        textplots::Chart::new(100, 25, 0.0, config.num_epochs as f32)
+        textplots::Chart::new_with_y_range(100, 30, 0.0, config.num_epochs as f32, 0.0, 0.15)
             .linecolorplot(
                 &textplots::Shape::Lines(&train_curve),
                 rgb::RGB::new(255, 0, 0),
@@ -238,6 +241,6 @@ pub fn train<B: Backend>() {
                 &textplots::Shape::Lines(&valid_curve),
                 rgb::RGB::new(0, 255, 0),
             )
-            .display();
+            .nice();
     }
 }
