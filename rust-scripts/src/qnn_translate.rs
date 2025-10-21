@@ -154,7 +154,7 @@ pub fn load_training_data<B: Backend>(
             .expect("Failed to deserialize");
 
             // println!("== {:?} ==", path);
-            // let gt: GroundTruth<B> = sparse3d_at_vantage(&sparse_data);
+            // let gt: GroundTruth<B> = ground_truth_at_vantage(&sparse_data);
             // print_voxels(&gt.voxels);
 
             all_sparse_data.push(sparse_data);
@@ -173,19 +173,19 @@ pub fn load_training_data<B: Backend>(
     let v_rooms = v_rooms.into_iter().cloned().map(augment_datum).flatten();
 
     let train_data = t_rooms
-        .map(|sparse_data| sparse3d_at_vantage(&sparse_data, metric, &structures))
+        .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .map(convert_ground_truth_to_autodiff)
         .collect();
 
     let test_data = v_rooms
-        .map(|sparse_data| sparse3d_at_vantage(&sparse_data, metric, &structures))
+        .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .collect();
 
     (InMemDataset::new(train_data), InMemDataset::new(test_data))
 }
 
 // Just handles a single datum, but the tensors could hold a batch
-pub fn sparse3d_at_vantage<B: Backend>(
+pub fn ground_truth_at_vantage<B: Backend>(
     sparse_data: &Sparse3D<OfflineCell>,
     metric: Metric,
     structures: &Vec<StructureInfo>,

@@ -8,10 +8,10 @@ use godot::prelude::*;
 use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
 use serde::{Deserialize, Serialize};
 
-use crate::serialization;
 use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
 use crate::structure::{self, Structure};
 use crate::{example_structures, qnn};
+use crate::{qnn_translate, serialization};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Dir {
@@ -346,6 +346,29 @@ impl WallGrid {
             });
         }
     }
+    #[func]
+    pub fn metrics_at(&self, location: Vector3) -> Vec<f32> {
+        // Return type is a hack; I don't feel like implementing `ToGodot` and `FromGodot` for
+        // `VantageEvaluation` right now.
+        let pos = location.round().cast_int();
+
+        let tensor: burn::tensor::Tensor<burn::backend::Wgpu, 5> =
+            qnn_translate::sparse3d_to_tensor(&self.contents, pos, |cell: &Cell| {
+                let semb = &self.structures[cell.id as usize].info.embedding;
+
+                vec![semb.tall, semb.decorative, semb.passable, semb.striated]
+            })
+            .unwrap();
+
+        let (symmetry, interest) = MODELS.with(|models| {
+            (
+                models.symmetry.forward(tensor.clone()).sum().into_scalar(),
+                models.interest.forward(tensor).sum().into_scalar(),
+            )
+        });
+
+        vec![symmetry, interest]
+    }
 
     #[func]
     pub fn save(&self, filename: GString) {
@@ -399,7 +422,8 @@ impl WallGrid {
 
                 Ok::<Cell, ()>(Cell {
                     id,
-                    facing: Facing::NegX, // TODO: we need to serialize this!
+                    // TODO: This gets loaded correctly when needed, but this looks wrong:
+                    facing: Facing::NegX,
                     mesh: mesh_instance,
                     evaluation: None,
                 })
@@ -533,4 +557,8 @@ impl INode3D for WallGrid {
             base,
         }
     }
+}
+
+thread_local! {
+    pub static MODELS: crate::qnn_adapter::ModelHolder = crate::qnn_adapter::ModelHolder::new();
 }

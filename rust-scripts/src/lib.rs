@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 use godot::prelude::*;
 
 struct MyExtension;
@@ -10,6 +11,7 @@ mod example_structures;
 mod llm_rooms;
 mod mesh_management;
 mod qnn;
+mod qnn_adapter;
 mod qnn_translate;
 mod serialization;
 mod sparse3d;

@@ -10,6 +10,7 @@ extends Node3D
 @export var filename: TextEdit
 @export var save_button: Button
 @export var load_button: Button
+@export var evaluation: RichTextLabel
 
 var cur_dir: int = 0
 var selected_structure_idx: int = 0
@@ -66,6 +67,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	var world_position = plane.intersects_ray(
 		view_camera.project_ray_origin(get_viewport().get_mouse_position()),
 		view_camera.project_ray_normal(get_viewport().get_mouse_position()))
+		
+	
+	if event.is_action_pressed("evaluate"):
+		evaluation.clear()
+		evaluation.add_text("working...")
+		var metrics = wallgrid.metrics_at(world_position)
+		evaluation.clear()
+		evaluation.add_text("symmetry: %.2f  interest: %.2f" % metrics)
 
 	if not world_position:
 		return

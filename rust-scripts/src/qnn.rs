@@ -176,7 +176,7 @@ pub fn train<B: Backend>() {
                 FileMetricLogger::new(format!("/tmp/logs/{metric}/train/")),
                 FileMetricLogger::new(format!("/tmp/logs/{metric}/valid/")),
             )
-            .with_file_checkpointer(burn::record::CompactRecorder::new())
+            // .with_file_checkpointer(burn::record::CompactRecorder::new())
             .devices(vec![device.clone()])
             .num_epochs(config.num_epochs)
             // .summary()
@@ -241,5 +241,3 @@ pub fn train<B: Backend>() {
             .display();
     }
 }
-
-pub struct Models {}

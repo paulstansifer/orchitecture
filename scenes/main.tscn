@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://vgwrcfy1qawf"]
+[gd_scene load_steps=17 format=3 uid="uid://vgwrcfy1qawf"]
 
 [ext_resource type="Script" uid="uid://b0rbp7jukmxlq" path="res://scripts/builder.gd" id="1_jybm7"]
 [ext_resource type="Environment" uid="uid://jbptgqvstei3" path="res://scenes/main-environment.tres" id="1_yndf3"]
@@ -48,21 +48,47 @@ grow_amount = -0.352
 material = SubResource("StandardMaterial3D_tbgi4")
 size = Vector2(0, 0)
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tbgi4"]
+content_margin_left = 0.0
+content_margin_top = 0.0
+content_margin_right = 0.0
+content_margin_bottom = 0.0
+bg_color = Color(0.1, 0.1, 0.1, 0.6)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+corner_detail = 5
+expand_margin_left = 5.0
+expand_margin_top = 5.0
+expand_margin_right = 5.0
+expand_margin_bottom = 5.0
+
+[sub_resource type="Theme" id="Theme_tefeu"]
+Panel/styles/panel = SubResource("StyleBoxFlat_tbgi4")
+PanelContainer/styles/panel = null
+VBoxContainer/constants/separation = 0
+
 [node name="Main" type="Node3D"]
 
 [node name="WallGrid" type="WallGrid" parent="."]
 
-[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "mouse_helper_room", "view_camera", "wallgrid", "buildable_buttons", "filename", "save_button", "load_button")]
+[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "mouse_helper_room", "view_camera", "wallgrid", "buildable_buttons", "filename", "save_button", "load_button", "evaluation")]
 script = ExtResource("1_jybm7")
 drag_start_helper = NodePath("drag start helper")
 mouse_helper = NodePath("mouse helper")
 mouse_helper_room = NodePath("mouse helper - room")
 view_camera = NodePath("../View/Camera")
 wallgrid = NodePath("../WallGrid")
-buildable_buttons = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons")
-filename = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons/TextEdit")
-save_button = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons/save button")
-load_button = NodePath("../CanvasLayer/Control/VBoxContainer/BuildableButtons/load button")
+buildable_buttons = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons")
+filename = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons/TextEdit")
+save_button = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons/save button")
+load_button = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons/load button")
+evaluation = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/Evaluation")
 
 [node name="drag start helper" type="Node3D" parent="Builder"]
 visible = false
@@ -152,23 +178,34 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 0
 
-[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control"]
+[node name="PanelContainer" type="PanelContainer" parent="CanvasLayer/Control"]
 layout_mode = 0
-offset_right = 1078.0
-offset_bottom = 62.0
+offset_left = 7.0
+offset_top = -24.0
+offset_right = 1027.0
+offset_bottom = 72.0
 
-[node name="BuildableButtons" type="HBoxContainer" parent="CanvasLayer/Control/VBoxContainer"]
+[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/Control/PanelContainer"]
+layout_mode = 2
+theme = SubResource("Theme_tefeu")
+
+[node name="Evaluation" type="RichTextLabel" parent="CanvasLayer/Control/PanelContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 25)
+layout_mode = 2
+text = "Press \"V\" to evaluate the current cursor location. It takes a moment to load the model the first time."
+
+[node name="BuildableButtons" type="HBoxContainer" parent="CanvasLayer/Control/PanelContainer/VBoxContainer"]
 layout_mode = 2
 
-[node name="load button" type="Button" parent="CanvasLayer/Control/VBoxContainer/BuildableButtons"]
+[node name="load button" type="Button" parent="CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons"]
 layout_mode = 2
 text = "LOAD"
 
-[node name="save button" type="Button" parent="CanvasLayer/Control/VBoxContainer/BuildableButtons"]
+[node name="save button" type="Button" parent="CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons"]
 layout_mode = 2
 text = "SAVE"
 
-[node name="TextEdit" type="TextEdit" parent="CanvasLayer/Control/VBoxContainer/BuildableButtons"]
+[node name="TextEdit" type="TextEdit" parent="CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons"]
 custom_minimum_size = Vector2(200, 25)
 layout_mode = 2
 text = "room.txt"
@@ -176,9 +213,11 @@ emoji_menu_enabled = false
 scroll_fit_content_height = true
 scroll_fit_content_width = true
 
-[node name="RichTextLabel" type="RichTextLabel" parent="CanvasLayer/Control/VBoxContainer"]
+[node name="VSeparator" type="VSeparator" parent="CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons"]
+layout_mode = 2
+
+[node name="RichTextLabel" type="RichTextLabel" parent="CanvasLayer/Control/PanelContainer/VBoxContainer"]
 custom_minimum_size = Vector2(0, 25)
 layout_mode = 2
 size_flags_vertical = 8
-text = "Ctrl-drag to delete structures. Ctrl-S/Ctrl-L to save/load. Mousewheel to change focus floor. Middle-drag+WASD to adjust view.
-"
+text = "Mousewheel: change focus floor. Middle-drag+WASD: adjust view. Drag/Ctrl-drag: build/delete."
