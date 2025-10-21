@@ -11,6 +11,7 @@ extends Node3D
 @export var save_button: Button
 @export var load_button: Button
 @export var evaluation: RichTextLabel
+@export var load_options: OptionButton
 
 var cur_dir: int = 0
 var selected_structure_idx: int = 0
@@ -34,10 +35,15 @@ func _ready():
 
 		button.connect("pressed", _on_buildable_button_pressed.bind(idx))
 		buildable_buttons.add_child(button)
+	
+	for file in DirAccess.open("res://training").get_files():
+		load_options.add_item(file)
+	for i in range(load_options.item_count):
+		load_options.get_popup().set_item_as_radio_checkable(i, false)
 		
 	save_button.connect("pressed", save_command)
 	load_button.connect("pressed", load_command)
-
+	load_options.connect("item_selected", select_command)
 
 func _unhandled_input(event: InputEvent) -> void:
 	# Controls
@@ -122,6 +128,9 @@ func save_command():
 func load_command():
 	wallgrid.load(filename.text)
 
+func select_command(index):
+	print(load_options.get_item_text(index))
+	wallgrid.load(load_options.get_item_text(index))
 
 func accept_actions():
 	if Input.is_action_pressed("quit"):

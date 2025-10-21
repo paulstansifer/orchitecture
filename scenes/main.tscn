@@ -77,7 +77,7 @@ VBoxContainer/constants/separation = 0
 
 [node name="WallGrid" type="WallGrid" parent="."]
 
-[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "mouse_helper_room", "view_camera", "wallgrid", "buildable_buttons", "filename", "save_button", "load_button", "evaluation")]
+[node name="Builder" type="Node3D" parent="." node_paths=PackedStringArray("drag_start_helper", "mouse_helper", "mouse_helper_room", "view_camera", "wallgrid", "buildable_buttons", "filename", "save_button", "load_button", "evaluation", "load_options")]
 script = ExtResource("1_jybm7")
 drag_start_helper = NodePath("drag start helper")
 mouse_helper = NodePath("mouse helper")
@@ -88,7 +88,8 @@ buildable_buttons = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContaine
 filename = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons/TextEdit")
 save_button = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons/save button")
 load_button = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons/load button")
-evaluation = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/Evaluation")
+evaluation = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/evaluation")
+load_options = NodePath("../CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons/load options")
 
 [node name="drag start helper" type="Node3D" parent="Builder"]
 visible = false
@@ -189,7 +190,7 @@ offset_bottom = 72.0
 layout_mode = 2
 theme = SubResource("Theme_tefeu")
 
-[node name="Evaluation" type="RichTextLabel" parent="CanvasLayer/Control/PanelContainer/VBoxContainer"]
+[node name="evaluation" type="RichTextLabel" parent="CanvasLayer/Control/PanelContainer/VBoxContainer"]
 custom_minimum_size = Vector2(0, 25)
 layout_mode = 2
 text = "Press \"V\" to evaluate the current cursor location. It takes a moment to load the model the first time."
@@ -198,6 +199,7 @@ text = "Press \"V\" to evaluate the current cursor location. It takes a moment t
 layout_mode = 2
 
 [node name="load button" type="Button" parent="CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons"]
+visible = false
 layout_mode = 2
 text = "LOAD"
 
@@ -216,7 +218,11 @@ scroll_fit_content_width = true
 [node name="VSeparator" type="VSeparator" parent="CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons"]
 layout_mode = 2
 
-[node name="RichTextLabel" type="RichTextLabel" parent="CanvasLayer/Control/PanelContainer/VBoxContainer"]
+[node name="load options" type="OptionButton" parent="CanvasLayer/Control/PanelContainer/VBoxContainer/BuildableButtons"]
+layout_mode = 2
+toggle_mode = false
+
+[node name="instructions" type="RichTextLabel" parent="CanvasLayer/Control/PanelContainer/VBoxContainer"]
 custom_minimum_size = Vector2(0, 25)
 layout_mode = 2
 size_flags_vertical = 8
