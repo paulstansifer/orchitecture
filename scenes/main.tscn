@@ -1,7 +1,8 @@
-[gd_scene load_steps=12 format=3 uid="uid://vgwrcfy1qawf"]
+[gd_scene load_steps=15 format=3 uid="uid://vgwrcfy1qawf"]
 
 [ext_resource type="Script" uid="uid://b0rbp7jukmxlq" path="res://scripts/builder.gd" id="1_jybm7"]
 [ext_resource type="Environment" uid="uid://jbptgqvstei3" path="res://scenes/main-environment.tres" id="1_yndf3"]
+[ext_resource type="Shader" uid="uid://clyn54av04wv0" path="res://scenes/postprocess.gdshader" id="5_tbgi4"]
 [ext_resource type="Script" uid="uid://dwid2ts3ka71a" path="res://scripts/view.gd" id="8_yovpv"]
 [ext_resource type="Shader" uid="uid://df3ajyyv7gmtw" path="res://scenes/grid.gdshader" id="23_pm3ni"]
 
@@ -26,6 +27,15 @@ albedo_color = Color(0.449668, 1, 0.562291, 1)
 emission_enabled = true
 emission = Color(0, 0, 1, 1)
 emission_energy_multiplier = 9.0
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_o6xl0"]
+render_priority = 0
+shader = ExtResource("5_tbgi4")
+
+[sub_resource type="QuadMesh" id="QuadMesh_o6xl0"]
+material = SubResource("ShaderMaterial_o6xl0")
+size = Vector2(2, 0.5)
+center_offset = Vector3(0, 0, -2)
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_tbgi4"]
 
@@ -112,12 +122,23 @@ environment = ExtResource("1_yndf3")
 fov = 20.0
 far = 1000.0
 
+[node name="MeshInstance3D" type="MeshInstance3D" parent="View/Camera"]
+visible = false
+extra_cull_margin = 16384.0
+mesh = SubResource("QuadMesh_o6xl0")
+
 [node name="Sun" type="DirectionalLight3D" parent="."]
 transform = Transform3D(-0.422618, -0.694272, 0.582563, 0, 0.642788, 0.766044, -0.906308, 0.323744, -0.271654, 0, 0, 0)
 light_energy = 0.5
 shadow_enabled = true
 shadow_opacity = 0.75
 directional_shadow_blend_splits = true
+
+[node name="drag preview" type="Node3D" parent="."]
+
+[node name="ground" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+mesh = SubResource("PlaneMesh_tefeu")
 
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
 
@@ -161,9 +182,3 @@ layout_mode = 2
 size_flags_vertical = 8
 text = "Ctrl-drag to delete structures. Ctrl-S/Ctrl-L to save/load. Mousewheel to change focus floor. Middle-drag+WASD to adjust view.
 "
-
-[node name="drag preview" type="Node3D" parent="."]
-
-[node name="ground" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
-mesh = SubResource("PlaneMesh_tefeu")
