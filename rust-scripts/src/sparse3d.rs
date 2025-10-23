@@ -419,6 +419,14 @@ impl<T> Sparse3D<T> {
         }
         (min, max)
     }
+
+    pub fn ray_trace(
+        &self,
+        _origin: SlotLocation,
+        _destination: SlotLocation,
+    ) -> Vec<SlotLocation> {
+        panic!();
+    }
 }
 
 impl<T: Rotateable + Clone> Rotateable for Sparse3D<T> {

@@ -79,9 +79,9 @@ fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTru
 pub struct GroundTruthBatcher {}
 
 fn augment_datum(s: Sparse3D<OfflineCell>) -> Vec<Sparse3D<OfflineCell>> {
-    // use crate::sparse3d::Rotateable;
+    use crate::sparse3d::Rotateable;
     let mut res = vec![];
-    // res.push(s.clone().rotate(crate::sparse3d::Rotation::Clockwise));
+    res.push(s.clone().rotate(crate::sparse3d::Rotation::Clockwise));
     // res.push(
     //     s.clone()
     //         .rotate(crate::sparse3d::Rotation::CounterClockwise),
