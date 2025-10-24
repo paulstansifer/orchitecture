@@ -25,6 +25,7 @@ pub struct Cnn<B: Backend> {
     conv2: Conv3d<B>,
     fc1: Linear<B>,
     fc2: Linear<B>,
+    fc3: Linear<B>,
 }
 
 impl<B: Backend> Cnn<B> {
@@ -42,7 +43,8 @@ impl<B: Backend> Cnn<B> {
         let flattened_size = 64 * 12 * 23 * 23; // Example, adjust based on your layers
 
         let fc1 = LinearConfig::new(flattened_size, 128).init(device);
-        let fc2 = LinearConfig::new(128, 1).init(device); // Output a single score
+        let fc2 = LinearConfig::new(128, 128).init(device);
+        let fc3 = LinearConfig::new(128, 1).init(device); // Output a single score
 
         let dropout = DropoutConfig::new(0.3).init();
 
@@ -54,6 +56,7 @@ impl<B: Backend> Cnn<B> {
             conv2,
             fc1,
             fc2,
+            fc3,
         }
     }
 
@@ -72,7 +75,14 @@ impl<B: Backend> Cnn<B> {
         let x = self.relu.forward(x);
         let x = self.dropout.forward(x);
 
-        let x = self.fc2.forward(x); // raw score
+        let x = self.fc2.forward(x);
+        let x = self.relu.forward(x);
+        let x = self.dropout.forward(x);
+
+        let x = self.fc3.forward(x);
+        let x = self.sigmoid.forward(x);
+        let x = self.dropout.forward(x);
+
         self.sigmoid.forward(x)
     }
 
@@ -120,7 +130,7 @@ impl<B: Backend> burn::train::ValidStep<GroundTruth<B>, RegressionOutput<B>> for
 #[derive(Config)]
 pub struct TrainingConfig {
     pub optimizer: burn::optim::AdamConfig,
-    #[config(default = 10)]
+    #[config(default = 3)] //10)]
     pub num_epochs: usize,
     #[config(default = 1)]
     pub batch_size: usize,
