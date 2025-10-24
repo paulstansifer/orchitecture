@@ -80,9 +80,6 @@ impl<B: Backend> Cnn<B> {
         let x = self.dropout.forward(x);
 
         let x = self.fc3.forward(x);
-        let x = self.sigmoid.forward(x);
-        let x = self.dropout.forward(x);
-
         self.sigmoid.forward(x)
     }
 
