@@ -18,7 +18,7 @@ pub struct Builder {
 
 impl Builder {
     pub fn new(structures: &Vec<StructureInfo>) -> Self {
-        let base_name = |s: &str| (s.splitn(2, ".").next().unwrap().to_string());
+        let base_name = |s: &str| s.splitn(2, ".").next().unwrap().to_string();
 
         Self {
             map: Sparse3D::new(),

@@ -16,6 +16,17 @@ use burn::{
     tensor::backend::AutodiffBackend,
     train::RegressionOutput,
 };
+// use clap::Parser;
+
+// #[derive(Parser, Debug)]
+// struct Args {
+//     #[arg(long)]
+//     conv_size: Vec<usize>,
+
+//     #[arg(long)]
+//     conv_feat: Vec<usize>,
+// }
+
 #[derive(Module, Debug)]
 pub struct Cnn<B: Backend> {
     relu: Relu,
@@ -30,17 +41,17 @@ pub struct Cnn<B: Backend> {
 
 impl<B: Backend> Cnn<B> {
     pub fn new(device: &<B as Backend>::Device) -> Self {
-        let conv1 = Conv3dConfig::new([qnn_translate::EMBEDDING_SIZE, 32], [3, 3, 3])
+        let conv1 = Conv3dConfig::new([qnn_translate::EMBEDDING_SIZE, 12], [3, 3, 3])
             .with_padding(PaddingConfig3d::Same)
             .init(device);
 
-        let conv2 = Conv3dConfig::new([32, 64], [3, 3, 3])
+        let conv2 = Conv3dConfig::new([12, 24], [3, 3, 3])
             .with_padding(PaddingConfig3d::Same)
             .init(device);
 
         // Calculate the output size after pooling (example: 10/2 = 5, 22/2 = 11)
         // If the input was [16, 10, 22, 22], after two pooling layers it becomes [64, 2, 5, 5] (approx.)
-        let flattened_size = 64 * 12 * 23 * 23; // Example, adjust based on your layers
+        let flattened_size = 24 * 12 * 23 * 23; // Example, adjust based on your layers
 
         let fc1 = LinearConfig::new(flattened_size, 128).init(device);
         let fc2 = LinearConfig::new(128, 128).init(device);
@@ -124,10 +135,10 @@ impl<B: Backend> burn::train::ValidStep<GroundTruth<B>, RegressionOutput<B>> for
     }
 }
 
-#[derive(Config)]
+#[derive(Config, Debug)]
 pub struct TrainingConfig {
     pub optimizer: burn::optim::AdamConfig,
-    #[config(default = 3)] //10)]
+    #[config(default = 5)]
     pub num_epochs: usize,
     #[config(default = 1)]
     pub batch_size: usize,
@@ -155,7 +166,7 @@ pub fn train<B: Backend>() {
         .save(format!("{artifact_dir}/config.json"))
         .expect("Config should be saved successfully");
 
-    B::seed(config.seed);
+    B::seed(&device, config.seed);
 
     for metric in [
         crate::qnn_translate::Metric::Interest,
@@ -182,29 +193,32 @@ pub fn train<B: Backend>() {
         let learner = burn::train::LearnerBuilder::new(artifact_dir)
             .metric_train_numeric(burn::train::metric::LossMetric::new())
             .metric_valid_numeric(burn::train::metric::LossMetric::new())
-            .metric_loggers(
-                FileMetricLogger::new(format!("/tmp/logs/{metric}/train/")),
-                FileMetricLogger::new(format!("/tmp/logs/{metric}/valid/")),
-            )
-            // .with_file_checkpointer(burn::record::CompactRecorder::new())
-            .devices(vec![device.clone()])
             .num_epochs(config.num_epochs)
-            // .summary()
+            .with_metric_logger(FileMetricLogger::new(format!("/tmp/logs/{metric}/")))
             .build(
                 Cnn::<Autodiff<B>>::new(&device),
                 config.optimizer.init(),
                 config.learning_rate,
+                burn::train::LearningStrategy::SingleDevice(device.clone()),
             );
 
-        let model_trained = learner.fit(dataloader_train, dataloader_test);
+        let model_trained = { learner.fit(dataloader_train, dataloader_test) };
 
         model_trained
+            .model
             .save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
                 format!("{artifact_dir}/{metric}_model"),
                 &burn::record::CompactRecorder::new(),
             )
             .expect("Trained model should be saved successfully");
+    }
 
+    // Gotta let the trainer go out of scope to get access to the terminal back?
+
+    for metric in [
+        crate::qnn_translate::Metric::Interest,
+        crate::qnn_translate::Metric::Symmetry,
+    ] {
         let mut train_curve = vec![];
         let mut valid_curve = vec![];
 
@@ -231,13 +245,13 @@ pub fn train<B: Backend>() {
             }
         }
 
+        use textplots::ColorPlot;
+
         println!(
             "Final {metric} loss (t/v) {:.3} {:.3}",
             train_curve.last().unwrap().1,
             valid_curve.last().unwrap().1
         );
-
-        use textplots::ColorPlot;
 
         textplots::Chart::new_with_y_range(100, 30, 0.0, config.num_epochs as f32, 0.0, 0.15)
             .linecolorplot(

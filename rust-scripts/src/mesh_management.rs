@@ -6,8 +6,8 @@ use godot::{
     prelude::*,
 };
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Debug)]
-pub struct MeshId(usize);
+// #[derive(PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Debug)]
+// pub struct MeshId(usize);
 
 pub fn load_meshes() -> HashMap<String, Gd<Mesh>> {
     let mut meshes: HashMap<String, Gd<Mesh>> = HashMap::new();
