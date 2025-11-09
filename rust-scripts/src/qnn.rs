@@ -16,46 +16,75 @@ use burn::{
     tensor::backend::AutodiffBackend,
     train::RegressionOutput,
 };
-// use clap::Parser;
+use clap::Parser;
 
-// #[derive(Parser, Debug)]
-// struct Args {
-//     #[arg(long)]
-//     conv_size: Vec<usize>,
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(short, long, default_value = "5/12,24/3")]
+    conv: String,
 
-//     #[arg(long)]
-//     conv_feat: Vec<usize>,
-// }
+    #[arg(short, long, default_value = "128,64,32")]
+    fc: String,
+    // #[arg(short, long, default_value = "1.0e-5")]
+    // lr: f32,
+}
 
 #[derive(Module, Debug)]
 pub struct Cnn<B: Backend> {
     relu: Relu,
     sigmoid: Sigmoid,
     dropout: Dropout,
-    conv1: Conv3d<B>,
-    conv2: Conv3d<B>,
-    fc1: Linear<B>,
-    fc2: Linear<B>,
-    fc3: Linear<B>,
+    conv: Vec<Conv3d<B>>,
+    // conv1: Conv3d<B>,
+    // conv2: Conv3d<B>,
+    fc: Vec<Linear<B>>,
+    // fc1: Linear<B>,
+    // fc2: Linear<B>,
+    // fc3: Linear<B>,
+    // fc4: Linear<B>,
 }
 
 impl<B: Backend> Cnn<B> {
     pub fn new(device: &<B as Backend>::Device) -> Self {
-        let conv1 = Conv3dConfig::new([qnn_translate::EMBEDDING_SIZE, 12], [3, 3, 3])
-            .with_padding(PaddingConfig3d::Same)
-            .init(device);
+        let args = Args::parse();
 
-        let conv2 = Conv3dConfig::new([12, 24], [3, 3, 3])
-            .with_padding(PaddingConfig3d::Same)
-            .init(device);
+        let mut features = qnn_translate::EMBEDDING_SIZE;
+        let mut conv = vec![];
+        for conv_spec in args.conv.split(",") {
+            let (size, next_features) = conv_spec.split_once("/").unwrap();
+            let size: usize = size.parse().unwrap();
+            let next_features: usize = next_features.parse().unwrap();
+            conv.push(
+                Conv3dConfig::new([features, next_features], [size, size, size])
+                    .with_padding(PaddingConfig3d::Same)
+                    .init(device),
+            );
+            features = next_features;
+        }
+
+        // let conv1 = Conv3dConfig::new([qnn_translate::EMBEDDING_SIZE, 12], [3, 3, 3])
+        //     .with_padding(PaddingConfig3d::Same)
+        //     .init(device);
+
+        // let conv2 = Conv3dConfig::new([12, 24], [3, 3, 3])
+        //     .with_padding(PaddingConfig3d::Same)
+        //     .init(device);
 
         // Calculate the output size after pooling (example: 10/2 = 5, 22/2 = 11)
         // If the input was [16, 10, 22, 22], after two pooling layers it becomes [64, 2, 5, 5] (approx.)
-        let flattened_size = 24 * 12 * 23 * 23; // Example, adjust based on your layers
+        let mut nodes = features * 12 * 23 * 23;
+        let mut fc = vec![];
+        for fc_spec in args.fc.split(",") {
+            let next_nodes: usize = fc_spec.parse().unwrap();
+            fc.push(LinearConfig::new(nodes, next_nodes).init(device));
+            nodes = next_nodes;
+        }
+        fc.push(LinearConfig::new(nodes, 1).init(device));
 
-        let fc1 = LinearConfig::new(flattened_size, 128).init(device);
-        let fc2 = LinearConfig::new(128, 128).init(device);
-        let fc3 = LinearConfig::new(128, 1).init(device); // Output a single score
+        // let fc1 = LinearConfig::new(flattened_size, 128).init(device);
+        // let fc2 = LinearConfig::new(128, 64).init(device);
+        // let fc3 = LinearConfig::new(64, 32).init(device);
+        // let fc4 = LinearConfig::new(32, 1).init(device); // Output a single score
 
         let dropout = DropoutConfig::new(0.3).init();
 
@@ -63,34 +92,37 @@ impl<B: Backend> Cnn<B> {
             relu: Relu::new(),
             sigmoid: Sigmoid::new(),
             dropout,
-            conv1,
-            conv2,
-            fc1,
-            fc2,
-            fc3,
+            conv,
+            fc,
         }
     }
 
-    pub fn forward(&self, x: Tensor<B, 5>) -> Tensor<B, 2> {
-        let x = self.conv1.forward(x);
-        let x = self.relu.forward(x);
-        let x = self.dropout.forward(x);
+    pub fn forward(&self, mut x: Tensor<B, 5>) -> Tensor<B, 2> {
+        for conv in &self.conv {
+            x = conv.forward(x);
+            x = self.relu.forward(x);
+            x = self.dropout.forward(x)
+        }
 
-        let x = self.conv2.forward(x);
-        let x = self.relu.forward(x);
-        let x = self.dropout.forward(x);
+        // let x = self.conv1.forward(x);
+        // let x = self.relu.forward(x);
+        // let x = self.dropout.forward(x);
+
+        // let x = self.conv2.forward(x);
+        // let x = self.relu.forward(x);
+        // let x = self.dropout.forward(x);
         let dims_left = x.dims().len() - 1;
 
-        let x: Tensor<B, 2> = x.flatten(1, dims_left); // Flatten from the channel dimension onwards
-        let x = self.fc1.forward(x);
-        let x = self.relu.forward(x);
-        let x = self.dropout.forward(x);
+        // Flatten from the channel dimension onwards
+        let mut x: Tensor<B, 2> = x.flatten(1, dims_left);
 
-        let x = self.fc2.forward(x);
-        let x = self.relu.forward(x);
-        let x = self.dropout.forward(x);
+        for fc in self.fc.iter().take(self.fc.len() - 1) {
+            x = fc.forward(x);
+            x = self.relu.forward(x);
+            x = self.dropout.forward(x);
+        }
+        x = self.fc.last().unwrap().forward(x);
 
-        let x = self.fc3.forward(x);
         self.sigmoid.forward(x)
     }
 
@@ -212,6 +244,8 @@ pub fn train<B: Backend>() {
             )
             .expect("Trained model should be saved successfully");
     }
+
+    println!("Parameters: {:?}", Args::parse());
 
     // Gotta let the trainer go out of scope to get access to the terminal back?
 
