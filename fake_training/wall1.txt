@@ -1,0 +1,19 @@
+      
+|     
+      
+|     
+      
+|     
+      
+|     
+    V 
+|     
+      
+|     
+      
+|     
+      
+|     
+~~~~~
+~*~*~
+(2,0,4,"Room")={"id":0,"facing":"NegX","evaluation":{"symmetry":0.0,"interest":0.6}}
