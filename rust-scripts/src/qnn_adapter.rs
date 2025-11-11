@@ -21,11 +21,11 @@ impl ModelHolder {
         let i_record: <Cnn<B> as burn::module::Module<B>>::Record = recorder
             .load("models/interest_model.mpk".into(), &device)
             .unwrap();
-        let i_model = Cnn::<B>::new(&device).load_record(i_record);
+        let i_model = Cnn::<B>::new(&device, panic!()).load_record(i_record);
         let s_record: <Cnn<B> as burn::module::Module<B>>::Record = recorder
             .load("models/symmetry_model.mpk".into(), &device)
             .unwrap();
-        let s_model = Cnn::<B>::new(&device).load_record(s_record);
+        let s_model = Cnn::<B>::new(&device, panic!()).load_record(s_record);
 
         ModelHolder {
             interest: i_model,

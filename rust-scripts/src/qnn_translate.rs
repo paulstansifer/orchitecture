@@ -203,6 +203,8 @@ pub fn ground_truth_at_vantage<B: Backend>(
                 Metric::Symmetry => eval.symmetry,
             };
 
+            // print_voxels(&tensor);
+
             return GroundTruth {
                 voxels: tensor,
                 scores: Tensor::from_data(TensorData::from([val]), &Default::default()),
