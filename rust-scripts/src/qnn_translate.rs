@@ -278,8 +278,6 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
         let mut slice = String::new();
         for x in 0..x_size {
             for z in 0..z_size {
-                let mut hot_channel = None;
-
                 let voxel = voxels
                     .clone()
                     .slice(s![0, .., x, y, z])
@@ -289,19 +287,11 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
 
                 for i in 0..voxel.len() {
                     if voxel[i] > 0.0 {
-                        if hot_channel.is_some() {
-                            panic!(); //but maybe it's okay!
-                        } else {
-                            hot_channel = Some(i);
-                        }
+                        has_anything = true;
+                        write!(slice, "{}", (voxel[i] * 9.0) as u8).unwrap();
+                    } else {
+                        write!(slice, " ").unwrap();
                     }
-                }
-
-                if let Some(c) = hot_channel {
-                    has_anything = true;
-                    write!(slice, "{}", c).unwrap();
-                } else {
-                    write!(slice, " ").unwrap();
                 }
             }
             writeln!(slice).unwrap()
@@ -341,20 +331,28 @@ mod tests {
 
     #[test]
     fn test_sparse3d_to_tensor() -> Result<(), Box<dyn Error>> {
+        let si = structure::load_structure_info();
+
         type B = backend::Autodiff<backend::NdArray<f32, i32>>;
 
         let mut sparse_data: Sparse3D<usize> = Sparse3D::new();
         // Add some dummy data to the sparse grid
-        sparse_data.set(SlotLocation::new(0, 0, 0, RelSlot::Room), 5);
-        sparse_data.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), 10);
-        sparse_data.set(SlotLocation::new(0, 1, 0, RelSlot::Floor), 2);
-        sparse_data.set(SlotLocation::new(0, 0, 1, RelSlot::ZLoWall), 11);
+        sparse_data.set(SlotLocation::new(0, 0, 0, RelSlot::Room), 0);
+        sparse_data.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), 5);
+        sparse_data.set(SlotLocation::new(0, 1, 0, RelSlot::Floor), 3);
+        sparse_data.set(SlotLocation::new(0, 0, 1, RelSlot::ZLoWall), 5);
+        sparse_data.set(SlotLocation::new(3, 0, 0, RelSlot::XLoWall), 6);
 
         let embedding = |id: &usize| vec![*id as f32, 0.0, 0.0, 0.0];
 
         // Convert a region around (0, 0, 0) to a tensor
         let center_coord = Vector3i::new(0, 0, 0);
-        let tensor = sparse3d_to_tensor::<B, _, _>(&sparse_data, center_coord, embedding)?;
+        // TODO: there's a bunch of stuff that needs to stay in sync here!
+        let tensor = sparse3d_to_tensor::<B, _, _>(&sparse_data, center_coord, |id| {
+            let semb = &si[*id].embedding;
+
+            vec![semb.tall, semb.decorative, semb.passable, semb.striated]
+        })?;
 
         // Check the shape of the resulting tensor
         let expected_shape = Shape::new([1, EMBEDDING_SIZE, 23, 12, 23]);
@@ -366,10 +364,12 @@ mod tests {
 
         // Check that the tensor is not all zeros (some data should be present)
 
-        assert_eq!(
+        print_voxels(&tensor);
+
+        assert_ne!(
             tensor.clone().sum().into_scalar(),
-            16.0,
-            "Tensor should have four entries"
+            0.0,
+            "Tensor should have some entries"
         );
 
         let tensor_way_far_away =
