@@ -179,6 +179,23 @@ impl SlotLocation {
         };
         (big_coords, small_coords)
     }
+
+    fn get_center(&self) -> (f64, f64, f64) {
+        let base = (
+            self.cube.x as f64 + 0.5,
+            self.cube.y as f64 + 0.5,
+            self.cube.z as f64 + 0.5,
+        );
+        match self.rel_slot {
+            RelSlot::Room => base,
+            RelSlot::XLoWall => (base.0 - 0.5, base.1, base.2),
+            RelSlot::XHiWall => (base.0 + 0.5, base.1, base.2),
+            RelSlot::Floor => (base.0, base.1 - 0.5, base.2),
+            RelSlot::Ceiling => (base.0, base.1 + 0.5, base.2),
+            RelSlot::ZLoWall => (base.0, base.1, base.2 - 0.5),
+            RelSlot::ZHiWall => (base.0, base.1, base.2 + 0.5),
+        }
+    }
 }
 
 impl Rotateable for SlotLocation {
@@ -420,12 +437,158 @@ impl<T> Sparse3D<T> {
         (min, max)
     }
 
-    pub fn ray_trace(
-        &self,
-        _origin: SlotLocation,
-        _destination: SlotLocation,
-    ) -> Vec<SlotLocation> {
-        panic!();
+    pub fn ray_trace(&self, origin: SlotLocation, destination: SlotLocation) -> Vec<Vec<&T>>
+    where
+        T: PartialEq,
+    {
+        let p0 = origin.get_center();
+        let p1 = destination.get_center();
+        let dir = (p1.0 - p0.0, p1.1 - p0.1, p1.2 - p0.2);
+
+        // 1. Identify all t values where the ray crosses an integer plane (x, y, or z)
+        let mut ts = Vec::new();
+        ts.push(0.0);
+        ts.push(1.0);
+
+        let epsilon = 1e-9;
+
+        // Helper to find intersections for one dimension
+        let mut add_intersections = |start: f64, d: f64| {
+            if d.abs() > epsilon {
+                let min_val = start.min(start + d);
+                let max_val = start.max(start + d);
+
+                let first_int = min_val.ceil() as i32;
+                let last_int = max_val.floor() as i32;
+
+                for k in first_int..=last_int {
+                    let t = (k as f64 - start) / d;
+                    if t >= -epsilon && t <= 1.0 + epsilon {
+                        ts.push(t.clamp(0.0, 1.0));
+                    }
+                }
+            } else if (start.round() - start).abs() < epsilon {
+                // parallel to plane and lies on an integer coordinate?
+                // technically "intersects" everywhere, but we don't need to add specific 't's for this
+                // because the segment checks will handle it.
+            }
+        };
+
+        add_intersections(p0.0, dir.0);
+        add_intersections(p0.1, dir.1);
+        add_intersections(p0.2, dir.2);
+
+        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ts.dedup_by(|a, b| (*a - *b).abs() < epsilon);
+
+        let mut result = Vec::new();
+
+        // 2. Iterate through points and segments
+        let mut prev_t: Option<f64> = None;
+
+        for &t in &ts {
+            // Segment before this point
+            if let Some(pt) = prev_t {
+                if (t - pt) > epsilon {
+                    let t_mid = (pt + t) / 2.0;
+                    let p_mid = (
+                        p0.0 + t_mid * dir.0,
+                        p0.1 + t_mid * dir.1,
+                        p0.2 + t_mid * dir.2,
+                    );
+                    let items = self.collect_at_point(p_mid, epsilon);
+                    if !items.is_empty() {
+                        result.push(items);
+                    }
+                }
+            }
+
+            // The point itself
+            let p_curr = (p0.0 + t * dir.0, p0.1 + t * dir.1, p0.2 + t * dir.2);
+            let items = self.collect_at_point(p_curr, epsilon);
+            if !items.is_empty() {
+                result.push(items);
+            }
+
+            prev_t = Some(t);
+        }
+
+        result
+    }
+
+    fn collect_at_point(&self, p: (f64, f64, f64), epsilon: f64) -> Vec<&T> {
+        let mut items = Vec::new();
+
+        // Helper to get candidate indices for a coordinate
+        let get_candidates = |val: f64| -> Vec<i32> {
+            if (val.round() - val).abs() < epsilon {
+                vec![val.round() as i32 - 1, val.round() as i32]
+            } else {
+                vec![val.floor() as i32]
+            }
+        };
+
+        let xs = get_candidates(p.0);
+        let ys = get_candidates(p.1);
+        let zs = get_candidates(p.2);
+
+        // Check Rooms
+        for &x in &xs {
+            for &y in &ys {
+                for &z in &zs {
+                    if let Some(val) = self.get(SlotLocation::new(x, y, z, RelSlot::Room)) {
+                        items.push(val);
+                    }
+                }
+            }
+        }
+
+        // Check XWalls
+        // For XWall, x must be closely integer. The wall is exactly at that integer.
+        // So we don't look at `xs` (which has 2 neighbors), we look at exactly `round(p.0)`.
+        if (p.0.round() - p.0).abs() < epsilon {
+            let x_idx = p.0.round() as i32;
+            for &y in &ys {
+                for &z in &zs {
+                    if let Some(val) = self.get(SlotLocation::new(x_idx, y, z, RelSlot::XLoWall)) {
+                        items.push(val);
+                    }
+                }
+            }
+        }
+
+        // Check YFloors
+        if (p.1.round() - p.1).abs() < epsilon {
+            let y_idx = p.1.round() as i32;
+            for &x in &xs {
+                for &z in &zs {
+                    if let Some(val) = self.get(SlotLocation::new(x, y_idx, z, RelSlot::Floor)) {
+                        items.push(val);
+                    }
+                }
+            }
+        }
+
+        // Check ZWalls
+        if (p.2.round() - p.2).abs() < epsilon {
+            let z_idx = p.2.round() as i32;
+            for &x in &xs {
+                for &y in &ys {
+                    if let Some(val) = self.get(SlotLocation::new(x, y, z_idx, RelSlot::ZLoWall)) {
+                        items.push(val);
+                    }
+                }
+            }
+        }
+
+        // Dedup items if necessary?
+        // Logic might add same item multiple times?
+        // e.g. Room check is distinct. Wall checks are distinct.
+        // But do Wall checks overlap with Room checks? No, different RelSlot.
+        // Result is Vec<&T>. Pointers.
+        // We shouldn't have duplicates because the slots are distinct keys in the map.
+
+        items
     }
 }
 
@@ -511,5 +674,77 @@ mod tests {
         .collect();
 
         assert_eq!(items, expected);
+    }
+
+    #[test]
+    fn test_ray_trace_simple() {
+        let mut grid: Sparse3D<RotInt> = Sparse3D::new();
+        // Room at (0,0,0) -> "Room A" (1)
+        grid.set(SlotLocation::new(0, 0, 0, RelSlot::Room), RotInt(1));
+        // Wall at (1,0,0) (XLoWall for (1,0,0) or XHiWall for (0,0,0)) -> "Wall" (2)
+        // XLoWall at (1,0,0) is at x=1.
+        grid.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), RotInt(2));
+        // Room at (1,0,0) -> "Room B" (3)
+        grid.set(SlotLocation::new(1, 0, 0, RelSlot::Room), RotInt(3));
+
+        // Ray from Center of Rule 0 (0.5, 0.5, 0.5) to Center of Room 1 (1.5, 0.5, 0.5)
+        let trace = grid.ray_trace(
+            SlotLocation::new(0, 0, 0, RelSlot::Room),
+            SlotLocation::new(1, 0, 0, RelSlot::Room),
+        );
+
+        // Expected sequence of sets of items found along the ray.
+        // We expect at least the rooms and the wall.
+        // Let's flatten and check presence.
+        let flattened: HashSet<&RotInt> = trace.iter().flatten().cloned().collect();
+        assert!(flattened.contains(&RotInt(1)));
+        assert!(flattened.contains(&RotInt(2)));
+        assert!(flattened.contains(&RotInt(3)));
+
+        // Verify structure roughly
+        // Middle of trace should have 3 items (Room A, Wall, Room B)
+        let crossing = trace.iter().find(|group| group.len() >= 3);
+        assert!(
+            crossing.is_some(),
+            "Should have a crossing event with multiple items"
+        );
+    }
+
+    #[test]
+    fn test_ray_trace_corner() {
+        let mut grid: Sparse3D<RotInt> = Sparse3D::new();
+        // 2D Corner: (0,0) to (1,1).
+        // Rooms: (0,0), (1,0), (0,1), (1,1).
+        // Walls/Floors at x=1, z=1.
+
+        // Ray from (0,0,0) to (1,0,1). (x,z plane).
+
+        let start = SlotLocation::new(0, 0, 0, RelSlot::Room);
+        let end = SlotLocation::new(1, 0, 1, RelSlot::Room);
+
+        grid.set(start, RotInt(10)); // Room 0,0
+        grid.set(end, RotInt(20)); // Room 1,1
+
+        // Corner is at x=1, z=1. (Ray goes 0.5->1.5? No, 0->1 in coords)
+        // Start center: (0.5, 0.5, 0.5)
+        // End center: (1.5, 0.5, 1.5)
+        // Ray passes through (1.0, 0.5, 1.0).
+
+        // At (1.0, 0.5, 1.0):
+        // Should touch Rooms at (0,0,0), (1,0,0), (0,0,1), (1,0,1).
+        // Should touch XWall at (1,0,0) (and at z=0,1..).
+        // Should touch ZWall at (0,0,1) etc.
+
+        // Let's just set the rooms and verify we hit them all.
+        grid.set(SlotLocation::new(1, 0, 0, RelSlot::Room), RotInt(11));
+        grid.set(SlotLocation::new(0, 0, 1, RelSlot::Room), RotInt(12));
+
+        let trace = grid.ray_trace(start, end);
+        let flattened: HashSet<&RotInt> = trace.iter().flatten().cloned().collect();
+
+        assert!(flattened.contains(&RotInt(10)));
+        assert!(flattened.contains(&RotInt(20)));
+        assert!(flattened.contains(&RotInt(11)));
+        assert!(flattened.contains(&RotInt(12)));
     }
 }

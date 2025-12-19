@@ -660,6 +660,8 @@ Final symmetry loss (t/v) 0.099 0.099
 
 ---
 Wait a second, I tried to add debugging information, and suddenly it looks like we're getting training happening again:
+
+Parameters: Args { conv: "3/24,3/12", fc: "64,32", lr: 0.0001, epochs: 10 }
 Final interest loss (t/v) 0.036 0.084
 ⡁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⣀⣁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⠀⠁⠈⡁ 0.2
 ⠄⠀⠀⠀⠀⠀⠀⠀⢀⠔⠉⠒⠤⣀⠀⠀⠀⡠⠔⠊⠀⠀⠉⠑⠒⠤⠤⠤⠤⠤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠄
