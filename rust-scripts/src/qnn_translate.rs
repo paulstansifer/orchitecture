@@ -172,14 +172,19 @@ pub fn load_training_data<B: Backend>(
     let t_rooms = t_rooms.into_iter().cloned().map(augment_datum).flatten();
     let v_rooms = v_rooms.into_iter().cloned().map(augment_datum).flatten();
 
-    let train_data = t_rooms
+    let train_data: Vec<_> = t_rooms
         .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .map(convert_ground_truth_to_autodiff)
         .collect();
 
-    let test_data = v_rooms
+    let test_data: Vec<_> = v_rooms
         .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .collect();
+    println!(
+        "{} training rooms, {} validation rooms",
+        train_data.len(),
+        test_data.len()
+    );
 
     (InMemDataset::new(train_data), InMemDataset::new(test_data))
 }

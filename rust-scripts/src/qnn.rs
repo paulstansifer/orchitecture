@@ -17,8 +17,9 @@ use burn::{
     train::RegressionOutput,
 };
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Serialize, Deserialize)]
 pub struct Args {
     #[arg(short, long, default_value = "5/12,24/3")]
     conv: String,
@@ -31,6 +32,9 @@ pub struct Args {
 
     #[arg(short, long, default_value = "10")]
     epochs: usize,
+
+    #[arg(short, long, default_value = "42")]
+    seed: u64,
 }
 
 #[derive(Module, Debug)]
@@ -204,7 +208,8 @@ pub fn train<B: Backend>() {
     let device: <Autodiff<B> as Backend>::Device = Default::default();
     let config = TrainingConfig::new(AdamConfig::new())
         .with_learning_rate(args.lr)
-        .with_num_epochs(args.epochs);
+        .with_num_epochs(args.epochs)
+        .with_seed(args.seed);
     let artifact_dir = "/tmp/artifacts/";
     create_artifact_dir(artifact_dir);
     config
@@ -239,8 +244,8 @@ pub fn train<B: Backend>() {
         let model = Cnn::<Autodiff<B>>::new(&device, &args);
 
         println!("Model params: {}", model.num_params());
-        println!("### Model: {model}");
-        println!("### last layer: {:?}", model.fc.last().unwrap().weight);
+        // println!("### Model: {model}");
+        // println!("### last layer: {:?}", model.fc.last().unwrap().weight);
 
         let learner = burn::train::LearnerBuilder::new(artifact_dir)
             .metric_train_numeric(burn::train::metric::LossMetric::new())
@@ -267,6 +272,9 @@ pub fn train<B: Backend>() {
                 &burn::record::CompactRecorder::new(),
             )
             .expect("Trained model should be saved successfully");
+
+        let args_json = serde_json::to_string_pretty(&args).unwrap();
+        std::fs::write(format!("{artifact_dir}/model_args.json"), args_json).unwrap();
     }
 
     println!("Parameters: {:?}", Args::parse());
