@@ -219,7 +219,8 @@ pub fn train<B: Backend>() {
     ] {
         let batcher = GroundTruthBatcher {};
 
-        let (train_data, test_data) = load_training_data::<B>("../training", config.seed, metric);
+        let (train_data, test_data) =
+            load_training_data::<B>("../fake_training", config.seed, metric);
 
         let dataloader_train: Arc<dyn DataLoader<Autodiff<B>, GroundTruth<Autodiff<B>>>> =
             burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
