@@ -10,7 +10,7 @@ use std::error::Error;
 
 use crate::structure::{self, StructureInfo};
 
-pub const EMBEDDING_SIZE: usize = 4; // Keep this in sync with structure.rs
+pub const EMBEDDING_SIZE: usize = 4 + 1; // Keep this in sync with structure.rs (+ 1 for "indoors")
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Metric {
@@ -240,6 +240,13 @@ where
 
     let mut voxels = Tensor::<B, 5>::zeros(shape, &device);
 
+    let vantage = SlotLocation::new(
+        center_coord.x,
+        center_coord.y,
+        center_coord.z,
+        RelSlot::Room,
+    );
+
     for grid_y in min_coord.y..=max_coord.y {
         for grid_x in min_coord.x..=max_coord.x {
             for grid_z in min_coord.z..=max_coord.z {
@@ -252,8 +259,40 @@ where
                     let grid_pos = Vector3i::new(grid_x, grid_y, grid_z);
                     let slot_location = SlotLocation::new(grid_x, grid_y, grid_z, slot);
 
+                    let obstacles = sparse_data.ray_trace(vantage, slot_location);
+
+                    let mut view_blocked = false;
+                    for obstacle_collection in obstacles {
+                        let mut any_transparent = false;
+                        for obstacle in obstacle_collection {
+                            if let [tall, decorative, passable, striated] =
+                                &embedding(&obstacle)[..]
+                            {
+                                // HACK! Identify walls and floors:
+                                let opaque = tall + decorative + passable + striated == 1.0
+                                    && (tall == &1.0 || passable == &1.0);
+                                // Also, uh, treat windows as opaque: (later I think we should just
+                                // measure 'indoors' by whether a window is passed through)
+                                let opaque = opaque || decorative == &0.75;
+                                any_transparent = any_transparent || !opaque;
+                            } else {
+                                panic!()
+                            }
+                        }
+
+                        if !any_transparent {
+                            view_blocked = true;
+                            break;
+                        }
+                    }
+
+                    if view_blocked {
+                        continue;
+                    }
+
                     if let Some(ref cell) = sparse_data.get(slot_location) {
-                        let emb = embedding(cell);
+                        let mut emb = embedding(cell);
+                        emb.push(1.0); // Window are opaque: if we can see it at all, it's indoors.
 
                         for channel in 0..EMBEDDING_SIZE {
                             let voxel_slice =

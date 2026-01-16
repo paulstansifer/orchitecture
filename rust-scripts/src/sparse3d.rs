@@ -437,10 +437,7 @@ impl<T> Sparse3D<T> {
         (min, max)
     }
 
-    pub fn ray_trace(&self, origin: SlotLocation, destination: SlotLocation) -> Vec<Vec<&T>>
-    where
-        T: PartialEq,
-    {
+    pub fn ray_trace(&self, origin: SlotLocation, destination: SlotLocation) -> Vec<Vec<&T>> {
         let p0 = origin.get_center();
         let p1 = destination.get_center();
         let dir = (p1.0 - p0.0, p1.1 - p0.1, p1.2 - p0.2);

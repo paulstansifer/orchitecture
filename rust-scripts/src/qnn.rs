@@ -46,16 +46,18 @@ impl<B: Backend> Cnn<B> {
     pub fn new(device: &<B as Backend>::Device, args: &Args) -> Self {
         let mut features = qnn_translate::EMBEDDING_SIZE;
         let mut conv = vec![];
-        for conv_spec in args.conv.split(",") {
-            let (size, next_features) = conv_spec.split_once("/").unwrap();
-            let size: usize = size.parse().unwrap();
-            let next_features: usize = next_features.parse().unwrap();
-            conv.push(
-                Conv3dConfig::new([features, next_features], [size, size, size])
-                    .with_padding(PaddingConfig3d::Same)
-                    .init(device),
-            );
-            features = next_features;
+        if args.conv.contains(",") {
+            for conv_spec in args.conv.split(",") {
+                let (size, next_features) = conv_spec.split_once("/").unwrap();
+                let size: usize = size.parse().unwrap();
+                let next_features: usize = next_features.parse().unwrap();
+                conv.push(
+                    Conv3dConfig::new([features, next_features], [size, size, size])
+                        .with_padding(PaddingConfig3d::Same)
+                        .init(device),
+                );
+                features = next_features;
+            }
         }
 
         // Calculate the output size after pooling
