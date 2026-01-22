@@ -66,22 +66,27 @@ fn grid_coord_to_voxel_coord(
 pub struct GroundTruth<B: Backend> {
     pub voxels: Tensor<B, 5, Float>,
     pub scores: Tensor<B, 1, Float>,
+    pub filename: String,
 }
 
 fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTruth<Autodiff<B>> {
     GroundTruth {
         voxels: Tensor::from_inner(gt.voxels),
         scores: Tensor::from_inner(gt.scores),
+        filename: gt.filename,
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct GroundTruthBatcher {}
 
-fn augment_datum(s: Sparse3D<OfflineCell>) -> Vec<Sparse3D<OfflineCell>> {
+fn augment_datum(s: (Sparse3D<OfflineCell>, String)) -> Vec<(Sparse3D<OfflineCell>, String)> {
     use crate::sparse3d::Rotateable;
     let mut res = vec![];
-    res.push(s.clone().rotate(crate::sparse3d::Rotation::Clockwise));
+    res.push((
+        s.0.clone().rotate(crate::sparse3d::Rotation::Clockwise),
+        format!("{}-cc", s.1),
+    ));
     // res.push(
     //     s.clone()
     //         .rotate(crate::sparse3d::Rotation::CounterClockwise),
@@ -97,15 +102,21 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
     fn batch(&self, ds: Vec<GroundTruth<B>>, _device: &B::Device) -> GroundTruth<B> {
         let mut voxels: Vec<Tensor<B, 5, Float>> = Vec::new();
         let mut scores: Vec<Tensor<B, 1, Float>> = Vec::new();
+        let mut files: Vec<String> = Vec::new();
 
         for gt in ds {
             voxels.push(gt.voxels);
             scores.push(gt.scores);
+            files.push(gt.filename);
         }
 
         let voxels = Tensor::cat(voxels, 0);
         let scores = Tensor::cat(scores, 0);
-        GroundTruth { voxels, scores }
+        GroundTruth {
+            voxels,
+            scores,
+            filename: files.join("/"),
+        }
     }
 }
 
@@ -157,7 +168,17 @@ pub fn load_training_data<B: Backend>(
             // let gt: GroundTruth<B> = ground_truth_at_vantage(&sparse_data);
             // print_voxels(&gt.voxels);
 
-            all_sparse_data.push(sparse_data);
+            all_sparse_data.push((
+                sparse_data,
+                path.to_str()
+                    .unwrap()
+                    .split("/")
+                    .last()
+                    .unwrap()
+                    .strip_suffix(".txt")
+                    .unwrap()
+                    .to_owned(),
+            ));
         }
     }
     use rand::SeedableRng;
@@ -180,24 +201,19 @@ pub fn load_training_data<B: Backend>(
     let test_data: Vec<_> = v_rooms
         .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .collect();
-    println!(
-        "{} training rooms, {} validation rooms",
-        train_data.len(),
-        test_data.len()
-    );
 
     (InMemDataset::new(train_data), InMemDataset::new(test_data))
 }
 
 // Just handles a single datum, but the tensors could hold a batch
 pub fn ground_truth_at_vantage<B: Backend>(
-    sparse_data: &Sparse3D<OfflineCell>,
+    data: &(Sparse3D<OfflineCell>, String),
     metric: Metric,
     structures: &Vec<StructureInfo>,
 ) -> GroundTruth<B> {
-    for (loc, cell) in sparse_data.iter() {
+    for (loc, cell) in data.0.iter() {
         if let Some(eval) = &cell.evaluation {
-            let tensor = sparse3d_to_tensor(sparse_data, /*center_coord=*/ loc.cube, |cell| {
+            let tensor = sparse3d_to_tensor(&data.0, /*center_coord=*/ loc.cube, |cell| {
                 let semb = &structures[cell.id as usize].embedding;
 
                 vec![semb.tall, semb.decorative, semb.passable, semb.striated]
@@ -213,6 +229,7 @@ pub fn ground_truth_at_vantage<B: Backend>(
             return GroundTruth {
                 voxels: tensor,
                 scores: Tensor::from_data(TensorData::from([val]), &Default::default()),
+                filename: data.1.clone(),
             };
         }
     }

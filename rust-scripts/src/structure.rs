@@ -102,11 +102,13 @@ pub fn load_structure_info() -> Vec<StructureInfo> {
         }
     }
 
-    if let (Some(s1), Some(s2)) = closest_pair {
-        println!(
-            "Closest structure embeddings: {} and {} with distance {}",
-            s1.name, s2.name, min_dist
-        );
+    if min_dist < 0.5 {
+        if let (Some(s1), Some(s2)) = closest_pair {
+            println!(
+                "Closest structure embeddings: {} and {} with distance {}",
+                s1.name, s2.name, min_dist
+            );
+        }
     }
 
     structures

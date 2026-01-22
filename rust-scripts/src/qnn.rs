@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use burn::data::dataset::Dataset;
 use burn::nn::Sigmoid;
 use burn::train::logger::FileMetricLogger;
 use burn::{
@@ -8,7 +9,7 @@ use burn::{
     data::dataloader::DataLoader,
     nn::{
         conv::{Conv3d, Conv3dConfig},
-        Dropout, DropoutConfig, Linear, LinearConfig, PaddingConfig3d, Relu,
+        Dropout, DropoutConfig, Linear, LinearConfig, PaddingConfig3d,
     },
     optim::AdamConfig,
     prelude::*,
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Parser, Debug, Serialize, Deserialize)]
 pub struct Args {
-    #[arg(short, long, default_value = "5/12,24/3")]
+    #[arg(short, long, default_value = "5/12,3/24")]
     conv: String,
 
     #[arg(short, long, default_value = "128,64,32")]
@@ -35,11 +36,17 @@ pub struct Args {
 
     #[arg(short, long, default_value = "42")]
     seed: u64,
+
+    #[arg(short, long, action = clap::ArgAction::SetTrue)]
+    show_scores: bool,
+
+    #[arg(short, long, action = clap::ArgAction::SetTrue)]
+    fake_data: bool,
 }
 
 #[derive(Module, Debug)]
 pub struct Cnn<B: Backend> {
-    relu: Relu,
+    relu: nn::LeakyRelu,
     sigmoid: Sigmoid,
     dropout: Dropout,
     conv: Vec<Conv3d<B>>,
@@ -50,7 +57,7 @@ impl<B: Backend> Cnn<B> {
     pub fn new(device: &<B as Backend>::Device, args: &Args) -> Self {
         let mut features = qnn_translate::EMBEDDING_SIZE;
         let mut conv = vec![];
-        if args.conv.contains(",") {
+        if args.conv.contains("/") {
             for conv_spec in args.conv.split(",") {
                 let (size, next_features) = conv_spec.split_once("/").unwrap();
                 let size: usize = size.parse().unwrap();
@@ -77,7 +84,7 @@ impl<B: Backend> Cnn<B> {
         let dropout = DropoutConfig::new(0.3).init();
 
         Self {
-            relu: Relu::new(),
+            relu: nn::LeakyReluConfig::new().init(),
             sigmoid: Sigmoid::new(),
             dropout,
             conv,
@@ -135,19 +142,6 @@ impl<B: Backend> Cnn<B> {
         let output = self.forward(rooms);
         let batch_size = output.dims()[0];
 
-        if let Ok(data) = output.clone().into_data().to_vec::<f32>() {
-            let log_path = "/tmp/outputs/output.log";
-            std::fs::create_dir_all("/tmp/outputs").ok();
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_path)
-                .and_then(|mut file| {
-                    use std::io::Write;
-                    writeln!(file, "### output: {:?}", data)
-                });
-        }
-
         // We have only one output metric:
         let targets_reshaped = targets.clone().reshape([batch_size, 1]);
 
@@ -200,7 +194,6 @@ fn create_artifact_dir(artifact_dir: &str) {
     // Remove existing artifacts before to get an accurate learner summary
     //std::fs::remove_dir_all(artifact_dir).unwrap();
     std::fs::create_dir_all(artifact_dir).unwrap();
-    println!("{artifact_dir} created successfully");
 }
 
 pub fn train<B: Backend>() {
@@ -218,15 +211,28 @@ pub fn train<B: Backend>() {
 
     B::seed(&device, config.seed);
 
+    let mut score_output = String::new();
+
     for metric in [
         crate::qnn_translate::Metric::Interest,
         crate::qnn_translate::Metric::Symmetry,
     ] {
         let batcher = GroundTruthBatcher {};
 
-        let (train_data, test_data) =
-            load_training_data::<B>("../fake_training", config.seed, metric);
+        let load_data = || {
+            load_training_data::<B>(
+                if args.fake_data {
+                    "../fake_training"
+                } else {
+                    "../training"
+                },
+                config.seed,
+                metric,
+            )
+        };
 
+        let (train_data, test_data) = load_data();
+        let data_size = (train_data.len(), test_data.len());
         let dataloader_train: Arc<dyn DataLoader<Autodiff<B>, GroundTruth<Autodiff<B>>>> =
             burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
                 .batch_size(config.batch_size)
@@ -243,7 +249,15 @@ pub fn train<B: Backend>() {
 
         let model = Cnn::<Autodiff<B>>::new(&device, &args);
 
-        println!("Model params: {}", model.num_params());
+        if metric == crate::qnn_translate::Metric::Interest {
+            // Only need to show this once:
+            println!(
+                "Model params: {}. Training items: {}. Test items: {}",
+                model.num_params(),
+                data_size.0,
+                data_size.1
+            );
+        }
         // println!("### Model: {model}");
         // println!("### last layer: {:?}", model.fc.last().unwrap().weight);
 
@@ -265,6 +279,28 @@ pub fn train<B: Backend>() {
             model_trained.model.fc.last().unwrap().weight
         );
 
+        if args.show_scores {
+            let (train_data, test_data) = load_data();
+
+            for idx in 0..train_data.len() {
+                let datum = train_data.get(idx).unwrap();
+                let evaluation = model_trained
+                    .model
+                    .forward(datum.voxels.inner())
+                    .into_scalar();
+                let goal = datum.scores.into_scalar();
+                score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, evaluation, goal);
+            }
+            score_output += "/// ";
+            for idx in 0..test_data.len() {
+                let datum = test_data.get(idx).unwrap();
+                let evaluation = model_trained.model.forward(datum.voxels).into_scalar();
+                let goal = datum.scores.into_scalar();
+                score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, evaluation, goal);
+            }
+            score_output += "\n";
+        }
+
         model_trained
             .model
             .save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
@@ -278,6 +314,7 @@ pub fn train<B: Backend>() {
     }
 
     println!("Parameters: {:?}", Args::parse());
+    let mut plots = vec![];
 
     // Gotta let the trainer go out of scope to get access to the terminal back?
 
@@ -319,15 +356,43 @@ pub fn train<B: Backend>() {
             valid_curve.last().unwrap().1
         );
 
-        textplots::Chart::new_with_y_range(100, 30, 0.0, config.num_epochs as f32, 0.0, 0.15)
-            .linecolorplot(
-                &textplots::Shape::Lines(&train_curve),
-                rgb::RGB::new(255, 0, 0),
-            )
-            .linecolorplot(
-                &textplots::Shape::Lines(&valid_curve),
-                rgb::RGB::new(0, 255, 0),
-            )
-            .nice();
+        let plot_file = "/tmp/plot_text";
+
+        for curve in &[train_curve, valid_curve] {
+            let _guard = stdio_override::StdoutOverride::from_file(plot_file).unwrap();
+
+            // println!("{metric} {name}: {:.3}", curve.last().unwrap().1);
+            textplots::Chart::new_with_y_range(100, 35, 0.0, config.num_epochs as f32, 0.0, 0.2)
+                .linecolorplot(&textplots::Shape::Lines(&curve), rgb::RGB::new(255, 0, 0))
+                .nice();
+
+            plots.push(std::fs::read_to_string(plot_file).unwrap());
+        }
+    }
+
+    // Display the plots side-by-side:
+    let max_lines = plots.iter().map(|p| p.lines().count()).max().unwrap();
+    let max_width = plots
+        .iter()
+        .map(|p| p.lines().map(|l| l.len()).max().unwrap())
+        .max()
+        .unwrap();
+    let plot_lines: Vec<Vec<&str>> = plots.iter().map(|p| p.lines().collect()).collect();
+    for line_idx in 0..max_lines {
+        for (plot_idx, lines) in plot_lines.iter().enumerate() {
+            if plot_idx > 0 {
+                print!("  ");
+            }
+            let mut this_line = lines.get(line_idx).unwrap_or(&"").to_string();
+            while this_line.len() < max_width {
+                this_line += " ";
+            }
+            print!("{this_line}");
+        }
+        println!();
+    }
+
+    if args.show_scores {
+        print!("{}", score_output);
     }
 }
