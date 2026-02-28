@@ -124,4 +124,4 @@ D# # #|#|# # # # #|#|# # #D
                             
 ~~~~~
 ~*~*~
-(6,0,5,"Room")={"id":0,"facing":"NegX","evaluation":{"symmetry":0.5,"interest":0.5}}
+(6,0,5,"Room")={"id":0,"facing":"NegX","evaluation":{"symmetry":0.3,"interest":0.5}}

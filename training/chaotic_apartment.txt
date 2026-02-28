@@ -29,4 +29,4 @@ W# # # # # # #|
                   
 ~~~~~
 ~*~*~
-(0,0,2,"Room")={"id":0,"facing":"PosZ","evaluation":{"symmetry":0.2,"interest":0.2}}
+(0,0,2,"Room")={"id":0,"facing":"PosZ","evaluation":{"symmetry":0.3,"interest":0.2}}
