@@ -45,4 +45,4 @@
                     
 ~~~~~
 ~*~*~
-(4,0,2,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":0.8,"interest":0.1}}
+(4,0,2,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":0.9,"interest":0.1}}

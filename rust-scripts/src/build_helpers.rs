@@ -295,11 +295,7 @@ pub fn add_noise(
                 break;
             }
 
-            // Choose a random slot kind for this coordinate
-            let slot_choices = [Room, XLoWall, ZLoWall, Floor];
-            let slot_idx = rng.random_range(0..slot_choices.len());
-            let slot = slot_choices[slot_idx];
-
+            let slot = RelSlot::rand();
             let dest = SlotLocation::new(cx, cy, cz, slot);
 
             // Ray trace from the vantage room center to this slot; only accept if no obstacles
@@ -384,11 +380,11 @@ pub fn add_noise(
             }
         }
 
-        // Edit the affected vantage: set coherence to 0.25 * original coherence
+        // Edit the affected vantage: set coherence to 0.2 * original coherence
         if let Some(orig_eval) = v_cell.evaluation.as_ref() {
             if let Some(cell_mut) = new_s.get_mut(*v_loc) {
                 cell_mut.evaluation = Some(VantageEvaluation {
-                    coherence: orig_eval.coherence * 0.25,
+                    coherence: orig_eval.coherence * 0.2,
                     interest: orig_eval.interest,
                 });
             }
