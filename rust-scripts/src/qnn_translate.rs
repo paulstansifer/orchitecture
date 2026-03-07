@@ -81,12 +81,26 @@ fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTru
 #[derive(Clone, Debug)]
 pub struct GroundTruthBatcher {}
 
-fn augment_datum(s: (Sparse3D<OfflineCell>, String)) -> Vec<(Sparse3D<OfflineCell>, String)> {
+fn augment_datum(
+    s: (Sparse3D<OfflineCell>, String),
+    metric: Metric,
+    structure_info: &[StructureInfo],
+    rng: &mut StdRng,
+) -> Vec<(Sparse3D<OfflineCell>, String)> {
     use crate::sparse3d::Rotateable;
     let mut res = vec![];
+
+    if metric == Metric::Symmetry {
+        // Create a messed-up version
+        let messed_up = mess_up_datum(s.0.clone(), structure_info, rng);
+        for messed in messed_up {
+            res.push((messed, format!("{}-messed", s.1)));
+        }
+    }
+
     res.push((
         s.0.clone().rotate(crate::sparse3d::Rotation::Clockwise),
-        format!("{}-cc", s.1),
+        format!("{}-cw", s.1),
     ));
     // res.push(
     //     s.clone()
@@ -117,10 +131,10 @@ fn mess_up_datum(
 
     // For each vantage, produce one "messed up" variant
     for (v_loc, v_cell) in vantages.iter() {
-        // Build list of candidate cube coordinates within Manhattan radius < 4
+        // candidate cube coordinates within Manhattan radius < 4
         let mut candidates: Vec<(i32, i32, i32)> = Vec::new();
         for dx in -3..=3 {
-            for dy in 0..=3 {
+            for dy in 0..=3 { // Only above; we likely can't see below.
                 for dz in -3..=3 {
                     let (dx, dy, dz) = (dx as i32, dy as i32, dz as i32);
                     if dx.abs() + dy.abs() + dz.abs() < 4 {
@@ -339,15 +353,27 @@ pub fn load_training_data<B: Backend>(
     let (t_rooms, v_rooms) = all_sparse_data.split_at(split_index);
 
     // Currently unclear if augmentation is helping at all; investigate more!
-    let t_rooms = t_rooms.into_iter().cloned().map(augment_datum).flatten();
-    let v_rooms = v_rooms.into_iter().cloned().map(augment_datum).flatten();
+    let t_rooms: Vec<_> = t_rooms.into_iter().cloned().collect();
+    let v_rooms: Vec<_> = v_rooms.into_iter().cloned().collect();
 
-    let train_data: Vec<_> = t_rooms
+    let mut t_rooms_augmented = Vec::new();
+    for data in t_rooms {
+        t_rooms_augmented.extend(augment_datum(data, metric, &structures, &mut rng));
+    }
+
+    let mut v_rooms_augmented = Vec::new();
+    for data in v_rooms {
+        v_rooms_augmented.extend(augment_datum(data, metric, &structures, &mut rng));
+    }
+
+    let train_data: Vec<_> = t_rooms_augmented
+        .into_iter()
         .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .map(convert_ground_truth_to_autodiff)
         .collect();
 
-    let test_data: Vec<_> = v_rooms
+    let test_data: Vec<_> = v_rooms_augmented
+        .into_iter()
         .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .collect();
 
