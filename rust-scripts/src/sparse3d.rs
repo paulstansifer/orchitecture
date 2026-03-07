@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::{Index, IndexMut};
 
+use enum_derived::Rand;
 use godot::builtin::Vector3i;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Rand)]
 enum Slot {
     Room,
     XWall,
@@ -20,7 +21,7 @@ pub struct SlotLocation {
     pub rel_slot: RelSlot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Rand)]
 pub enum RelSlot {
     Room,
     XHiWall,
@@ -31,7 +32,7 @@ pub enum RelSlot {
     ZLoWall,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Rand)]
 pub enum Rotation {
     Clockwise,
     OneEighty,

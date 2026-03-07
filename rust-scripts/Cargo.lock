@@ -2088,6 +2088,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum-derived"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c26fa59eec8d89acada9ea419a5ff9c97ccd4b688db1564b33ad06b103c2b58e"
+dependencies = [
+ "enum-derived-macro",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "enum-derived-macro"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd1a3aecd220fd9e302f14a05e18f228fa8a1ff5a1a815e8fead634a435d7147"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "enumset"
 version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5108,6 +5129,7 @@ dependencies = [
  "burn-import",
  "clap",
  "csv",
+ "enum-derived",
  "gag",
  "godot",
  "rand 0.9.2",
@@ -5633,6 +5655,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
 dependencies = [
  "proc-macro2",
+ "quote",
  "unicode-ident",
 ]
 

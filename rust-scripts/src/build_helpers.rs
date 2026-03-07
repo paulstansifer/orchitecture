@@ -1,15 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
+use enum_derived::Rand;
 use godot::builtin::Vector3i;
 
-use crate::sparse3d::{Facing, RelSlot};
+use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::StructureInfo;
 use crate::wall_grid::VantageEvaluation;
 use crate::{
     sparse3d::{SlotLocation, Sparse3D},
     wall_grid::OfflineCell,
 };
-use rand::{Rng,rngs::StdRng,prelude::SliceRandom};
+use rand::{prelude::SliceRandom, rngs::StdRng, Rng};
 
 #[derive(Clone)]
 pub struct Builder {
@@ -221,6 +222,32 @@ impl Builder {
     }
 }
 
+pub fn make_boring_room(
+    structures: &Vec<StructureInfo>,
+    rng: &mut StdRng,
+) -> (Sparse3D<OfflineCell>, String) {
+    let mut builder = Builder::new(structures);
+    let x_size = rng.random_range(1..7);
+    let y_height = rng.random_range(1..4);
+    let z_size = rng.random_range(1..7);
+    builder.build_box(
+        Vector3i::new(0, 0, 0),
+        Vector3i::new(x_size, y_height, z_size),
+    );
+    let door_loc = Vector3i::new(rng.random_range(0..=x_size), 0, 0);
+    builder.build_plane(door_loc, door_loc, RelSlot::ZLoWall, Some("doorway"));
+    builder.set_vantage(
+        Vector3i::new(rng.random_range(0..x_size), 0, rng.random_range(0..z_size)),
+        1.0,
+        0.0,
+    );
+    let result = builder.get();
+    (
+        result.rotate(Rotation::rand()),
+        format!("boring-{x_size}x{z_size}"),
+    )
+}
+
 pub fn add_noise(
     s: Sparse3D<OfflineCell>,
     structure_info: &[StructureInfo],
@@ -244,7 +271,8 @@ pub fn add_noise(
         // candidate cube coordinates within Manhattan radius < 4
         let mut candidates: Vec<(i32, i32, i32)> = Vec::new();
         for dx in -3..=3 {
-            for dy in 0..=3 { // Only above; we likely can't see below.
+            for dy in 0..=3 {
+                // Only above; we likely can't see below.
                 for dz in -3..=3 {
                     let (dx, dy, dz) = (dx as i32, dy as i32, dz as i32);
                     if dx.abs() + dy.abs() + dz.abs() < 4 {
@@ -369,12 +397,11 @@ pub fn add_noise(
     results
 }
 
-
 #[test]
 fn test_add_noise() {
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
     use crate::wall_grid::VantageEvaluation;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     let structures = crate::structure::load_structure_info();
 
