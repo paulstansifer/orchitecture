@@ -210,13 +210,16 @@ impl Builder {
         }
     }
 
-    pub fn set_vantage(&mut self, loc: Vector3i, symmetry: f32, interest: f32) {
+    pub fn set_vantage(&mut self, loc: Vector3i, coherence: f32, interest: f32) {
         self.map.set(
             SlotLocation::new(loc.x, loc.y, loc.z, RelSlot::Room),
             OfflineCell {
                 id: *self.structures.get("desk").unwrap() as i32,
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
-                evaluation: Some(VantageEvaluation { interest, symmetry }),
+                evaluation: Some(VantageEvaluation {
+                    interest,
+                    coherence,
+                }),
             },
         );
     }
@@ -381,11 +384,11 @@ pub fn add_noise(
             }
         }
 
-        // Edit the affected vantage: set symmetry to 0.25 * original symmetry
+        // Edit the affected vantage: set coherence to 0.25 * original coherence
         if let Some(orig_eval) = v_cell.evaluation.as_ref() {
             if let Some(cell_mut) = new_s.get_mut(*v_loc) {
                 cell_mut.evaluation = Some(VantageEvaluation {
-                    symmetry: orig_eval.symmetry * 0.25,
+                    coherence: orig_eval.coherence * 0.25,
                     interest: orig_eval.interest,
                 });
             }
@@ -414,7 +417,7 @@ fn test_add_noise() {
             id: 0,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: Some(VantageEvaluation {
-                symmetry: 1.0,
+                coherence: 1.0,
                 interest: 0.5,
             }),
         },
@@ -446,10 +449,10 @@ fn test_add_noise() {
         }
     }
 
-    // Check symmetry scaled
+    // Check coherence scaled
     if let Some(cell) = out.get(v_loc) {
         if let Some(eval) = &cell.evaluation {
-            assert!((eval.symmetry - 0.25).abs() < 1e-6);
+            assert!((eval.coherence - 0.25).abs() < 1e-6);
         } else {
             panic!("vantage evaluation missing");
         }

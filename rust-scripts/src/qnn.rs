@@ -215,7 +215,7 @@ pub fn train<B: Backend>() {
 
     for metric in [
         crate::qnn_translate::Metric::Interest,
-        crate::qnn_translate::Metric::Symmetry,
+        crate::qnn_translate::Metric::Coherence,
     ] {
         let batcher = GroundTruthBatcher {};
 
@@ -320,7 +320,7 @@ pub fn train<B: Backend>() {
 
     for metric in [
         crate::qnn_translate::Metric::Interest,
-        crate::qnn_translate::Metric::Symmetry,
+        crate::qnn_translate::Metric::Coherence,
     ] {
         let mut train_curve = vec![];
         let mut valid_curve = vec![];

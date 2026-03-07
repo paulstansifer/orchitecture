@@ -36,7 +36,7 @@ const DESK_ID: i32 = 0;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct VantageEvaluation {
-    pub symmetry: f32,
+    pub coherence: f32,
     pub interest: f32,
 }
 
@@ -341,7 +341,7 @@ impl WallGrid {
         if selected_mesh_id == Some(DESK_ID) {
             let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
             self.contents.get_mut(loc).unwrap().evaluation = Some(VantageEvaluation {
-                symmetry: 0.5,
+                coherence: 0.5,
                 interest: 0.5,
             });
         }
@@ -360,14 +360,14 @@ impl WallGrid {
             })
             .unwrap();
 
-        let (symmetry, interest) = MODELS.with(|models| {
+        let (coherence, interest) = MODELS.with(|models| {
             (
-                models.symmetry.forward(tensor.clone()).sum().into_scalar(),
+                models.coherence.forward(tensor.clone()).sum().into_scalar(),
                 models.interest.forward(tensor).sum().into_scalar(),
             )
         });
 
-        vec![symmetry, interest]
+        vec![coherence, interest]
     }
 
     #[func]

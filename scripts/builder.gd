@@ -80,7 +80,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		evaluation.add_text("working...")
 		var metrics = wallgrid.metrics_at(world_position)
 		evaluation.clear()
-		evaluation.add_text("symmetry: %.2f  interest: %.2f" % metrics)
+		evaluation.add_text("coherence: %.2f  interest: %.2f" % metrics)
 
 	if not world_position:
 		return

@@ -16,14 +16,14 @@ pub const EMBEDDING_SIZE: usize = 4 + 1; // Keep this in sync with structure.rs 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Metric {
     Interest,
-    Symmetry,
+    Coherence,
 }
 
 impl std::fmt::Display for Metric {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Metric::Interest => write!(f, "interest"),
-            Metric::Symmetry => write!(f, "symmetry"),
+            Metric::Coherence => write!(f, "coherence"),
         }
     }
 }
@@ -90,7 +90,7 @@ fn augment_datum(
     use crate::sparse3d::Rotateable;
     let mut res = vec![];
 
-    if metric == Metric::Symmetry {
+    if metric == Metric::Coherence {
         // Create a messed-up version
         let messed_up = crate::build_helpers::add_noise(s.0.clone(), structure_info, rng);
         for messed in messed_up {
@@ -259,7 +259,7 @@ pub fn ground_truth_at_vantage<B: Backend>(
             .unwrap();
             let val = match metric {
                 Metric::Interest => eval.interest,
-                Metric::Symmetry => eval.symmetry,
+                Metric::Coherence => eval.coherence,
             };
 
             // print_voxels(&tensor);

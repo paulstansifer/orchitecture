@@ -94,4 +94,4 @@
               
 ~~~~~
 ~*~*~
-(4,0,5,"Room")={"id":0,"facing":"NegX","evaluation":{"symmetry":0.75,"interest":0.6}}
+(4,0,5,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":0.75,"interest":0.6}}

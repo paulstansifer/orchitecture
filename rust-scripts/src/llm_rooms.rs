@@ -29,7 +29,7 @@ fn build_union_boxes(&mut self, boxes: &[(Vector3i, Vector3i)]);
 fn wall_off_drops(&mut self, corner_a: Vector3i, corner_b: Vector3i, obj_name: &str)
 
 // Sets a viewpoint with the given aesthetic evaluations.
-fn set_vantage(&mut self, loc: Vector3i, symmetry: f32, interest: f32)
+fn set_vantage(&mut self, loc: Vector3i, coherence: f32, interest: f32)
 */
 use crate::build_helpers::*;
 use crate::wall_grid::OfflineCell;
@@ -64,11 +64,11 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
     // The check area covers the extent of potential floors at y=1.
     sunken_courtyard.wall_off_drops(v(-5, 1, -5), v(5, 1, 5), "railing");
     // Vantage point in the lower courtyard, looking towards the overlook.
-    sunken_courtyard.set_vantage(v(0, 0, 0), /*symmetry=*/ 0.5, /*interest=*/ 0.65);
+    sunken_courtyard.set_vantage(v(0, 0, 0), /*coherence=*/ 0.5, /*interest=*/ 0.65);
 
     // Design 2: Grand Library Hall
     // A tall central hall flanked by multi-level balconies or walkways, suggesting bookshelves.
-    // Aims for high symmetry and high interest due to verticality and complexity.
+    // Aims for high coherence and high interest due to verticality and complexity.
     let mut library_hall = Builder::new(&structures);
     library_hall.build_union_boxes(&[
         // Main ground floor area (nave + side aisles): 2 cubes high (floor y=0, ceiling y=1)
@@ -88,7 +88,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
     // Add railings for the third level walkways (on y=4 plane)
     library_hall.wall_off_drops(v(-6, 4, -10), v(6, 4, 10), "railing");
     // Vantage point from the center of the ground floor.
-    library_hall.set_vantage(v(0, 0, 0), /*symmetry=*/ 0.9, /*interest=*/ 0.85);
+    library_hall.set_vantage(v(0, 0, 0), /*coherence=*/ 0.9, /*interest=*/ 0.85);
 
     // Design 3: Stepped Pyramid Core
     // A large room containing a central, multi-tiered pyramid structure.
@@ -119,7 +119,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
                                                                            // No railings needed for the very top platform if it's just 1x1.
 
     // Vantage point at the base of the room, looking at the pyramid.
-    pyramid_core_room.set_vantage(v(0, 0, 6), /*symmetry=*/ 0.8, /*interest=*/ 0.7);
+    pyramid_core_room.set_vantage(v(0, 0, 6), /*coherence=*/ 0.8, /*interest=*/ 0.7);
 
     // Design 4: Chasm Crossing
     // Two distinct platforms/areas separated by a chasm, connected by a narrow bridge.
@@ -139,7 +139,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
     // The area checked should encompass all y=0 floors.
     chasm_crossing.wall_off_drops(v(-10, 0, -5), v(10, 0, 5), "railing");
     // Vantage point on one platform, looking across towards the bridge and other platform.
-    chasm_crossing.set_vantage(v(-8, 0, 0), /*symmetry=*/ 0.4, /*interest=*/ 0.8);
+    chasm_crossing.set_vantage(v(-8, 0, 0), /*coherence=*/ 0.4, /*interest=*/ 0.8);
 
     // -- GPT --
 
@@ -226,7 +226,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
         );
     }
 
-    spiral_room.set_vantage(v(0, 2, 0), /*symmetry=*/ 0.8, /*interest=*/ 0.8);
+    spiral_room.set_vantage(v(0, 2, 0), /*coherence=*/ 0.8, /*interest=*/ 0.8);
 
     let mut checkerboard_room = Builder::new(&structures);
     checkerboard_room.build_box(v(-5, 0, -5), v(5, 3, 5));
@@ -238,7 +238,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
         }
     }
 
-    checkerboard_room.set_vantage(v(0, 1, 0), /*symmetry=*/ 0.9, /*interest=*/ 0.7);
+    checkerboard_room.set_vantage(v(0, 1, 0), /*coherence=*/ 0.9, /*interest=*/ 0.7);
 
     let mut terrace_room = Builder::new(&structures);
     terrace_room.build_box(v(-5, 0, -5), v(5, 4, 5));
@@ -250,7 +250,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
         terrace_room.build_box(v(-size, height, -size), v(size, height, size));
     }
 
-    terrace_room.set_vantage(v(0, 2, 0), /*symmetry=*/ 0.8, /*interest=*/ 0.9);
+    terrace_room.set_vantage(v(0, 2, 0), /*coherence=*/ 0.8, /*interest=*/ 0.9);
 
     let mut concentric_room = Builder::new(&structures);
     concentric_room.build_box(v(-5, 0, -5), v(5, 3, 5));
@@ -261,7 +261,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
         concentric_room.build_box(v(-size, 0, -size), v(size, 3, size));
     }
 
-    concentric_room.set_vantage(v(0, 1, 0), /*symmetry=*/ 1.0, /*interest=*/ 0.7);
+    concentric_room.set_vantage(v(0, 1, 0), /*coherence=*/ 1.0, /*interest=*/ 0.7);
 
     let mut labyrinth_room = Builder::new(&structures);
     labyrinth_room.build_box(v(-5, 0, -5), v(5, 3, 5));
@@ -275,7 +275,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
         }
     }
 
-    labyrinth_room.set_vantage(v(0, 1, 0), /*symmetry=*/ 0.6, /*interest=*/ 0.9);
+    labyrinth_room.set_vantage(v(0, 1, 0), /*coherence=*/ 0.6, /*interest=*/ 0.9);
 
     // A "stacked balconies" atrium: three levels of offset balconies around a central void
     let mut stacked_balconies = Builder::new(&structures);
@@ -293,7 +293,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
     stacked_balconies.wall_off_drops(v(-4, 4, -6), v(4, 4, 6), "railing");
     stacked_balconies.set_vantage(
         v(0, 0, -2),
-        /*symmetry=*/ 0.75,
+        /*coherence=*/ 0.75,
         /*interest=*/ 0.85,
     );
 
@@ -311,7 +311,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
     spiral_terraces.wall_off_drops(v(-6, 3, -6), v(6, 3, 6), "railing");
     spiral_terraces.wall_off_drops(v(-5, 2, -5), v(5, 2, 5), "railing");
     spiral_terraces.wall_off_drops(v(-4, 1, -4), v(4, 1, 4), "railing");
-    spiral_terraces.set_vantage(v(0, 3, -4), /*symmetry=*/ 0.8, /*interest=*/ 0.9);
+    spiral_terraces.set_vantage(v(0, 3, -4), /*coherence=*/ 0.8, /*interest=*/ 0.9);
 
     // A cross-shaped upper walkway over an open ground floor
     let mut cross_walkway = Builder::new(&structures);
@@ -331,7 +331,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
         Some("doorway"),
     );
     cross_walkway.build_plane(v(5, 0, 1), v(5, 0, 1), RelSlot::XHiWall, Some("doorway"));
-    cross_walkway.set_vantage(v(0, 0, 0), /*symmetry=*/ 0.95, /*interest=*/ 0.8);
+    cross_walkway.set_vantage(v(0, 0, 0), /*coherence=*/ 0.95, /*interest=*/ 0.8);
 
     // A "bridge over chasm" with two asymmetric viewing decks
     let mut chasm_bridge = Builder::new(&structures);
@@ -346,7 +346,7 @@ pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {
     chasm_bridge.wall_off_drops(v(-1, 2, 0), v(1, 2, 0), "railing");
     chasm_bridge.set_vantage(
         v(0, 0, -5),
-        /*symmetry=*/ 0.65,
+        /*coherence=*/ 0.65,
         /*interest=*/ 0.85,
     );
 

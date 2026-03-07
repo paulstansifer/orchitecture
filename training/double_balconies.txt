@@ -68,4 +68,4 @@
 (1,1,4,"Room")={"id":4,"facing":"PosZ","evaluation":null}
 (5,0,4,"Room")={"id":4,"facing":"NegZ","evaluation":null}
 (7,1,4,"Room")={"id":4,"facing":"NegZ","evaluation":null}
-(4,0,2,"Room")={"id":0,"facing":"NegX","evaluation":{"symmetry":0.7,"interest":0.8}}
+(4,0,2,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":0.7,"interest":0.8}}
