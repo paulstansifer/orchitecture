@@ -1,6 +1,6 @@
 use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
 use crate::wall_grid::OfflineCell;
-use rand::{rngs::StdRng, Rng, seq::SliceRandom};
+use rand::rngs::StdRng;
 use burn::backend::Autodiff;
 use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
@@ -92,7 +92,7 @@ fn augment_datum(
 
     if metric == Metric::Symmetry {
         // Create a messed-up version
-        let messed_up = mess_up_datum(s.0.clone(), structure_info, rng);
+        let messed_up = crate::build_helpers::add_noise(s.0.clone(), structure_info, rng);
         for messed in messed_up {
             res.push((messed, format!("{}-messed", s.1)));
         }
@@ -109,154 +109,6 @@ fn augment_datum(
     // res.push(s.clone().rotate(crate::sparse3d::Rotation::OneEighty));
     res.push(s);
     res
-}
-
-fn mess_up_datum(
-    s: Sparse3D<OfflineCell>,
-    structure_info: &[StructureInfo],
-    rng: &mut StdRng,
-) -> Vec<Sparse3D<OfflineCell>> {
-    use crate::sparse3d::RelSlot::{Floor, Room, XLoWall, ZLoWall};
-    use crate::wall_grid::VantageEvaluation;
-
-    let mut results: Vec<Sparse3D<OfflineCell>> = Vec::new();
-
-    // Collect all vantages (locations with an evaluation)
-    let mut vantages: Vec<(SlotLocation, OfflineCell)> = Vec::new();
-    for (loc, cell) in s.iter() {
-        if cell.evaluation.is_some() {
-            vantages.push((loc, cell.clone()));
-        }
-    }
-
-    // For each vantage, produce one "messed up" variant
-    for (v_loc, v_cell) in vantages.iter() {
-        // candidate cube coordinates within Manhattan radius < 4
-        let mut candidates: Vec<(i32, i32, i32)> = Vec::new();
-        for dx in -3..=3 {
-            for dy in 0..=3 { // Only above; we likely can't see below.
-                for dz in -3..=3 {
-                    let (dx, dy, dz) = (dx as i32, dy as i32, dz as i32);
-                    if dx.abs() + dy.abs() + dz.abs() < 4 {
-                        candidates.push((v_loc.cube.x + dx, v_loc.cube.y + dy, v_loc.cube.z + dz));
-                    }
-                }
-            }
-        }
-
-        candidates.shuffle(rng);
-
-        // We'll select up to 9 coordinates that are visible (ray_trace returns empty)
-        let mut selected: Vec<(SlotLocation, RelSlot)> = Vec::new();
-
-        for (cx, cy, cz) in candidates.into_iter() {
-            if selected.len() >= 9 {
-                break;
-            }
-
-            // Choose a random slot kind for this coordinate
-            let slot_choices = [Room, XLoWall, ZLoWall, Floor];
-            let slot_idx = rng.random_range(0..slot_choices.len());
-            let slot = slot_choices[slot_idx];
-
-            let dest = SlotLocation::new(cx, cy, cz, slot);
-
-            // Ray trace from the vantage room center to this slot; only accept if no obstacles
-            let vantage_room = SlotLocation::new(v_loc.cube.x, v_loc.cube.y, v_loc.cube.z, Room);
-            let obstacles = s.ray_trace(vantage_room, dest);
-            if obstacles.is_empty() {
-                selected.push((dest, slot));
-            }
-        }
-
-        // Make a clone and apply modifications
-        let mut new_s = s.clone();
-
-        // For each selected dest, pick a replacement (or deletion if present)
-        for (dest_loc, slot) in selected.into_iter() {
-            // Determine candidate structure IDs matching the placement style for this slot
-            let mut candidates_ids: Vec<i32> = Vec::new();
-
-            for (idx, info) in structure_info.iter().enumerate() {
-                match slot {
-                    Room => {
-                        if info.placement_style == crate::structure::PlacementStyle::RoomPlop {
-                            candidates_ids.push(idx as i32);
-                        }
-                    }
-                    Floor => {
-                        if info.placement_style == crate::structure::PlacementStyle::FloorDrag {
-                            candidates_ids.push(idx as i32);
-                        }
-                    }
-                    XLoWall | ZLoWall => {
-                        if info.placement_style == crate::structure::PlacementStyle::WallDrag
-                            || info.placement_style == crate::structure::PlacementStyle::WallPlop
-                        {
-                            candidates_ids.push(idx as i32);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // If something is already present, allow deletion as one option
-            let existing = new_s.get(dest_loc);
-            let mut options: Vec<Option<i32>> = Vec::new();
-            if existing.is_some() {
-                options.push(None);
-            }
-
-            for id in candidates_ids.into_iter() {
-                if existing.map(|c| c.id) != Some(id) {
-                    options.push(Some(id));
-                }
-            }
-
-            if options.is_empty() {
-                // nothing to do here
-                continue;
-            }
-
-            let idx = rng.random_range(0..options.len());
-            let choice = options[idx].clone();
-
-            match choice {
-                None => {
-                    new_s.take(dest_loc);
-                }
-                Some(id) => {
-                    let new_cell = OfflineCell {
-                        id,
-                        facing: crate::sparse3d::Facing::default(),
-                        evaluation: None,
-                    };
-                    new_s.set(dest_loc, new_cell);
-                }
-            }
-        }
-
-        // Remove all other vantages (clear evaluations except for this one)
-        for (loc, cell) in new_s.iter_mut() {
-            if !(loc.cube == v_loc.cube && loc.rel_slot == v_loc.rel_slot) {
-                cell.evaluation = None;
-            }
-        }
-
-        // Edit the affected vantage: set symmetry to 0.25 * original symmetry
-        if let Some(orig_eval) = v_cell.evaluation.as_ref() {
-            if let Some(cell_mut) = new_s.get_mut(*v_loc) {
-                cell_mut.evaluation = Some(VantageEvaluation {
-                    symmetry: orig_eval.symmetry * 0.25,
-                    interest: orig_eval.interest,
-                });
-            }
-        }
-
-        results.push(new_s);
-    }
-
-    results
 }
 
 impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, GroundTruth<B>>
@@ -623,63 +475,3 @@ mod tests {
     }
 }
 
-        #[test]
-        fn test_mess_up_datum() {
-            use rand::SeedableRng;
-            use rand::rngs::StdRng;
-            use crate::wall_grid::VantageEvaluation;
-
-            let structures = structure::load_structure_info();
-
-            let mut s: Sparse3D<OfflineCell> = Sparse3D::new();
-
-            let v_loc = SlotLocation::new(0, 0, 0, RelSlot::Room);
-            s.set(
-                v_loc,
-                OfflineCell {
-                    id: 0,
-                    facing: crate::sparse3d::Facing::NegX,
-                    evaluation: Some(VantageEvaluation {
-                        symmetry: 1.0,
-                        interest: 0.5,
-                    }),
-                },
-            );
-
-            // Add a nearby wall so there's something to possibly replace/delete
-            s.set(
-                SlotLocation::new(1, 0, 0, RelSlot::XLoWall),
-                OfflineCell {
-                    id: 1,
-                    facing: crate::sparse3d::Facing::NegX,
-                    evaluation: None,
-                },
-            );
-
-            let mut rng = StdRng::seed_from_u64(42);
-
-            let res = mess_up_datum(s.clone(), &structures, &mut rng);
-
-            // We had one vantage, so expect one result
-            assert_eq!(res.len(), 1);
-
-            let out = &res[0];
-
-            // Ensure all other evaluations are cleared
-            for (loc, cell) in out.iter() {
-                if !(loc.cube == v_loc.cube && loc.rel_slot == v_loc.rel_slot) {
-                    assert!(cell.evaluation.is_none());
-                }
-            }
-
-            // Check symmetry scaled
-            if let Some(cell) = out.get(v_loc) {
-                if let Some(eval) = &cell.evaluation {
-                    assert!((eval.symmetry - 0.25).abs() < 1e-6);
-                } else {
-                    panic!("vantage evaluation missing");
-                }
-            } else {
-                panic!("vantage cell missing");
-            }
-        }
