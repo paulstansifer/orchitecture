@@ -291,7 +291,7 @@ pub fn add_noise(
         let mut selected: Vec<(SlotLocation, RelSlot)> = Vec::new();
 
         for (cx, cy, cz) in candidates.into_iter() {
-            if selected.len() >= 9 {
+            if selected.len() >= 13 {
                 break;
             }
 
@@ -380,11 +380,11 @@ pub fn add_noise(
             }
         }
 
-        // Edit the affected vantage: set coherence to 0.2 * original coherence
+        // Edit the affected vantage: set coherence to 0.1 * original coherence
         if let Some(orig_eval) = v_cell.evaluation.as_ref() {
             if let Some(cell_mut) = new_s.get_mut(*v_loc) {
                 cell_mut.evaluation = Some(VantageEvaluation {
-                    coherence: orig_eval.coherence * 0.2,
+                    coherence: orig_eval.coherence * 0.1,
                     interest: orig_eval.interest,
                 });
             }
