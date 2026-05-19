@@ -209,6 +209,31 @@ pub fn load_training_data<B: Backend>(
         }
     }
 
+    // if metric == Metric::Coherence {
+    //     for exemplar in all_sparse_data.iter().take(6) {
+    //         println!("{}", exemplar.1);
+    //         print_voxels(
+    //             &ground_truth_at_vantage::<B>(exemplar, Metric::Coherence, &structures).voxels,
+    //         );
+    //         println!("{} messed up", exemplar.1);
+
+    //         print_voxels(
+    //             &ground_truth_at_vantage::<B>(
+    //                 &(
+    //                     crate::build_helpers::add_noise(exemplar.0.clone(), &structures, &mut rng)
+    //                         [0]
+    //                     .clone(),
+    //                     format!("---"),
+    //                 ),
+    //                 Metric::Coherence,
+    //                 &structures,
+    //             )
+    //             .voxels,
+    //         );
+    //     }
+    //     panic!()
+    // }
+
     use rand::seq::SliceRandom;
     all_sparse_data.shuffle(&mut rng);
 
@@ -271,7 +296,7 @@ pub fn ground_truth_at_vantage<B: Backend>(
             };
         }
     }
-    panic!("No vantage found!")
+    panic!("No vantage found! {}", data.1)
 }
 
 /// Converts a region of Sparse3D data centered around a coordinate to a Tensor,
@@ -375,7 +400,7 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
     assert_eq!(rooms, 1);
 
     for y in 0..y_size {
-        let mut has_anything = false;
+        let mut has_anything_y = false;
         let mut slice = String::new();
         for x in 0..x_size {
             for z in 0..z_size {
@@ -388,7 +413,7 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
 
                 for i in 0..voxel.len() {
                     if voxel[i] > 0.0 {
-                        has_anything = true;
+                        has_anything_y = true;
                         write!(slice, "{}", (voxel[i] * 9.0) as u8).unwrap();
                     } else {
                         write!(slice, " ").unwrap();
@@ -397,10 +422,10 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
             }
             writeln!(slice).unwrap()
         }
-        if has_anything {
+        if has_anything_y {
             println!("{}", slice);
+            println!("----")
         }
-        println!("----")
     }
 }
 

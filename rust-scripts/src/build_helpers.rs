@@ -278,7 +278,7 @@ pub fn add_noise(
                 // Only above; we likely can't see below.
                 for dz in -3..=3 {
                     let (dx, dy, dz) = (dx as i32, dy as i32, dz as i32);
-                    if dx.abs() + dy.abs() + dz.abs() < 4 {
+                    if dx.abs() + dy.abs() + dz.abs() < 4 && (dx != 0 || dy != 0 || dz != 0) {
                         candidates.push((v_loc.cube.x + dx, v_loc.cube.y + dy, v_loc.cube.z + dz));
                     }
                 }
@@ -301,10 +301,16 @@ pub fn add_noise(
             // Ray trace from the vantage room center to this slot; only accept if no obstacles
             let vantage_room = SlotLocation::new(v_loc.cube.x, v_loc.cube.y, v_loc.cube.z, Room);
             let obstacles = s.ray_trace(vantage_room, dest);
-            if obstacles.is_empty() {
+            if obstacles.len() > 1 {
                 selected.push((dest, slot));
+            } else {
+                // println!("Obstacles: {:?}", obstacles);
             }
         }
+        assert!(
+            selected.len() > 3,
+            "Need to find at least a couple things to edit"
+        );
 
         // Make a clone and apply modifications
         let mut new_s = s.clone();
