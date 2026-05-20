@@ -1,5 +1,5 @@
 [package]
-name = "rust-scripts"
+name = "orchitecture"
 version = "0.1.0"
 edition = "2021"
 default-run = "game"
@@ -42,4 +42,10 @@ name = "game"
 path = "src/main.rs"
 
 [lib]
-name = "rust_scripts"
+name = "orchitecture_lib"
+
+[profile.dev]
+opt-level = 1 # Suggested by the Bevy docs
+
+[profile.dev.package."*"]
+opt-level = 3 # Suggested by the Bevy docs

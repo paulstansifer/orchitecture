@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
-use rust_scripts::{
+use orchitecture_lib::{
     camera::{camera_input_system, spawn_camera, CameraState},
     input::{building_input_system, cursor_system, spawn_cursors, BuildState},
     structure::{spawn_structures, StructureList},
@@ -12,13 +12,11 @@ use rust_scripts::{
 
 fn main() {
     App::new()
-        .add_plugins(
-            DefaultPlugins.set(AssetPlugin {
-                // Absolute path so assets load correctly regardless of working directory.
-                file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/..").to_string(),
-                ..default()
-            }),
-        )
+        .add_plugins(DefaultPlugins.set(AssetPlugin {
+            // Absolute path so assets load correctly regardless of working directory.
+            file_path: env!("CARGO_MANIFEST_DIR").to_string(),
+            ..default()
+        }))
         .add_plugins(EguiPlugin::default())
         .insert_resource(CameraState::default())
         .insert_resource(BuildState::default())

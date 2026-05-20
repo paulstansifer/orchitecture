@@ -42,11 +42,12 @@ impl ModelHolder {
 
         use burn::module::Module;
 
-        let model_dir: PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/../models/").into();
+        let model_dir: PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/models/").into();
 
-        let args: crate::qnn::Args =
-            serde_json::from_str(&std::fs::read_to_string(model_dir.join("model_args.json")).unwrap()).unwrap();
-
+        let args: crate::qnn::Args = serde_json::from_str(
+            &std::fs::read_to_string(model_dir.join("model_args.json")).unwrap(),
+        )
+        .unwrap();
 
         let recorder = DefaultFileRecorder::<HalfPrecisionSettings>::new();
         let i_record: <Cnn<B> as burn::module::Module<B>>::Record = recorder

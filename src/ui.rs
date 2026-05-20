@@ -2,8 +2,8 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::input::BuildState;
-use crate::wall_grid::apply_changes;
 use crate::structure::StructureList;
+use crate::wall_grid::apply_changes;
 use crate::wall_grid::WallGrid;
 
 #[derive(Resource, Default)]
@@ -19,7 +19,11 @@ pub fn discover_training_files(mut ui_state: ResMut<UiState>) {
             .flatten()
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                if !name.starts_with('.') { Some(name) } else { None }
+                if !name.starts_with('.') {
+                    Some(name)
+                } else {
+                    None
+                }
             })
             .collect();
         ui_state.available_files.sort();
@@ -34,10 +38,11 @@ pub fn ui_system(
     mut build_state: ResMut<BuildState>,
     mut ui_state: ResMut<UiState>,
 ) {
-    let Ok(ctx) = contexts.ctx_mut() else { return; };
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
 
-    let training_dir: std::path::PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/../training/").into();
-
+    let training_dir: std::path::PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/training/").into();
 
     // Bottom panel must be added before side panels.
     egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
@@ -65,11 +70,7 @@ pub fn ui_system(
                     .selected_text(ui_state.load_filename.as_str())
                     .show_ui(ui, |ui| {
                         for name in ui_state.available_files.clone() {
-                            ui.selectable_value(
-                                &mut ui_state.load_filename,
-                                name.clone(),
-                                &name,
-                            );
+                            ui.selectable_value(&mut ui_state.load_filename, name.clone(), &name);
                         }
                     });
             }
@@ -87,27 +88,29 @@ pub fn ui_system(
         });
     });
 
-    egui::SidePanel::left("controls").min_width(140.0).show(ctx, |ui| {
-        ui.heading("Orchitecture");
-        ui.separator();
-
-        ui.label("Structure:");
-        let names = wall_grid.get_structure_names();
-        for (i, name) in names.iter().enumerate() {
-            let selected = build_state.selected_structure == i;
-            if ui.selectable_label(selected, name).clicked() {
-                build_state.selected_structure = i;
-            }
-        }
-
-        ui.separator();
-        ui.label(format!("Layer (Y): {}", build_state.cur_y));
-        ui.label(format!("Direction: {}", build_state.cur_dir));
-
-        if let Some((coherence, interest)) = build_state.evaluation {
+    egui::SidePanel::left("controls")
+        .min_width(140.0)
+        .show(ctx, |ui| {
+            ui.heading("Orchitecture");
             ui.separator();
-            ui.label(format!("Coherence: {:.3}", coherence));
-            ui.label(format!("Interest:  {:.3}", interest));
-        }
-    });
+
+            ui.label("Structure:");
+            let names = wall_grid.get_structure_names();
+            for (i, name) in names.iter().enumerate() {
+                let selected = build_state.selected_structure == i;
+                if ui.selectable_label(selected, name).clicked() {
+                    build_state.selected_structure = i;
+                }
+            }
+
+            ui.separator();
+            ui.label(format!("Layer (Y): {}", build_state.cur_y));
+            ui.label(format!("Direction: {}", build_state.cur_dir));
+
+            if let Some((coherence, interest)) = build_state.evaluation {
+                ui.separator();
+                ui.label(format!("Coherence: {:.3}", coherence));
+                ui.label(format!("Interest:  {:.3}", interest));
+            }
+        });
 }

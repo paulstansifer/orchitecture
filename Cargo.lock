@@ -7050,6 +7050,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchitecture"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "bevy_egui",
+ "burn",
+ "burn-import",
+ "clap",
+ "csv",
+ "enum-derived",
+ "gag",
+ "naga 26.0.0",
+ "rand 0.9.2",
+ "rgb",
+ "serde",
+ "serde_json",
+ "stdio-override",
+ "textplots",
+]
+
+[[package]]
 name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8053,27 +8074,6 @@ dependencies = [
  "prettyplease 0.1.25",
  "proc-macro2",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "rust-scripts"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "bevy_egui",
- "burn",
- "burn-import",
- "clap",
- "csv",
- "enum-derived",
- "gag",
- "naga 26.0.0",
- "rand 0.9.2",
- "rgb",
- "serde",
- "serde_json",
- "stdio-override",
- "textplots",
 ]
 
 [[package]]
