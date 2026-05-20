@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Read(//home/paul/.cargo/registry/src/**)"
+      "Bash(cargo check *)",
+      "Bash(cargo test *)",
+      "Bash(cargo build *)",
+      "Bash(cargo run *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(rg *)",
+      "Bash(ls *)",
+      "Bash(head *)",
+      "Bash(tail *)"
     ]
   }
 }
