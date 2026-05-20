@@ -28,6 +28,7 @@ bevy = { version = "0.18.1", default-features = false, features = [
     "bevy_dev_tools",
     "default_platform",
     "bevy_gltf",
+    "experimental_pbr_pcss",
 ] }
 bevy_egui = "0.39"
 # Force naga 26's stderr feature on to fix a compile bug in naga 26.0.0 (used by burn's wgpu backend)
