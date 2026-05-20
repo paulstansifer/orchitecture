@@ -1,4 +1,4 @@
-use godot::builtin::Vector3i;
+use bevy::math::IVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -22,7 +22,7 @@ pub fn deserialize(c: char, structures: &HashMap<char, i32>) -> i32 {
         .unwrap_or_else(|| panic!("Unknown character for deserialization: {}", c))
 }
 
-fn extended_serialize_at<T: Serialize>(pos: Vector3i, slot: RelSlot, cell: &T) -> String {
+fn extended_serialize_at<T: Serialize>(pos: IVec3, slot: RelSlot, cell: &T) -> String {
     format!(
         "({},{},{},{})={}\n",
         pos.x,
@@ -33,7 +33,7 @@ fn extended_serialize_at<T: Serialize>(pos: Vector3i, slot: RelSlot, cell: &T) -
     )
 }
 
-fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (Vector3i, RelSlot, T) {
+fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (IVec3, RelSlot, T) {
     let parts: Vec<&str> = line.split('=').collect();
     if parts.len() != 2 {
         panic!("Invalid extended serialization format");
@@ -45,7 +45,7 @@ fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (Vector3i, 
         .split(',')
         .collect();
 
-    let pos = Vector3i::new(
+    let pos = IVec3::new(
         coords[0].parse::<i32>().unwrap(),
         coords[1].parse::<i32>().unwrap(),
         coords[2].parse::<i32>().unwrap(),

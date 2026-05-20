@@ -2,6 +2,7 @@
 name = "rust-scripts"
 version = "0.1.0"
 edition = "2021"
+default-run = "game"
 
 [dependencies]
 burn = { git = "https://github.com/tracel-ai/burn", features = [
@@ -26,16 +27,19 @@ bevy = { version = "0.18.1", default-features = false, features = [
     "debug",
     "bevy_dev_tools",
     "default_platform",
+    "bevy_gltf",
 ] }
-bevy_egui = "0.38"
+bevy_egui = "0.39"
+# Force naga 26's stderr feature on to fix a compile bug in naga 26.0.0 (used by burn's wgpu backend)
+naga = { version = "26.0.0", features = ["termcolor"] }
 
 [[bin]]
 name = "train"
-path = "src/lib.rs"
+path = "src/bin/train.rs"
+
+[[bin]]
+name = "game"
+path = "src/main.rs"
 
 [lib]
-crate-type = ["cdylib"] # Compile this crate to a dynamic C library.
-
-[dependencies.godot]
-version = "0.2.4"
-features = ["experimental-wasm", "lazy-function-tables"]
+name = "rust_scripts"

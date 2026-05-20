@@ -1,24 +1,16 @@
 #![recursion_limit = "256"]
-use godot::prelude::*;
 
-struct MyExtension;
-
-#[gdextension]
-unsafe impl ExtensionLibrary for MyExtension {}
-
-mod build_helpers;
-mod example_structures;
-mod llm_rooms;
-mod mesh_management;
-mod qnn;
-mod qnn_adapter;
-mod qnn_translate;
-mod serialization;
-mod sparse3d;
-mod structure;
-mod wall_grid;
-
-#[allow(dead_code)]
-fn main() {
-    qnn::train::<burn::backend::Wgpu>();
-}
+pub mod build_helpers;
+pub mod camera;
+pub mod example_structures;
+pub mod input;
+pub mod llm_rooms;
+pub mod mesh_management;
+pub mod qnn;
+pub mod qnn_adapter;
+pub mod qnn_translate;
+pub mod serialization;
+pub mod sparse3d;
+pub mod structure;
+pub mod ui;
+pub mod wall_grid;

@@ -37,10 +37,10 @@ pub struct Args {
     #[arg(short, long, default_value = "42")]
     seed: u64,
 
-    #[arg(short, long, action = clap::ArgAction::SetTrue)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     show_scores: bool,
 
-    #[arg(short, long, action = clap::ArgAction::SetTrue)]
+    #[arg(long, action = clap::ArgAction::SetTrue)]
     fake_data: bool,
 }
 

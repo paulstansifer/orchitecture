@@ -1,61 +1,32 @@
 use std::collections::HashMap;
 
-use godot::{
-    classes::{GltfDocument, GltfState, ImporterMeshInstance3D, Mesh, MeshInstance3D},
-    global::Error,
-    prelude::*,
-};
+use bevy::asset::{AssetServer, Handle};
+use bevy::scene::Scene;
 
-// #[derive(PartialEq, Eq, Hash, Clone, Copy, PartialOrd, Ord, Debug)]
-// pub struct MeshId(usize);
+/// Load all .gltf files from the `buildables/` directory via Bevy's AssetServer.
+/// The asset root is expected to be the project root (parent of `rust-scripts/`).
+pub fn load_mesh_handles(asset_server: &AssetServer) -> HashMap<String, Handle<Scene>> {
+    let mut handles = HashMap::new();
 
-pub fn load_meshes() -> HashMap<String, Gd<Mesh>> {
-    let mut meshes: HashMap<String, Gd<Mesh>> = HashMap::new();
+    let buildables_path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../buildables"));
+    let dir = match std::fs::read_dir(buildables_path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("Could not read buildables/: {e}");
+            return handles;
+        }
+    };
 
-    let mut dir = godot::classes::DirAccess::open("res://buildables/").unwrap();
-    dir.list_dir_begin();
-    let mut filename = dir.get_next();
-    while !filename.is_empty() {
-        if filename.ends_with(".gltf") {
-            let path = format!("res://buildables/{}", filename);
-            // godot_print!("### Loading {}", path);
-
-            let mut gltf_document_load = GltfDocument::new_gd();
-            let gltf_state = GltfState::new_gd();
-            if gltf_document_load.append_from_file(&path, &gltf_state) == Error::OK {
-                let root_node = gltf_document_load.generate_scene(&gltf_state).unwrap();
-                // godot_print!(
-                //     "### {:?} --> {:?}",
-                //     root_node.get_child(0).unwrap().get_child(0).unwrap(),
-                //     root_node
-                //         .get_child(0)
-                //         .unwrap()
-                //         .get_child(0)
-                //         .unwrap()
-                //         .get_children()
-                // );
-
-                let mi_node: Gd<Node> = root_node.get_child(0).unwrap().get_child(0).unwrap();
-
-                let mesh = if mi_node.is_class("MeshInstance3D") {
-                    mi_node.cast::<MeshInstance3D>().get_mesh().unwrap()
-                } else if mi_node.is_class("ImporterMeshInstance3D") {
-                    mi_node
-                        .cast::<ImporterMeshInstance3D>()
-                        .get_mesh()
-                        .unwrap()
-                        .get_mesh()
-                        .unwrap()
-                        .upcast()
-                } else {
-                    panic!("Oh dear");
-                };
-
-                meshes.insert(filename.to_string(), mesh);
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("gltf") {
+            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                let asset_path = format!("buildables/{filename}#Scene0");
+                let handle: Handle<Scene> = asset_server.load(&asset_path);
+                handles.insert(filename.to_string(), handle);
             }
         }
-        filename = dir.get_next();
     }
 
-    meshes
+    handles
 }

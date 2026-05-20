@@ -4,7 +4,7 @@ use burn::backend::Autodiff;
 use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
 use burn::tensor::{Float, TensorData};
-use godot::builtin::Vector3i;
+use bevy::math::IVec3;
 use rand::rngs::StdRng;
 use std::collections::HashMap;
 use std::error::Error;
@@ -40,20 +40,20 @@ fn idx_to_range(idx: i32, expand: bool) -> std::ops::Range<usize> {
 // Returns a 5D index into the voxels. Each grid cell is represented by a 2x2x2 cluster of voxels,
 // with each slot occupying a particular position.
 fn grid_coord_to_voxel_coord(
-    pos: Vector3i,
-    min: Vector3i,
+    pos: IVec3,
+    min: IVec3,
     slot: RelSlot,
     channel: usize,
 ) -> [std::ops::Range<usize>; 5] {
     use RelSlot::{Floor, Room, XLoWall, ZLoWall};
-    let adj_vec = (pos - min) * 2 + Vector3i::new(1, 1, 1);
+    let adj_vec = (pos - min) * 2 + IVec3::new(1, 1, 1);
     let vox_vec = adj_vec
         + match slot {
             // Match on RelSlot
-            Room => Vector3i::new(0, 0, 0),
-            ZLoWall => Vector3i::new(0, 0, -1),
-            Floor => Vector3i::new(0, -1, 0),
-            XLoWall => Vector3i::new(-1, 0, 0),
+            Room => IVec3::new(0, 0, 0),
+            ZLoWall => IVec3::new(0, 0, -1),
+            Floor => IVec3::new(0, -1, 0),
+            XLoWall => IVec3::new(-1, 0, 0),
             _ => panic!("We're only using lo slots"),
         };
     let x = idx_to_range(vox_vec.x, slot == Floor || slot == ZLoWall);
@@ -303,7 +303,7 @@ pub fn ground_truth_at_vantage<B: Backend>(
 /// expanding each Sparse3D cell into a 2x2x2 voxel block.
 pub fn sparse3d_to_tensor<B: Backend, T, F>(
     sparse_data: &Sparse3D<T>,
-    center_coord: Vector3i,
+    center_coord: IVec3,
     embedding: F,
 ) -> Result<Tensor<B, 5, Float>, Box<dyn Error>>
 where
@@ -311,9 +311,9 @@ where
 {
     let device = Default::default();
 
-    let min_coord = center_coord - Vector3i::new(5, 2, 5);
-    let max_coord = center_coord + Vector3i::new(5, 3, 5);
-    let size = max_coord - min_coord + Vector3i::new(1, 1, 1);
+    let min_coord = center_coord - IVec3::new(5, 2, 5);
+    let max_coord = center_coord + IVec3::new(5, 3, 5);
+    let size = max_coord - min_coord + IVec3::new(1, 1, 1);
 
     let shape = Shape::new([
         1_usize,
@@ -341,7 +341,7 @@ where
                     RelSlot::Floor,
                     RelSlot::ZLoWall,
                 ] {
-                    let grid_pos = Vector3i::new(grid_x, grid_y, grid_z);
+                    let grid_pos = IVec3::new(grid_x, grid_y, grid_z);
                     let slot_location = SlotLocation::new(grid_x, grid_y, grid_z, slot);
 
                     let obstacles = sparse_data.ray_trace(vantage, slot_location);
@@ -472,7 +472,7 @@ mod tests {
         let embedding = |id: &usize| vec![*id as f32, 0.0, 0.0, 0.0];
 
         // Convert a region around (0, 0, 0) to a tensor
-        let center_coord = Vector3i::new(0, 0, 0);
+        let center_coord = IVec3::new(0, 0, 0);
         // TODO: there's a bunch of stuff that needs to stay in sync here!
         let tensor = sparse3d_to_tensor::<B, _, _>(&sparse_data, center_coord, |id| {
             let semb = &si[*id].embedding;
@@ -499,7 +499,7 @@ mod tests {
         );
 
         let tensor_way_far_away =
-            sparse3d_to_tensor::<B, _, _>(&sparse_data, Vector3i::new(50, 0, 0), embedding)?;
+            sparse3d_to_tensor::<B, _, _>(&sparse_data, IVec3::new(50, 0, 0), embedding)?;
 
         assert_eq!(
             tensor_way_far_away.clone().sum().into_scalar(),

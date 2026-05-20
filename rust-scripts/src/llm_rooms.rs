@@ -10,36 +10,36 @@
 // `None`, uses walls or floors, but it can also be "railing" or "doorway".
 fn build_plane(
         &mut self,
-        corner_a: Vector3i,
-        corner_b: Vector3i,
+        corner_a: IVec3,
+        corner_b: IVec3,
         slot: RelSlot,
         obj_name: Option<&str>,
     );
 
 // Encloses the volume between corner_a and corner_b (inclusive) in walls and floors/ceilings.
-fn build_box(&mut self, corner_a: Vector3i, corner_b: Vector3i);
+fn build_box(&mut self, corner_a: IVec3, corner_b: IVec3);
 
 // Encloses a volume that's contained within the boxes defined by `boxes`, with no internal walls.
 // (This is like a CSG union operation)
-fn build_union_boxes(&mut self, boxes: &[(Vector3i, Vector3i)]);
+fn build_union_boxes(&mut self, boxes: &[(IVec3, IVec3)]);
 
 // For the plane between `corner_a` and `corner_b` (their Y coordinates must be equal), identify
 // any floors that are adjacent to a lack of floor, and adds `obj_name` in the wall slot between
 // them, if none is present.
-fn wall_off_drops(&mut self, corner_a: Vector3i, corner_b: Vector3i, obj_name: &str)
+fn wall_off_drops(&mut self, corner_a: IVec3, corner_b: IVec3, obj_name: &str)
 
 // Sets a viewpoint with the given aesthetic evaluations.
-fn set_vantage(&mut self, loc: Vector3i, coherence: f32, interest: f32)
+fn set_vantage(&mut self, loc: IVec3, coherence: f32, interest: f32)
 */
 use crate::build_helpers::*;
 use crate::wall_grid::OfflineCell;
-use godot::builtin::Vector3i;
+use bevy::math::IVec3;
 
 use crate::sparse3d::{RelSlot, Sparse3D};
 use crate::structure::load_structure_info;
 
-fn v(x: i32, y: i32, z: i32) -> Vector3i {
-    Vector3i::new(x, y, z)
+fn v(x: i32, y: i32, z: i32) -> IVec3 {
+    IVec3::new(x, y, z)
 }
 
 pub fn rooms() -> Vec<Sparse3D<OfflineCell>> {

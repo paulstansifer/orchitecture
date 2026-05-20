@@ -1,38 +1,19 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
-use std::ops::DerefMut;
 
-use godot::classes::file_access::ModeFlags;
-use godot::prelude::*;
-
-use godot::classes::{INode3D, MeshInstance3D, MeshLibrary, Node3D};
+use bevy::math::{IVec3, Quat, Vec3};
+use bevy::prelude::{Component, Entity, Resource, Transform};
 use serde::{Deserialize, Serialize};
 
 use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
-use crate::structure::{self, Structure};
-use crate::{example_structures, qnn};
+use crate::structure::{PlacementStyle, StructureInfo};
 use crate::{qnn_translate, serialization};
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum Dir {
+pub enum Dir {  // TODO: this should probably be replaced with `Facing`
     X,
-    // Y,  // TODO: `Dir` should probably be replaced with `Facing`
     Z,
 }
-
-struct ParticularCell {
-    pos: Vector3i,
-    slot: RelSlot,
-    mi: Option<Cell>,
-    replacer_mi: Option<Cell>,
-}
-
-struct UndoRecord {
-    changed: Vec<ParticularCell>,
-}
-
-// HACK: we should be passed this information
-const DESK_ID: i32 = 0;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct VantageEvaluation {
@@ -40,18 +21,11 @@ pub struct VantageEvaluation {
     pub interest: f32,
 }
 
-// Must manually set this up while assembling the scene
-fn unset_mesh() -> Gd<MeshInstance3D> {
-    MeshInstance3D::new_alloc()
-}
-
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Cell {
     pub id: i32,
     #[serde(default)]
-    pub facing: crate::sparse3d::Facing,
-    #[serde(skip, default = "unset_mesh")]
-    pub mesh: Gd<MeshInstance3D>,
+    pub facing: Facing,
     pub evaluation: Option<VantageEvaluation>,
 }
 
@@ -63,242 +37,117 @@ impl crate::sparse3d::Rotateable for Cell {
     }
 }
 
-// Safe to use outside of Godot
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub struct OfflineCell {
-    pub id: i32,
-    #[serde(default)]
-    pub facing: crate::sparse3d::Facing,
-    pub evaluation: Option<VantageEvaluation>,
+// Compatibility alias used by build_helpers, example_structures, qnn_translate
+// TODO: remove
+pub type OfflineCell = Cell;
+
+const DESK_ID: i32 = 0;
+
+struct UndoRecord {
+    // (location, what_was_there_before)
+    changed: Vec<(SlotLocation, Option<Cell>)>,
 }
 
-impl crate::sparse3d::Rotateable for OfflineCell {
-    fn rotate(self, rotation: crate::sparse3d::Rotation) -> Self {
-        let mut new = self.clone();
-        new.facing = new.facing.rotate(rotation);
-        new
-    }
+/// Marker component for entities that represent placed grid cells.
+#[derive(Component)]
+pub struct GridCellMarker {
+    pub loc: SlotLocation,
 }
 
-// `WallGrid` will be used to store walls, which are 1 unit long and infinitely thin, and are
-// snapped to the coordinate grid.
-#[derive(GodotClass)]
-#[class(base=Node3D)]
+/// Marker component for y-cut visibility variant entities.
+#[derive(Component)]
+pub struct CutCellMarker;
+
+#[derive(Resource)]
 pub struct WallGrid {
-    structures: Vec<Structure>,
-
-    mesh_library: Gd<MeshLibrary>,
-    contents: Sparse3D<Cell>,
-    container: Gd<Node3D>,
-    cut_container: Gd<Node3D>,
-
+    pub structures: Vec<StructureInfo>,
+    pub contents: Sparse3D<Cell>,
+    /// Entity spawned for each placed cell.
+    pub cell_entities: HashMap<SlotLocation, Entity>,
+    /// Entities spawned for the y-cut visibility layer (cleared each visibility update).
+    pub cut_entities: Vec<Entity>,
     undo_record: Vec<UndoRecord>,
-
-    base: Base<Node3D>,
 }
 
-// Fixup to get models into the right spot (necessary, since walls can be X or Y).
-fn slot_transform(slot: RelSlot, facing: Facing) -> Transform3D {
-    let xform = Transform3D::IDENTITY.rotated(Vector3::RIGHT, -TAU / 4.0);
-    match slot {
-        RelSlot::Room => xform
-            .rotated(Vector3::UP, -TAU / 4.0)
-            .translated(Vector3::new(-0.5, 0.0, -0.5))
-            .rotated(Vector3::UP, (1.0 - facing as u8 as f32) * (-TAU / 4.0))
-            .translated(Vector3::new(0.5, 0.0, 0.5)),
-        RelSlot::XLoWall | RelSlot::XHiWall => xform.rotated(Vector3::UP, -TAU / 4.0),
-        RelSlot::Floor | RelSlot::Ceiling => xform.rotated(Vector3::UP, -TAU / 4.0),
-        RelSlot::ZLoWall | RelSlot::ZHiWall => xform,
-    }
-}
-
-#[godot_api]
 impl WallGrid {
-    #[allow(dead_code)]
-    pub fn to_offline(&self) -> Sparse3D<OfflineCell> {
-        let mut offline_grid = Sparse3D::new();
-        for (loc, cell) in self.contents.iter() {
-            offline_grid.set(
-                loc,
-                OfflineCell {
-                    id: cell.id,
-                    facing: cell.facing,
-                    evaluation: cell.evaluation.clone(),
-                },
-            );
-        }
-        offline_grid
-    }
-
-    pub fn from_offline(&mut self, offline_grid: Sparse3D<OfflineCell>) {
-        self.contents = Sparse3D::new();
-        for (loc, offline_cell) in offline_grid.iter() {
-            let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
-            mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(offline_cell.id).unwrap());
-
-            self.contents.set(
-                loc,
-                Cell {
-                    id: offline_cell.id,
-                    facing: offline_cell.facing,
-                    mesh: mesh_instance,
-                    evaluation: offline_cell.evaluation.clone(),
-                },
-            );
-        }
-
-        self.container.propagate_call("queue_free");
-        let container = Node3D::new_alloc();
-        self.base_mut().add_child(&container);
-        self.container = container;
-
-        for (loc, cell) in self.contents.iter_mut() {
-            cell.mesh.set_transform(
-                slot_transform(loc.rel_slot, cell.facing).translated(loc.cube.cast_float()),
-            );
-            self.container.add_child(&cell.mesh);
+    pub fn new(structures: Vec<StructureInfo>) -> Self {
+        WallGrid {
+            structures,
+            contents: Sparse3D::new(),
+            cell_entities: HashMap::new(),
+            cut_entities: Vec::new(),
+            undo_record: Vec::new(),
         }
     }
 
-    #[func]
-    pub fn get_structures(&self) -> Array<GString> {
-        let mut res = Array::new();
-
-        for structure in &self.structures {
-            let mut name = structure.info.main_mesh.clone();
-            if let Some(dot_index) = name.find('.') {
-                name.truncate(dot_index);
-            }
-            res.push(&name);
-        }
-
-        res
+    pub fn get_structure_names(&self) -> Vec<String> {
+        self.structures
+            .iter()
+            .map(|s| {
+                let mut name = s.main_mesh.clone();
+                if let Some(dot) = name.find('.') {
+                    name.truncate(dot);
+                }
+                name
+            })
+            .collect()
     }
 
-    #[func]
     pub fn structure_is_room_plop(&self, id: i32) -> bool {
-        self.structures[id as usize].info.placement_style == structure::PlacementStyle::RoomPlop
+        self.structures[id as usize].placement_style == PlacementStyle::RoomPlop
     }
 
-    pub fn set_range_item_dir(
+    /// Place or clear cells in a rectangular range.
+    /// Returns `(loc, new_cell)` deltas — `None` means the cell was removed.
+    fn set_range_item_dir(
         &mut self,
-        dir: i32, // only used for room items
-        position1: Vector3i,
-        position2: Vector3i,
+        dir: i32,
+        position1: IVec3,
+        position2: IVec3,
         slot: RelSlot,
         item: Option<i32>,
-    ) {
-        let start_x = i32::min(position1.x, position2.x);
-        let end_x = i32::max(position1.x, position2.x);
-        let start_y = i32::min(position1.y, position2.y);
-        let end_y = i32::max(position1.y, position2.y);
-        let start_z = i32::min(position1.z, position2.z);
-        let end_z = i32::max(position1.z, position2.z);
+    ) -> Vec<(SlotLocation, Option<Cell>)> {
+        let start = position1.min(position2);
+        let end = position1.max(position2);
+        let mut changes: Vec<(SlotLocation, Option<Cell>)> = Vec::new();
+        let mut undo_changed: Vec<(SlotLocation, Option<Cell>)> = Vec::new();
 
-        let mut changed_cells: Vec<ParticularCell> = Vec::new();
-
-        let container: &mut Node3D = self.container.deref_mut();
-
-        for x in start_x..=end_x {
-            for y in start_y..=end_y {
-                for z in start_z..=end_z {
-                    let position = Vector3i::new(x, y, z);
+        for x in start.x..=end.x {
+            for y in start.y..=end.y {
+                for z in start.z..=end.z {
                     let loc = SlotLocation::new(x, y, z, slot);
-
                     let old_cell = self.contents.take(loc);
+                    undo_changed.push((loc, old_cell));
 
-                    match old_cell {
-                        Some(ref old_cell) => {
-                            container.remove_child(&old_cell.mesh);
-                        }
-                        None => {}
-                    }
-
-                    if let Some(item) = item {
-                        let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
-                        mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(item).unwrap());
-
+                    if let Some(id) = item {
                         let facing = Facing::from_number(dir as u8);
-
-                        mesh_instance.set_transform(
-                            slot_transform(slot, facing).translated(position.cast_float()),
-                        );
-
-                        container.add_child(&mesh_instance);
-
-                        let new_cell = Cell {
-                            id: item,
-                            facing,
-                            mesh: mesh_instance.clone(),
-                            evaluation: None,
-                        };
-
-                        changed_cells.push(ParticularCell {
-                            pos: position,
-                            slot,
-                            mi: old_cell,
-                            replacer_mi: Some(new_cell.clone()),
-                        });
-
-                        self.contents.set(loc, new_cell);
+                        let new_cell = Cell { id, facing, evaluation: None };
+                        self.contents.set(loc, new_cell.clone());
+                        changes.push((loc, Some(new_cell)));
                     } else {
-                        changed_cells.push(ParticularCell {
-                            pos: position,
-                            slot,
-                            mi: old_cell,
-                            replacer_mi: None,
-                        });
-                        self.contents.take(loc);
+                        changes.push((loc, None));
                     }
                 }
             }
         }
 
-        if !changed_cells.is_empty() {
-            self.undo_record.push(UndoRecord {
-                changed: changed_cells,
-            });
+        if !changes.is_empty() {
+            self.undo_record.push(UndoRecord { changed: undo_changed });
         }
+        changes
     }
 
-    #[func]
-    pub fn click(&mut self, position: Vector3, selected_mesh_id: i32, dir: i32, remove: bool) {
-        match self.structures[selected_mesh_id as usize]
-            .info
-            .placement_style
-        {
-            structure::PlacementStyle::RoomPlop => {
-                self.room_plop(position, dir, (!remove).then_some(selected_mesh_id))
-            }
-            _ => {}
-        }
-    }
-
-    #[func]
-    pub fn drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: i32, remove: bool) {
-        let id = (!remove).then_some(selected_mesh_id);
-        match self.structures[selected_mesh_id as usize]
-            .info
-            .placement_style
-        {
-            structure::PlacementStyle::WallDrag => self.wall_drag(from, to, id),
-            structure::PlacementStyle::FloorDrag => self.floor_drag(from, to, id),
-            _ => {}
-        }
-    }
-
-    // The user has dragged something wall-like bewteen `from` and `to`
-    pub fn wall_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: Option<i32>) {
+    pub fn wall_drag(
+        &mut self,
+        from: Vec3,
+        to: Vec3,
+        selected_mesh_id: Option<i32>,
+    ) -> Vec<(SlotLocation, Option<Cell>)> {
         let x_diff = to.x - from.x;
         let z_diff = to.z - from.z;
+        let d = if x_diff.abs() > z_diff.abs() { Dir::X } else { Dir::Z };
 
-        let d = if x_diff.abs() > z_diff.abs() {
-            Dir::X
-        } else {
-            Dir::Z
-        };
-
-        let from_i = from.round().cast_int();
+        let from_i = from.round().as_ivec3();
         let mut to_i = from_i;
         if d == Dir::X {
             to_i.x = to.x.round() as i32;
@@ -306,257 +155,233 @@ impl WallGrid {
             to_i.z = to.z.round() as i32;
         }
 
-        let start = Vector3i::coord_min(from_i, to_i);
-        let end = Vector3i::coord_max(from_i, to_i);
-
-        let end = end
+        let start = from_i.min(to_i);
+        let end = from_i.max(to_i)
             - if d == Dir::X {
-                Vector3i::new(1, 0, 0)
+                IVec3::new(1, 0, 0)
             } else {
-                Vector3i::new(0, 0, 1)
+                IVec3::new(0, 0, 1)
             };
+        let slot = if d == Dir::X { RelSlot::ZLoWall } else { RelSlot::XLoWall };
 
-        let slot = if d == Dir::X {
-            RelSlot::ZLoWall
-        } else {
-            RelSlot::XLoWall
-        };
-
-        self.set_range_item_dir(0 /*ignored*/, start, end, slot, selected_mesh_id);
+        self.set_range_item_dir(0, start, end, slot, selected_mesh_id)
     }
 
-    pub fn floor_drag(&mut self, from: Vector3, to: Vector3, selected_mesh_id: Option<i32>) {
-        let from_i = from.round().cast_int();
-        let to_i = to.round().cast_int();
-
-        let start = Vector3i::coord_min(from_i, to_i);
-        let end = Vector3i::coord_max(from_i, to_i) - Vector3i::new(1, 0, 1);
-
-        self.set_range_item_dir(0, start, end, RelSlot::Floor, selected_mesh_id);
+    pub fn floor_drag(
+        &mut self,
+        from: Vec3,
+        to: Vec3,
+        selected_mesh_id: Option<i32>,
+    ) -> Vec<(SlotLocation, Option<Cell>)> {
+        let from_i = from.round().as_ivec3();
+        let to_i = to.round().as_ivec3();
+        let start = from_i.min(to_i);
+        let end = from_i.max(to_i) - IVec3::new(1, 0, 1);
+        self.set_range_item_dir(0, start, end, RelSlot::Floor, selected_mesh_id)
     }
 
-    pub fn room_plop(&mut self, location: Vector3, dir: i32, selected_mesh_id: Option<i32>) {
-        let pos = location.round().cast_int();
-        self.set_range_item_dir(dir, pos, pos, RelSlot::Room, selected_mesh_id);
+    pub fn room_plop(
+        &mut self,
+        location: Vec3,
+        dir: i32,
+        selected_mesh_id: Option<i32>,
+    ) -> Vec<(SlotLocation, Option<Cell>)> {
+        let pos = location.round().as_ivec3();
+        let changes = self.set_range_item_dir(dir, pos, pos, RelSlot::Room, selected_mesh_id);
         if selected_mesh_id == Some(DESK_ID) {
             let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
-            self.contents.get_mut(loc).unwrap().evaluation = Some(VantageEvaluation {
-                coherence: 0.5,
-                interest: 0.5,
-            });
+            if let Some(cell) = self.contents.get_mut(loc) {
+                cell.evaluation = Some(VantageEvaluation { coherence: 0.5, interest: 0.5 });
+            }
+        }
+        changes
+    }
+
+    pub fn drag(
+        &mut self,
+        from: Vec3,
+        to: Vec3,
+        selected_mesh_id: i32,
+        remove: bool,
+    ) -> Vec<(SlotLocation, Option<Cell>)> {
+        let id = (!remove).then_some(selected_mesh_id);
+        match self.structures[selected_mesh_id as usize].placement_style {
+            PlacementStyle::WallDrag => self.wall_drag(from, to, id),
+            PlacementStyle::FloorDrag => self.floor_drag(from, to, id),
+            _ => vec![],
         }
     }
-    #[func]
-    pub fn metrics_at(&self, location: Vector3) -> Vec<f32> {
-        // Return type is a hack; I don't feel like implementing `ToGodot` and `FromGodot` for
-        // `VantageEvaluation` right now.
-        let pos = location.round().cast_int();
 
+    pub fn click(
+        &mut self,
+        position: Vec3,
+        selected_mesh_id: i32,
+        dir: i32,
+        remove: bool,
+    ) -> Vec<(SlotLocation, Option<Cell>)> {
+        match self.structures[selected_mesh_id as usize].placement_style {
+            PlacementStyle::RoomPlop => {
+                self.room_plop(position, dir, (!remove).then_some(selected_mesh_id))
+            }
+            _ => vec![],
+        }
+    }
+
+    /// Undo last action. Returns `(loc, cell_to_restore)` deltas — `None` means delete.
+    pub fn undo(&mut self) -> Vec<(SlotLocation, Option<Cell>)> {
+        let Some(record) = self.undo_record.pop() else {
+            return vec![];
+        };
+        for (loc, old_cell) in &record.changed {
+            if let Some(cell) = old_cell {
+                self.contents.set(*loc, cell.clone());
+            } else {
+                self.contents.take(*loc);
+            }
+        }
+        record.changed
+    }
+
+    pub fn metrics_at(&self, location: Vec3) -> Vec<f32> {
+        let pos = location.round().as_ivec3();
         let tensor: burn::tensor::Tensor<burn::backend::Wgpu, 5> =
             qnn_translate::sparse3d_to_tensor(&self.contents, pos, |cell: &Cell| {
-                let semb = &self.structures[cell.id as usize].info.embedding;
-
+                let semb = &self.structures[cell.id as usize].embedding;
                 vec![semb.tall, semb.decorative, semb.passable, semb.striated]
             })
             .unwrap();
 
-        let (coherence, interest) = MODELS.with(|models| {
-            (
+        MODELS.with(|models| {
+            vec![
                 models.coherence.forward(tensor.clone()).sum().into_scalar(),
                 models.interest.forward(tensor).sum().into_scalar(),
-            )
-        });
-
-        vec![coherence, interest]
+            ]
+        })
     }
 
-    #[func]
-    pub fn save(&self, filename: GString) {
+    pub fn save(&self, path: &std::path::PathBuf) {
         let mut structures_by_id = HashMap::new();
-        for (id, structure) in self.structures.iter().enumerate() {
-            structures_by_id.insert(id as i32, structure.info.clone());
+        for (id, info) in self.structures.iter().enumerate() {
+            structures_by_id.insert(id as i32, info.clone());
         }
-
         let serialized = serialization::serialize_sparse3d(
             &self.contents,
             |cell, slot, structures| serialization::serialize_slot(cell.id, slot, structures),
             &structures_by_id,
         );
-        let path = GString::from(format!("training/{filename}"));
-
-        let mut file = GFile::open(&path, ModeFlags::WRITE).unwrap();
-        file.write_gstring(&serialized).unwrap();
-        godot_print!("Saved to {}", file.path_absolute());
+        std::fs::write(path, serialized).unwrap();
     }
 
-    #[func]
-    pub fn load(&mut self, filename: GString) {
-        if let Ok(idx) = filename.to_string().parse::<usize>() {
-            let new_map = example_structures::make_structures().remove(idx);
-            self.from_offline(new_map);
-            return;
-        }
-
-        let path = GString::from(format!("training/{filename}"));
-
-        let mut file = GFile::open(&path, ModeFlags::READ).unwrap();
-        let serialized = file.read_as_gstring_entire(false).unwrap().to_string();
-
+    /// Load from a text file. Returns full replacement deltas (clear all, set all new).
+    pub fn load(&mut self, path: &std::path::PathBuf) -> Vec<(SlotLocation, Option<Cell>)> {
+        let serialized = std::fs::read_to_string(path).unwrap();
         let mut structures_by_char = HashMap::new();
-        for (id, structure) in self.structures.iter().enumerate() {
-            if let Some(x_char) = structure.info.x_char {
-                structures_by_char.insert(x_char, id as i32);
+        for (id, info) in self.structures.iter().enumerate() {
+            if let Some(c) = info.x_char {
+                structures_by_char.insert(c, id as i32);
             }
-            if let Some(z_char) = structure.info.z_char {
-                structures_by_char.insert(z_char, id as i32);
+            if let Some(c) = info.z_char {
+                structures_by_char.insert(c, id as i32);
             }
         }
 
-        // TODO: a lot of this duplicates `from_offline`; use that instead.
-        self.contents = serialization::deserialize_sparse3d(
+        let new_contents = serialization::deserialize_sparse3d(
             &serialized,
-            |c, _slot, structures_by_char| {
-                let id = serialization::deserialize(c, structures_by_char);
-                let mut mesh_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
-                mesh_instance.set_mesh(&self.mesh_library.get_item_mesh(id).unwrap());
-
-                Ok::<Cell, ()>(Cell {
-                    id,
-                    // TODO: This gets loaded correctly when needed, but this looks wrong:
-                    facing: Facing::NegX,
-                    mesh: mesh_instance,
-                    evaluation: None,
-                })
+            |c, _slot, map| {
+                let id = serialization::deserialize(c, map);
+                Ok::<Cell, ()>(Cell { id, facing: Facing::NegX, evaluation: None })
             },
             &structures_by_char,
         )
         .unwrap();
 
-        self.container.propagate_call("queue_free");
-        let container = Node3D::new_alloc();
-        self.base_mut().add_child(&container);
-        self.container = container;
-
-        for (loc, cell) in self.contents.iter_mut() {
-            cell.mesh.set_transform(
-                slot_transform(loc.rel_slot, cell.facing).translated(loc.cube.cast_float()),
-            );
-            self.container.add_child(&cell.mesh);
-        }
-        godot_print!("Loaded from {}", file.path_absolute());
+        self.replace_contents(new_contents)
     }
 
-    #[func]
-    pub fn undo(&mut self) {
-        if let Some(undo_record) = self.undo_record.pop() {
-            for mut cell in undo_record.changed {
-                let position = cell.pos;
-                let slot = cell.slot;
-
-                if let Some(ref mut new_cell) = cell.replacer_mi {
-                    self.container.remove_child(&new_cell.mesh);
-                    new_cell.mesh.queue_free();
-                }
-
-                if let Some(ref old_cell) = cell.mi {
-                    let loc = SlotLocation::new(position.x, position.y, position.z, slot);
-                    self.contents.set(loc, old_cell.clone());
-                } else {
-                    let loc = SlotLocation::new(position.x, position.y, position.z, slot);
-                    self.contents.take(loc);
-                }
-            }
-        }
+    pub fn load_from_offline(
+        &mut self,
+        new_contents: Sparse3D<Cell>,
+    ) -> Vec<(SlotLocation, Option<Cell>)> {
+        self.replace_contents(new_contents)
     }
 
-    #[func]
-    pub fn dont_actually_call_me() {
-        if false {
-            // Otherwise, we get warnings for things not used in the library.
-            qnn::train::<burn::backend::NdArray>();
+    fn replace_contents(
+        &mut self,
+        new_contents: Sparse3D<Cell>,
+    ) -> Vec<(SlotLocation, Option<Cell>)> {
+        let mut changes: Vec<(SlotLocation, Option<Cell>)> = Vec::new();
+        for (loc, _) in self.contents.iter() {
+            changes.push((loc, None));
         }
-    }
-
-    #[func]
-    pub fn update_visibility(&mut self, focus_location: Vector3, camera_location: Vector3) {
-        // Clear the old cut walls:
-        self.cut_container.propagate_call("queue_free");
-        let new_cut_container = Node3D::new_alloc();
-        self.base_mut().add_child(&new_cut_container);
-        self.cut_container = new_cut_container;
-
-        let view_direction = (focus_location - camera_location).sign().round().cast_int();
-        let effective_focus_location = focus_location.round().cast_int()
-            + Vector3i::new(view_direction.x * 2, 0, view_direction.z * 2);
-
-        let last_y_layer = Vector3i::new(view_direction.x, 0, view_direction.z);
-        for (loc, cell) in self.contents.iter_mut() {
-            if (effective_focus_location - loc.cube).sign() == view_direction {
-                cell.mesh.hide();
-            } else if (effective_focus_location - loc.cube).sign() == last_y_layer {
-                cell.mesh.hide();
-
-                let mut cut_instance: Gd<MeshInstance3D> = MeshInstance3D::new_alloc();
-
-                cut_instance.set_transform(cell.mesh.get_transform());
-                cut_instance.set_mesh(&self.mesh_library.get_item_mesh(cell.id + 1000).unwrap());
-
-                self.cut_container.add_child(&cut_instance);
-            } else {
-                cell.mesh.show();
-            }
+        for (loc, cell) in new_contents.iter() {
+            changes.push((loc, Some(cell.clone())));
         }
-    }
-
-    #[func]
-    fn get_ready_to_quit(&mut self) {
-        self.structures.clear();
-
-        for (_, cell) in self.contents.iter_mut() {
-            cell.mesh.queue_free();
-        }
-        self.container.queue_free();
-        self.cut_container.queue_free();
+        self.contents = new_contents;
+        self.undo_record.clear();
+        changes
     }
 }
 
-#[godot_api]
-impl INode3D for WallGrid {
-    fn init(base: Base<Node3D>) -> Self {
-        let container = Node3D::new_alloc();
-        base.to_gd().add_child(&container);
-        let cut_container = Node3D::new_alloc();
-        base.to_gd().add_child(&cut_container);
+/// Computes the Bevy Transform for a cell at the given grid position.
+pub fn cell_transform(slot: RelSlot, facing: Facing, cube: IVec3) -> Transform {
+    let rx = Quat::from_rotation_x(-TAU / 4.0);
+    let ry_neg90 = Quat::from_rotation_y(-TAU / 4.0);
 
-        let structures = structure::load_structures();
+    let rotation = match slot {
+        RelSlot::Room => {
+            let facing_angle = (1.0 - facing as u8 as f32) * (-TAU / 4.0);
+            Quat::from_rotation_y(-TAU / 4.0 + facing_angle) * rx
+        }
+        RelSlot::XLoWall | RelSlot::XHiWall | RelSlot::Floor | RelSlot::Ceiling => ry_neg90 * rx,
+        RelSlot::ZLoWall | RelSlot::ZHiWall => rx,
+    };
 
-        let mut mesh_library = MeshLibrary::new_gd();
+    Transform {
+        translation: cube.as_vec3(),
+        rotation,
+        scale: Vec3::ONE,
+    }
+}
 
-        for (id, structure) in structures.iter().enumerate() {
-            mesh_library.create_item(id as i32);
-            mesh_library.create_item(id as i32 + 1000);
-            mesh_library.set_item_mesh(id as i32, &structure.mesh);
-            if let Some(ref cut_mesh) = structure.y_cut_mesh {
-                // HACK; add 1000 for the cutaway versions:
-                mesh_library.set_item_mesh(id as i32 + 1000, cut_mesh);
-            } else {
-                // HACK: instead of doing a lookup, just always replace the mesh (but sometimes
-                // with the same mesh).
-                mesh_library.set_item_mesh(id as i32 + 1000, &structure.mesh);
+/// Compute which cells are hidden / need cut variants based on camera view.
+/// Returns (cells_to_hide, cells_needing_cut_variant).
+pub fn compute_visibility(
+    contents: &Sparse3D<Cell>,
+    focus_location: Vec3,
+    camera_location: Vec3,
+) -> (Vec<SlotLocation>, Vec<(SlotLocation, i32)>) {
+    let diff = focus_location - camera_location;
+    let view_dir = IVec3::new(
+        diff.x.signum() as i32,
+        diff.y.signum() as i32,
+        diff.z.signum() as i32,
+    );
+    let effective_focus = focus_location.round().as_ivec3()
+        + IVec3::new(view_dir.x * 2, 0, view_dir.z * 2);
+    let last_y_layer = IVec3::new(view_dir.x, 0, view_dir.z);
+
+    let sign = |v: IVec3| IVec3::new(v.x.signum(), v.y.signum(), v.z.signum());
+
+    let mut hidden: Vec<SlotLocation> = Vec::new();
+    let mut cut: Vec<(SlotLocation, i32)> = Vec::new();
+
+    for (loc, cell) in contents.iter() {
+        let delta = effective_focus - loc.cube;
+        if sign(delta) == view_dir {
+            hidden.push(loc);
+        } else if sign(delta) == last_y_layer {
+            // Floors and ceilings at the current layer have no cut variant and
+            // should remain visible; only hide/cut wall and room cells here.
+            match loc.rel_slot {
+                RelSlot::Floor | RelSlot::Ceiling => {}
+                _ => {
+                    hidden.push(loc);
+                    cut.push((loc, cell.id));
+                }
             }
         }
-
-        Self {
-            structures,
-            undo_record: Vec::new(),
-            mesh_library,
-            contents: Sparse3D::new(),
-            container: container,
-            cut_container: cut_container,
-
-            base,
-        }
     }
+    (hidden, cut)
 }
 
 thread_local! {

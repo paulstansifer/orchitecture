@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::{Index, IndexMut};
 
+use bevy::math::IVec3;
 use enum_derived::Rand;
-use godot::builtin::Vector3i;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Rand)]
@@ -17,7 +17,7 @@ enum Slot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SlotLocation {
-    pub cube: Vector3i,
+    pub cube: IVec3,
     pub rel_slot: RelSlot,
 }
 
@@ -82,12 +82,12 @@ impl Rotateable for Facing {
 }
 
 impl RelSlot {
-    fn absolute_offset(self) -> Vector3i {
+    fn absolute_offset(self) -> IVec3 {
         match self {
-            RelSlot::XHiWall => Vector3i::new(1, 0, 0),
-            RelSlot::Ceiling => Vector3i::new(0, 1, 0),
-            RelSlot::ZHiWall => Vector3i::new(0, 0, 1),
-            _ => Vector3i::ZERO,
+            RelSlot::XHiWall => IVec3::new(1, 0, 0),
+            RelSlot::Ceiling => IVec3::new(0, 1, 0),
+            RelSlot::ZHiWall => IVec3::new(0, 0, 1),
+            _ => IVec3::ZERO,
         }
     }
 
@@ -109,14 +109,14 @@ impl RelSlot {
         }
     }
 
-    pub fn direction_of_neighbor(self) -> Vector3i {
+    pub fn direction_of_neighbor(self) -> IVec3 {
         match self {
-            RelSlot::XHiWall => Vector3i::new(1, 0, 0),
-            RelSlot::Ceiling => Vector3i::new(0, 1, 0),
-            RelSlot::ZHiWall => Vector3i::new(0, 0, 1),
-            RelSlot::XLoWall => Vector3i::new(-1, 0, 0),
-            RelSlot::Floor => Vector3i::new(0, -1, 0),
-            RelSlot::ZLoWall => Vector3i::new(0, 0, -1),
+            RelSlot::XHiWall => IVec3::new(1, 0, 0),
+            RelSlot::Ceiling => IVec3::new(0, 1, 0),
+            RelSlot::ZHiWall => IVec3::new(0, 0, 1),
+            RelSlot::XLoWall => IVec3::new(-1, 0, 0),
+            RelSlot::Floor => IVec3::new(0, -1, 0),
+            RelSlot::ZLoWall => IVec3::new(0, 0, -1),
             RelSlot::Room => panic!(),
         }
     }
@@ -153,7 +153,7 @@ impl Rotateable for RelSlot {
 impl SlotLocation {
     pub fn new(x: i32, y: i32, z: i32, rel_slot: RelSlot) -> Self {
         SlotLocation {
-            cube: Vector3i::new(x, y, z),
+            cube: IVec3::new(x, y, z),
             rel_slot,
         }
     }
@@ -202,9 +202,9 @@ impl SlotLocation {
 impl Rotateable for SlotLocation {
     fn rotate(self, rotation: Rotation) -> Self {
         let new_coord = match rotation {
-            Rotation::Clockwise => Vector3i::new(-self.cube.z, self.cube.y, self.cube.x),
-            Rotation::CounterClockwise => Vector3i::new(self.cube.z, self.cube.y, -self.cube.x),
-            Rotation::OneEighty => Vector3i::new(-self.cube.x, self.cube.y, -self.cube.z),
+            Rotation::Clockwise => IVec3::new(-self.cube.z, self.cube.y, self.cube.x),
+            Rotation::CounterClockwise => IVec3::new(self.cube.z, self.cube.y, -self.cube.x),
+            Rotation::OneEighty => IVec3::new(-self.cube.x, self.cube.y, -self.cube.z),
         };
         SlotLocation {
             cube: new_coord,
@@ -213,10 +213,10 @@ impl Rotateable for SlotLocation {
     }
 }
 
-impl std::ops::Add<Vector3i> for SlotLocation {
+impl std::ops::Add<IVec3> for SlotLocation {
     type Output = Self;
 
-    fn add(self, other: Vector3i) -> Self {
+    fn add(self, other: IVec3) -> Self {
         SlotLocation {
             cube: self.cube + other,
             rel_slot: self.rel_slot,
@@ -239,7 +239,7 @@ struct SmallCoordinates {
     slot: Slot,
 }
 
-fn split_coords(loc: Vector3i, slot: Slot) -> (BigCoordinates, SmallCoordinates) {
+fn split_coords(loc: IVec3, slot: Slot) -> (BigCoordinates, SmallCoordinates) {
     let big_coords = BigCoordinates {
         x: loc.x.div_euclid(4),
         y: loc.y.div_euclid(4),
@@ -256,8 +256,8 @@ fn split_coords(loc: Vector3i, slot: Slot) -> (BigCoordinates, SmallCoordinates)
     (big_coords, small_coords)
 }
 
-fn combine_coords(bc: BigCoordinates, sc: SmallCoordinates) -> Vector3i {
-    Vector3i::new(
+fn combine_coords(bc: BigCoordinates, sc: SmallCoordinates) -> IVec3 {
+    IVec3::new(
         bc.x * 4 + sc.x as i32,
         bc.y * 4 + sc.y as i32,
         bc.z * 4 + sc.z as i32,
@@ -420,19 +420,19 @@ impl<T> Sparse3D<T> {
         })
     }
 
-    pub fn bounding_box(&self) -> (Vector3i, Vector3i) {
+    pub fn bounding_box(&self) -> (IVec3, IVec3) {
         if self.chunks.is_empty() {
-            return (Vector3i::ZERO, Vector3i::ZERO);
+            return (IVec3::ZERO, IVec3::ZERO);
         }
 
-        let mut min = Vector3i::new(i32::MAX, i32::MAX, i32::MAX);
-        let mut max = Vector3i::new(i32::MIN, i32::MIN, i32::MIN);
+        let mut min = IVec3::new(i32::MAX, i32::MAX, i32::MAX);
+        let mut max = IVec3::new(i32::MIN, i32::MIN, i32::MIN);
 
         for (bc, chunk) in &self.chunks {
             for (sc, _) in chunk.iter() {
                 let coord = combine_coords(*bc, sc);
-                min = Vector3i::coord_min(min, coord);
-                max = Vector3i::coord_max(max, coord);
+                min = min.min(coord);
+                max = max.max(coord);
             }
         }
         (min, max)

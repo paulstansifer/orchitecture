@@ -1,12 +1,12 @@
 use crate::wall_grid::OfflineCell;
 use crate::{build_helpers::*, llm_rooms};
-use godot::builtin::Vector3i;
+use bevy::math::IVec3;
 
 use crate::sparse3d::{RelSlot, Sparse3D};
 use crate::structure::load_structure_info;
 
-fn v(x: i32, y: i32, z: i32) -> Vector3i {
-    Vector3i::new(x, y, z)
+fn v(x: i32, y: i32, z: i32) -> IVec3 {
+    IVec3::new(x, y, z)
 }
 
 pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {

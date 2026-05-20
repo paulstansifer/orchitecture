@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use enum_derived::Rand;
-use godot::builtin::Vector3i;
+use bevy::math::IVec3;
 
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::StructureInfo;
@@ -51,9 +51,9 @@ impl Builder {
         }
     }
 
-    pub fn build_box(&mut self, corner_a: Vector3i, corner_b: Vector3i) {
-        let min = Vector3i::coord_min(corner_a, corner_b);
-        let max = Vector3i::coord_max(corner_a, corner_b);
+    pub fn build_box(&mut self, corner_a: IVec3, corner_b: IVec3) {
+        let min = IVec3::min(corner_a, corner_b);
+        let max = IVec3::max(corner_a, corner_b);
 
         for x in min.x..=max.x {
             for z in min.z..=max.z {
@@ -93,16 +93,16 @@ impl Builder {
         }
     }
 
-    pub fn build_union_boxes(&mut self, boxes: &[(Vector3i, Vector3i)]) {
-        let mut inside_coords: HashSet<Vector3i> = HashSet::new();
+    pub fn build_union_boxes(&mut self, boxes: &[(IVec3, IVec3)]) {
+        let mut inside_coords: HashSet<IVec3> = HashSet::new();
         for (a, b) in boxes {
-            let min = Vector3i::coord_min(*a, *b);
-            let max = Vector3i::coord_max(*a, *b);
+            let min = IVec3::min(*a, *b);
+            let max = IVec3::max(*a, *b);
 
             for x in min.x..=max.x {
                 for y in min.y..=max.y {
                     for z in min.z..=max.z {
-                        inside_coords.insert(Vector3i::new(x, y, z));
+                        inside_coords.insert(IVec3::new(x, y, z));
                     }
                 }
             }
@@ -133,8 +133,8 @@ impl Builder {
 
     pub fn build_plane(
         &mut self,
-        corner_a: Vector3i,
-        corner_b: Vector3i,
+        corner_a: IVec3,
+        corner_b: IVec3,
         slot: RelSlot,
         obj_name: Option<&str>,
     ) {
@@ -160,8 +160,8 @@ impl Builder {
             obj.id = *self.structures.get(name).unwrap() as i32;
         }
 
-        let min = Vector3i::coord_min(corner_a, corner_b);
-        let max = Vector3i::coord_max(corner_a, corner_b);
+        let min = IVec3::min(corner_a, corner_b);
+        let max = IVec3::max(corner_a, corner_b);
 
         for x in min.x..=max.x {
             for y in min.y..=max.y {
@@ -172,11 +172,11 @@ impl Builder {
         }
     }
 
-    pub fn wall_off_drops(&mut self, corner_a: Vector3i, corner_b: Vector3i, obj_name: &str) {
+    pub fn wall_off_drops(&mut self, corner_a: IVec3, corner_b: IVec3, obj_name: &str) {
         assert!(corner_a.y == corner_b.y);
 
-        let min = Vector3i::coord_min(corner_a, corner_b);
-        let max = Vector3i::coord_max(corner_a, corner_b);
+        let min = IVec3::min(corner_a, corner_b);
+        let max = IVec3::max(corner_a, corner_b);
         let y = min.y;
 
         let obj = OfflineCell {
@@ -210,7 +210,7 @@ impl Builder {
         }
     }
 
-    pub fn set_vantage(&mut self, loc: Vector3i, coherence: f32, interest: f32) {
+    pub fn set_vantage(&mut self, loc: IVec3, coherence: f32, interest: f32) {
         self.map.set(
             SlotLocation::new(loc.x, loc.y, loc.z, RelSlot::Room),
             OfflineCell {
@@ -234,13 +234,13 @@ pub fn make_boring_room(
     let y_height = rng.random_range(1..4);
     let z_size = rng.random_range(1..7);
     builder.build_box(
-        Vector3i::new(0, 0, 0),
-        Vector3i::new(x_size, y_height, z_size),
+        IVec3::new(0, 0, 0),
+        IVec3::new(x_size, y_height, z_size),
     );
-    let door_loc = Vector3i::new(rng.random_range(0..=x_size), 0, 0);
+    let door_loc = IVec3::new(rng.random_range(0..=x_size), 0, 0);
     builder.build_plane(door_loc, door_loc, RelSlot::ZLoWall, Some("doorway"));
     builder.set_vantage(
-        Vector3i::new(rng.random_range(0..x_size), 0, rng.random_range(0..z_size)),
+        IVec3::new(rng.random_range(0..x_size), 0, rng.random_range(0..z_size)),
         1.0,
         0.0,
     );
