@@ -2,6 +2,31 @@ use crate::qnn::Cnn;
 use burn::{backend::Autodiff, prelude::Backend, record::Recorder};
 use std::path::PathBuf;
 
+thread_local! {
+    static MODELS: ModelHolder = ModelHolder::new();
+}
+
+pub fn metrics_at(
+    contents: &crate::sparse3d::Sparse3D<crate::wall_grid::Cell>,
+    structures: &[crate::structure::StructureInfo],
+    location: bevy::math::Vec3,
+) -> Vec<f32> {
+    let pos = location.round().as_ivec3();
+    let tensor: burn::tensor::Tensor<burn::backend::Wgpu, 5> =
+        crate::qnn_translate::sparse3d_to_tensor(contents, pos, |cell: &crate::wall_grid::Cell| {
+            let semb = &structures[cell.id as usize].embedding;
+            vec![semb.tall, semb.decorative, semb.passable, semb.striated]
+        })
+        .unwrap();
+
+    MODELS.with(|models| {
+        vec![
+            models.coherence.forward(tensor.clone()).sum().into_scalar(),
+            models.interest.forward(tensor).sum().into_scalar(),
+        ]
+    })
+}
+
 pub struct ModelHolder {
     pub interest: Cnn<burn::backend::Wgpu>,
     pub coherence: Cnn<burn::backend::Wgpu>,

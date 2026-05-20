@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-use crate::input::{apply_changes, BuildState};
+use crate::input::BuildState;
+use crate::wall_grid::apply_changes;
 use crate::structure::StructureList;
 use crate::wall_grid::WallGrid;
 

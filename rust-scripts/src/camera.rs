@@ -4,6 +4,8 @@ use bevy::input::mouse::MouseButton;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+
+
 #[derive(Resource)]
 pub struct CameraState {
     pub target_position: Vec3,
@@ -25,6 +27,15 @@ impl Default for CameraState {
 
 #[derive(Component)]
 pub struct GameCamera;
+
+/// Startup system: spawns the main 3D camera.
+pub fn spawn_camera(mut commands: Commands) {
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(0.0, 15.0, 25.0).looking_at(Vec3::ZERO, Vec3::Y),
+        GameCamera,
+    ));
+}
 
 pub fn camera_input_system(
     time: Res<Time>,

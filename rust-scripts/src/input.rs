@@ -3,7 +3,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::GameCamera;
 use crate::structure::StructureList;
-use crate::wall_grid::{cell_transform, GridCellMarker, WallGrid};
+use crate::wall_grid::{apply_changes, WallGrid};
 
 /// Marker for the wall/floor build cursor (pin shape).
 #[derive(Component)]
@@ -66,35 +66,6 @@ pub struct BuildState {
     pub drag_start: Option<Vec3>,
     /// Latest evaluation results (coherence, interest).
     pub evaluation: Option<(f32, f32)>,
-    /// Cursor world position on the cur_y plane; updated each frame.
-    pub focus_pos: Vec3,
-}
-
-/// Applies a list of cell changes to the world: despawns old entities, spawns new ones.
-pub fn apply_changes(
-    commands: &mut Commands,
-    wall_grid: &mut WallGrid,
-    structure_list: &StructureList,
-    changes: Vec<(
-        crate::sparse3d::SlotLocation,
-        Option<crate::wall_grid::Cell>,
-    )>,
-) {
-    for (loc, new_cell) in changes {
-        // Despawn existing entity at this location (if any).
-        if let Some(old_entity) = wall_grid.cell_entities.remove(&loc) {
-            commands.entity(old_entity).despawn();
-        }
-        // Spawn new entity if placing a cell.
-        if let Some(cell) = new_cell {
-            let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
-            let handle = structure_list.scene_handle(cell.id).clone();
-            let entity = commands
-                .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
-                .id();
-            wall_grid.cell_entities.insert(loc, entity);
-        }
-    }
 }
 
 pub fn building_input_system(
@@ -107,14 +78,6 @@ pub fn building_input_system(
     structure_list: Res<StructureList>,
     mut build_state: ResMut<BuildState>,
 ) {
-    // Keep focus_pos current so update_visibility_system uses the right spot.
-    let y = build_state.cur_y as f32;
-    if let Some(pos) = cursor_world_pos(&windows, &camera_q, y) {
-        build_state.focus_pos = pos;
-    } else {
-        build_state.focus_pos.y = y;
-    }
-
     // --- Layer up/down ---
     if keyboard.just_pressed(KeyCode::ArrowUp) {
         build_state.cur_y = (build_state.cur_y + 1).min(10);
@@ -137,7 +100,11 @@ pub fn building_input_system(
     // --- Evaluate (V key) ---
     if keyboard.just_pressed(KeyCode::KeyV) {
         if let Some(world_pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
-            let metrics = wall_grid.metrics_at(world_pos);
+            let metrics = crate::qnn_adapter::metrics_at(
+                &wall_grid.contents,
+                &wall_grid.structures,
+                world_pos,
+            );
             if metrics.len() >= 2 {
                 build_state.evaluation = Some((metrics[0], metrics[1]));
             }
@@ -168,10 +135,8 @@ pub fn building_input_system(
             let dist_sq = (end - start).length_squared();
 
             let changes = if dist_sq < 0.25 {
-                // Click (no drag)
                 wall_grid.click(start, id, dir, remove)
             } else {
-                // Drag
                 wall_grid.drag(start, end, id, remove)
             };
 
@@ -183,7 +148,7 @@ pub fn building_input_system(
 }
 
 /// Cast a ray from the cursor through the camera to a horizontal plane at height `y`.
-fn cursor_world_pos(
+pub(crate) fn cursor_world_pos(
     windows: &Query<&Window, With<PrimaryWindow>>,
     camera_q: &Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     y: f32,
@@ -193,7 +158,6 @@ fn cursor_world_pos(
     let (camera, camera_transform) = camera_q.single().ok()?;
     let ray = camera.viewport_to_world(camera_transform, cursor).ok()?;
 
-    // Intersect with the horizontal plane at y
     let denom = ray.direction.y;
     if denom.abs() < 1e-6 {
         return None;
@@ -203,4 +167,42 @@ fn cursor_world_pos(
         return None;
     }
     Some(ray.origin + ray.direction * t)
+}
+
+/// Startup system: spawns the wall and room cursor entities.
+pub fn spawn_cursors(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let cursor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.2, 0.8, 1.0),
+        unlit: true,
+        ..default()
+    });
+
+    // Wall/floor cursor: tall pin (cylinder + sphere on top).
+    commands
+        .spawn((Transform::default(), Visibility::Hidden, WallCursorMarker))
+        .with_children(|p| {
+            p.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.04, 0.5))),
+                MeshMaterial3d(cursor_mat.clone()),
+                Transform::from_xyz(0.0, 0.5, 0.0),
+            ));
+            p.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.12))),
+                MeshMaterial3d(cursor_mat.clone()),
+                Transform::from_xyz(0.0, 1.12, 0.0),
+            ));
+        });
+
+    // Room cursor: flat disc.
+    commands.spawn((
+        Mesh3d(meshes.add(Cylinder::new(0.45, 0.025))),
+        MeshMaterial3d(cursor_mat),
+        Transform::default(),
+        Visibility::Hidden,
+        RoomCursorMarker,
+    ));
 }

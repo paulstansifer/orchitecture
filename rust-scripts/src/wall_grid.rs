@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use bevy::math::{IVec3, Quat, Vec3};
-use bevy::prelude::{Component, Entity, Resource, Transform};
+use bevy::prelude::{Commands, Component, Entity, Resource, SceneRoot, Transform};
 use serde::{Deserialize, Serialize};
 
 use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
-use crate::structure::{PlacementStyle, StructureInfo};
-use crate::{qnn_translate, serialization};
+use crate::structure::{PlacementStyle, StructureInfo, StructureList};
+use crate::serialization;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Dir {  // TODO: this should probably be replaced with `Facing`
@@ -242,23 +242,6 @@ impl WallGrid {
         record.changed
     }
 
-    pub fn metrics_at(&self, location: Vec3) -> Vec<f32> {
-        let pos = location.round().as_ivec3();
-        let tensor: burn::tensor::Tensor<burn::backend::Wgpu, 5> =
-            qnn_translate::sparse3d_to_tensor(&self.contents, pos, |cell: &Cell| {
-                let semb = &self.structures[cell.id as usize].embedding;
-                vec![semb.tall, semb.decorative, semb.passable, semb.striated]
-            })
-            .unwrap();
-
-        MODELS.with(|models| {
-            vec![
-                models.coherence.forward(tensor.clone()).sum().into_scalar(),
-                models.interest.forward(tensor).sum().into_scalar(),
-            ]
-        })
-    }
-
     pub fn save(&self, path: &std::path::PathBuf) {
         let mut structures_by_id = HashMap::new();
         for (id, info) in self.structures.iter().enumerate() {
@@ -343,47 +326,30 @@ pub fn cell_transform(slot: RelSlot, facing: Facing, cube: IVec3) -> Transform {
     }
 }
 
-/// Compute which cells are hidden / need cut variants based on camera view.
-/// Returns (cells_to_hide, cells_needing_cut_variant).
-pub fn compute_visibility(
-    contents: &Sparse3D<Cell>,
-    focus_location: Vec3,
-    camera_location: Vec3,
-) -> (Vec<SlotLocation>, Vec<(SlotLocation, i32)>) {
-    let diff = focus_location - camera_location;
-    let view_dir = IVec3::new(
-        diff.x.signum() as i32,
-        diff.y.signum() as i32,
-        diff.z.signum() as i32,
-    );
-    let effective_focus = focus_location.round().as_ivec3()
-        + IVec3::new(view_dir.x * 2, 0, view_dir.z * 2);
-    let last_y_layer = IVec3::new(view_dir.x, 0, view_dir.z);
-
-    let sign = |v: IVec3| IVec3::new(v.x.signum(), v.y.signum(), v.z.signum());
-
-    let mut hidden: Vec<SlotLocation> = Vec::new();
-    let mut cut: Vec<(SlotLocation, i32)> = Vec::new();
-
-    for (loc, cell) in contents.iter() {
-        let delta = effective_focus - loc.cube;
-        if sign(delta) == view_dir {
-            hidden.push(loc);
-        } else if sign(delta) == last_y_layer {
-            // Floors and ceilings at the current layer have no cut variant and
-            // should remain visible; only hide/cut wall and room cells here.
-            match loc.rel_slot {
-                RelSlot::Floor | RelSlot::Ceiling => {}
-                _ => {
-                    hidden.push(loc);
-                    cut.push((loc, cell.id));
-                }
-            }
+/// Applies a list of cell changes to the world: despawns old entities, spawns new ones.
+pub fn apply_changes(
+    commands: &mut Commands,
+    wall_grid: &mut WallGrid,
+    structure_list: &StructureList,
+    changes: Vec<(SlotLocation, Option<Cell>)>,
+) {
+    for (loc, new_cell) in changes {
+        if let Some(old_entity) = wall_grid.cell_entities.remove(&loc) {
+            commands.entity(old_entity).despawn();
+        }
+        if let Some(cell) = new_cell {
+            let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+            let handle = structure_list.scene_handle(cell.id).clone();
+            let entity = commands
+                .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
+                .id();
+            wall_grid.cell_entities.insert(loc, entity);
         }
     }
-    (hidden, cut)
 }
 
-thread_local! {
-    pub static MODELS: crate::qnn_adapter::ModelHolder = crate::qnn_adapter::ModelHolder::new();
+/// Startup system: creates the WallGrid resource from the already-populated StructureList.
+pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<StructureList>) {
+    let infos = structure_list.structures.iter().map(|s| s.info.clone()).collect();
+    commands.insert_resource(WallGrid::new(infos));
 }
