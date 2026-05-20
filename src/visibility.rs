@@ -69,7 +69,9 @@ pub fn update_visibility_system(
     for entity in cut_q.iter() {
         commands.entity(entity).despawn();
     }
-    wall_grid.cut_entities.clear();
+    // bypass_change_detection so per-frame cut_entities writes don't mark WallGrid
+    // as changed and don't trigger ceiling light rebuilds every frame.
+    wall_grid.bypass_change_detection().cut_entities.clear();
 
     let (hidden_locs, cut_entries) =
         compute_visibility(&wall_grid.contents, focus_pos, camera_pos);
@@ -90,7 +92,7 @@ pub fn update_visibility_system(
             let entity = commands
                 .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
                 .id();
-            wall_grid.cut_entities.push(entity);
+            wall_grid.bypass_change_detection().cut_entities.push(entity);
         }
     }
 }

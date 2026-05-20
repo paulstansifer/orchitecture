@@ -2,11 +2,12 @@ use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use orchitecture_lib::{
     camera::{camera_input_system, spawn_camera, CameraState},
+    ceiling_lights::update_ceiling_lights,
     input::{building_input_system, cursor_system, spawn_cursors, BuildState},
     structure::{spawn_structures, StructureList},
     ui::{discover_training_files, ui_system, UiState},
     visibility::update_visibility_system,
-    wall_grid::spawn_grid,
+    wall_grid::{spawn_grid, WallGrid},
     world::spawn_world,
 };
 
@@ -40,6 +41,7 @@ fn main() {
                 building_input_system,
                 cursor_system,
                 update_visibility_system,
+                update_ceiling_lights.run_if(resource_changed::<WallGrid>),
             ),
         )
         // ui_system must run in EguiPrimaryContextPass (not Update) to access Egui contexts.

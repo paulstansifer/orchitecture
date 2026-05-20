@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 pub mod build_helpers;
+pub mod ceiling_lights;
 pub mod camera;
 pub mod example_structures;
 pub mod input;
