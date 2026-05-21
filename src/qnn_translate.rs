@@ -1,24 +1,34 @@
 use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
-use crate::wall_grid::OfflineCell;
-use burn::backend::Autodiff;
-use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
-use burn::tensor::{Float, TensorData};
+use burn::tensor::Float;
 use bevy::math::IVec3;
-use rand::rngs::StdRng;
-use std::collections::HashMap;
 use std::error::Error;
 
+#[cfg(feature = "training")]
+use burn::tensor::TensorData;
+#[cfg(feature = "training")]
+use crate::wall_grid::OfflineCell;
+#[cfg(feature = "training")]
+use burn::backend::Autodiff;
+#[cfg(feature = "training")]
+use burn::data::dataset::InMemDataset;
+#[cfg(feature = "training")]
+use rand::rngs::StdRng;
+#[cfg(feature = "training")]
+use std::collections::HashMap;
+#[cfg(feature = "training")]
 use crate::structure::{self, StructureInfo};
 
 pub const EMBEDDING_SIZE: usize = 4 + 1; // Keep this in sync with structure.rs (+ 1 for "indoors")
 
+#[cfg(feature = "training")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Metric {
     Interest,
     Coherence,
 }
 
+#[cfg(feature = "training")]
 impl std::fmt::Display for Metric {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -63,6 +73,7 @@ fn grid_coord_to_voxel_coord(
     [0..1, channel..channel + 1, x, y, z]
 }
 
+#[cfg(feature = "training")]
 #[derive(Clone, Debug)]
 pub struct GroundTruth<B: Backend> {
     pub voxels: Tensor<B, 5, Float>,
@@ -70,6 +81,7 @@ pub struct GroundTruth<B: Backend> {
     pub filename: String,
 }
 
+#[cfg(feature = "training")]
 fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTruth<Autodiff<B>> {
     GroundTruth {
         voxels: Tensor::from_inner(gt.voxels),
@@ -78,9 +90,11 @@ fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTru
     }
 }
 
+#[cfg(feature = "training")]
 #[derive(Clone, Debug)]
 pub struct GroundTruthBatcher {}
 
+#[cfg(feature = "training")]
 fn augment_datum(
     s: (Sparse3D<OfflineCell>, String),
     metric: Metric,
@@ -91,7 +105,6 @@ fn augment_datum(
     let mut res = vec![];
 
     if metric == Metric::Coherence {
-        // Create a messed-up version
         let messed_up = crate::build_helpers::add_noise(s.0.clone(), structure_info, rng);
         for messed in messed_up {
             res.push((messed, format!("{}-messed", s.1)));
@@ -111,6 +124,7 @@ fn augment_datum(
     res
 }
 
+#[cfg(feature = "training")]
 impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, GroundTruth<B>>
     for GroundTruthBatcher
 {
@@ -135,8 +149,10 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
     }
 }
 
+#[cfg(feature = "training")]
 use std::{fs, path::Path};
 
+#[cfg(feature = "training")]
 pub fn load_training_data<B: Backend>(
     directory: &str,
     seed: u64,
@@ -234,6 +250,15 @@ pub fn load_training_data<B: Backend>(
     //     panic!()
     // }
 
+    if metric == Metric::Interest {
+        for _ in 0..25 {
+            all_sparse_data.push(crate::build_helpers::make_boring_room(
+                &structures,
+                &mut rng,
+            ))
+        }
+    }
+
     use rand::seq::SliceRandom;
     all_sparse_data.shuffle(&mut rng);
 
@@ -269,6 +294,8 @@ pub fn load_training_data<B: Backend>(
 }
 
 // Just handles a single datum, but the tensors could hold a batch
+// Just handles a single datum, but the tensors could hold a batch
+#[cfg(feature = "training")]
 pub fn ground_truth_at_vantage<B: Backend>(
     data: &(Sparse3D<OfflineCell>, String),
     metric: Metric,
@@ -430,6 +457,7 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
 }
 
 #[cfg(test)]
+#[cfg(feature = "training")]
 mod tests {
     use burn::backend;
 

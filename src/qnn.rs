@@ -1,47 +1,52 @@
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use burn::data::dataset::Dataset;
 use burn::nn::Sigmoid;
-use burn::train::logger::FileMetricLogger;
 use burn::{
-    backend::Autodiff,
-    data::dataloader::DataLoader,
     nn::{
         conv::{Conv3d, Conv3dConfig},
         Dropout, DropoutConfig, Linear, LinearConfig, PaddingConfig3d,
     },
-    optim::AdamConfig,
     prelude::*,
-    record::{DefaultFileRecorder, HalfPrecisionSettings},
-    tensor::backend::AutodiffBackend,
-    train::RegressionOutput,
 };
-use clap::Parser;
 use serde::{Deserialize, Serialize};
 
-#[derive(Parser, Debug, Serialize, Deserialize)]
+#[cfg(feature = "training")]
+use std::path::PathBuf;
+#[cfg(feature = "training")]
+use std::sync::Arc;
+#[cfg(feature = "training")]
+use burn::{
+    backend::Autodiff,
+    data::{dataloader::DataLoader, dataset::Dataset},
+    optim::AdamConfig,
+    record::{DefaultFileRecorder, HalfPrecisionSettings},
+    tensor::backend::AutodiffBackend,
+    train::{RegressionOutput, TrainOutput, logger::FileMetricLogger},
+};
+#[cfg(feature = "training")]
+use crate::qnn_translate::{load_training_data, GroundTruth, GroundTruthBatcher};
+
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "training", derive(clap::Parser))]
 pub struct Args {
-    #[arg(short, long, default_value = "5/12,3/24")]
-    conv: String,
+    #[cfg_attr(feature = "training", arg(short, long, default_value = "5/12,3/24"))]
+    pub conv: String,
 
-    #[arg(short, long, default_value = "128,64,32")]
-    fc: String,
+    #[cfg_attr(feature = "training", arg(short, long, default_value = "128,64,32"))]
+    pub fc: String,
 
-    #[arg(short, long, default_value = "1.0e-5")]
-    lr: f64,
+    #[cfg_attr(feature = "training", arg(short, long, default_value = "1.0e-5"))]
+    pub lr: f64,
 
-    #[arg(short, long, default_value = "10")]
-    epochs: usize,
+    #[cfg_attr(feature = "training", arg(short, long, default_value = "10"))]
+    pub epochs: usize,
 
-    #[arg(short, long, default_value = "42")]
-    seed: u64,
+    #[cfg_attr(feature = "training", arg(short, long, default_value = "42"))]
+    pub seed: u64,
 
-    #[arg(long, action = clap::ArgAction::SetTrue)]
-    show_scores: bool,
+    #[cfg_attr(feature = "training", arg(long, action = clap::ArgAction::SetTrue))]
+    pub show_scores: bool,
 
-    #[arg(long, action = clap::ArgAction::SetTrue)]
-    fake_data: bool,
+    #[cfg_attr(feature = "training", arg(long, action = clap::ArgAction::SetTrue))]
+    pub fake_data: bool,
 }
 
 #[derive(Module, Debug)]
@@ -55,7 +60,7 @@ pub struct Cnn<B: Backend> {
 
 impl<B: Backend> Cnn<B> {
     pub fn new(device: &<B as Backend>::Device, args: &Args) -> Self {
-        let mut features = qnn_translate::EMBEDDING_SIZE;
+        let mut features = crate::qnn_translate::EMBEDDING_SIZE;
         let mut conv = vec![];
         if args.conv.contains("/") {
             for conv_spec in args.conv.split(",") {
@@ -134,6 +139,7 @@ impl<B: Backend> Cnn<B> {
         self.sigmoid.forward(x)
     }
 
+    #[cfg(feature = "training")]
     pub fn forward_classification(
         &self,
         rooms: Tensor<B, 5>,
@@ -157,27 +163,25 @@ impl<B: Backend> Cnn<B> {
     }
 }
 
-use burn::train::TrainOutput;
-
-use crate::qnn_translate::{self, load_training_data, GroundTruth, GroundTruthBatcher};
-
+#[cfg(feature = "training")]
 impl<B: AutodiffBackend> burn::train::TrainStep<GroundTruth<B>, RegressionOutput<B>> for Cnn<B> {
     fn step(&self, batch: GroundTruth<B>) -> TrainOutput<RegressionOutput<B>> {
         let item = self.forward_classification(batch.voxels, batch.scores);
-
         TrainOutput::new::<B, Cnn<B>>(self, item.loss.backward(), item)
     }
 }
 
+#[cfg(feature = "training")]
 impl<B: Backend> burn::train::ValidStep<GroundTruth<B>, RegressionOutput<B>> for Cnn<B> {
     fn step(&self, batch: GroundTruth<B>) -> RegressionOutput<B> {
         self.forward_classification(batch.voxels, batch.scores)
     }
 }
 
+#[cfg(feature = "training")]
 #[derive(Config, Debug)]
 pub struct TrainingConfig {
-    pub optimizer: burn::optim::AdamConfig,
+    pub optimizer: AdamConfig,
     #[config(default = 5)]
     pub num_epochs: usize,
     #[config(default = 1)]
@@ -190,13 +194,17 @@ pub struct TrainingConfig {
     pub learning_rate: f64,
 }
 
+#[cfg(feature = "training")]
 fn create_artifact_dir(artifact_dir: &str) {
     // Remove existing artifacts before to get an accurate learner summary
     //std::fs::remove_dir_all(artifact_dir).unwrap();
     std::fs::create_dir_all(artifact_dir).unwrap();
 }
 
+#[cfg(feature = "training")]
 pub fn train<B: Backend>() {
+    use clap::Parser;
+
     let args = Args::parse();
     let device: <Autodiff<B> as Backend>::Device = Default::default();
     let config = TrainingConfig::new(AdamConfig::new())

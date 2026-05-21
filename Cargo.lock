@@ -7061,6 +7061,7 @@ dependencies = [
  "csv",
  "enum-derived",
  "gag",
+ "getrandom 0.2.16",
  "naga 26.0.0",
  "rand 0.9.2",
  "rgb",
