@@ -70,7 +70,10 @@ fn cursor_cube(focus: Vec3, camera: Vec3, is_room_plop: bool) -> (i32, i32) {
 /// Searches downward from `from_y` for the first Floor cell at (x, z).
 fn descend_to_floor(contents: &Sparse3D<Cell>, x: i32, z: i32, from_y: i32) -> Option<i32> {
     for y in (from_y - 30..=from_y).rev() {
-        if contents.get(SlotLocation::new(x, y, z, RelSlot::Floor)).is_some() {
+        if contents
+            .get(SlotLocation::new(x, y, z, RelSlot::Floor))
+            .is_some()
+        {
             return Some(y);
         }
     }
@@ -78,10 +81,18 @@ fn descend_to_floor(contents: &Sparse3D<Cell>, x: i32, z: i32, from_y: i32) -> O
 }
 
 /// BFS over Floor cells at `floor_y`, ignoring walls. Returns (x, z) of all reachable cells.
-fn ground_floor_fill(contents: &Sparse3D<Cell>, sx: i32, floor_y: i32, sz: i32) -> HashSet<(i32, i32)> {
+fn ground_floor_fill(
+    contents: &Sparse3D<Cell>,
+    sx: i32,
+    floor_y: i32,
+    sz: i32,
+) -> HashSet<(i32, i32)> {
     let mut visited: HashSet<(i32, i32)> = HashSet::new();
     let mut queue: VecDeque<(i32, i32)> = VecDeque::new();
-    if contents.get(SlotLocation::new(sx, floor_y, sz, RelSlot::Floor)).is_none() {
+    if contents
+        .get(SlotLocation::new(sx, floor_y, sz, RelSlot::Floor))
+        .is_none()
+    {
         return visited;
     }
     visited.insert((sx, sz));
@@ -89,7 +100,9 @@ fn ground_floor_fill(contents: &Sparse3D<Cell>, sx: i32, floor_y: i32, sz: i32) 
     while let Some((fx, fz)) = queue.pop_front() {
         for (nx, nz) in [(fx + 1, fz), (fx - 1, fz), (fx, fz + 1), (fx, fz - 1)] {
             if !visited.contains(&(nx, nz))
-                && contents.get(SlotLocation::new(nx, floor_y, nz, RelSlot::Floor)).is_some()
+                && contents
+                    .get(SlotLocation::new(nx, floor_y, nz, RelSlot::Floor))
+                    .is_some()
             {
                 visited.insert((nx, nz));
                 queue.push_back((nx, nz));
@@ -113,7 +126,10 @@ fn upper_floor_fill(
     if floor_visited.contains(&(sx, sy, sz)) {
         return cells;
     }
-    if contents.get(SlotLocation::new(sx, sy, sz, RelSlot::Floor)).is_none() {
+    if contents
+        .get(SlotLocation::new(sx, sy, sz, RelSlot::Floor))
+        .is_none()
+    {
         return cells;
     }
     floor_visited.insert((sx, sy, sz));
@@ -123,9 +139,17 @@ fn upper_floor_fill(
     queue.push_back((sx, sz));
     while let Some((fx, fz)) = queue.pop_front() {
         let neighbors: [(i32, i32, SlotLocation); 4] = [
-            (fx + 1, fz, SlotLocation::new(fx + 1, sy, fz, RelSlot::XLoWall)),
+            (
+                fx + 1,
+                fz,
+                SlotLocation::new(fx + 1, sy, fz, RelSlot::XLoWall),
+            ),
             (fx - 1, fz, SlotLocation::new(fx, sy, fz, RelSlot::XLoWall)),
-            (fx, fz + 1, SlotLocation::new(fx, sy, fz + 1, RelSlot::ZLoWall)),
+            (
+                fx,
+                fz + 1,
+                SlotLocation::new(fx, sy, fz + 1, RelSlot::ZLoWall),
+            ),
             (fx, fz - 1, SlotLocation::new(fx, sy, fz, RelSlot::ZLoWall)),
         ];
         for (nx, nz, wall_loc) in neighbors {
@@ -135,7 +159,10 @@ fn upper_floor_fill(
             if contents.get(wall_loc).is_some() {
                 continue;
             }
-            if contents.get(SlotLocation::new(nx, sy, nz, RelSlot::Floor)).is_some() {
+            if contents
+                .get(SlotLocation::new(nx, sy, nz, RelSlot::Floor))
+                .is_some()
+            {
                 floor_visited.insert((nx, sy, nz));
                 hidden.push(SlotLocation::new(nx, sy, nz, RelSlot::Floor));
                 cells.push((nx, nz));
@@ -154,7 +181,13 @@ fn find_wall_seeds(
     floor_y: i32,
     x_dir: i32,
     z_dir: i32,
+    inverted: bool,
 ) -> Vec<SlotLocation> {
+    let (x_dir, z_dir) = if inverted {
+        (-x_dir, -z_dir)
+    } else {
+        (x_dir, z_dir)
+    };
     let mut walls: Vec<SlotLocation> = Vec::new();
     for &(fx, fz) in floor_cells {
         if x_dir != 0 && !floor_cells.contains(&(fx + x_dir, fz)) {
@@ -181,10 +214,12 @@ fn find_wall_seeds(
 fn climb_wall_column(
     contents: &Sparse3D<Cell>,
     bottom_loc: SlotLocation,
+    x_dir: i32,
+    z_dir: i32,
     visited_walls: &mut HashSet<(i32, i32, i32, bool)>,
     hidden: &mut Vec<SlotLocation>,
-    cut: &mut Vec<(SlotLocation, i32)>,
-    floor_seeds: &mut Vec<(i32, i32, i32)>,
+    mut cut: Option<&mut Vec<(SlotLocation, i32)>>,
+    floor_seeds: &mut Vec<(i32, i32, i32, bool)>,
 ) {
     let is_x = bottom_loc.rel_slot == RelSlot::XLoWall;
     let mut y = bottom_loc.cube.y;
@@ -194,26 +229,36 @@ fn climb_wall_column(
         if !visited_walls.insert(key) {
             break;
         }
-        let cur_loc = SlotLocation::new(bottom_loc.cube.x, y, bottom_loc.cube.z, bottom_loc.rel_slot);
+        let cur_loc =
+            SlotLocation::new(bottom_loc.cube.x, y, bottom_loc.cube.z, bottom_loc.rel_slot);
         let Some(cell) = contents.get(cur_loc) else {
             break;
         };
         hidden.push(cur_loc);
         if first {
-            cut.push((cur_loc, cell.id));
+            if let Some(ref mut cut) = cut {
+                cut.push((cur_loc, cell.id));
+            }
             first = false;
         }
-        let next_loc = SlotLocation::new(bottom_loc.cube.x, y + 1, bottom_loc.cube.z, bottom_loc.rel_slot);
+        let next_loc = SlotLocation::new(
+            bottom_loc.cube.x,
+            y + 1,
+            bottom_loc.cube.z,
+            bottom_loc.rel_slot,
+        );
         if contents.get(next_loc).is_none() {
             let y_above = y + 1;
             match bottom_loc.rel_slot {
                 RelSlot::XLoWall => {
-                    floor_seeds.push((bottom_loc.cube.x - 1, y_above, bottom_loc.cube.z));
-                    floor_seeds.push((bottom_loc.cube.x, y_above, bottom_loc.cube.z));
+                    let wx = bottom_loc.cube.x;
+                    floor_seeds.push((wx - 1, y_above, bottom_loc.cube.z, x_dir > 0));
+                    floor_seeds.push((wx, y_above, bottom_loc.cube.z, x_dir < 0));
                 }
                 RelSlot::ZLoWall => {
-                    floor_seeds.push((bottom_loc.cube.x, y_above, bottom_loc.cube.z - 1));
-                    floor_seeds.push((bottom_loc.cube.x, y_above, bottom_loc.cube.z));
+                    let wz = bottom_loc.cube.z;
+                    floor_seeds.push((bottom_loc.cube.x, y_above, wz - 1, z_dir > 0));
+                    floor_seeds.push((bottom_loc.cube.x, y_above, wz, z_dir < 0));
                 }
                 _ => {}
             }
@@ -225,7 +270,7 @@ fn climb_wall_column(
 
 pub fn compute_visibility(
     contents: &Sparse3D<Cell>,
-    (focus_location, is_room_plop): (Vec3, bool)
+    (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
     cur_y: i32,
 ) -> (Vec<SlotLocation>, Vec<(SlotLocation, i32)>) {
@@ -246,21 +291,27 @@ pub fn compute_visibility(
     let mut visited_walls: HashSet<(i32, i32, i32, bool)> = HashSet::new();
     let mut floor_visited: HashSet<(i32, i32, i32)> = HashSet::new();
     let mut pending_walls: VecDeque<SlotLocation> = VecDeque::new();
-    let mut pending_floors: VecDeque<(i32, i32, i32)> = VecDeque::new();
+    let mut pending_floors: VecDeque<(i32, i32, i32, bool)> = VecDeque::new();
 
-    for wall_loc in find_wall_seeds(contents, &ground_cells, floor_y, x_dir, z_dir) {
+    for wall_loc in find_wall_seeds(contents, &ground_cells, floor_y, x_dir, z_dir, false) {
         pending_walls.push_back(wall_loc);
     }
 
     loop {
         while let Some(wall_loc) = pending_walls.pop_front() {
-            let mut floor_seeds: Vec<(i32, i32, i32)> = Vec::new();
+            let mut floor_seeds: Vec<(i32, i32, i32, bool)> = Vec::new();
             climb_wall_column(
                 contents,
                 wall_loc,
+                x_dir,
+                z_dir,
                 &mut visited_walls,
                 &mut hidden,
-                &mut cut,
+                if wall_loc.cube.y == floor_y {
+                    Some(&mut cut)
+                } else {
+                    None // Cuts are only at the bottom level
+                },
                 &mut floor_seeds,
             );
             for seed in floor_seeds {
@@ -268,7 +319,7 @@ pub fn compute_visibility(
             }
         }
 
-        let Some((fx, fy, fz)) = pending_floors.pop_front() else {
+        let Some((fx, fy, fz, inverted)) = pending_floors.pop_front() else {
             break;
         };
 
@@ -282,7 +333,7 @@ pub fn compute_visibility(
         }
 
         let upper_set: HashSet<(i32, i32)> = upper_cells.into_iter().collect();
-        for wall_loc in find_wall_seeds(contents, &upper_set, fy, x_dir, z_dir) {
+        for wall_loc in find_wall_seeds(contents, &upper_set, fy, x_dir, z_dir, inverted) {
             pending_walls.push_back(wall_loc);
         }
     }
@@ -297,7 +348,12 @@ pub fn update_visibility_system(
     build_state: Res<BuildState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
-    mut vis_q: Query<(Entity, &GridCellMarker, &mut Visibility, Option<&RenderLayers>)>,
+    mut vis_q: Query<(
+        Entity,
+        &GridCellMarker,
+        &mut Visibility,
+        Option<&RenderLayers>,
+    )>,
     children_q: Query<&Children>,
     cut_q: Query<Entity, With<CutCellMarker>>,
 ) {
@@ -350,8 +406,10 @@ pub fn update_visibility_system(
             let entity = commands
                 .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
                 .id();
-            wall_grid.bypass_change_detection().cut_entities.push(entity);
+            wall_grid
+                .bypass_change_detection()
+                .cut_entities
+                .push(entity);
         }
     }
 }
-
