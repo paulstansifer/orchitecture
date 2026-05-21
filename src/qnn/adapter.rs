@@ -1,4 +1,4 @@
-use crate::qnn::Cnn;
+use super::model::Cnn;
 use burn::{backend::Autodiff, prelude::Backend, record::Recorder};
 use std::path::PathBuf;
 
@@ -13,7 +13,7 @@ pub fn metrics_at(
 ) -> Vec<f32> {
     let pos = location.round().as_ivec3();
     let tensor: burn::tensor::Tensor<burn::backend::Wgpu, 5> =
-        crate::qnn_translate::sparse3d_to_tensor(contents, pos, |cell: &crate::wall_grid::Cell| {
+        super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::wall_grid::Cell| {
             let semb = &structures[cell.id as usize].embedding;
             vec![semb.tall, semb.decorative, semb.passable, semb.striated]
         })
@@ -44,7 +44,7 @@ impl ModelHolder {
 
         let model_dir: PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/models/").into();
 
-        let args: crate::qnn::Args = serde_json::from_str(
+        let args: super::model::Args = serde_json::from_str(
             &std::fs::read_to_string(model_dir.join("model_args.json")).unwrap(),
         )
         .unwrap();

@@ -47,7 +47,7 @@ naga = { version = "26.0.0", features = ["termcolor"] }
 
 [[bin]]
 name = "train"
-path = "src/bin/train.rs"
+path = "src/qnn/train.rs"
 required-features = ["training"]
 
 [[bin]]
