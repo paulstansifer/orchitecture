@@ -5,7 +5,7 @@ use orchitecture_lib::{
     ceiling_lights::update_ceiling_lights,
     input::{building_input_system, cursor_system, spawn_cursors, BuildState},
     structure::{spawn_structures, StructureList},
-    ui::{discover_training_files, ui_system, UiState},
+    ui::{discover_training_files, enable_ui_input_absorption, ui_system, UiState},
     visibility::update_visibility_system,
     wall_grid::{spawn_grid, WallGrid},
     world::spawn_world,
@@ -26,6 +26,7 @@ fn main() {
         .add_systems(
             Startup,
             (
+                enable_ui_input_absorption,
                 // spawn_structures must run before spawn_grid (grid reads StructureList).
                 (spawn_structures, spawn_grid).chain(),
                 spawn_camera,

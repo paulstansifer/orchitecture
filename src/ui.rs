@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_egui::{egui, EguiContexts};
+use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 
 use crate::input::BuildState;
 use crate::structure::StructureList;
@@ -11,6 +11,10 @@ pub struct UiState {
     pub save_filename: String,
     pub load_filename: String,
     pub available_files: Vec<String>,
+}
+
+pub fn enable_ui_input_absorption(mut egui_settings: ResMut<EguiGlobalSettings>) {
+    egui_settings.enable_absorb_bevy_input_system = true;
 }
 
 pub fn discover_training_files(mut ui_state: ResMut<UiState>) {
