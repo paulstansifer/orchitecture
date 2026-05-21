@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::GameCamera;
-use crate::structure::StructureList;
+use crate::structure::{PlacementStyle, StructureList};
 use crate::wall_grid::{apply_changes, WallGrid};
 
 /// Marker for the wall/floor build cursor (pin shape).
@@ -13,6 +13,10 @@ pub struct WallCursorMarker;
 #[derive(Component)]
 pub struct RoomCursorMarker;
 
+/// Marker for the drag-preview rectangle (flat semi-transparent slab).
+#[derive(Component)]
+pub struct DragPreviewMarker;
+
 pub fn cursor_system(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
@@ -20,11 +24,15 @@ pub fn cursor_system(
     wall_grid: Res<WallGrid>,
     mut wall_q: Query<
         (&mut Transform, &mut Visibility),
-        (With<WallCursorMarker>, Without<RoomCursorMarker>),
+        (With<WallCursorMarker>, Without<RoomCursorMarker>, Without<DragPreviewMarker>),
     >,
     mut room_q: Query<
         (&mut Transform, &mut Visibility),
-        (With<RoomCursorMarker>, Without<WallCursorMarker>),
+        (With<RoomCursorMarker>, Without<WallCursorMarker>, Without<DragPreviewMarker>),
+    >,
+    mut preview_q: Query<
+        (&mut Transform, &mut Visibility),
+        (With<DragPreviewMarker>, Without<WallCursorMarker>, Without<RoomCursorMarker>),
     >,
 ) {
     let id = build_state.selected_structure as i32;
@@ -54,6 +62,67 @@ pub fn cursor_system(
             }
             None => *vis = Visibility::Hidden,
         }
+    }
+
+    if let Ok((mut t, mut vis)) = preview_q.single_mut() {
+        let style = wall_grid.structures[id as usize].placement_style;
+        let show = build_state
+            .drag_start
+            .zip(maybe_pos)
+            .and_then(|(start, end)| drag_preview_rect(start, end, style, y));
+        match show {
+            Some((center, size)) => {
+                t.translation = center;
+                t.scale = size;
+                *vis = Visibility::Inherited;
+            }
+            None => *vis = Visibility::Hidden,
+        }
+    }
+}
+
+/// Compute the center and scale of a flat preview slab for the given drag.
+/// Returns `None` if the drag has zero extent along the relevant axes.
+fn drag_preview_rect(
+    start: Vec3,
+    end: Vec3,
+    style: PlacementStyle,
+    y: f32,
+) -> Option<(Vec3, Vec3)> {
+    const H: f32 = 0.05;
+    const WALL_H: f32 = 0.8;
+    const WALL_W: f32 = 0.2;
+    match style {
+        PlacementStyle::WallDrag => {
+            let from_r = start.round();
+            if (end.x - start.x).abs() > (end.z - start.z).abs() {
+                let end_x = end.x.round();
+                let (min_x, max_x) = (from_r.x.min(end_x), from_r.x.max(end_x));
+                if min_x >= max_x {
+                    return None;
+                }
+                let center = Vec3::new((min_x + max_x) * 0.5, y + WALL_H * 0.5, from_r.z);
+                Some((center, Vec3::new(max_x - min_x, WALL_H, WALL_W)))
+            } else {
+                let end_z = end.z.round();
+                let (min_z, max_z) = (from_r.z.min(end_z), from_r.z.max(end_z));
+                if min_z >= max_z {
+                    return None;
+                }
+                let center = Vec3::new(from_r.x, y + WALL_H * 0.5, (min_z + max_z) * 0.5);
+                Some((center, Vec3::new(WALL_W, WALL_H, max_z - min_z)))
+            }
+        }
+        PlacementStyle::FloorDrag => {
+            let min = start.round().min(end.round());
+            let max = start.round().max(end.round());
+            if max.x <= min.x || max.z <= min.z {
+                return None;
+            }
+            let center = Vec3::new((min.x + max.x) * 0.5, y + H * 0.5, (min.z + max.z) * 0.5);
+            Some((center, Vec3::new(max.x - min.x, H, max.z - min.z)))
+        }
+        _ => None,
     }
 }
 
@@ -204,5 +273,20 @@ pub fn spawn_cursors(
         Transform::default(),
         Visibility::Hidden,
         RoomCursorMarker,
+    ));
+
+    // Drag preview: unit box scaled at runtime to represent the affected area.
+    let preview_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.2, 0.9, 1.0, 0.35),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+        MeshMaterial3d(preview_mat),
+        Transform::default(),
+        Visibility::Hidden,
+        DragPreviewMarker,
     ));
 }
