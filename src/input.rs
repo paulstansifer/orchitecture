@@ -6,54 +6,28 @@ use crate::camera::GameCamera;
 use crate::structure::{PlacementStyle, StructureList};
 use crate::wall_grid::{apply_changes, WallGrid};
 
-/// Marker for the wall/floor build cursor (pin shape).
-#[derive(Component)]
-pub struct WallCursorMarker;
-
-/// Marker for the room-plop build cursor (flat disc).
-#[derive(Component)]
-pub struct RoomCursorMarker;
-
-/// Marker for the drag-preview rectangle (flat semi-transparent slab).
-#[derive(Component)]
-pub struct DragPreviewMarker;
+#[derive(Resource)]
+pub struct CursorEntities {
+    pub wall: Entity,
+    pub room: Entity,
+    pub preview: Entity,
+    pub cyan_mat: Handle<StandardMaterial>,
+}
 
 pub fn cursor_system(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     build_state: Res<BuildState>,
     wall_grid: Res<WallGrid>,
-    mut wall_q: Query<
-        (&mut Transform, &mut Visibility),
-        (
-            With<WallCursorMarker>,
-            Without<RoomCursorMarker>,
-            Without<DragPreviewMarker>,
-        ),
-    >,
-    mut room_q: Query<
-        (&mut Transform, &mut Visibility),
-        (
-            With<RoomCursorMarker>,
-            Without<WallCursorMarker>,
-            Without<DragPreviewMarker>,
-        ),
-    >,
-    mut preview_q: Query<
-        (&mut Transform, &mut Visibility),
-        (
-            With<DragPreviewMarker>,
-            Without<WallCursorMarker>,
-            Without<RoomCursorMarker>,
-        ),
-    >,
+    cursor_entities: Res<CursorEntities>,
+    mut cursors: Query<(&mut Transform, &mut Visibility)>,
 ) {
     let id = build_state.selected_structure as i32;
     let is_room = wall_grid.structure_is_room_plop(id);
     let maybe_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32);
     let y = build_state.cur_y as f32;
 
-    if let Ok((mut t, mut vis)) = wall_q.single_mut() {
+    if let Ok((mut t, mut vis)) = cursors.get_mut(cursor_entities.wall) {
         match (!is_room).then_some(maybe_pos).flatten() {
             Some(pos) => {
                 let s = pos.round();
@@ -64,11 +38,11 @@ pub fn cursor_system(
         }
     }
 
-    if let Ok((mut t, mut vis)) = room_q.single_mut() {
+    if let Ok((mut t, mut vis)) = cursors.get_mut(cursor_entities.room) {
         match is_room.then_some(maybe_pos).flatten() {
             Some(pos) => {
                 let s = pos.round();
-                t.translation = Vec3::new(s.x + 0.5, y, s.z + 0.5);
+                t.translation = Vec3::new(s.x, y, s.z);
                 t.rotation =
                     Quat::from_rotation_y(build_state.cur_dir as f32 * std::f32::consts::TAU / 4.0);
                 *vis = Visibility::Inherited;
@@ -77,7 +51,7 @@ pub fn cursor_system(
         }
     }
 
-    if let Ok((mut t, mut vis)) = preview_q.single_mut() {
+    if let Ok((mut t, mut vis)) = cursors.get_mut(cursor_entities.preview) {
         let style = wall_grid.structures[id as usize].placement_style;
         let show = build_state
             .drag_start
@@ -242,6 +216,54 @@ pub fn building_input_system(
     let _ = window;
 }
 
+/// Keeps the room cursor's SceneRoot in sync with the selected structure.
+pub fn update_room_cursor_mesh(
+    build_state: Res<BuildState>,
+    cursor_entities: Res<CursorEntities>,
+    structure_list: Res<StructureList>,
+    wall_grid: Res<WallGrid>,
+    mut commands: Commands,
+    mut last_id: Local<Option<usize>>,
+) {
+    let id = build_state.selected_structure;
+    if Some(id) == *last_id {
+        return;
+    }
+    *last_id = Some(id);
+    if wall_grid.structure_is_room_plop(id as i32) {
+        let handle = structure_list.scene_handle(id as i32).clone();
+        commands.entity(cursor_entities.room).insert(SceneRoot(handle));
+    }
+}
+
+/// Recolors any newly spawned mesh children of the room cursor to cyan.
+pub fn recolor_room_cursor_children(
+    cursor_entities: Res<CursorEntities>,
+    new_meshes: Query<Entity, Added<MeshMaterial3d<StandardMaterial>>>,
+    child_of_q: Query<&ChildOf>,
+    mut mat_q: Query<&mut MeshMaterial3d<StandardMaterial>>,
+) {
+    for entity in new_meshes.iter() {
+        if is_descendant_of(entity, cursor_entities.room, &child_of_q) {
+            if let Ok(mut m) = mat_q.get_mut(entity) {
+                *m = MeshMaterial3d(cursor_entities.cyan_mat.clone());
+            }
+        }
+    }
+}
+
+fn is_descendant_of(mut entity: Entity, ancestor: Entity, child_of_q: &Query<&ChildOf>) -> bool {
+    loop {
+        if entity == ancestor {
+            return true;
+        }
+        match child_of_q.get(entity) {
+            Ok(child_of) => entity = child_of.0,
+            Err(_) => return false,
+        }
+    }
+}
+
 /// Cast a ray from the cursor through the camera to a horizontal plane at height `y`.
 pub(crate) fn cursor_world_pos(
     windows: &Query<&Window, With<PrimaryWindow>>,
@@ -277,8 +299,8 @@ pub fn spawn_cursors(
     });
 
     // Wall/floor cursor: tall pin (cylinder + sphere on top).
-    commands
-        .spawn((Transform::default(), Visibility::Hidden, WallCursorMarker))
+    let wall = commands
+        .spawn((Transform::default(), Visibility::Hidden))
         .with_children(|p| {
             p.spawn((
                 Mesh3d(meshes.add(Cylinder::new(0.04, 0.5))),
@@ -290,16 +312,19 @@ pub fn spawn_cursors(
                 MeshMaterial3d(cursor_mat.clone()),
                 Transform::from_xyz(0.0, 1.12, 0.0),
             ));
-        });
+        })
+        .id();
 
-    // Room cursor: flat disc.
-    commands.spawn((
-        Mesh3d(meshes.add(Cylinder::new(0.45, 0.025))),
-        MeshMaterial3d(cursor_mat),
-        Transform::default(),
-        Visibility::Hidden,
-        RoomCursorMarker,
-    ));
+    // Room cursor: starts empty; SceneRoot is inserted by update_room_cursor_mesh.
+    let cyan_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.2, 0.8, 1.0, 0.7),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    let room = commands
+        .spawn((Transform::default(), Visibility::Hidden))
+        .id();
 
     // Drag preview: unit box scaled at runtime to represent the affected area.
     let preview_mat = materials.add(StandardMaterial {
@@ -308,11 +333,14 @@ pub fn spawn_cursors(
         alpha_mode: AlphaMode::Blend,
         ..default()
     });
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-        MeshMaterial3d(preview_mat),
-        Transform::default(),
-        Visibility::Hidden,
-        DragPreviewMarker,
-    ));
+    let preview = commands
+        .spawn((
+            Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
+            MeshMaterial3d(preview_mat),
+            Transform::default(),
+            Visibility::Hidden,
+        ))
+        .id();
+
+    commands.insert_resource(CursorEntities { wall, room, preview, cyan_mat });
 }
