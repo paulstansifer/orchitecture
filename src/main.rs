@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use orchitecture_lib::{
@@ -5,6 +7,7 @@ use orchitecture_lib::{
     ceiling_lights::update_ceiling_lights,
     grid_preview::GridPreviewPlugin,
     input::{building_input_system, cursor_system, spawn_cursors, BuildState},
+    qnn::ModelPlugin,
     structure::{spawn_structures, StructureList},
     ui::{discover_user_files, enable_ui_input_absorption, ui_system, UiState},
     visibility::update_visibility_system,
@@ -28,6 +31,7 @@ fn main() {
         }))
         .add_plugins(EguiPlugin::default())
         .add_plugins(GridPreviewPlugin)
+        .add_plugins(ModelPlugin)
         .insert_resource(CameraState::default())
         .insert_resource(BuildState::default())
         .insert_resource(UiState::default())

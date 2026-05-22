@@ -1,4 +1,4 @@
-use std::f32::consts::{FRAC_PI_3, FRAC_PI_4, PI};
+use std::f32::consts::{FRAC_PI_3, FRAC_PI_4};
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;

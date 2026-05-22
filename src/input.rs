@@ -160,6 +160,7 @@ pub fn building_input_system(
     structure_list: Res<StructureList>,
     mut build_state: ResMut<BuildState>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
+    model_state: Res<crate::qnn::ModelState>,
 ) {
     // --- Layer up/down ---
     if keyboard.just_pressed(KeyCode::ArrowUp) {
@@ -190,10 +191,17 @@ pub fn building_input_system(
     // --- Evaluate (V key) ---
     if keyboard.just_pressed(KeyCode::KeyV) {
         if let Some(world_pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
-            let metrics =
-                crate::qnn::metrics_at(&wall_grid.contents, &wall_grid.structures, world_pos);
-            if metrics.len() >= 2 {
-                build_state.evaluation = Some((metrics[0], metrics[1]));
+            if let Some(holder) = &model_state.holder {
+                let holder = holder.lock().unwrap();
+                let metrics = crate::qnn::compute_metrics(
+                    &holder,
+                    &wall_grid.contents,
+                    &wall_grid.structures,
+                    world_pos,
+                );
+                if metrics.len() >= 2 {
+                    build_state.evaluation = Some((metrics[0], metrics[1]));
+                }
             }
         }
     }

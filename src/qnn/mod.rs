@@ -2,5 +2,5 @@ pub mod adapter;
 pub mod model;
 pub mod translate;
 
-pub use adapter::metrics_at;
+pub use adapter::{compute_metrics, ModelPlugin, ModelState};
 pub use model::{Args, Cnn};

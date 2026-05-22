@@ -1,0 +1,2 @@
+[build]
+cargo_args = ["--profile", "wasm-dev"]

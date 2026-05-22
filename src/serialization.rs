@@ -193,8 +193,7 @@ pub fn save(contents: &Sparse3D<Cell>, structures: &[StructureInfo], path: &std:
     std::fs::write(path, serialized).unwrap();
 }
 
-pub fn load(path: &std::path::PathBuf, structures: &[StructureInfo]) -> Sparse3D<Cell> {
-    let serialized = std::fs::read_to_string(path).unwrap();
+pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Cell> {
     let mut structures_by_char = HashMap::new();
     for (id, info) in structures.iter().enumerate() {
         if let Some(c) = info.x_char {
@@ -205,7 +204,7 @@ pub fn load(path: &std::path::PathBuf, structures: &[StructureInfo]) -> Sparse3D
         }
     }
     deserialize_sparse3d(
-        &serialized,
+        content,
         |c, _slot, map| {
             let id = deserialize(c, map);
             Ok::<Cell, ()>(Cell { id, facing: Facing::NegX, evaluation: None })
@@ -213,4 +212,9 @@ pub fn load(path: &std::path::PathBuf, structures: &[StructureInfo]) -> Sparse3D
         &structures_by_char,
     )
     .unwrap()
+}
+
+pub fn load(path: &std::path::PathBuf, structures: &[StructureInfo]) -> Sparse3D<Cell> {
+    let content = std::fs::read_to_string(path).unwrap();
+    load_from_str(&content, structures)
 }
