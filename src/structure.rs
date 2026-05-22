@@ -58,37 +58,24 @@ pub fn load_structure_info() -> Vec<StructureInfo> {
     serde_json::from_str(json_content).unwrap()
 }
 
-/// Load all .gltf files from the `buildables/` directory via Bevy's AssetServer.
-pub fn load_mesh_handles(asset_server: &AssetServer) -> HashMap<String, Handle<Scene>> {
+/// Register handles for every .gltf referenced in the given StructureInfo list.
+pub fn load_mesh_handles(asset_server: &AssetServer, infos: &[StructureInfo]) -> HashMap<String, Handle<Scene>> {
     let mut handles = HashMap::new();
-
-    let buildables_path = std::path::Path::new(crate::paths::BUILDABLES_DIR);
-    let dir = match std::fs::read_dir(buildables_path) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("Could not read buildables/: {e}");
-            return handles;
-        }
-    };
-
-    for entry in dir.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("gltf") {
-            if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+    for info in infos {
+        for filename in [Some(&info.main_mesh), info.y_cut_mesh.as_ref()].into_iter().flatten() {
+            if !handles.contains_key(filename.as_str()) {
                 let asset_path = format!("buildables/{filename}#Scene0");
-                let handle: Handle<Scene> = asset_server.load(&asset_path);
-                handles.insert(filename.to_string(), handle);
+                handles.insert(filename.clone(), asset_server.load(&asset_path));
             }
         }
     }
-
     handles
 }
 
 /// Startup system: loads structure infos and mesh handles, populates StructureList.
 pub fn spawn_structures(asset_server: Res<AssetServer>, mut structure_list: ResMut<StructureList>) {
     let infos = load_structure_info();
-    let mesh_handles = load_mesh_handles(&asset_server);
+    let mesh_handles = load_mesh_handles(&asset_server, &infos);
 
     for info in &infos {
         let mesh_handle = mesh_handles

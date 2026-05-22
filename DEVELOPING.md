@@ -40,3 +40,9 @@ for f in buildables/*.scad; do dest="$(echo "$f" | sed 's/.scad/.gltf/')"; opens
 ```
 
 (You need to do `sudo apt install openscad assimp-utils` to get those programs.)
+
+The files used at runtime are located in:
+  * `buildables/`: 3D models of structures
+  * `models/`: saved weights for the QNN
+  * `training/`: example structures
+  * `shadlers/`: shaders

@@ -19,6 +19,7 @@ pub fn enable_ui_input_absorption(mut egui_settings: ResMut<EguiGlobalSettings>)
 }
 
 pub fn discover_user_files(mut ui_state: ResMut<UiState>) {
+    #[cfg(not(target_arch = "wasm32"))]
     if let Ok(dir) = std::fs::read_dir(crate::paths::USER_DIR) {
         ui_state.available_files = dir
             .flatten()
@@ -47,47 +48,50 @@ pub fn ui_system(
         return;
     };
 
-    let user_dir: std::path::PathBuf = crate::paths::USER_DIR.into();
-
     // Bottom panel must be added before side panels.
     egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label("Up/Dn=layer  R=rotate  Z=undo  Drag=place  Ctrl+drag=erase  V=evaluate");
 
-            ui.separator();
-            ui.label("Save:");
-            ui.add(egui::TextEdit::singleline(&mut ui_state.save_filename).desired_width(110.0));
-            if ui.button("Save").clicked() && !ui_state.save_filename.is_empty() {
-                let path = user_dir.join(&ui_state.save_filename);
-                serialization::save(&wall_grid.contents, &wall_grid.structures, &path);
-            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let user_dir: std::path::PathBuf = crate::paths::USER_DIR.into();
 
-            ui.separator();
-            ui.label("Load:");
-            ui.add(egui::TextEdit::singleline(&mut ui_state.load_filename).desired_width(110.0));
-            if ui.button("Load").clicked() && !ui_state.load_filename.is_empty() {
-                let path = user_dir.join(&ui_state.load_filename);
-                let new_contents = serialization::load(&path, &wall_grid.structures);
-                let changes = wall_grid.load_from_offline(new_contents);
-                apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
-            }
-            if !ui_state.available_files.is_empty() {
-                egui::ComboBox::from_id_salt("file_select")
-                    .selected_text(ui_state.load_filename.as_str())
-                    .show_ui(ui, |ui| {
-                        for name in ui_state.available_files.clone() {
-                            ui.selectable_value(&mut ui_state.load_filename, name.clone(), &name);
+                ui.separator();
+                ui.label("Save:");
+                ui.add(egui::TextEdit::singleline(&mut ui_state.save_filename).desired_width(110.0));
+                if ui.button("Save").clicked() && !ui_state.save_filename.is_empty() {
+                    let path = user_dir.join(&ui_state.save_filename);
+                    serialization::save(&wall_grid.contents, &wall_grid.structures, &path);
+                }
+
+                ui.separator();
+                ui.label("Load:");
+                ui.add(egui::TextEdit::singleline(&mut ui_state.load_filename).desired_width(110.0));
+                if ui.button("Load").clicked() && !ui_state.load_filename.is_empty() {
+                    let path = user_dir.join(&ui_state.load_filename);
+                    let new_contents = serialization::load(&path, &wall_grid.structures);
+                    let changes = wall_grid.load_from_offline(new_contents);
+                    apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
+                }
+                if !ui_state.available_files.is_empty() {
+                    egui::ComboBox::from_id_salt("file_select")
+                        .selected_text(ui_state.load_filename.as_str())
+                        .show_ui(ui, |ui| {
+                            for name in ui_state.available_files.clone() {
+                                ui.selectable_value(&mut ui_state.load_filename, name.clone(), &name);
+                            }
+                        });
+                }
+
+                ui.separator();
+                if ui.button("Load example").clicked() && !ui_state.load_filename.is_empty() {
+                    if let Ok(idx) = ui_state.load_filename.parse::<usize>() {
+                        let examples = crate::example_structures::make_structures();
+                        if let Some(map) = examples.into_iter().nth(idx) {
+                            let changes = wall_grid.load_from_offline(map);
+                            apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
                         }
-                    });
-            }
-
-            ui.separator();
-            if ui.button("Load example").clicked() && !ui_state.load_filename.is_empty() {
-                if let Ok(idx) = ui_state.load_filename.parse::<usize>() {
-                    let examples = crate::example_structures::make_structures();
-                    if let Some(map) = examples.into_iter().nth(idx) {
-                        let changes = wall_grid.load_from_offline(map);
-                        apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
                     }
                 }
             }

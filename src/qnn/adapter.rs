@@ -1,7 +1,11 @@
+#[cfg(not(target_arch = "wasm32"))]
 use super::model::Cnn;
+#[cfg(not(target_arch = "wasm32"))]
 use burn::{backend::Autodiff, prelude::Backend, record::Recorder};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+#[cfg(not(target_arch = "wasm32"))]
 thread_local! {
     static MODELS: ModelHolder = ModelHolder::new();
 }
@@ -11,27 +15,35 @@ pub fn metrics_at(
     structures: &[crate::structure::StructureInfo],
     location: bevy::math::Vec3,
 ) -> Vec<f32> {
-    let pos = location.round().as_ivec3();
-    let tensor: burn::tensor::Tensor<burn::backend::Wgpu, 5> =
-        super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::wall_grid::Cell| {
-            let semb = &structures[cell.id as usize].embedding;
-            vec![semb.tall, semb.decorative, semb.passable, semb.striated]
-        })
-        .unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let pos = location.round().as_ivec3();
+        let tensor: burn::tensor::Tensor<burn::backend::Wgpu, 5> =
+            super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::wall_grid::Cell| {
+                let semb = &structures[cell.id as usize].embedding;
+                vec![semb.tall, semb.decorative, semb.passable, semb.striated]
+            })
+            .unwrap();
 
-    MODELS.with(|models| {
-        vec![
-            models.coherence.forward(tensor.clone()).sum().into_scalar(),
-            models.interest.forward(tensor).sum().into_scalar(),
-        ]
-    })
+        return MODELS.with(|models| {
+            vec![
+                models.coherence.forward(tensor.clone()).sum().into_scalar(),
+                models.interest.forward(tensor).sum().into_scalar(),
+            ]
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (contents, structures, location);
+    vec![]
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ModelHolder {
     pub interest: Cnn<burn::backend::Wgpu>,
     pub coherence: Cnn<burn::backend::Wgpu>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ModelHolder {
     pub fn new() -> Self {
         type B = burn::backend::Wgpu;
