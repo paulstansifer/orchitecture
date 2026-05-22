@@ -24,9 +24,7 @@ pub struct Cell {
 
 impl crate::sparse3d::Rotateable for Cell {
     fn rotate(self, rotation: crate::sparse3d::Rotation) -> Self {
-        let mut new = self.clone();
-        new.facing = new.facing.rotate(rotation);
-        new
+        Cell { facing: self.facing.rotate(rotation), ..self }
     }
 }
 
@@ -67,11 +65,11 @@ impl WallGrid {
         self.structures
             .iter()
             .map(|s| {
-                let mut name = s.main_mesh.clone();
-                if let Some(dot) = name.find('.') {
-                    name.truncate(dot);
-                }
-                name
+                std::path::Path::new(&s.main_mesh)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(&s.main_mesh)
+                    .to_string()
             })
             .collect()
     }

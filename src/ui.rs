@@ -18,8 +18,8 @@ pub fn enable_ui_input_absorption(mut egui_settings: ResMut<EguiGlobalSettings>)
     egui_settings.enable_absorb_bevy_input_system = true;
 }
 
-pub fn discover_training_files(mut ui_state: ResMut<UiState>) {
-    if let Ok(dir) = std::fs::read_dir("training") {
+pub fn discover_user_files(mut ui_state: ResMut<UiState>) {
+    if let Ok(dir) = std::fs::read_dir(crate::paths::USER_DIR) {
         ui_state.available_files = dir
             .flatten()
             .filter_map(|e| {
@@ -47,7 +47,7 @@ pub fn ui_system(
         return;
     };
 
-    let training_dir: std::path::PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/training/").into();
+    let user_dir: std::path::PathBuf = crate::paths::USER_DIR.into();
 
     // Bottom panel must be added before side panels.
     egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
@@ -58,7 +58,7 @@ pub fn ui_system(
             ui.label("Save:");
             ui.add(egui::TextEdit::singleline(&mut ui_state.save_filename).desired_width(110.0));
             if ui.button("Save").clicked() && !ui_state.save_filename.is_empty() {
-                let path = training_dir.join(&ui_state.save_filename);
+                let path = user_dir.join(&ui_state.save_filename);
                 serialization::save(&wall_grid.contents, &wall_grid.structures, &path);
             }
 
@@ -66,7 +66,7 @@ pub fn ui_system(
             ui.label("Load:");
             ui.add(egui::TextEdit::singleline(&mut ui_state.load_filename).desired_width(110.0));
             if ui.button("Load").clicked() && !ui_state.load_filename.is_empty() {
-                let path = training_dir.join(&ui_state.load_filename);
+                let path = user_dir.join(&ui_state.load_filename);
                 let new_contents = serialization::load(&path, &wall_grid.structures);
                 let changes = wall_grid.load_from_offline(new_contents);
                 apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);

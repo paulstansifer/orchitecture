@@ -34,7 +34,7 @@ fn extended_serialize_at<T: Serialize>(pos: IVec3, slot: RelSlot, cell: &T) -> S
 }
 
 fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (IVec3, RelSlot, T) {
-    let parts: Vec<&str> = line.split('=').collect();
+    let parts: Vec<&str> = line.splitn(2, '=').collect();
     if parts.len() != 2 {
         panic!("Invalid extended serialization format");
     }
@@ -59,7 +59,6 @@ fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (IVec3, Rel
 pub fn serialize_sparse3d(
     grid: &crate::sparse3d::Sparse3D<Cell>,
     f: fn(&Cell, RelSlot, &HashMap<i32, StructureInfo>) -> char,
-    //cell_needs_extended: fn(&Cell) -> bool,
     structures: &HashMap<i32, StructureInfo>,
 ) -> String {
     let mut serialized = String::new();

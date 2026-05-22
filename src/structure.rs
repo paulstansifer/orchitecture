@@ -62,7 +62,7 @@ pub fn load_structure_info() -> Vec<StructureInfo> {
 pub fn load_mesh_handles(asset_server: &AssetServer) -> HashMap<String, Handle<Scene>> {
     let mut handles = HashMap::new();
 
-    let buildables_path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/buildables"));
+    let buildables_path = std::path::Path::new(crate::paths::BUILDABLES_DIR);
     let dir = match std::fs::read_dir(buildables_path) {
         Ok(d) => d,
         Err(e) => {

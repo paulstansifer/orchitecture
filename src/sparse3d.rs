@@ -159,12 +159,7 @@ impl SlotLocation {
     }
 
     fn split_location(&self) -> (BigCoordinates, SmallCoordinates) {
-        let slot = match self.rel_slot {
-            RelSlot::Room => Slot::Room,
-            RelSlot::XHiWall | RelSlot::XLoWall => Slot::XWall,
-            RelSlot::Floor | RelSlot::Ceiling => Slot::YFloor,
-            RelSlot::ZHiWall | RelSlot::ZLoWall => Slot::ZWall,
-        };
+        let slot = self.rel_slot.as_absolute_slot();
         let abs_loc = self.cube + self.rel_slot.absolute_offset();
         let big_coords = BigCoordinates {
             x: abs_loc.x.div_euclid(4),
@@ -237,23 +232,6 @@ struct SmallCoordinates {
     y: u8,
     z: u8,
     slot: Slot,
-}
-
-fn split_coords(loc: IVec3, slot: Slot) -> (BigCoordinates, SmallCoordinates) {
-    let big_coords = BigCoordinates {
-        x: loc.x.div_euclid(4),
-        y: loc.y.div_euclid(4),
-        z: loc.z.div_euclid(4),
-    };
-
-    let small_coords = SmallCoordinates {
-        x: loc.x.rem_euclid(4) as u8,
-        y: loc.y.rem_euclid(4) as u8,
-        z: loc.z.rem_euclid(4) as u8,
-        slot,
-    };
-
-    (big_coords, small_coords)
 }
 
 fn combine_coords(bc: BigCoordinates, sc: SmallCoordinates) -> IVec3 {
@@ -373,10 +351,7 @@ impl<T> Sparse3D<T> {
 
     pub fn take(&mut self, loc: SlotLocation) -> Option<T> {
         let (bc, sc) = loc.split_location();
-        self.chunks.get_mut(&bc).and_then(|chunk| {
-            let value = chunk[sc].take();
-            value
-        })
+        self.chunks.get_mut(&bc).and_then(|chunk| chunk[sc].take())
     }
 
     pub fn get_mut(&mut self, loc: SlotLocation) -> Option<&mut T> {

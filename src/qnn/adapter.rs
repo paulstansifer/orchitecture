@@ -42,7 +42,7 @@ impl ModelHolder {
 
         use burn::module::Module;
 
-        let model_dir: PathBuf = concat!(env!("CARGO_MANIFEST_DIR"), "/models/").into();
+        let model_dir: PathBuf = crate::paths::MODELS_DIR.into();
 
         let args: super::model::Args = serde_json::from_str(
             &std::fs::read_to_string(model_dir.join("model_args.json")).unwrap(),

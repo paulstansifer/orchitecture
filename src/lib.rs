@@ -1,8 +1,10 @@
 #![recursion_limit = "256"]
 
 pub mod build_helpers;
+pub mod paths;
 pub mod ceiling_lights;
 pub mod camera;
+pub mod grid_preview;
 pub mod example_structures;
 pub mod input;
 pub mod llm_rooms;
