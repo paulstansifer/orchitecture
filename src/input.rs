@@ -1,3 +1,4 @@
+use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -158,12 +159,20 @@ pub fn building_input_system(
     mut wall_grid: ResMut<WallGrid>,
     structure_list: Res<StructureList>,
     mut build_state: ResMut<BuildState>,
+    mouse_scroll: Res<AccumulatedMouseScroll>,
 ) {
     // --- Layer up/down ---
     if keyboard.just_pressed(KeyCode::ArrowUp) {
         build_state.cur_y = (build_state.cur_y + 1).min(10);
     }
     if keyboard.just_pressed(KeyCode::ArrowDown) {
+        build_state.cur_y = (build_state.cur_y - 1).max(0);
+    }
+
+    let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    if shift && mouse_scroll.delta.y > 0.5 {
+        build_state.cur_y = (build_state.cur_y + 1).min(10);
+    } else if shift && mouse_scroll.delta.y < -0.5 {
         build_state.cur_y = (build_state.cur_y - 1).max(0);
     }
 
