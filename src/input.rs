@@ -24,15 +24,27 @@ pub fn cursor_system(
     wall_grid: Res<WallGrid>,
     mut wall_q: Query<
         (&mut Transform, &mut Visibility),
-        (With<WallCursorMarker>, Without<RoomCursorMarker>, Without<DragPreviewMarker>),
+        (
+            With<WallCursorMarker>,
+            Without<RoomCursorMarker>,
+            Without<DragPreviewMarker>,
+        ),
     >,
     mut room_q: Query<
         (&mut Transform, &mut Visibility),
-        (With<RoomCursorMarker>, Without<WallCursorMarker>, Without<DragPreviewMarker>),
+        (
+            With<RoomCursorMarker>,
+            Without<WallCursorMarker>,
+            Without<DragPreviewMarker>,
+        ),
     >,
     mut preview_q: Query<
         (&mut Transform, &mut Visibility),
-        (With<DragPreviewMarker>, Without<WallCursorMarker>, Without<RoomCursorMarker>),
+        (
+            With<DragPreviewMarker>,
+            Without<WallCursorMarker>,
+            Without<RoomCursorMarker>,
+        ),
     >,
 ) {
     let id = build_state.selected_structure as i32;
@@ -89,9 +101,9 @@ fn drag_preview_rect(
     style: PlacementStyle,
     y: f32,
 ) -> Option<(Vec3, Vec3)> {
-    const H: f32 = 0.05;
+    const H: f32 = 0.15;
     const WALL_H: f32 = 0.8;
-    const WALL_W: f32 = 0.2;
+    const WALL_W: f32 = 0.201; // You can't Z-fight in here! It's the 3D room!
     match style {
         PlacementStyle::WallDrag => {
             let from_r = start.round();
@@ -169,11 +181,8 @@ pub fn building_input_system(
     // --- Evaluate (V key) ---
     if keyboard.just_pressed(KeyCode::KeyV) {
         if let Some(world_pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
-            let metrics = crate::qnn::metrics_at(
-                &wall_grid.contents,
-                &wall_grid.structures,
-                world_pos,
-            );
+            let metrics =
+                crate::qnn::metrics_at(&wall_grid.contents, &wall_grid.structures, world_pos);
             if metrics.len() >= 2 {
                 build_state.evaluation = Some((metrics[0], metrics[1]));
             }

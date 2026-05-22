@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
@@ -7,7 +8,7 @@ use crate::wall_grid::{Cell, WallGrid};
 
 const GRID_PERIOD: i32 = 6;
 const COVERAGE_RADIUS: i32 = 3;
-const LIGHT_INTENSITY: f32 = 50_000.0;
+const LIGHT_INTENSITY: f32 = 150_000.0;
 const LIGHT_RANGE: f32 = 8.0;
 
 #[derive(Component)]
@@ -203,6 +204,7 @@ pub fn update_ceiling_lights(
     }
 
     for pos in compute_ceiling_lights(&wall_grid.contents) {
+        // TODO: try using a spotlight to minimize shine-through... though I'm not sure it helps much
         commands.spawn((
             PointLight {
                 color: Color::srgb(1.0, 0.95, 0.8),

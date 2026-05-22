@@ -1,4 +1,4 @@
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+use std::f32::consts::{FRAC_PI_3, FRAC_PI_4, PI};
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
@@ -13,19 +13,17 @@ pub fn spawn_world(
     // Four lights may be costly; reconsider if performance is bad.
     // Layers 0 (visible) + 1 (shadow-only hidden geometry) so hidden cells still cast shadows.
     let light_layers = RenderLayers::default().with(1);
-    for azimuth in [0.0, FRAC_PI_2, PI, -FRAC_PI_2] {
-        commands.spawn((
-            DirectionalLight {
-                illuminance: 2_500.0,
-                // We should try `TemporalAntiAliasing` to reduce the noise.
-                shadows_enabled: true,
-                soft_shadow_size: Some(10.0),
-                ..default()
-            },
-            Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, azimuth, -FRAC_PI_4, 0.0)),
-            light_layers.clone(),
-        ));
-    }
+    commands.spawn((
+        DirectionalLight {
+            illuminance: 5_000.0,
+            // We should try `TemporalAntiAliasing` to reduce the noise.
+            shadows_enabled: true,
+            soft_shadow_size: Some(10.0),
+            ..default()
+        },
+        Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, FRAC_PI_3, -FRAC_PI_4, 0.0)),
+        light_layers.clone(),
+    ));
 
     ambient_light.brightness = 100.0;
 
