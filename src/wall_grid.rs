@@ -7,13 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
 use crate::structure::{PlacementStyle, StructureInfo, StructureList};
-use crate::serialization;
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-pub enum Dir {  // TODO: this should probably be replaced with `Facing`
-    X,
-    Z,
-}
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct VantageEvaluation {
@@ -37,12 +30,6 @@ impl crate::sparse3d::Rotateable for Cell {
     }
 }
 
-// Compatibility alias used by build_helpers, example_structures, qnn_translate
-// TODO: remove
-pub type OfflineCell = Cell;
-
-const DESK_ID: i32 = 0;
-
 struct UndoRecord {
     // (location, what_was_there_before)
     changed: Vec<(SlotLocation, Option<Cell>)>,
@@ -53,10 +40,6 @@ struct UndoRecord {
 pub struct GridCellMarker {
     pub loc: SlotLocation,
 }
-
-/// Marker component for y-cut visibility variant entities.
-#[derive(Component)]
-pub struct CutCellMarker;
 
 #[derive(Resource)]
 pub struct WallGrid {
@@ -121,7 +104,11 @@ impl WallGrid {
 
                     if let Some(id) = item {
                         let facing = Facing::from_number(dir as u8);
-                        let new_cell = Cell { id, facing, evaluation: None };
+                        let new_cell = Cell {
+                            id,
+                            facing,
+                            evaluation: None,
+                        };
                         self.contents.set(loc, new_cell.clone());
                         changes.push((loc, Some(new_cell)));
                     } else {
@@ -132,7 +119,9 @@ impl WallGrid {
         }
 
         if !changes.is_empty() {
-            self.undo_record.push(UndoRecord { changed: undo_changed });
+            self.undo_record.push(UndoRecord {
+                changed: undo_changed,
+            });
         }
         changes
     }
@@ -143,13 +132,11 @@ impl WallGrid {
         to: Vec3,
         selected_mesh_id: Option<i32>,
     ) -> Vec<(SlotLocation, Option<Cell>)> {
-        let x_diff = to.x - from.x;
-        let z_diff = to.z - from.z;
-        let d = if x_diff.abs() > z_diff.abs() { Dir::X } else { Dir::Z };
+        let along_x = (to.x - from.x).abs() > (to.z - from.z).abs();
 
         let from_i = from.round().as_ivec3();
         let mut to_i = from_i;
-        if d == Dir::X {
+        if along_x {
             to_i.x = to.x.round() as i32;
         } else {
             to_i.z = to.z.round() as i32;
@@ -157,12 +144,16 @@ impl WallGrid {
 
         let start = from_i.min(to_i);
         let end = from_i.max(to_i)
-            - if d == Dir::X {
+            - if along_x {
                 IVec3::new(1, 0, 0)
             } else {
                 IVec3::new(0, 0, 1)
             };
-        let slot = if d == Dir::X { RelSlot::ZLoWall } else { RelSlot::XLoWall };
+        let slot = if along_x {
+            RelSlot::ZLoWall
+        } else {
+            RelSlot::XLoWall
+        };
 
         self.set_range_item_dir(0, start, end, slot, selected_mesh_id)
     }
@@ -188,10 +179,14 @@ impl WallGrid {
     ) -> Vec<(SlotLocation, Option<Cell>)> {
         let pos = location.round().as_ivec3();
         let changes = self.set_range_item_dir(dir, pos, pos, RelSlot::Room, selected_mesh_id);
-        if selected_mesh_id == Some(DESK_ID) {
+        if selected_mesh_id == Some(0) {
+            // Desk's ID number. TODO: fix this!
             let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
             if let Some(cell) = self.contents.get_mut(loc) {
-                cell.evaluation = Some(VantageEvaluation { coherence: 0.5, interest: 0.5 });
+                cell.evaluation = Some(VantageEvaluation {
+                    coherence: 0.5,
+                    interest: 0.5,
+                });
             }
         }
         changes
@@ -240,45 +235,6 @@ impl WallGrid {
             }
         }
         record.changed
-    }
-
-    pub fn save(&self, path: &std::path::PathBuf) {
-        let mut structures_by_id = HashMap::new();
-        for (id, info) in self.structures.iter().enumerate() {
-            structures_by_id.insert(id as i32, info.clone());
-        }
-        let serialized = serialization::serialize_sparse3d(
-            &self.contents,
-            |cell, slot, structures| serialization::serialize_slot(cell.id, slot, structures),
-            &structures_by_id,
-        );
-        std::fs::write(path, serialized).unwrap();
-    }
-
-    /// Load from a text file. Returns full replacement deltas (clear all, set all new).
-    pub fn load(&mut self, path: &std::path::PathBuf) -> Vec<(SlotLocation, Option<Cell>)> {
-        let serialized = std::fs::read_to_string(path).unwrap();
-        let mut structures_by_char = HashMap::new();
-        for (id, info) in self.structures.iter().enumerate() {
-            if let Some(c) = info.x_char {
-                structures_by_char.insert(c, id as i32);
-            }
-            if let Some(c) = info.z_char {
-                structures_by_char.insert(c, id as i32);
-            }
-        }
-
-        let new_contents = serialization::deserialize_sparse3d(
-            &serialized,
-            |c, _slot, map| {
-                let id = serialization::deserialize(c, map);
-                Ok::<Cell, ()>(Cell { id, facing: Facing::NegX, evaluation: None })
-            },
-            &structures_by_char,
-        )
-        .unwrap();
-
-        self.replace_contents(new_contents)
     }
 
     pub fn load_from_offline(
@@ -350,6 +306,10 @@ pub fn apply_changes(
 
 /// Startup system: creates the WallGrid resource from the already-populated StructureList.
 pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<StructureList>) {
-    let infos = structure_list.structures.iter().map(|s| s.info.clone()).collect();
+    let infos = structure_list
+        .structures
+        .iter()
+        .map(|s| s.info.clone())
+        .collect();
     commands.insert_resource(WallGrid::new(infos));
 }

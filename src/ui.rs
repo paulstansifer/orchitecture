@@ -3,6 +3,7 @@ use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 
 use crate::input::BuildState;
 use crate::structure::StructureList;
+use crate::serialization;
 use crate::wall_grid::apply_changes;
 use crate::wall_grid::WallGrid;
 
@@ -58,7 +59,7 @@ pub fn ui_system(
             ui.add(egui::TextEdit::singleline(&mut ui_state.save_filename).desired_width(110.0));
             if ui.button("Save").clicked() && !ui_state.save_filename.is_empty() {
                 let path = training_dir.join(&ui_state.save_filename);
-                wall_grid.save(&path);
+                serialization::save(&wall_grid.contents, &wall_grid.structures, &path);
             }
 
             ui.separator();
@@ -66,7 +67,8 @@ pub fn ui_system(
             ui.add(egui::TextEdit::singleline(&mut ui_state.load_filename).desired_width(110.0));
             if ui.button("Load").clicked() && !ui_state.load_filename.is_empty() {
                 let path = training_dir.join(&ui_state.load_filename);
-                let changes = wall_grid.load(&path);
+                let new_contents = serialization::load(&path, &wall_grid.structures);
+                let changes = wall_grid.load_from_offline(new_contents);
                 apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
             }
             if !ui_state.available_files.is_empty() {

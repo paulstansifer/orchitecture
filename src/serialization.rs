@@ -2,7 +2,7 @@ use bevy::math::IVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::sparse3d::{RelSlot, SlotLocation};
+use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
 use crate::structure::StructureInfo;
 use crate::wall_grid::Cell;
 
@@ -179,4 +179,39 @@ where
     }
 
     Ok(grid)
+}
+
+pub fn save(contents: &Sparse3D<Cell>, structures: &[StructureInfo], path: &std::path::PathBuf) {
+    let mut structures_by_id = HashMap::new();
+    for (id, info) in structures.iter().enumerate() {
+        structures_by_id.insert(id as i32, info.clone());
+    }
+    let serialized = serialize_sparse3d(
+        contents,
+        |cell, slot, structures| serialize_slot(cell.id, slot, structures),
+        &structures_by_id,
+    );
+    std::fs::write(path, serialized).unwrap();
+}
+
+pub fn load(path: &std::path::PathBuf, structures: &[StructureInfo]) -> Sparse3D<Cell> {
+    let serialized = std::fs::read_to_string(path).unwrap();
+    let mut structures_by_char = HashMap::new();
+    for (id, info) in structures.iter().enumerate() {
+        if let Some(c) = info.x_char {
+            structures_by_char.insert(c, id as i32);
+        }
+        if let Some(c) = info.z_char {
+            structures_by_char.insert(c, id as i32);
+        }
+    }
+    deserialize_sparse3d(
+        &serialized,
+        |c, _slot, map| {
+            let id = deserialize(c, map);
+            Ok::<Cell, ()>(Cell { id, facing: Facing::NegX, evaluation: None })
+        },
+        &structures_by_char,
+    )
+    .unwrap()
 }

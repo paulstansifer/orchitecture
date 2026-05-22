@@ -8,13 +8,13 @@ use crate::structure::StructureInfo;
 use crate::wall_grid::VantageEvaluation;
 use crate::{
     sparse3d::{SlotLocation, Sparse3D},
-    wall_grid::OfflineCell,
+    wall_grid::Cell,
 };
 use rand::{prelude::SliceRandom, rngs::StdRng, Rng};
 
 #[derive(Clone)]
 pub struct Builder {
-    map: Sparse3D<OfflineCell>,
+    map: Sparse3D<Cell>,
     structures: HashMap<String, usize>,
 }
 
@@ -32,19 +32,19 @@ impl Builder {
         }
     }
 
-    pub fn get(self) -> Sparse3D<OfflineCell> {
+    pub fn get(self) -> Sparse3D<Cell> {
         self.map
     }
 
-    fn wall(&self) -> OfflineCell {
-        OfflineCell {
+    fn wall(&self) -> Cell {
+        Cell {
             id: *self.structures.get("wall").unwrap() as i32,
             facing: Facing::arbitrary(),
             evaluation: None,
         }
     }
-    fn flat(&self) -> OfflineCell {
-        OfflineCell {
+    fn flat(&self) -> Cell {
+        Cell {
             id: *self.structures.get("floor").unwrap() as i32,
             facing: Facing::arbitrary(),
             evaluation: None,
@@ -179,7 +179,7 @@ impl Builder {
         let max = IVec3::max(corner_a, corner_b);
         let y = min.y;
 
-        let obj = OfflineCell {
+        let obj = Cell {
             id: *self.structures.get(obj_name).unwrap() as i32,
             facing: Facing::arbitrary(),
             evaluation: None,
@@ -213,7 +213,7 @@ impl Builder {
     pub fn set_vantage(&mut self, loc: IVec3, coherence: f32, interest: f32) {
         self.map.set(
             SlotLocation::new(loc.x, loc.y, loc.z, RelSlot::Room),
-            OfflineCell {
+            Cell {
                 id: *self.structures.get("desk").unwrap() as i32,
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation {
@@ -228,7 +228,7 @@ impl Builder {
 pub fn make_boring_room(
     structures: &Vec<StructureInfo>,
     rng: &mut StdRng,
-) -> (Sparse3D<OfflineCell>, String) {
+) -> (Sparse3D<Cell>, String) {
     let mut builder = Builder::new(structures);
     let x_size = rng.random_range(1..7);
     let y_height = rng.random_range(1..4);
@@ -252,17 +252,17 @@ pub fn make_boring_room(
 }
 
 pub fn add_noise(
-    s: Sparse3D<OfflineCell>,
+    s: Sparse3D<Cell>,
     structure_info: &[StructureInfo],
     rng: &mut StdRng,
-) -> Vec<Sparse3D<OfflineCell>> {
+) -> Vec<Sparse3D<Cell>> {
     use crate::sparse3d::RelSlot::{Floor, Room, XLoWall, ZLoWall};
     use crate::wall_grid::VantageEvaluation;
 
-    let mut results: Vec<Sparse3D<OfflineCell>> = Vec::new();
+    let mut results: Vec<Sparse3D<Cell>> = Vec::new();
 
     // Collect all vantages (locations with an evaluation)
-    let mut vantages: Vec<(SlotLocation, OfflineCell)> = Vec::new();
+    let mut vantages: Vec<(SlotLocation, Cell)> = Vec::new();
     for (loc, cell) in s.iter() {
         if cell.evaluation.is_some() {
             vantages.push((loc, cell.clone()));
@@ -369,7 +369,7 @@ pub fn add_noise(
                     new_s.take(dest_loc);
                 }
                 Some(id) => {
-                    let new_cell = OfflineCell {
+                    let new_cell = Cell {
                         id,
                         facing: crate::sparse3d::Facing::default(),
                         evaluation: None,
@@ -410,12 +410,12 @@ fn test_add_noise() {
 
     let structures = crate::structure::load_structure_info();
 
-    let mut s: Sparse3D<OfflineCell> = Sparse3D::new();
+    let mut s: Sparse3D<Cell> = Sparse3D::new();
 
     let v_loc = SlotLocation::new(0, 0, 0, RelSlot::Room);
     s.set(
         v_loc,
-        OfflineCell {
+        Cell {
             id: 0,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: Some(VantageEvaluation {
@@ -428,7 +428,7 @@ fn test_add_noise() {
     // Add a nearby wall so there's something to possibly replace/delete
     s.set(
         SlotLocation::new(1, 0, 0, RelSlot::XLoWall),
-        OfflineCell {
+        Cell {
             id: 1,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: None,

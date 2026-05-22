@@ -1,4 +1,4 @@
-use crate::wall_grid::OfflineCell;
+use crate::wall_grid::Cell;
 use crate::{build_helpers::*, llm_rooms};
 use bevy::math::IVec3;
 
@@ -9,7 +9,7 @@ fn v(x: i32, y: i32, z: i32) -> IVec3 {
     IVec3::new(x, y, z)
 }
 
-pub fn make_structures() -> Vec<Sparse3D<OfflineCell>> {
+pub fn make_structures() -> Vec<Sparse3D<Cell>> {
     let structures = load_structure_info();
 
     // Plain rectangular room, with minimum height.

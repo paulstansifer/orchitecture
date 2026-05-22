@@ -13,11 +13,13 @@ Game parts:
   * ceiling_lights.rs: Adds lighting inside a `WallGrid`
 
 `WallGrid` and related concepts:
-  * wall_grid.rs: `WallGrid` represents the world as `Sparse3d<Cell>`. 
-    Lots of other stuff in this file; it should be split up!
-  * visibility.rs: hides parts of the `WallGrid` so we can see inside
+  * wall_grid.rs: `WallGrid` represents the world as `Sparse3d<Cell>`.
+    Core types (`Cell`, `VantageEvaluation`), grid-mutation methods (drag/click/undo),
+    `apply_changes` (syncs ECS entities to grid state), and `cell_transform`.
+  * visibility.rs: hides parts of the `WallGrid` so we can see inside.
   * sparse3d.rs: storage for walls, ceilings and "room objects" on a sparse cubic grid
   * structure.rs: `Structure`s are the walls, doors, desks, etc. that occupy `Cell`s.
+  * serialization.rs: text format for `Sparse3D<Cell>`
 
 Quality neural net (`qnn/` module):
   * qnn/train.rs: training binary entry point (`fn main`) and training loop

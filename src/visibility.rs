@@ -9,7 +9,11 @@ use crate::camera::GameCamera;
 use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
 use crate::structure::StructureList;
-use crate::wall_grid::{cell_transform, Cell, CutCellMarker, GridCellMarker, WallGrid};
+use crate::wall_grid::{cell_transform, Cell, GridCellMarker, WallGrid};
+
+/// Marker component for y-cut visibility variant entities.
+#[derive(Component)]
+pub struct CutCellMarker;
 
 /// Layer used for geometry that should cast shadows but not be seen by the main camera.
 const SHADOW_ONLY_LAYER: usize = 1;

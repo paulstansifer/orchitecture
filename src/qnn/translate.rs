@@ -7,7 +7,7 @@ use std::error::Error;
 #[cfg(feature = "training")]
 use burn::tensor::TensorData;
 #[cfg(feature = "training")]
-use crate::wall_grid::OfflineCell;
+use crate::wall_grid::Cell;
 #[cfg(feature = "training")]
 use burn::backend::Autodiff;
 #[cfg(feature = "training")]
@@ -96,11 +96,11 @@ pub struct GroundTruthBatcher {}
 
 #[cfg(feature = "training")]
 fn augment_datum(
-    s: (Sparse3D<OfflineCell>, String),
+    s: (Sparse3D<Cell>, String),
     metric: Metric,
     structure_info: &[StructureInfo],
     rng: &mut StdRng,
-) -> Vec<(Sparse3D<OfflineCell>, String)> {
+) -> Vec<(Sparse3D<Cell>, String)> {
     use crate::sparse3d::Rotateable;
     let mut res = vec![];
 
@@ -181,11 +181,11 @@ pub fn load_training_data<B: Backend>(
 
         if path.extension().map_or(false, |ext| ext == "txt") {
             let content = fs::read_to_string(&path).expect("Failed to read file");
-            let sparse_data = crate::serialization::deserialize_sparse3d::<OfflineCell, _, ()>(
+            let sparse_data = crate::serialization::deserialize_sparse3d::<Cell, _, ()>(
                 &content,
                 |c, _slot, structures_by_char| {
                     let id = crate::serialization::deserialize(c, structures_by_char);
-                    Ok(OfflineCell {
+                    Ok(Cell {
                         id,
                         facing: crate::sparse3d::Facing::NegX, // TODO!!!
                         evaluation: None,
@@ -297,7 +297,7 @@ pub fn load_training_data<B: Backend>(
 // Just handles a single datum, but the tensors could hold a batch
 #[cfg(feature = "training")]
 pub fn ground_truth_at_vantage<B: Backend>(
-    data: &(Sparse3D<OfflineCell>, String),
+    data: &(Sparse3D<Cell>, String),
     metric: Metric,
     structures: &Vec<StructureInfo>,
 ) -> GroundTruth<B> {
