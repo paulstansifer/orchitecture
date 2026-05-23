@@ -4,7 +4,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::GameCamera;
 use crate::structure::{PlacementStyle, StructureList};
-use crate::wall_grid::{apply_changes, WallGrid};
+use crate::wall_grid::{apply_proposal_changes, ProposalGhostMarker, ProposalOverlayAssets, WallGrid};
 
 #[derive(Resource)]
 pub struct CursorEntities {
@@ -135,6 +135,7 @@ pub fn building_input_system(
     mut build_state: ResMut<BuildState>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     model_state: Res<crate::qnn::ModelState>,
+    overlay_assets: Res<ProposalOverlayAssets>,
 ) {
     // --- Layer up/down ---
     if keyboard.just_pressed(KeyCode::ArrowUp) {
@@ -158,8 +159,12 @@ pub fn building_input_system(
 
     // --- Undo ---
     if keyboard.just_pressed(KeyCode::KeyZ) {
-        let changes = wall_grid.undo();
-        apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
+        // Use bypass_change_detection so proposal edits don't trigger ceiling-light recomputation.
+        let changes = wall_grid.bypass_change_detection().undo();
+        if !changes.is_empty() {
+            let wg = wall_grid.bypass_change_detection();
+            apply_proposal_changes(&mut commands, &mut *wg, &structure_list, &overlay_assets, changes);
+        }
     }
 
     // --- Evaluate (V key) ---
@@ -203,13 +208,23 @@ pub fn building_input_system(
 
             let dist_sq = (end - start).length_squared();
 
+            // All proposal edits bypass change detection so ceiling lights don't recompute.
             let changes = if dist_sq < 0.25 {
-                wall_grid.click(start, id, dir, remove)
+                wall_grid.bypass_change_detection().click(start, id, dir, remove)
             } else {
-                wall_grid.drag(start, end, id, remove)
+                wall_grid.bypass_change_detection().drag(start, end, id, remove)
             };
 
-            apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
+            if !changes.is_empty() {
+                let wg = wall_grid.bypass_change_detection();
+                apply_proposal_changes(
+                    &mut commands,
+                    &mut *wg,
+                    &structure_list,
+                    &overlay_assets,
+                    changes,
+                );
+            }
         }
     }
 
@@ -236,17 +251,34 @@ pub fn update_room_cursor_mesh(
     }
 }
 
-/// Recolors any newly spawned mesh children of the room cursor to cyan.
-pub fn recolor_room_cursor_children(
+/// Recolors newly spawned mesh children of the room cursor (cyan) and proposal ghosts (translucent).
+///
+/// Uses `ParamSet` to avoid a conflict between the `Added<T>` filter and `&mut T` access,
+/// which Bevy treats as incompatible within a single system.
+pub fn recolor_new_mesh_children(
     cursor_entities: Res<CursorEntities>,
-    new_meshes: Query<Entity, Added<MeshMaterial3d<StandardMaterial>>>,
+    overlay_assets: Res<ProposalOverlayAssets>,
+    ghost_markers_q: Query<Entity, With<ProposalGhostMarker>>,
     child_of_q: Query<&ChildOf>,
-    mut mat_q: Query<&mut MeshMaterial3d<StandardMaterial>>,
+    mut param_set: ParamSet<(
+        Query<Entity, Added<MeshMaterial3d<StandardMaterial>>>,
+        Query<&mut MeshMaterial3d<StandardMaterial>>,
+    )>,
 ) {
-    for entity in new_meshes.iter() {
+    let new_entities: Vec<Entity> = param_set.p0().iter().collect();
+    for entity in new_entities {
         if is_descendant_of(entity, cursor_entities.room, &child_of_q) {
-            if let Ok(mut m) = mat_q.get_mut(entity) {
+            if let Ok(mut m) = param_set.p1().get_mut(entity) {
                 *m = MeshMaterial3d(cursor_entities.cyan_mat.clone());
+            }
+        } else {
+            for ghost_entity in ghost_markers_q.iter() {
+                if is_descendant_of(entity, ghost_entity, &child_of_q) {
+                    if let Ok(mut m) = param_set.p1().get_mut(entity) {
+                        *m = MeshMaterial3d(overlay_assets.ghost_mat.clone());
+                    }
+                    break;
+                }
             }
         }
     }

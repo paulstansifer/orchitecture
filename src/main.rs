@@ -7,14 +7,16 @@ use orchitecture_lib::{
     ceiling_lights::update_ceiling_lights,
     grid_preview::GridPreviewPlugin,
     input::{
-        building_input_system, cursor_system, recolor_room_cursor_children,
+        building_input_system, cursor_system, recolor_new_mesh_children,
         spawn_cursors, update_room_cursor_mesh, BuildState,
     },
     qnn::ModelPlugin,
     structure::{spawn_structures, StructureList},
     ui::{discover_user_files, enable_ui_input_absorption, ui_system, UiState},
     visibility::update_visibility_system,
-    wall_grid::{spawn_grid, WallGrid},
+    wall_grid::{
+        spawn_grid, spawn_proposal_overlay_assets, WallGrid,
+    },
     world::spawn_world,
 };
 
@@ -48,6 +50,7 @@ fn main() {
                 spawn_camera,
                 spawn_world,
                 spawn_cursors,
+                spawn_proposal_overlay_assets,
                 discover_user_files,
             ),
         )
@@ -58,7 +61,7 @@ fn main() {
                 building_input_system,
                 cursor_system,
                 update_room_cursor_mesh,
-                recolor_room_cursor_children,
+                recolor_new_mesh_children,
                 update_visibility_system,
                 update_ceiling_lights.run_if(resource_changed::<WallGrid>),
             ),

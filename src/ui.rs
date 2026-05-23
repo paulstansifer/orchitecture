@@ -4,8 +4,7 @@ use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 use crate::input::BuildState;
 use crate::structure::StructureList;
 use crate::serialization;
-use crate::wall_grid::apply_changes;
-use crate::wall_grid::WallGrid;
+use crate::wall_grid::{apply_changes, apply_proposal_changes, ProposalOverlayAssets, WallGrid};
 
 /// Maps bundled at compile time; always available on all platforms.
 const BUNDLED_MAPS: &[(&str, &str)] = &[
@@ -73,6 +72,15 @@ pub fn discover_user_files(mut ui_state: ResMut<UiState>) {
     }
 }
 
+/// Despawns all proposal preview entities and drains `proposal_entities`.
+fn clear_proposal_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
+    for (_, entities) in wall_grid.proposal_entities.drain() {
+        for entity in entities {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 pub fn ui_system(
     mut commands: Commands,
     mut contexts: EguiContexts,
@@ -80,6 +88,7 @@ pub fn ui_system(
     mut wall_grid: ResMut<WallGrid>,
     mut build_state: ResMut<BuildState>,
     mut ui_state: ResMut<UiState>,
+    overlay_assets: Res<ProposalOverlayAssets>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -116,6 +125,7 @@ pub fn ui_system(
                     } else {
                         serialization::load(&user_dir.join(&name), &wall_grid.structures)
                     };
+                    clear_proposal_entities(&mut commands, &mut wall_grid);
                     let changes = wall_grid.load_from_offline(new_contents);
                     apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
                 }
@@ -152,6 +162,7 @@ pub fn ui_system(
                     if let Ok(idx) = ui_state.load_filename.parse::<usize>() {
                         let examples = crate::example_structures::make_structures();
                         if let Some(map) = examples.into_iter().nth(idx) {
+                            clear_proposal_entities(&mut commands, &mut wall_grid);
                             let changes = wall_grid.load_from_offline(map);
                             apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
                         }
@@ -166,6 +177,7 @@ pub fn ui_system(
     if let Some(name) = wasm_load {
         if let Some(content) = find_bundled(&name) {
             let new_contents = serialization::load_from_str(content, &wall_grid.structures);
+            clear_proposal_entities(&mut commands, &mut wall_grid);
             let changes = wall_grid.load_from_offline(new_contents);
             apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
         }
@@ -194,6 +206,43 @@ pub fn ui_system(
                 ui.separator();
                 ui.label(format!("Coherence: {:.3}", coherence));
                 ui.label(format!("Interest:  {:.3}", interest));
+            }
+
+            let n = wall_grid.num_proposed_changes();
+            if n > 0 {
+                ui.separator();
+                let months = wall_grid.months_for_construction();
+                let months_label =
+                    if months == 1 { "month".to_string() } else { "months".to_string() };
+                if ui
+                    .button(format!("Construct! ({months} {months_label})"))
+                    .clicked()
+                {
+                    // commit() writes to contents (triggers ceiling-light recompute)
+                    let real_changes = wall_grid.construct();
+                    clear_proposal_entities(&mut commands, &mut wall_grid);
+                    apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
+                }
+                if ui.button("Reset").clicked() {
+                    // Reset clears proposals without committing; bypass detection so
+                    // ceiling lights don't recompute.
+                    let deltas = {
+                        let wg = wall_grid.bypass_change_detection();
+                        let locs: Vec<_> = wg.proposed_changes.iter().map(|(l, _)| l).collect();
+                        wg.reset_proposals();
+                        locs.into_iter()
+                            .map(|loc| (loc, crate::wall_grid::ProposalView::None))
+                            .collect::<Vec<_>>()
+                    };
+                    // Despawn all proposal entities (bypassing is fine since we already have mut wg above)
+                    apply_proposal_changes(
+                        &mut commands,
+                        &mut wall_grid,
+                        &structure_list,
+                        &overlay_assets,
+                        deltas,
+                    );
+                }
             }
         });
 }
