@@ -14,8 +14,10 @@ Game parts:
 
 `WallGrid` and related concepts:
   * wall_grid.rs: `WallGrid` represents the world as `Sparse3d<Cell>`.
-    Core types (`Cell`, `VantageEvaluation`), grid-mutation methods (drag/click/undo),
-    `apply_changes` (syncs ECS entities to grid state), and `cell_transform`.
+    Core types (`Cell`, `VantageEvaluation`), `apply_changes` (syncs ECS entities to grid state),
+    and `cell_transform`.
+  * construction.rs: grid-mutation methods on `WallGrid` — `wall_drag`, `floor_drag`,
+    `room_plop`, `drag`, `click`, `undo`, and `load_from_offline`.
   * visibility.rs: hides parts of the `WallGrid` so we can see inside.
   * sparse3d.rs: storage for walls, ceilings and "room objects" on a sparse cubic grid
   * structure.rs: `Structure`s are the walls, doors, desks, etc. that occupy `Cell`s.
