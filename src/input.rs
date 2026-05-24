@@ -3,9 +3,10 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::GameCamera;
+use crate::sparse3d::{Facing, RelSlot};
 use crate::structure::{PlacementStyle, StructureList};
 use crate::wall_grid::{
-    apply_proposal_changes, ProposalGhostMarker, ProposalOverlayAssets, WallGrid,
+    apply_proposal_changes, cell_transform, ProposalGhostMarker, ProposalOverlayAssets, WallGrid,
 };
 
 #[derive(Resource)]
@@ -44,9 +45,11 @@ pub fn cursor_system(
         match is_room.then_some(maybe_pos).flatten() {
             Some(pos) => {
                 let s = pos.round();
-                t.translation = Vec3::new(s.x, y, s.z);
-                t.rotation =
-                    Quat::from_rotation_y(build_state.cur_dir as f32 * std::f32::consts::TAU / 4.0);
+                let cube = IVec3::new(s.x as i32, build_state.cur_y, s.z as i32);
+                let facing = Facing::from_number(build_state.cur_dir);
+                let tr = cell_transform(RelSlot::Room, facing, cube);
+                t.translation = tr.translation;
+                t.rotation = tr.rotation;
                 *vis = Visibility::Inherited;
             }
             None => *vis = Visibility::Hidden,
@@ -159,7 +162,7 @@ pub fn building_input_system(
 
     // --- Rotation ---
     if keyboard.just_pressed(KeyCode::KeyR) {
-        build_state.cur_dir = (build_state.cur_dir + 1) % 4;
+        build_state.cur_dir = (build_state.cur_dir + 3) % 4;
     }
 
     // --- Undo ---

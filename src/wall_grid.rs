@@ -167,17 +167,25 @@ pub fn cell_transform(slot: RelSlot, facing: Facing, cube: IVec3) -> Transform {
     let rx = Quat::from_rotation_x(-TAU / 4.0);
     let ry_neg90 = Quat::from_rotation_y(-TAU / 4.0);
 
-    let rotation = match slot {
+    let (rotation, translation) = match slot {
         RelSlot::Room => {
             let facing_angle = (1.0 - facing as u8 as f32) * (-TAU / 4.0);
-            Quat::from_rotation_y(-TAU / 4.0 + facing_angle) * rx
+            let rotation = Quat::from_rotation_y(-TAU / 4.0 + facing_angle) * rx;
+            // Rotate around the cell center rather than the cell corner, so the
+            // desk stays in the same cell regardless of facing direction.
+            let facing_rot = Quat::from_rotation_y(facing_angle);
+            let cell_center = cube.as_vec3() + Vec3::splat(0.5);
+            let translation = cell_center + facing_rot.mul_vec3(Vec3::splat(-0.5));
+            (rotation, translation)
         }
-        RelSlot::XLoWall | RelSlot::XHiWall | RelSlot::Floor | RelSlot::Ceiling => ry_neg90 * rx,
-        RelSlot::ZLoWall | RelSlot::ZHiWall => rx,
+        RelSlot::XLoWall | RelSlot::XHiWall | RelSlot::Floor | RelSlot::Ceiling => {
+            (ry_neg90 * rx, cube.as_vec3())
+        }
+        RelSlot::ZLoWall | RelSlot::ZHiWall => (rx, cube.as_vec3()),
     };
 
     Transform {
-        translation: cube.as_vec3(),
+        translation,
         rotation,
         scale: Vec3::ONE,
     }
