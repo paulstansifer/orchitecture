@@ -8,6 +8,49 @@
     <link data-trunk rel="copy-dir" href="shaders" />
     <link data-trunk rel="copy-dir" href="models" />
     <link data-trunk rel="copy-dir" href="training/" />
+    <link data-trunk rel="copy-file" href="orc.png" />
 </head>
+
+<body>
+    <div id="loading-screen">
+        <div class="spinner-wrap">
+            <img src="orc.png" alt="Orchitecture" />
+            <svg class="spinner-svg" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <!-- Rounded rectangle orbit path, 280x280 with r=45, centered in 300x300 -->
+                    <path id="orbit"
+                        d="M 55,10 L 245,10 Q 290,10 290,55 L 290,245 Q 290,290 245,290 L 55,290 Q 10,290 10,245 L 10,55 Q 10,10 55,10 Z" />
+                </defs>
+                <circle r="7" fill="#18b903">
+                    <animateMotion dur="3s" begin="0s" repeatCount="indefinite">
+                        <mpath href="#orbit" />
+                    </animateMotion>
+                </circle>
+                <circle r="7" fill="#18b903">
+                    <animateMotion dur="5s" begin="-4s" repeatCount="indefinite">
+                        <mpath href="#orbit" />
+                    </animateMotion>
+                </circle>
+                <circle r="7" fill="#18b903">
+                    <animateMotion dur="7s" begin="-3s" repeatCount="indefinite">
+                        <mpath href="#orbit" />
+                    </animateMotion>
+                </circle>
+                <circle r="7" fill="#18b903">
+                    <animateMotion dur="11s" begin="-2s" repeatCount="indefinite">
+                        <mpath href="#orbit" />
+                    </animateMotion>
+                </circle>
+            </svg>
+        </div>
+    </div>
+    <script>
+        window.addEventListener('TrunkApplicationStarted', () => {
+            const screen = document.getElementById('loading-screen');
+            screen.style.opacity = '0';
+            setTimeout(() => screen.remove(), 600);
+        });
+    </script>
+</body>
 
 </html>
