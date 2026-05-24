@@ -4,7 +4,9 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::GameCamera;
 use crate::structure::{PlacementStyle, StructureList};
-use crate::wall_grid::{apply_proposal_changes, ProposalGhostMarker, ProposalOverlayAssets, WallGrid};
+use crate::wall_grid::{
+    apply_proposal_changes, ProposalGhostMarker, ProposalOverlayAssets, WallGrid,
+};
 
 #[derive(Resource)]
 pub struct CursorEntities {
@@ -134,6 +136,7 @@ pub fn building_input_system(
     structure_list: Res<StructureList>,
     mut build_state: ResMut<BuildState>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
+    egui_wants_input: Res<bevy_egui::input::EguiWantsInput>,
     model_state: Res<crate::qnn::ModelState>,
     overlay_assets: Res<ProposalOverlayAssets>,
 ) {
@@ -146,10 +149,12 @@ pub fn building_input_system(
     }
 
     let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-    if shift && mouse_scroll.delta.y > 0.5 {
-        build_state.cur_y = (build_state.cur_y + 1).min(10);
-    } else if shift && mouse_scroll.delta.y < -0.5 {
-        build_state.cur_y = (build_state.cur_y - 1).max(0);
+    if shift && !egui_wants_input.wants_any_pointer_input() {
+        if mouse_scroll.delta.y > 0.5 {
+            build_state.cur_y = (build_state.cur_y + 1).min(10);
+        } else if mouse_scroll.delta.y < -0.5 {
+            build_state.cur_y = (build_state.cur_y - 1).max(0);
+        }
     }
 
     // --- Rotation ---
@@ -163,7 +168,13 @@ pub fn building_input_system(
         let changes = wall_grid.bypass_change_detection().undo();
         if !changes.is_empty() {
             let wg = wall_grid.bypass_change_detection();
-            apply_proposal_changes(&mut commands, &mut *wg, &structure_list, &overlay_assets, changes);
+            apply_proposal_changes(
+                &mut commands,
+                &mut *wg,
+                &structure_list,
+                &overlay_assets,
+                changes,
+            );
         }
     }
 
@@ -210,9 +221,13 @@ pub fn building_input_system(
 
             // All proposal edits bypass change detection so ceiling lights don't recompute.
             let changes = if dist_sq < 0.25 {
-                wall_grid.bypass_change_detection().click(start, id, dir, remove)
+                wall_grid
+                    .bypass_change_detection()
+                    .click(start, id, dir, remove)
             } else {
-                wall_grid.bypass_change_detection().drag(start, end, id, remove)
+                wall_grid
+                    .bypass_change_detection()
+                    .drag(start, end, id, remove)
             };
 
             if !changes.is_empty() {
@@ -247,7 +262,9 @@ pub fn update_room_cursor_mesh(
     *last_id = Some(id);
     if wall_grid.structure_is_room_plop(id as i32) {
         let handle = structure_list.scene_handle(id as i32).clone();
-        commands.entity(cursor_entities.room).insert(SceneRoot(handle));
+        commands
+            .entity(cursor_entities.room)
+            .insert(SceneRoot(handle));
     }
 }
 
@@ -374,5 +391,10 @@ pub fn spawn_cursors(
         ))
         .id();
 
-    commands.insert_resource(CursorEntities { wall, room, preview, cyan_mat });
+    commands.insert_resource(CursorEntities {
+        wall,
+        room,
+        preview,
+        cyan_mat,
+    });
 }

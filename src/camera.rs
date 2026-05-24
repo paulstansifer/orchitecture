@@ -1,10 +1,9 @@
 use std::f32::consts::TAU;
 
-use bevy::input::mouse::{AccumulatedMouseScroll, MouseButton};
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseButton, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-
-
+use bevy_egui::input::EguiWantsInput;
 
 #[derive(Resource)]
 pub struct CameraState {
@@ -43,6 +42,7 @@ pub fn camera_input_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
+    egui_wants_input: Res<EguiWantsInput>,
     mut last_cursor: Local<Option<Vec2>>,
     mut state: ResMut<CameraState>,
     mut camera_q: Query<&mut Transform, With<GameCamera>>,
@@ -59,13 +59,19 @@ pub fn camera_input_system(
 
     if mouse_button.pressed(MouseButton::Middle) {
         state.target_yaw -= cursor_delta.x * 0.005;
-        state.target_pitch = (state.target_pitch + cursor_delta.y * 0.005)
-            .clamp(0.05, TAU / 4.0 - 0.05);
+        state.target_pitch =
+            (state.target_pitch + cursor_delta.y * 0.005).clamp(0.05, TAU / 4.0 - 0.05);
     }
 
     let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-    if !shift && mouse_scroll.delta.y != 0.0 {
-        state.target_dist = (state.target_dist * 0.9_f32.powf(mouse_scroll.delta.y)).clamp(5.0, 200.0);
+    // `absorb_bevy_input_system` doesn't seem to work in all cases for mouse wheels
+    if !shift && mouse_scroll.delta.y != 0.0 && !egui_wants_input.wants_any_pointer_input() {
+        // Browsers report wheel deltas in pixels (~100/notch); native reports lines (~1/notch).
+        let scroll_y = match mouse_scroll.unit {
+            MouseScrollUnit::Line => mouse_scroll.delta.y,
+            MouseScrollUnit::Pixel => mouse_scroll.delta.y / 100.0,
+        };
+        state.target_dist = (state.target_dist * 0.9_f32.powf(scroll_y)).clamp(5.0, 200.0);
     }
 
     // WASD pan.
@@ -102,8 +108,8 @@ pub fn camera_input_system(
         yaw.cos() * pitch.cos() * dist,
     );
     let desired_pos = state.target_position + offset;
-    let desired = Transform::from_translation(desired_pos)
-        .looking_at(state.target_position, Vec3::Y);
+    let desired =
+        Transform::from_translation(desired_pos).looking_at(state.target_position, Vec3::Y);
 
     let lerp_pos = (8.0 * dt).min(1.0);
     let lerp_rot = (6.0 * dt).min(1.0);
