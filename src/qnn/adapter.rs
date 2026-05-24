@@ -6,6 +6,14 @@ use std::sync::Mutex;
 
 const MODEL_ARGS: &str = include_str!("../../models/model_args.json");
 
+#[cfg(not(target_arch = "wasm32"))]
+type AppBackend = burn::backend::Wgpu;
+
+// Wasm should support Wgpu... seems there is a problem while loading.
+// Maybe this will ne fast enough?
+#[cfg(target_arch = "wasm32")]
+type AppBackend = burn::backend::NdArray<f32>;
+
 // ---------------------------------------------------------------------------
 // Raw-bytes asset (used to ferry .mpk data through the Bevy asset pipeline)
 // ---------------------------------------------------------------------------
@@ -42,29 +50,31 @@ impl AssetLoader for ModelBytesLoader {
 // ---------------------------------------------------------------------------
 
 pub struct ModelHolder {
-    pub interest: Cnn<burn::backend::Wgpu>,
-    pub coherence: Cnn<burn::backend::Wgpu>,
+    pub interest: Cnn<AppBackend>,
+    pub coherence: Cnn<AppBackend>,
 }
 
 impl ModelHolder {
     fn from_bytes(interest_bytes: Vec<u8>, coherence_bytes: Vec<u8>) -> Self {
-        type B = burn::backend::Wgpu;
         use burn::module::Module;
         use burn::record::HalfPrecisionSettings;
         use burn::record::NamedMpkBytesRecorder;
 
-        let device: <B as Backend>::Device = Default::default();
+        let device: <AppBackend as Backend>::Device = Default::default();
         let args: super::model::Args = serde_json::from_str(MODEL_ARGS).unwrap();
 
         let recorder = NamedMpkBytesRecorder::<HalfPrecisionSettings>::new();
-        let i_record: <Cnn<B> as Module<B>>::Record =
+        let i_record: <Cnn<AppBackend> as Module<AppBackend>>::Record =
             recorder.load(interest_bytes, &device).unwrap();
-        let i_model = Cnn::<B>::new(&device, &args).load_record(i_record);
-        let c_record: <Cnn<B> as Module<B>>::Record =
+        let i_model = Cnn::<AppBackend>::new(&device, &args).load_record(i_record);
+        let c_record: <Cnn<AppBackend> as Module<AppBackend>>::Record =
             recorder.load(coherence_bytes, &device).unwrap();
-        let c_model = Cnn::<B>::new(&device, &args).load_record(c_record);
+        let c_model = Cnn::<AppBackend>::new(&device, &args).load_record(c_record);
 
-        ModelHolder { interest: i_model, coherence: c_model }
+        ModelHolder {
+            interest: i_model,
+            coherence: c_model,
+        }
     }
 }
 
@@ -75,7 +85,7 @@ pub fn compute_metrics(
     location: Vec3,
 ) -> Vec<f32> {
     let pos = location.round().as_ivec3();
-    let tensor: burn::tensor::Tensor<burn::backend::Wgpu, 5> =
+    let tensor: burn::tensor::Tensor<AppBackend, 5> =
         super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::wall_grid::Cell| {
             let semb = &structures[cell.id as usize].embedding;
             vec![semb.tall, semb.decorative, semb.passable, semb.striated]
@@ -120,8 +130,12 @@ fn build_model_when_ready(
     {
         return;
     }
-    let interest = model_bytes.remove(model_state.interest_handle.id()).unwrap();
-    let coherence = model_bytes.remove(model_state.coherence_handle.id()).unwrap();
+    let interest = model_bytes
+        .remove(model_state.interest_handle.id())
+        .unwrap();
+    let coherence = model_bytes
+        .remove(model_state.coherence_handle.id())
+        .unwrap();
     model_state.holder = Some(Mutex::new(ModelHolder::from_bytes(interest.0, coherence.0)));
 }
 
