@@ -3,8 +3,8 @@ use std::f32::consts::TAU;
 
 use bevy::math::{IVec3, Quat, Vec3};
 use bevy::prelude::{
-    AlphaMode, Assets, Color, Commands, Component, Entity, Mesh, Mesh3d, MeshMaterial3d,
-    ResMut, Resource, SceneRoot, StandardMaterial, Transform,
+    AlphaMode, Assets, Color, Commands, Component, Entity, Mesh, Mesh3d, MeshMaterial3d, ResMut,
+    Resource, SceneRoot, StandardMaterial, Transform,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +27,10 @@ pub struct Cell {
 
 impl crate::sparse3d::Rotateable for Cell {
     fn rotate(self, rotation: crate::sparse3d::Rotation) -> Self {
-        Cell { facing: self.facing.rotate(rotation), ..self }
+        Cell {
+            facing: self.facing.rotate(rotation),
+            ..self
+        }
     }
 }
 
@@ -149,10 +152,13 @@ impl WallGrid {
         self.proposed_changes.iter().count()
     }
 
-    /// Cost of committing current proposals, in months (ceil(n/10), min 1 when n > 0).
     pub fn months_for_construction(&self) -> usize {
         let n = self.num_proposed_changes();
-        if n == 0 { 0 } else { (n + 9) / 10 }
+        if n == 0 {
+            0
+        } else {
+            (n + 9) / 80
+        }
     }
 }
 
@@ -257,6 +263,17 @@ fn ring_rotation(slot: RelSlot) -> Quat {
     }
 }
 
+/// Returns the axis along which overlays should be duplicated so they protrude
+/// from the slot surface and remain visible rather than buried in the mesh.
+fn protrude_axis(slot: RelSlot) -> Option<Vec3> {
+    match slot {
+        RelSlot::XLoWall | RelSlot::XHiWall => Some(Vec3::X),
+        RelSlot::ZLoWall | RelSlot::ZHiWall => Some(Vec3::Z),
+        RelSlot::Floor | RelSlot::Ceiling => Some(Vec3::Y),
+        RelSlot::Room => None,
+    }
+}
+
 fn spawn_x_overlay(
     commands: &mut Commands,
     assets: &ProposalOverlayAssets,
@@ -265,23 +282,38 @@ fn spawn_x_overlay(
     let center = slot_center(loc);
     let (arm_mesh, rot1, rot2) = x_mesh_and_rotations(loc.rel_slot, assets);
 
-    let arm1 = commands
-        .spawn((
-            Mesh3d(arm_mesh.clone()),
-            MeshMaterial3d(assets.red_mat.clone()),
-            Transform::from_translation(center).with_rotation(rot1),
-            ProposalOverlayMarker { loc },
-        ))
-        .id();
-    let arm2 = commands
-        .spawn((
-            Mesh3d(arm_mesh),
-            MeshMaterial3d(assets.red_mat.clone()),
-            Transform::from_translation(center).with_rotation(rot2),
-            ProposalOverlayMarker { loc },
-        ))
-        .id();
-    vec![arm1, arm2]
+    // For wall slots spawn on both faces so the X is never buried.
+    const PROTRUDE: f32 = 0.15;
+    let offsets: &[Vec3] = match protrude_axis(loc.rel_slot) {
+        Some(n) => &[n * PROTRUDE, n * -PROTRUDE],
+        None => &[Vec3::ZERO],
+    };
+
+    let mut entities = Vec::new();
+    for &offset in offsets {
+        let c = center + offset;
+        entities.push(
+            commands
+                .spawn((
+                    Mesh3d(arm_mesh.clone()),
+                    MeshMaterial3d(assets.red_mat.clone()),
+                    Transform::from_translation(c).with_rotation(rot1),
+                    ProposalOverlayMarker { loc },
+                ))
+                .id(),
+        );
+        entities.push(
+            commands
+                .spawn((
+                    Mesh3d(arm_mesh.clone()),
+                    MeshMaterial3d(assets.red_mat.clone()),
+                    Transform::from_translation(c).with_rotation(rot2),
+                    ProposalOverlayMarker { loc },
+                ))
+                .id(),
+        );
+    }
+    entities
 }
 
 fn spawn_ring_overlay(
@@ -293,15 +325,28 @@ fn spawn_ring_overlay(
     if loc.rel_slot == RelSlot::Room {
         center.y += 0.25; // Float in upper half of cell for room objects
     }
-    let entity = commands
-        .spawn((
-            Mesh3d(assets.ring_mesh.clone()),
-            MeshMaterial3d(assets.yellow_mat.clone()),
-            Transform::from_translation(center).with_rotation(ring_rotation(loc.rel_slot)),
-            ProposalOverlayMarker { loc },
-        ))
-        .id();
-    vec![entity]
+
+    const PROTRUDE: f32 = 0.15;
+    let offsets: &[Vec3] = match protrude_axis(loc.rel_slot) {
+        Some(n) => &[n * PROTRUDE, n * -PROTRUDE],
+        None => &[Vec3::ZERO],
+    };
+
+    let mut entities = Vec::new();
+    for &offset in offsets {
+        entities.push(
+            commands
+                .spawn((
+                    Mesh3d(assets.ring_mesh.clone()),
+                    MeshMaterial3d(assets.yellow_mat.clone()),
+                    Transform::from_translation(center + offset)
+                        .with_rotation(ring_rotation(loc.rel_slot)),
+                    ProposalOverlayMarker { loc },
+                ))
+                .id(),
+        );
+    }
+    entities
 }
 
 /// Applies a list of proposal view changes: despawns old overlays/ghosts, spawns new ones.
@@ -350,7 +395,10 @@ pub fn spawn_proposal_overlay_assets(
 
     let arm_along_x = meshes.add(bevy::prelude::Cuboid::new(0.8, 0.07, 0.07));
     let arm_along_y = meshes.add(bevy::prelude::Cuboid::new(0.07, 0.8, 0.07));
-    let ring_mesh = meshes.add(Torus { minor_radius: 0.07, major_radius: 0.35 });
+    let ring_mesh = meshes.add(Torus {
+        minor_radius: 0.07,
+        major_radius: 0.35,
+    });
 
     let red_mat = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 0.15, 0.15, 0.9),
