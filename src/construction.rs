@@ -504,4 +504,59 @@ mod tests {
         assert_eq!(grid.proposed_changes.iter().count(), 0);
         assert!(grid.undo_record.is_empty());
     }
+
+    // ── smoke ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn smoke_load_propose_undo_construct() {
+        use bevy::math::Vec3;
+        use crate::serialization::load_from_str;
+        use crate::structure::load_structure_info;
+
+        // Structure indices from buildables/structures.json:
+        //   0 = desk  (RoomPlop,  z_char='V')
+        //   5 = wall  (WallDrag,  x_char='|', z_char='-')
+        const DESK_ID: i32 = 0;
+        const WALL_ID: i32 = 5;
+
+        let structures = load_structure_info();
+        let mut grid = WallGrid::new(structures.clone());
+
+        // 1. Load a saved building: one z-wall ('-') at (0,0,0).
+        //    Save format: pairs of (room+zwall / xwall+floor) lines, then "~~~~~" per y-layer.
+        let saved = " -\n  \n~~~~~\n~*~*~\n";
+        let loaded = load_from_str(saved, &structures);
+        let load_changes = grid.load_from_offline(loaded);
+
+        assert_eq!(load_changes.len(), 1);
+        let (loaded_loc, loaded_cell) = &load_changes[0];
+        assert_eq!(loaded_loc.rel_slot, RelSlot::ZLoWall);
+        assert_eq!(loaded_cell.as_ref().unwrap().id, WALL_ID);
+
+        // 2. Propose two z-walls via drag (x=1..=2, z=0).
+        let drag_deltas =
+            grid.drag(Vec3::new(1.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 0.0), WALL_ID, false);
+        assert_eq!(drag_deltas.len(), 2);
+        assert_eq!(grid.proposed_changes.iter().count(), 2);
+
+        // 3. Propose a desk at (2, 0, 2) via click.
+        let click_deltas = grid.click(Vec3::new(2.0, 0.0, 2.0), DESK_ID, 0, false);
+        assert_eq!(click_deltas.len(), 1);
+        assert!(matches!(click_deltas[0].1, ProposalView::Add(_)));
+        assert_eq!(grid.proposed_changes.iter().count(), 3);
+
+        // 4. Undo the desk; the two wall proposals remain.
+        let undo_deltas = grid.undo();
+        assert_eq!(undo_deltas.len(), 1);
+        assert!(matches!(undo_deltas[0].1, ProposalView::None));
+        assert_eq!(grid.proposed_changes.iter().count(), 2);
+
+        // 5. Construct: two new walls land in real contents; proposals clear.
+        let real_changes = grid.construct();
+        assert_eq!(real_changes.len(), 2);
+        assert!(grid.proposed_changes.iter().count() == 0);
+        assert!(grid.undo_record.is_empty());
+        // Original loaded wall + 2 newly constructed walls
+        assert_eq!(grid.contents.iter().count(), 3);
+    }
 }
