@@ -49,7 +49,7 @@ pub fn camera_input_system(
 ) {
     let dt = time.delta_secs();
 
-    // Track cursor delta for middle-mouse drag.
+    // Track cursor delta for right-mouse drag.
     let cursor = windows.single().map(|w| w.cursor_position()).ok().flatten();
     let cursor_delta = cursor
         .zip(*last_cursor)
@@ -57,7 +57,7 @@ pub fn camera_input_system(
         .unwrap_or(Vec2::ZERO);
     *last_cursor = cursor;
 
-    if mouse_button.pressed(MouseButton::Middle) {
+    if mouse_button.pressed(MouseButton::Right) {
         state.target_yaw -= cursor_delta.x * 0.005;
         state.target_pitch =
             (state.target_pitch + cursor_delta.y * 0.005).clamp(0.05, TAU / 4.0 - 0.05);
