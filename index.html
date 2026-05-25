@@ -45,10 +45,27 @@
         </div>
     </div>
     <script>
-        window.addEventListener('TrunkApplicationStarted', () => {
+        function dismissLoadingScreen() {
             const screen = document.getElementById('loading-screen');
+            if (!screen) return;
             screen.style.opacity = '0';
             setTimeout(() => screen.remove(), 600);
+        }
+
+        // Bevy's app.run() causes main() to exit abnormally on WASM (winit behavior),
+        // so Trunk's TrunkApplicationStarted event is never dispatched. Use a
+        // MutationObserver to detect when Bevy inserts its canvas as the real signal.
+        const observer = new MutationObserver(() => {
+            if (document.querySelector('canvas')) {
+                observer.disconnect();
+                dismissLoadingScreen();
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        window.addEventListener('TrunkApplicationStarted', () => {
+            observer.disconnect();
+            dismissLoadingScreen();
         });
     </script>
 </body>
