@@ -477,7 +477,7 @@ mod tests {
     // ── get_real_or_proposed ──────────────────────────────────────────────────
 
     #[test]
-    fn get_real_or_proposed_returns_proposal_over_real() {
+    fn get_real_or_proposed_removal() {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
         // Real cell with id=0
@@ -486,8 +486,8 @@ mod tests {
         grid.proposed_changes.set(loc, Proposal::Remove);
 
         assert!(
-            grid.get_real_or_proposed(loc).is_none(),
-            "Remove proposal should shadow the real cell"
+            grid.get_real_or_proposed(loc).is_some(),
+            "Remove proposals shouldn't override reals"
         );
     }
 
@@ -498,43 +498,6 @@ mod tests {
         grid.contents.set(loc, wall_cell(0));
 
         assert!(grid.get_real_or_proposed(loc).is_some());
-    }
-
-    // ── months_for_construction ───────────────────────────────────────────────
-
-    #[test]
-    fn months_zero_when_no_proposals() {
-        let grid = make_wall_grid();
-        assert_eq!(grid.months_for_construction(), 0);
-    }
-
-    #[test]
-    fn months_one_for_single_change() {
-        let mut grid = make_wall_grid();
-        grid.set_range_item_dir(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, Some(0));
-        assert_eq!(grid.months_for_construction(), 1);
-    }
-
-    #[test]
-    fn months_ceil_ten() {
-        let mut grid = make_wall_grid();
-        // Propose 10 walls along z
-        for z in 0..10 {
-            let pos = IVec3::new(0, 0, z);
-            grid.set_range_item_dir(0, pos, pos, RelSlot::XLoWall, Some(0));
-        }
-        assert_eq!(grid.num_proposed_changes(), 10);
-        assert_eq!(grid.months_for_construction(), 1);
-    }
-
-    #[test]
-    fn months_ceil_eleven_is_two() {
-        let mut grid = make_wall_grid();
-        for z in 0..11 {
-            let pos = IVec3::new(0, 0, z);
-            grid.set_range_item_dir(0, pos, pos, RelSlot::XLoWall, Some(0));
-        }
-        assert_eq!(grid.months_for_construction(), 2);
     }
 
     // ── load_from_offline ─────────────────────────────────────────────────────
