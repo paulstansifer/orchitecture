@@ -31,7 +31,11 @@ impl WallGrid {
 
                     let new_proposal: Option<Proposal> = if let Some(id) = item {
                         let facing = Facing::from_number(dir as u8);
-                        let new_cell = Cell { id, facing, evaluation: None };
+                        let new_cell = Cell {
+                            id,
+                            facing,
+                            evaluation: None,
+                        };
                         if real_cell.as_ref() == Some(&new_cell) {
                             None // Desired state already matches real — cancel any proposal
                         } else {
@@ -39,7 +43,11 @@ impl WallGrid {
                         }
                     } else {
                         // Erasure: only meaningful if a real cell exists
-                        if real_cell.is_some() { Some(Proposal::Remove) } else { None }
+                        if real_cell.is_some() {
+                            Some(Proposal::Remove)
+                        } else {
+                            None
+                        }
                     };
 
                     if new_proposal == prior_proposal {
@@ -72,7 +80,9 @@ impl WallGrid {
         }
 
         if !undo_changed.is_empty() {
-            self.undo_record.push(UndoRecord { changed: undo_changed });
+            self.undo_record.push(UndoRecord {
+                changed: undo_changed,
+            });
         }
         changes
     }
@@ -95,8 +105,16 @@ impl WallGrid {
 
         let start = from_i.min(to_i);
         let end = from_i.max(to_i)
-            - if along_x { IVec3::new(1, 0, 0) } else { IVec3::new(0, 0, 1) };
-        let slot = if along_x { RelSlot::ZLoWall } else { RelSlot::XLoWall };
+            - if along_x {
+                IVec3::new(1, 0, 0)
+            } else {
+                IVec3::new(0, 0, 1)
+            };
+        let slot = if along_x {
+            RelSlot::ZLoWall
+        } else {
+            RelSlot::XLoWall
+        };
 
         self.set_range_item_dir(0, start, end, slot, selected_mesh_id)
     }
@@ -126,7 +144,10 @@ impl WallGrid {
             // Desk's ID number. TODO: fix this!
             let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
             if let Some(Proposal::Place(cell)) = self.proposed_changes.get_mut(loc) {
-                cell.evaluation = Some(VantageEvaluation { coherence: 0.5, interest: 0.5 });
+                cell.evaluation = Some(VantageEvaluation {
+                    coherence: 0.5,
+                    interest: 0.5,
+                });
             }
         }
         changes
@@ -269,13 +290,22 @@ mod tests {
             placement_style: PlacementStyle::WallDrag,
             x_char: None,
             z_char: None,
-            embedding: StructureEmbedding { tall: 0.0, passable: 0.0, decorative: 0.0, striated: 0.0 },
+            embedding: StructureEmbedding {
+                tall: 0.0,
+                passable: 0.0,
+                decorative: 0.0,
+                striated: 0.0,
+            },
         }];
         WallGrid::new(structs)
     }
 
     fn wall_cell(id: i32) -> Cell {
-        Cell { id, facing: Facing::NegX, evaluation: None }
+        Cell {
+            id,
+            facing: Facing::NegX,
+            evaluation: None,
+        }
     }
 
     fn xlowall(x: i32, y: i32, z: i32) -> SlotLocation {
@@ -291,8 +321,14 @@ mod tests {
 
         grid.set_range_item_dir(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, Some(0));
 
-        assert!(grid.contents.get(loc).is_none(), "contents must not change on proposal");
-        assert!(matches!(grid.proposed_changes.get(loc), Some(Proposal::Place(_))));
+        assert!(
+            grid.contents.get(loc).is_none(),
+            "contents must not change on proposal"
+        );
+        assert!(matches!(
+            grid.proposed_changes.get(loc),
+            Some(Proposal::Place(_))
+        ));
     }
 
     #[test]
@@ -313,8 +349,7 @@ mod tests {
 
         // Now propose a different cell (id=0 same, so let's make a distinct check)
         // propose removal to get a Remove view
-        let deltas =
-            grid.set_range_item_dir(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, None);
+        let deltas = grid.set_range_item_dir(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, None);
         assert_eq!(deltas.len(), 1);
         assert!(matches!(deltas[0].1, ProposalView::Remove));
     }
@@ -337,8 +372,7 @@ mod tests {
     #[test]
     fn propose_remove_on_empty_slot_is_no_op() {
         let mut grid = make_wall_grid();
-        let deltas =
-            grid.set_range_item_dir(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, None);
+        let deltas = grid.set_range_item_dir(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, None);
         assert!(deltas.is_empty());
         assert_eq!(grid.proposed_changes.iter().count(), 0);
     }
@@ -354,7 +388,10 @@ mod tests {
         assert!(grid.proposed_changes.get(loc).is_some());
 
         let deltas = grid.undo();
-        assert!(grid.proposed_changes.get(loc).is_none(), "undo should clear the proposal");
+        assert!(
+            grid.proposed_changes.get(loc).is_none(),
+            "undo should clear the proposal"
+        );
         assert_eq!(deltas.len(), 1);
         assert!(matches!(deltas[0].1, ProposalView::None));
     }
@@ -382,7 +419,13 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(1, 0, 0);
 
-        grid.set_range_item_dir(0, IVec3::new(1, 0, 0), IVec3::new(1, 0, 0), RelSlot::XLoWall, Some(0));
+        grid.set_range_item_dir(
+            0,
+            IVec3::new(1, 0, 0),
+            IVec3::new(1, 0, 0),
+            RelSlot::XLoWall,
+            Some(0),
+        );
         assert!(grid.contents.get(loc).is_none());
 
         let real_changes = grid.construct();
@@ -442,7 +485,10 @@ mod tests {
         // Proposed removal
         grid.proposed_changes.set(loc, Proposal::Remove);
 
-        assert!(grid.get_real_or_proposed(loc).is_none(), "Remove proposal should shadow the real cell");
+        assert!(
+            grid.get_real_or_proposed(loc).is_none(),
+            "Remove proposal should shadow the real cell"
+        );
     }
 
     #[test]
@@ -509,9 +555,9 @@ mod tests {
 
     #[test]
     fn smoke_load_propose_undo_construct() {
-        use bevy::math::Vec3;
         use crate::serialization::load_from_str;
         use crate::structure::load_structure_info;
+        use bevy::math::Vec3;
 
         // Structure indices from buildables/structures.json:
         //   0 = desk  (RoomPlop,  z_char='V')
@@ -534,8 +580,12 @@ mod tests {
         assert_eq!(loaded_cell.as_ref().unwrap().id, WALL_ID);
 
         // 2. Propose two z-walls via drag (x=1..=2, z=0).
-        let drag_deltas =
-            grid.drag(Vec3::new(1.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 0.0), WALL_ID, false);
+        let drag_deltas = grid.drag(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(3.0, 0.0, 0.0),
+            WALL_ID,
+            false,
+        );
         assert_eq!(drag_deltas.len(), 2);
         assert_eq!(grid.proposed_changes.iter().count(), 2);
 

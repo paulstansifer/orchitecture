@@ -56,7 +56,11 @@ fn spawn_grid_preview(
 fn update_grid_preview(
     build_state: Res<BuildState>,
     mut grid_q: Query<
-        (&mut Transform, &mut Visibility, &MeshMaterial3d<GridPreviewMaterial>),
+        (
+            &mut Transform,
+            &mut Visibility,
+            &MeshMaterial3d<GridPreviewMaterial>,
+        ),
         With<GridPreviewMarker>,
     >,
     mut materials: ResMut<Assets<GridPreviewMaterial>>,

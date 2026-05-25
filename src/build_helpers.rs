@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use enum_derived::Rand;
 use bevy::math::IVec3;
+use enum_derived::Rand;
 
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::StructureInfo;
@@ -233,10 +233,7 @@ pub fn make_boring_room(
     let x_size = rng.random_range(1..7);
     let y_height = rng.random_range(1..4);
     let z_size = rng.random_range(1..7);
-    builder.build_box(
-        IVec3::new(0, 0, 0),
-        IVec3::new(x_size, y_height, z_size),
-    );
+    builder.build_box(IVec3::new(0, 0, 0), IVec3::new(x_size, y_height, z_size));
     let door_loc = IVec3::new(rng.random_range(0..=x_size), 0, 0);
     builder.build_plane(door_loc, door_loc, RelSlot::ZLoWall, Some("doorway"));
     builder.set_vantage(

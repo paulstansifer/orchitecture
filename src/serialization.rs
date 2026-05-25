@@ -207,7 +207,11 @@ pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Ce
         content,
         |c, _slot, map| {
             let id = deserialize(c, map);
-            Ok::<Cell, ()>(Cell { id, facing: Facing::NegX, evaluation: None })
+            Ok::<Cell, ()>(Cell {
+                id,
+                facing: Facing::NegX,
+                evaluation: None,
+            })
         },
         &structures_by_char,
     )

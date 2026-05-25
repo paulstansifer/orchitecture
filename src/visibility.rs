@@ -88,12 +88,7 @@ fn descend_to_floor(wall_grid: &WallGrid, x: i32, z: i32, from_y: i32) -> Option
 }
 
 /// BFS over Floor cells at `floor_y`, ignoring walls. Returns (x, z) of all reachable cells.
-fn ground_floor_fill(
-    wall_grid: &WallGrid,
-    sx: i32,
-    floor_y: i32,
-    sz: i32,
-) -> HashSet<(i32, i32)> {
+fn ground_floor_fill(wall_grid: &WallGrid, sx: i32, floor_y: i32, sz: i32) -> HashSet<(i32, i32)> {
     let mut visited: HashSet<(i32, i32)> = HashSet::new();
     let mut queue: VecDeque<(i32, i32)> = VecDeque::new();
     if wall_grid
@@ -336,8 +331,7 @@ pub fn compute_visibility(
             continue;
         }
 
-        let upper_cells =
-            upper_floor_fill(wall_grid, fx, fy, fz, &mut floor_visited, &mut hidden);
+        let upper_cells = upper_floor_fill(wall_grid, fx, fy, fz, &mut floor_visited, &mut hidden);
         if upper_cells.is_empty() {
             continue;
         }
@@ -439,7 +433,12 @@ pub fn update_visibility_system(
             let transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
             let entity = if is_proposed_only {
                 commands
-                    .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker, ProposedCutMarker))
+                    .spawn((
+                        SceneRoot(cut_handle.clone()),
+                        transform,
+                        CutCellMarker,
+                        ProposedCutMarker,
+                    ))
                     .id()
             } else {
                 commands

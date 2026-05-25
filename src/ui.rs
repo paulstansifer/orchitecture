@@ -2,38 +2,95 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 
 use crate::input::BuildState;
-use crate::structure::StructureList;
 use crate::serialization;
+use crate::structure::StructureList;
 use crate::wall_grid::{apply_changes, apply_proposal_changes, ProposalOverlayAssets, WallGrid};
 
 /// Maps bundled at compile time; always available on all platforms.
 const BUNDLED_MAPS: &[(&str, &str)] = &[
-    ("boring_room.txt",               include_str!("../training/boring_room.txt")),
-    ("boring_room_blob.txt",          include_str!("../training/boring_room_blob.txt")),
-    ("boring_room_tall.txt",          include_str!("../training/boring_room_tall.txt")),
-    ("boring_room_tall_with_boxes.txt", include_str!("../training/boring_room_tall_with_boxes.txt")),
-    ("boring_room_tiny.txt",          include_str!("../training/boring_room_tiny.txt")),
-    ("boring_room_with_alcove.txt",   include_str!("../training/boring_room_with_alcove.txt")),
-    ("cavern.txt",                    include_str!("../training/cavern.txt")),
-    ("chaotic_apartment.txt",         include_str!("../training/chaotic_apartment.txt")),
-    ("corner_in_corner.txt",          include_str!("../training/corner_in_corner.txt")),
-    ("corners.txt",                   include_str!("../training/corners.txt")),
-    ("double_balconies.txt",          include_str!("../training/double_balconies.txt")),
-    ("gallery.txt",                   include_str!("../training/gallery.txt")),
-    ("hall_turn_fat_pillars.txt",     include_str!("../training/hall_turn_fat_pillars.txt")),
-    ("hall_turn_stations.txt",        include_str!("../training/hall_turn_stations.txt")),
-    ("long_apartment.txt",            include_str!("../training/long_apartment.txt")),
-    ("meta_pillars.txt",              include_str!("../training/meta_pillars.txt")),
-    ("random_but_coherent.txt",       include_str!("../training/random_but_coherent.txt")),
-    ("rotational_apartment.txt",      include_str!("../training/rotational_apartment.txt")),
-    ("sanctuary.txt",                 include_str!("../training/sanctuary.txt")),
-    ("simple_apartment.txt",          include_str!("../training/simple_apartment.txt")),
-    ("simple_balcony.txt",            include_str!("../training/simple_balcony.txt")),
-    ("two_level_apartment.txt",       include_str!("../training/two_level_apartment.txt")),
+    (
+        "boring_room.txt",
+        include_str!("../training/boring_room.txt"),
+    ),
+    (
+        "boring_room_blob.txt",
+        include_str!("../training/boring_room_blob.txt"),
+    ),
+    (
+        "boring_room_tall.txt",
+        include_str!("../training/boring_room_tall.txt"),
+    ),
+    (
+        "boring_room_tall_with_boxes.txt",
+        include_str!("../training/boring_room_tall_with_boxes.txt"),
+    ),
+    (
+        "boring_room_tiny.txt",
+        include_str!("../training/boring_room_tiny.txt"),
+    ),
+    (
+        "boring_room_with_alcove.txt",
+        include_str!("../training/boring_room_with_alcove.txt"),
+    ),
+    ("cavern.txt", include_str!("../training/cavern.txt")),
+    (
+        "chaotic_apartment.txt",
+        include_str!("../training/chaotic_apartment.txt"),
+    ),
+    (
+        "corner_in_corner.txt",
+        include_str!("../training/corner_in_corner.txt"),
+    ),
+    ("corners.txt", include_str!("../training/corners.txt")),
+    (
+        "double_balconies.txt",
+        include_str!("../training/double_balconies.txt"),
+    ),
+    ("gallery.txt", include_str!("../training/gallery.txt")),
+    (
+        "hall_turn_fat_pillars.txt",
+        include_str!("../training/hall_turn_fat_pillars.txt"),
+    ),
+    (
+        "hall_turn_stations.txt",
+        include_str!("../training/hall_turn_stations.txt"),
+    ),
+    (
+        "long_apartment.txt",
+        include_str!("../training/long_apartment.txt"),
+    ),
+    (
+        "meta_pillars.txt",
+        include_str!("../training/meta_pillars.txt"),
+    ),
+    (
+        "random_but_coherent.txt",
+        include_str!("../training/random_but_coherent.txt"),
+    ),
+    (
+        "rotational_apartment.txt",
+        include_str!("../training/rotational_apartment.txt"),
+    ),
+    ("sanctuary.txt", include_str!("../training/sanctuary.txt")),
+    (
+        "simple_apartment.txt",
+        include_str!("../training/simple_apartment.txt"),
+    ),
+    (
+        "simple_balcony.txt",
+        include_str!("../training/simple_balcony.txt"),
+    ),
+    (
+        "two_level_apartment.txt",
+        include_str!("../training/two_level_apartment.txt"),
+    ),
 ];
 
 fn find_bundled(name: &str) -> Option<&'static str> {
-    BUNDLED_MAPS.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
+    BUNDLED_MAPS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, c)| *c)
 }
 
 #[derive(Resource, Default)]
@@ -49,7 +106,10 @@ pub fn enable_ui_input_absorption(mut egui_settings: ResMut<EguiGlobalSettings>)
 
 pub fn discover_user_files(mut ui_state: ResMut<UiState>) {
     // Bundled maps are always available.
-    ui_state.available_files = BUNDLED_MAPS.iter().map(|(name, _)| name.to_string()).collect();
+    ui_state.available_files = BUNDLED_MAPS
+        .iter()
+        .map(|(name, _)| name.to_string())
+        .collect();
 
     // On native, also add any user-created files not already in the bundled list.
     #[cfg(not(target_arch = "wasm32"))]
@@ -109,7 +169,9 @@ pub fn ui_system(
 
                 ui.separator();
                 ui.label("Save:");
-                ui.add(egui::TextEdit::singleline(&mut ui_state.save_filename).desired_width(110.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut ui_state.save_filename).desired_width(110.0),
+                );
                 if ui.button("Save").clicked() && !ui_state.save_filename.is_empty() {
                     let path = user_dir.join(&ui_state.save_filename);
                     serialization::save(&wall_grid.contents, &wall_grid.structures, &path);
@@ -117,7 +179,9 @@ pub fn ui_system(
 
                 ui.separator();
                 ui.label("Load:");
-                ui.add(egui::TextEdit::singleline(&mut ui_state.load_filename).desired_width(110.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut ui_state.load_filename).desired_width(110.0),
+                );
                 if ui.button("Load").clicked() && !ui_state.load_filename.is_empty() {
                     let name = ui_state.load_filename.clone();
                     let new_contents = if let Some(content) = find_bundled(&name) {
@@ -212,8 +276,11 @@ pub fn ui_system(
             if n > 0 {
                 ui.separator();
                 let months = wall_grid.months_for_construction();
-                let months_label =
-                    if months == 1 { "month".to_string() } else { "months".to_string() };
+                let months_label = if months == 1 {
+                    "month".to_string()
+                } else {
+                    "months".to_string()
+                };
                 if ui
                     .button(format!("Construct! ({months} {months_label})"))
                     .clicked()

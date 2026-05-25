@@ -1,11 +1,11 @@
 use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
+use bevy::math::IVec3;
 use burn::prelude::*;
 use burn::tensor::Float;
-use bevy::math::IVec3;
 use std::error::Error;
 
 #[cfg(feature = "training")]
-use burn::tensor::TensorData;
+use crate::structure::{self, StructureInfo};
 #[cfg(feature = "training")]
 use crate::wall_grid::Cell;
 #[cfg(feature = "training")]
@@ -13,11 +13,11 @@ use burn::backend::Autodiff;
 #[cfg(feature = "training")]
 use burn::data::dataset::InMemDataset;
 #[cfg(feature = "training")]
+use burn::tensor::TensorData;
+#[cfg(feature = "training")]
 use rand::rngs::StdRng;
 #[cfg(feature = "training")]
 use std::collections::HashMap;
-#[cfg(feature = "training")]
-use crate::structure::{self, StructureInfo};
 
 pub const EMBEDDING_SIZE: usize = 4 + 1; // Keep this in sync with structure.rs (+ 1 for "indoors")
 

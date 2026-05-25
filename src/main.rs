@@ -7,16 +7,14 @@ use orchitecture_lib::{
     ceiling_lights::update_ceiling_lights,
     grid_preview::GridPreviewPlugin,
     input::{
-        building_input_system, cursor_system, recolor_new_mesh_children,
-        spawn_cursors, update_room_cursor_mesh, BuildState,
+        building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
+        update_room_cursor_mesh, BuildState,
     },
     qnn::ModelPlugin,
     structure::{spawn_structures, StructureList},
     ui::{discover_user_files, enable_ui_input_absorption, ui_system, UiState},
     visibility::update_visibility_system,
-    wall_grid::{
-        spawn_grid, spawn_proposal_overlay_assets, WallGrid,
-    },
+    wall_grid::{spawn_grid, spawn_proposal_overlay_assets, WallGrid},
     world::spawn_world,
 };
 

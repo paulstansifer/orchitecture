@@ -9,13 +9,13 @@ use burn::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "training")]
+use super::translate::GroundTruth;
+#[cfg(feature = "training")]
 use burn::{
     backend::Autodiff,
     tensor::backend::AutodiffBackend,
     train::{RegressionOutput, TrainOutput},
 };
-#[cfg(feature = "training")]
-use super::translate::GroundTruth;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "training", derive(clap::Parser))]

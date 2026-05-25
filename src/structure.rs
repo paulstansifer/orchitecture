@@ -59,10 +59,16 @@ pub fn load_structure_info() -> Vec<StructureInfo> {
 }
 
 /// Register handles for every .gltf referenced in the given StructureInfo list.
-pub fn load_mesh_handles(asset_server: &AssetServer, infos: &[StructureInfo]) -> HashMap<String, Handle<Scene>> {
+pub fn load_mesh_handles(
+    asset_server: &AssetServer,
+    infos: &[StructureInfo],
+) -> HashMap<String, Handle<Scene>> {
     let mut handles = HashMap::new();
     for info in infos {
-        for filename in [Some(&info.main_mesh), info.y_cut_mesh.as_ref()].into_iter().flatten() {
+        for filename in [Some(&info.main_mesh), info.y_cut_mesh.as_ref()]
+            .into_iter()
+            .flatten()
+        {
             if !handles.contains_key(filename.as_str()) {
                 let asset_path = format!("buildables/{filename}#Scene0");
                 handles.insert(filename.clone(), asset_server.load(&asset_path));

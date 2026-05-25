@@ -20,7 +20,11 @@ pub fn make_structures() -> Vec<Sparse3D<Cell>> {
     let mut boring_room_with_alcove = Builder::new(&structures);
     boring_room_with_alcove
         .build_union_boxes(&[(v(-3, 0, 0), v(3, 0, 14)), (v(-2, 0, 2), v(-4, 0, 5))]);
-    boring_room_with_alcove.set_vantage(v(0, 0, 2), /*coherence=*/ 0.7, /*interest=*/ 0.1);
+    boring_room_with_alcove.set_vantage(
+        v(0, 0, 2),
+        /*coherence=*/ 0.7,
+        /*interest=*/ 0.1,
+    );
 
     let mut plus_shaped_room = Builder::new(&structures);
     plus_shaped_room.build_union_boxes(&[(v(-2, 0, -7), v(2, 0, 7)), (v(-7, 0, -2), v(7, 0, 2))]);
