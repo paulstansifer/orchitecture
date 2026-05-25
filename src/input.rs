@@ -6,7 +6,8 @@ use crate::camera::GameCamera;
 use crate::sparse3d::{Facing, RelSlot};
 use crate::structure::{PlacementStyle, StructureList};
 use crate::wall_grid::{
-    apply_proposal_changes, cell_transform, ProposalGhostMarker, ProposalOverlayAssets, WallGrid,
+    apply_proposal_changes, cell_transform, ProposalGhostMarker, ProposalOverlayAssets,
+    ProposedCutMarker, WallGrid,
 };
 
 #[derive(Resource)]
@@ -50,6 +51,7 @@ pub fn cursor_system(
                 let tr = cell_transform(RelSlot::Room, facing, cube);
                 t.translation = tr.translation;
                 t.rotation = tr.rotation;
+                t.scale = Vec3::splat(0.999);
                 *vis = Visibility::Inherited;
             }
             None => *vis = Visibility::Hidden,
@@ -271,7 +273,8 @@ pub fn update_room_cursor_mesh(
     }
 }
 
-/// Recolors newly spawned mesh children of the room cursor (cyan) and proposal ghosts (translucent).
+/// Recolors newly spawned mesh children of the room cursor (cyan), proposal ghosts (translucent),
+/// and proposed-cut entities (translucent, same material as ghosts).
 ///
 /// Uses `ParamSet` to avoid a conflict between the `Added<T>` filter and `&mut T` access,
 /// which Bevy treats as incompatible within a single system.
@@ -279,6 +282,7 @@ pub fn recolor_new_mesh_children(
     cursor_entities: Res<CursorEntities>,
     overlay_assets: Res<ProposalOverlayAssets>,
     ghost_markers_q: Query<Entity, With<ProposalGhostMarker>>,
+    proposed_cut_q: Query<Entity, With<ProposedCutMarker>>,
     child_of_q: Query<&ChildOf>,
     mut param_set: ParamSet<(
         Query<Entity, Added<MeshMaterial3d<StandardMaterial>>>,
@@ -294,6 +298,14 @@ pub fn recolor_new_mesh_children(
         } else {
             for ghost_entity in ghost_markers_q.iter() {
                 if is_descendant_of(entity, ghost_entity, &child_of_q) {
+                    if let Ok(mut m) = param_set.p1().get_mut(entity) {
+                        *m = MeshMaterial3d(overlay_assets.ghost_mat.clone());
+                    }
+                    break;
+                }
+            }
+            for cut_entity in proposed_cut_q.iter() {
+                if is_descendant_of(entity, cut_entity, &child_of_q) {
                     if let Ok(mut m) = param_set.p1().get_mut(entity) {
                         *m = MeshMaterial3d(overlay_assets.ghost_mat.clone());
                     }

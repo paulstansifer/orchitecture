@@ -77,6 +77,11 @@ pub struct ProposalOverlayMarker {
     pub loc: SlotLocation,
 }
 
+/// Marker component for cut-plane entities that replace a proposed-only (ghost) wall.
+/// Children get the ghost material applied by `recolor_new_mesh_children`.
+#[derive(Component)]
+pub struct ProposedCutMarker;
+
 /// Pre-built mesh/material handles used to spawn proposal overlays.
 #[derive(Resource)]
 pub struct ProposalOverlayAssets {
@@ -139,13 +144,22 @@ impl WallGrid {
         self.structures[id as usize].placement_style == crate::structure::PlacementStyle::RoomPlop
     }
 
-    /// Returns the effective cell at `loc`: the proposed state if any, otherwise the real cell.
+    /// Returns `(real, proposed_add)`:
+    /// - `real`: the cell in `contents`, if any (present even under a `Proposal::Remove`).
+    /// - `proposed_add`: the proposed cell only when it is an addition with no real cell beneath it.
+    pub fn get_real_and_proposed(&self, loc: SlotLocation) -> (Option<&Cell>, Option<&Cell>) {
+        let real = self.contents.get(loc);
+        let proposed_add = match self.proposed_changes.get(loc) {
+            Some(Proposal::Place(cell)) if real.is_none() => Some(cell),
+            _ => None,
+        };
+        (real, proposed_add)
+    }
+
+    /// If both, returns `real`.
     pub fn get_real_or_proposed(&self, loc: SlotLocation) -> Option<&Cell> {
-        match self.proposed_changes.get(loc) {
-            Some(Proposal::Place(cell)) => Some(cell),
-            Some(Proposal::Remove) => None,
-            None => self.contents.get(loc),
-        }
+        let (real, proposed) = self.get_real_and_proposed(loc);
+        real.or(proposed)
     }
 
     pub fn num_proposed_changes(&self) -> usize {
@@ -374,7 +388,8 @@ pub fn apply_proposal_changes(
         match view {
             ProposalView::None => {}
             ProposalView::Add(cell) => {
-                let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+                let mut transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+                transform.scale *= 0.999;
                 let handle = structure_list.scene_handle(cell.id).clone();
                 let entity = commands
                     .spawn((SceneRoot(handle), transform, ProposalGhostMarker { loc }))

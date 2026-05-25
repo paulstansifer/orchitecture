@@ -9,7 +9,10 @@ use crate::camera::GameCamera;
 use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, SlotLocation};
 use crate::structure::StructureList;
-use crate::wall_grid::{cell_transform, GridCellMarker, WallGrid};
+use crate::wall_grid::{
+    cell_transform, GridCellMarker, ProposalGhostMarker, ProposalOverlayMarker, ProposedCutMarker,
+    WallGrid,
+};
 
 /// Marker component for y-cut visibility variant entities.
 #[derive(Component)]
@@ -222,7 +225,7 @@ fn climb_wall_column(
     z_dir: i32,
     visited_walls: &mut HashSet<(i32, i32, i32, bool)>,
     hidden: &mut Vec<SlotLocation>,
-    mut cut: Option<&mut Vec<(SlotLocation, i32)>>,
+    mut cut: Option<&mut Vec<(SlotLocation, i32, bool)>>,
     floor_seeds: &mut Vec<(i32, i32, i32, bool)>,
 ) {
     let is_x = bottom_loc.rel_slot == RelSlot::XLoWall;
@@ -235,15 +238,15 @@ fn climb_wall_column(
         }
         let cur_loc =
             SlotLocation::new(bottom_loc.cube.x, y, bottom_loc.cube.z, bottom_loc.rel_slot);
-        let Some(cell) = wall_grid.get_real_or_proposed(cur_loc) else {
+        let (real, proposed) = wall_grid.get_real_and_proposed(cur_loc);
+        let Some(cell) = real.or(proposed) else {
             break;
         };
         hidden.push(cur_loc);
         if first {
             if let Some(ref mut cut) = cut {
-                // Cut entities reference the real cell id for mesh lookup; fall back to 0 if only proposed.
-                let id = wall_grid.contents.get(cur_loc).map(|c| c.id).unwrap_or(cell.id);
-                cut.push((cur_loc, id));
+                let is_proposed_only = real.is_none();
+                cut.push((cur_loc, cell.id, is_proposed_only));
             }
             first = false;
         }
@@ -279,9 +282,9 @@ pub fn compute_visibility(
     (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
     cur_y: i32,
-) -> (Vec<SlotLocation>, Vec<(SlotLocation, i32)>) {
+) -> (Vec<SlotLocation>, Vec<(SlotLocation, i32, bool)>) {
     let mut hidden: Vec<SlotLocation> = Vec::new();
-    let mut cut: Vec<(SlotLocation, i32)> = Vec::new();
+    let mut cut: Vec<(SlotLocation, i32, bool)> = Vec::new();
 
     let (x_dir, z_dir) = camera_facing_dirs(focus_location, camera_location);
     let (sx, sz) = cursor_cube(focus_location, camera_location, is_room_plop);
@@ -361,6 +364,8 @@ pub fn update_visibility_system(
         &mut Visibility,
         Option<&RenderLayers>,
     )>,
+    mut ghost_q: Query<(Entity, &ProposalGhostMarker, Option<&RenderLayers>)>,
+    mut overlay_q: Query<(Entity, &ProposalOverlayMarker, Option<&RenderLayers>)>,
     children_q: Query<&Children>,
     cut_q: Query<Entity, With<CutCellMarker>>,
 ) {
@@ -407,12 +412,40 @@ pub fn update_visibility_system(
         }
     }
 
-    for (loc, id) in cut_entries {
+    for (entity, marker, current_layers) in ghost_q.iter_mut() {
+        let desired = if hidden_set.contains(&marker.loc) {
+            RenderLayers::layer(SHADOW_ONLY_LAYER)
+        } else {
+            RenderLayers::default()
+        };
+        if current_layers.map_or(true, |l| l != &desired) {
+            apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
+        }
+    }
+
+    for (entity, marker, current_layers) in overlay_q.iter_mut() {
+        let desired = if hidden_set.contains(&marker.loc) {
+            RenderLayers::layer(SHADOW_ONLY_LAYER)
+        } else {
+            RenderLayers::default()
+        };
+        if current_layers.map_or(true, |l| l != &desired) {
+            apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
+        }
+    }
+
+    for (loc, id, is_proposed_only) in cut_entries {
         if let Some(cut_handle) = structure_list.cut_handle(id) {
             let transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
-            let entity = commands
-                .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
-                .id();
+            let entity = if is_proposed_only {
+                commands
+                    .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker, ProposedCutMarker))
+                    .id()
+            } else {
+                commands
+                    .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
+                    .id()
+            };
             wall_grid
                 .bypass_change_detection()
                 .cut_entities
