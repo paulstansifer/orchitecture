@@ -402,7 +402,7 @@ where
                         continue;
                     }
 
-                    if let Some(ref cell) = sparse_data.get(slot_location) {
+                    if let Some(cell) = sparse_data.get(slot_location) {
                         let mut emb = embedding(cell);
                         emb.push(1.0); // Window are opaque: if we can see it at all, it's indoors.
 
@@ -438,10 +438,10 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
                     .to_vec::<f32>()
                     .unwrap();
 
-                for i in 0..voxel.len() {
-                    if voxel[i] > 0.0 {
+                for channel in &voxel {
+                    if *channel > 0.0 {
                         has_anything_y = true;
-                        write!(slice, "{}", (voxel[i] * 9.0) as u8).unwrap();
+                        write!(slice, "{}", (channel * 9.0) as u8).unwrap();
                     } else {
                         write!(slice, " ").unwrap();
                     }
