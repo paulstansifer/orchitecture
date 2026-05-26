@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+
 use bevy::prelude::*;
 
 use crate::sparse3d::{RelSlot, Sparse3D};
@@ -125,10 +127,10 @@ fn lights_for_component(tiles: &HashSet<(i32, i32)>, y: i32) -> Vec<Vec3> {
         uncovered.retain(|t| !covered.contains(t));
     }
 
-    // Ceiling face is at world y = cube_y + 1.0; hang the light just below it.
+    // Hang the light just below the ceiling, in the middle
     light_xz
         .into_iter()
-        .map(|(x, z)| Vec3::new(x as f32 + 0.5, y as f32 + 0.8, z as f32 + 0.5))
+        .map(|(x, z)| Vec3::new(x as f32 + 0.5, y as f32 - 0.05, z as f32 + 0.5))
         .collect()
 }
 
@@ -203,17 +205,113 @@ pub fn update_ceiling_lights(
     }
 
     for pos in compute_ceiling_lights(&wall_grid.contents) {
-        // TODO: try using a spotlight to minimize shine-through... though I'm not sure it helps much
+        // SpotLight pointing straight down: the exterior top of the ceiling tile is
+        // above the light and therefore outside the cone, so it receives no illumination.
         commands.spawn((
-            PointLight {
+            SpotLight {
                 color: Color::srgb(1.0, 0.95, 0.8),
                 intensity: LIGHT_INTENSITY,
                 range: LIGHT_RANGE,
+                inner_angle: FRAC_PI_4,        // full intensity within 45°
+                outer_angle: FRAC_PI_2 - 0.05, // fade to 0 just before the horizontal plane
                 shadows_enabled: false,
                 ..default()
             },
-            Transform::from_translation(pos),
+            // looking_to(NEG_Y, X) makes the spotlight's local −Z face world −Y (downward).
+            Transform::from_translation(pos).looking_to(Vec3::NEG_Y, Vec3::X),
             CeilingLight,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use bevy::math::IVec3;
+
+    use crate::build_helpers::Builder;
+    use crate::structure::load_structure_info;
+
+    /// Three floor planes — Y=1 (ground, excluded by min-y rule), Y=2 (interior
+    /// ceiling), Y=3 (roof).  Lights should appear only at Y=2 and Y=3 levels.
+    #[test]
+    fn test_compute_ceiling_lights_three_levels() {
+        let structures = load_structure_info();
+        let mut builder = Builder::new(&structures);
+        builder.build_plane(
+            IVec3::new(0, 1, 0),
+            IVec3::new(2, 1, 2),
+            RelSlot::Floor,
+            None,
+        );
+        builder.build_plane(
+            IVec3::new(0, 2, 0),
+            IVec3::new(2, 2, 2),
+            RelSlot::Floor,
+            None,
+        );
+        builder.build_plane(
+            IVec3::new(0, 3, 0),
+            IVec3::new(2, 3, 2),
+            RelSlot::Floor,
+            None,
+        );
+
+        let contents = builder.get();
+        let lights = compute_ceiling_lights(&contents);
+
+        assert!(
+            !lights.is_empty(),
+            "should place at least one ceiling light"
+        );
+
+        // No light at ground level (world Y ≈ 0.8).
+        let at_ground = lights.iter().filter(|l| (l.y - 0.8).abs() < 0.1).count();
+        assert_eq!(
+            at_ground, 0,
+            "no lights should hang from the excluded ground floor"
+        );
+
+        // At least one light for the interior ceiling (Y=2 → world Y ≈ 1.95).
+        let at_y2 = lights.iter().filter(|l| (l.y - 1.95).abs() < 0.1).count();
+        assert!(
+            at_y2 >= 1,
+            "expected ceiling lights at Y=2 level, got {at_y2}"
+        );
+
+        // At least one light for the roof level (Y=3 → world Y ≈ 2.95).
+        let at_y3 = lights.iter().filter(|l| (l.y - 2.95).abs() < 0.1).count();
+        assert!(
+            at_y3 >= 1,
+            "expected ceiling lights at Y=3 level, got {at_y3}"
+        );
+
+        // Sanity: all lights sit at one of the two expected world-Y heights.
+        for l in &lights {
+            let near_y2 = (l.y - 1.95).abs() < 0.1;
+            let near_y3 = (l.y - 2.95).abs() < 0.1;
+            assert!(near_y2 || near_y3, "unexpected light Y={}", l.y);
+        }
+    }
+
+    /// Flat plane (floor at Y=0 only after min-y exclusion: nothing).
+    /// No interior ceiling exists, so no lights should be placed.
+    #[test]
+    fn test_no_lights_flat_plane() {
+        let structures = load_structure_info();
+        let mut builder = Builder::new(&structures);
+        builder.build_plane(
+            IVec3::new(0, 0, 0),
+            IVec3::new(4, 0, 4),
+            RelSlot::Floor,
+            None,
+        );
+
+        let lights = compute_ceiling_lights(&builder.get());
+        assert!(
+            lights.is_empty(),
+            "Flat plane should have no ceiling lights"
+        );
     }
 }

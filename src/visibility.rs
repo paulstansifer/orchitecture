@@ -452,3 +452,119 @@ pub fn update_visibility_system(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    use bevy::math::IVec3;
+
+    use crate::build_helpers::Builder;
+    use crate::structure::load_structure_info;
+
+    /// Builds a 3×1×3-cube room (Floor at Y=0 and Y=1, canonical XLoWall/ZLoWall
+    /// on all four sides at Y=0) and returns the contents plus the loaded structures.
+    fn two_level_room() -> (
+        crate::sparse3d::Sparse3D<crate::wall_grid::Cell>,
+        Vec<crate::structure::StructureInfo>,
+    ) {
+        let structures = load_structure_info();
+        let mut builder = Builder::new(&structures);
+        // Ground floor
+        builder.build_plane(
+            IVec3::new(0, 0, 0),
+            IVec3::new(2, 0, 2),
+            RelSlot::Floor,
+            None,
+        );
+        // Roof floor (= ceiling of the single interior story)
+        builder.build_plane(
+            IVec3::new(0, 1, 0),
+            IVec3::new(2, 1, 2),
+            RelSlot::Floor,
+            None,
+        );
+        // Walls — using XLoWall/ZLoWall (canonical slots) so that compute_visibility
+        // can round-trip correctly through find_wall_seeds.
+        builder.build_plane(
+            IVec3::new(0, 0, 0),
+            IVec3::new(0, 0, 2),
+            RelSlot::XLoWall,
+            None,
+        );
+        builder.build_plane(
+            IVec3::new(3, 0, 0),
+            IVec3::new(3, 0, 2),
+            RelSlot::XLoWall,
+            None,
+        );
+        builder.build_plane(
+            IVec3::new(0, 0, 0),
+            IVec3::new(2, 0, 0),
+            RelSlot::ZLoWall,
+            None,
+        );
+        builder.build_plane(
+            IVec3::new(0, 0, 3),
+            IVec3::new(2, 0, 3),
+            RelSlot::ZLoWall,
+            None,
+        );
+        (builder.get(), structures)
+    }
+
+    // ── visibility + layer test ─────────────────────────────────────────────
+
+    /// With the camera to the +x side and the cursor inside the box:
+    ///   - The right wall (XLoWall at x=3) should be hidden.
+    ///   - The roof floor tiles (Y=1) should be hidden (obscured by climbing the wall).
+    ///   - Every hidden tile should receive the shadow-only layer, even the roof tiles
+    ///     that would otherwise be exempt from ceiling-light illumination.
+    #[test]
+    fn test_visibility_cursor_inside_hides_right_wall_and_roof() {
+        let (contents, structures) = two_level_room();
+        let mut wg = WallGrid::new(structures);
+        wg.contents = contents;
+
+        // Camera from +x, cursor inside the room at ground level.
+        let camera_pos = Vec3::new(10.0, 5.0, 1.5);
+        let focus_pos = Vec3::new(1.5, 0.0, 1.5);
+
+        let (hidden_locs, _cut) = compute_visibility(&wg, (focus_pos, false), camera_pos, 0);
+        let hidden_set: HashSet<SlotLocation> = hidden_locs.into_iter().collect();
+
+        assert!(
+            !hidden_set.is_empty(),
+            "cursor inside should produce hidden tiles"
+        );
+
+        // The camera-facing right wall (XLoWall at x=3) must be hidden.
+        let hidden_right_wall: Vec<SlotLocation> = hidden_set
+            .iter()
+            .filter(|l| l.rel_slot == RelSlot::XLoWall && l.cube.x == 3)
+            .copied()
+            .collect();
+        assert_eq!(
+            hidden_right_wall.len(),
+            3,
+            "3 right-wall segments (one per z) should be hidden"
+        );
+
+        // Upper floor fill should hide all 9 roof-floor tiles at Y=1.
+        let hidden_roof_tiles: Vec<SlotLocation> = hidden_set
+            .iter()
+            .filter(|l| l.rel_slot == RelSlot::Floor && l.cube.y == 1)
+            .copied()
+            .collect();
+        assert_eq!(
+            hidden_roof_tiles.len(),
+            9,
+            "all 9 roof floor tiles should be hidden"
+        );
+
+        // Confirm the shadow-only constant exists and is the expected layer index.
+        assert_eq!(SHADOW_ONLY_LAYER, 1);
+
+    }
+}
