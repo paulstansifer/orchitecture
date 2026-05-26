@@ -1,0 +1,28 @@
+ W W W W W  
+W# # # # #W 
+            
+W# # # # #W 
+    V       
+W# # # # #W 
+            
+W# # # # #W 
+            
+W# # # # #W 
+ W W W W W  
+            
+~~~~~
+            
+ # # # # #  
+            
+ # # # # #  
+            
+ # # # # #  
+            
+ # # # # #  
+            
+ # # # # #  
+            
+            
+~~~~~
+~*~*~
+(2,0,2,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":0.7,"interest":0.1}}

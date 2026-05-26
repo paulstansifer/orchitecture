@@ -281,13 +281,13 @@ pub fn load_training_data<B: Backend>(
 
     let train_data: Vec<_> = t_rooms_augmented
         .into_iter()
-        .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
+        .filter_map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .map(convert_ground_truth_to_autodiff)
         .collect();
 
     let test_data: Vec<_> = v_rooms_augmented
         .into_iter()
-        .map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
+        .filter_map(|sparse_data| ground_truth_at_vantage(&sparse_data, metric, &structures))
         .collect();
 
     (InMemDataset::new(train_data), InMemDataset::new(test_data))
@@ -300,30 +300,31 @@ pub fn ground_truth_at_vantage<B: Backend>(
     data: &(Sparse3D<Cell>, String),
     metric: Metric,
     structures: &Vec<StructureInfo>,
-) -> GroundTruth<B> {
+) -> Option<GroundTruth<B>> {
     for (loc, cell) in data.0.iter() {
         if let Some(eval) = &cell.evaluation {
+            let val = match metric {
+                Metric::Interest => eval.interest?,
+                Metric::Coherence => eval.coherence?,
+            };
+
             let tensor = sparse3d_to_tensor(&data.0, /*center_coord=*/ loc.cube, |cell| {
                 let semb = &structures[cell.id as usize].embedding;
 
                 vec![semb.tall, semb.decorative, semb.passable, semb.striated]
             })
             .unwrap();
-            let val = match metric {
-                Metric::Interest => eval.interest,
-                Metric::Coherence => eval.coherence,
-            };
 
             // print_voxels(&tensor);
 
-            return GroundTruth {
+            return Some(GroundTruth {
                 voxels: tensor,
                 scores: Tensor::from_data(TensorData::from([val]), &Default::default()),
                 filename: data.1.clone(),
-            };
+            });
         }
     }
-    panic!("No vantage found! {}", data.1)
+    None
 }
 
 /// Converts a region of Sparse3D data centered around a coordinate to a Tensor,

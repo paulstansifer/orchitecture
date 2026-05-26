@@ -1,0 +1,36 @@
+     P     R  
+              
+     W  V     
+  R           
+              
+              
+      V       
+       #    P 
+ R            
+      |       
+              
+              
+  S           
+            R 
+           D  
+              
+~~~~~
+              
+              
+              
+              
+      S    D  
+              
+              
+              
+              
+  D           
+              
+              
+     R        
+              
+     P P      
+              
+~~~~~
+~*~*~
+(3,0,3,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":0.0}}

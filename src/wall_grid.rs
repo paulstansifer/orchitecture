@@ -13,8 +13,10 @@ use crate::structure::{StructureInfo, StructureList};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct VantageEvaluation {
-    pub coherence: f32,
-    pub interest: f32,
+    #[serde(default)]
+    pub coherence: Option<f32>,
+    #[serde(default)]
+    pub interest: Option<f32>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]

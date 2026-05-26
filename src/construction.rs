@@ -145,8 +145,8 @@ impl WallGrid {
             let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
             if let Some(Proposal::Place(cell)) = self.proposed_changes.get_mut(loc) {
                 cell.evaluation = Some(VantageEvaluation {
-                    coherence: 0.5,
-                    interest: 0.5,
+                    coherence: None,
+                    interest: None,
                 });
             }
         }

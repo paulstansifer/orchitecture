@@ -217,8 +217,8 @@ impl Builder {
                 id: *self.structures.get("desk").unwrap() as i32,
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation {
-                    interest,
-                    coherence,
+                    interest: Some(interest),
+                    coherence: Some(coherence),
                 }),
             },
         );
@@ -387,7 +387,7 @@ pub fn add_noise(
         if let Some(orig_eval) = v_cell.evaluation.as_ref() {
             if let Some(cell_mut) = new_s.get_mut(*v_loc) {
                 cell_mut.evaluation = Some(VantageEvaluation {
-                    coherence: orig_eval.coherence * 0.1,
+                    coherence: orig_eval.coherence.map(|c| c * 0.1),
                     interest: orig_eval.interest,
                 });
             }
@@ -416,8 +416,8 @@ fn test_add_noise() {
             id: 0,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: Some(VantageEvaluation {
-                coherence: 1.0,
-                interest: 0.5,
+                coherence: Some(1.0),
+                interest: Some(0.5),
             }),
         },
     );
