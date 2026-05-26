@@ -125,11 +125,12 @@ fn train<B: Backend>() {
 
             for idx in 0..train_data.len() {
                 let datum = train_data.get(idx).unwrap();
-                let pred = model_trained
+                let pred: f32 = model_trained
                     .model
                     .forward(datum.voxels.inner())
-                    .into_scalar();
-                let goal = datum.scores.into_scalar();
+                    .into_scalar()
+                    .elem();
+                let goal: f32 = datum.scores.into_scalar().elem();
                 if args.show_scores {
                     score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, pred, goal);
                 }
@@ -140,8 +141,8 @@ fn train<B: Backend>() {
             }
             for idx in 0..test_data.len() {
                 let datum = test_data.get(idx).unwrap();
-                let pred = model_trained.model.forward(datum.voxels).into_scalar();
-                let goal = datum.scores.into_scalar();
+                let pred: f32 = model_trained.model.forward(datum.voxels).into_scalar().elem();
+                let goal: f32 = datum.scores.into_scalar().elem();
                 if args.show_scores {
                     score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, pred, goal);
                 }
