@@ -119,26 +119,45 @@ fn train<B: Backend>() {
             model_trained.model.fc.last().unwrap().weight
         );
 
-        if args.show_scores {
+        {
             let (train_data, test_data) = load_data();
+            let mut errors: Vec<(f32, String, bool, f32, f32)> = Vec::new();
 
             for idx in 0..train_data.len() {
                 let datum = train_data.get(idx).unwrap();
-                let evaluation = model_trained
+                let pred = model_trained
                     .model
                     .forward(datum.voxels.inner())
                     .into_scalar();
                 let goal = datum.scores.into_scalar();
-                score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, evaluation, goal);
+                if args.show_scores {
+                    score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, pred, goal);
+                }
+                errors.push(((pred - goal).abs(), datum.filename.clone(), false, pred, goal));
             }
-            score_output += "/// ";
+            if args.show_scores {
+                score_output += "/// ";
+            }
             for idx in 0..test_data.len() {
                 let datum = test_data.get(idx).unwrap();
-                let evaluation = model_trained.model.forward(datum.voxels).into_scalar();
+                let pred = model_trained.model.forward(datum.voxels).into_scalar();
                 let goal = datum.scores.into_scalar();
-                score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, evaluation, goal);
+                if args.show_scores {
+                    score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, pred, goal);
+                }
+                errors.push(((pred - goal).abs(), datum.filename.clone(), true, pred, goal));
             }
-            score_output += "\n";
+            if args.show_scores {
+                score_output += "\n";
+            }
+
+            errors.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            score_output += &format!("\nWorst {metric} errors:\n");
+            for (err, filename, is_val, pred, goal) in errors.iter().take(10) {
+                let marker = if *is_val { "*" } else { " " };
+                score_output +=
+                    &format!("  {marker} {filename}: {goal:.1}=>{pred:.2} (err {err:.2})\n");
+            }
         }
 
         model_trained
@@ -229,9 +248,7 @@ fn train<B: Backend>() {
         println!();
     }
 
-    if args.show_scores {
-        print!("{}", score_output);
-    }
+    print!("{}", score_output);
 }
 
 fn main() {
