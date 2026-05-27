@@ -58,6 +58,12 @@ path = "src/main.rs"
 [lib]
 name = "orchitecture_lib"
 
+[profile.release]
+opt-level = 2
+
+[profile.release.package."*"]
+opt-level = 3
+
 [profile.dev]
 opt-level = 1 # Suggested by the Bevy docs
 debug = 1 # Try not to run out of RAM

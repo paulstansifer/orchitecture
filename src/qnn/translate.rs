@@ -175,7 +175,7 @@ pub fn load_training_data<B: Backend>(
         }
     }
 
-    for entry in fs::read_dir(path).expect("Failed to read directory") {
+    for entry in fs::read_dir(path).expect(&format!("Failed to read {:?}", path)) {
         let entry = entry.expect("Failed to read entry");
         let path = entry.path();
 

@@ -62,9 +62,9 @@ fn train<B: Backend>() {
         let load_data = || {
             load_training_data::<B>(
                 if args.fake_data {
-                    "../fake_training"
+                    "fake_training"
                 } else {
-                    "../training"
+                    "training"
                 },
                 config.seed,
                 metric,
@@ -134,19 +134,35 @@ fn train<B: Backend>() {
                 if args.show_scores {
                     score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, pred, goal);
                 }
-                errors.push(((pred - goal).abs(), datum.filename.clone(), false, pred, goal));
+                errors.push((
+                    (pred - goal).abs(),
+                    datum.filename.clone(),
+                    false,
+                    pred,
+                    goal,
+                ));
             }
             if args.show_scores {
                 score_output += "/// ";
             }
             for idx in 0..test_data.len() {
                 let datum = test_data.get(idx).unwrap();
-                let pred: f32 = model_trained.model.forward(datum.voxels).into_scalar().elem();
+                let pred: f32 = model_trained
+                    .model
+                    .forward(datum.voxels)
+                    .into_scalar()
+                    .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
                 if args.show_scores {
                     score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, pred, goal);
                 }
-                errors.push(((pred - goal).abs(), datum.filename.clone(), true, pred, goal));
+                errors.push((
+                    (pred - goal).abs(),
+                    datum.filename.clone(),
+                    true,
+                    pred,
+                    goal,
+                ));
             }
             if args.show_scores {
                 score_output += "\n";
