@@ -450,9 +450,8 @@ fn test_add_noise() {
 
     // Check coherence scaled
     if let Some(cell) = out.get(v_loc) {
-        if let Some(_eval) = &cell.evaluation {
-            // TODO: this test is failing.
-            // assert!((eval.coherence - 0.25).abs() < 1e-6);
+        if let Some(eval) = &cell.evaluation {
+            assert!((eval.coherence.unwrap() - 0.1).abs() < 1e-6);
         } else {
             panic!("vantage evaluation missing");
         }
