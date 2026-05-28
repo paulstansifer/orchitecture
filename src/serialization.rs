@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
-use crate::structure::StructureInfo;
+use crate::structure::{StructureId, StructureInfo};
 use crate::wall_grid::Cell;
 
-pub fn serialize_slot(id: i32, slot: RelSlot, structures: &HashMap<i32, StructureInfo>) -> char {
+pub fn serialize_slot(id: StructureId, slot: RelSlot, structures: &HashMap<StructureId, StructureInfo>) -> char {
     let structure_info = structures.get(&id).unwrap();
     match slot {
         RelSlot::XLoWall | RelSlot::XHiWall => structure_info.x_char.unwrap_or(' '),
@@ -16,7 +16,7 @@ pub fn serialize_slot(id: i32, slot: RelSlot, structures: &HashMap<i32, Structur
     }
 }
 
-pub fn deserialize(c: char, structures: &HashMap<char, i32>) -> i32 {
+pub fn deserialize(c: char, structures: &HashMap<char, StructureId>) -> StructureId {
     *structures
         .get(&c)
         .unwrap_or_else(|| panic!("Unknown character for deserialization: {}", c))
@@ -58,8 +58,8 @@ fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (IVec3, Rel
 
 pub fn serialize_sparse3d(
     grid: &crate::sparse3d::Sparse3D<Cell>,
-    f: fn(&Cell, RelSlot, &HashMap<i32, StructureInfo>) -> char,
-    structures: &HashMap<i32, StructureInfo>,
+    f: fn(&Cell, RelSlot, &HashMap<StructureId, StructureInfo>) -> char,
+    structures: &HashMap<StructureId, StructureInfo>,
 ) -> String {
     let mut serialized = String::new();
     let (min, max) = grid.bounding_box();
@@ -105,10 +105,10 @@ pub fn serialize_sparse3d(
 pub fn deserialize_sparse3d<'a, T, F, E>(
     lines: &'a str,
     mut f: F,
-    structures_by_char: &HashMap<char, i32>,
+    structures_by_char: &HashMap<char, StructureId>,
 ) -> Result<crate::sparse3d::Sparse3D<T>, E>
 where
-    F: FnMut(char, RelSlot, &HashMap<char, i32>) -> Result<T, E>,
+    F: FnMut(char, RelSlot, &HashMap<char, StructureId>) -> Result<T, E>,
     T: Deserialize<'a> + Serialize,
 {
     let mut grid = crate::sparse3d::Sparse3D::new();
@@ -183,7 +183,7 @@ where
 pub fn save(contents: &Sparse3D<Cell>, structures: &[StructureInfo], path: &std::path::PathBuf) {
     let mut structures_by_id = HashMap::new();
     for (id, info) in structures.iter().enumerate() {
-        structures_by_id.insert(id as i32, info.clone());
+        structures_by_id.insert(StructureId(id as u32), info.clone());
     }
     let serialized = serialize_sparse3d(
         contents,
@@ -197,10 +197,10 @@ pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Ce
     let mut structures_by_char = HashMap::new();
     for (id, info) in structures.iter().enumerate() {
         if let Some(c) = info.x_char {
-            structures_by_char.insert(c, id as i32);
+            structures_by_char.insert(c, StructureId(id as u32));
         }
         if let Some(c) = info.z_char {
-            structures_by_char.insert(c, id as i32);
+            structures_by_char.insert(c, StructureId(id as u32));
         }
     }
     deserialize_sparse3d(

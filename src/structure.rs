@@ -5,6 +5,15 @@ use bevy::prelude::{Res, ResMut, Resource};
 use bevy::scene::Scene;
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StructureId(pub u32);
+
+impl StructureId {
+    pub fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Debug)]
 pub enum PlacementStyle {
     WallDrag,
@@ -44,12 +53,12 @@ pub struct StructureList {
 }
 
 impl StructureList {
-    pub fn scene_handle(&self, id: i32) -> &Handle<Scene> {
-        &self.structures[id as usize].mesh_handle
+    pub fn scene_handle(&self, id: StructureId) -> &Handle<Scene> {
+        &self.structures[id.as_usize()].mesh_handle
     }
 
-    pub fn cut_handle(&self, id: i32) -> Option<&Handle<Scene>> {
-        self.structures[id as usize].cut_handle.as_ref()
+    pub fn cut_handle(&self, id: StructureId) -> Option<&Handle<Scene>> {
+        self.structures[id.as_usize()].cut_handle.as_ref()
     }
 }
 

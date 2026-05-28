@@ -12,6 +12,7 @@ pub mod paths;
 pub mod qnn;
 pub mod serialization;
 pub mod sparse3d;
+pub mod station;
 pub mod structure;
 pub mod ui;
 pub mod visibility;

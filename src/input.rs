@@ -4,7 +4,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::camera::GameCamera;
 use crate::sparse3d::{Facing, RelSlot};
-use crate::structure::{PlacementStyle, StructureList};
+use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::wall_grid::{
     apply_proposal_changes, cell_transform, ProposalGhostMarker, ProposalOverlayAssets,
     ProposedCutMarker, WallGrid,
@@ -26,7 +26,7 @@ pub fn cursor_system(
     cursor_entities: Res<CursorEntities>,
     mut cursors: Query<(&mut Transform, &mut Visibility)>,
 ) {
-    let id = build_state.selected_structure as i32;
+    let id = StructureId(build_state.selected_structure as u32);
     let is_room = wall_grid.structure_is_room_plop(id);
     let maybe_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32);
     let y = build_state.cur_y as f32;
@@ -59,7 +59,7 @@ pub fn cursor_system(
     }
 
     if let Ok((mut t, mut vis)) = cursors.get_mut(cursor_entities.preview) {
-        let style = wall_grid.structures[id as usize].placement_style;
+        let style = wall_grid.structures[id.as_usize()].placement_style;
         let show = build_state
             .drag_start
             .zip(maybe_pos)
@@ -219,7 +219,7 @@ pub fn building_input_system(
             build_state.drag_start.take(),
             cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32),
         ) {
-            let id = build_state.selected_structure as i32;
+            let id = StructureId(build_state.selected_structure as u32);
             let dir = build_state.cur_dir as i32;
 
             let dist_sq = (end - start).length_squared();
@@ -265,8 +265,8 @@ pub fn update_room_cursor_mesh(
         return;
     }
     *last_id = Some(id);
-    if wall_grid.structure_is_room_plop(id as i32) {
-        let handle = structure_list.scene_handle(id as i32).clone();
+    if wall_grid.structure_is_room_plop(StructureId(id as u32)) {
+        let handle = structure_list.scene_handle(StructureId(id as u32)).clone();
         commands
             .entity(cursor_entities.room)
             .insert(SceneRoot(handle));
