@@ -26,7 +26,10 @@ impl WallGrid {
             for y in start.y..=end.y {
                 for z in start.z..=end.z {
                     let loc = SlotLocation::new(x, y, z, slot);
-                    if item.is_some() && self.road_forbidden_zone && crate::road::is_in_road_forbidden_zone(loc) {
+                    if item.is_some()
+                        && self.road_forbidden_zone
+                        && crate::road::is_in_road_forbidden_zone(loc)
+                    {
                         continue;
                     }
                     let real_cell = self.contents.get(loc).cloned();
@@ -333,7 +336,10 @@ mod tests {
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
 
         check!(grid.contents.get(loc).is_none());
-        check!(matches!(grid.proposed_changes.get(loc), Some(Proposal::Place(_))));
+        check!(matches!(
+            grid.proposed_changes.get(loc),
+            Some(Proposal::Place(_))
+        ));
     }
 
     #[test]

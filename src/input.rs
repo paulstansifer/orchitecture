@@ -167,6 +167,27 @@ pub fn building_input_system(
         build_state.cur_dir = (build_state.cur_dir + 3) % 4;
     }
 
+    // --- Structure selection by digit key ---
+    if !egui_wants_input.wants_keyboard_input() {
+        const DIGIT_KEYS: [KeyCode; 9] = [
+            KeyCode::Digit1,
+            KeyCode::Digit2,
+            KeyCode::Digit3,
+            KeyCode::Digit4,
+            KeyCode::Digit5,
+            KeyCode::Digit6,
+            KeyCode::Digit7,
+            KeyCode::Digit8,
+            KeyCode::Digit9,
+        ];
+        let num_structures = wall_grid.get_structure_names().len();
+        for (i, key) in DIGIT_KEYS.iter().enumerate() {
+            if keyboard.just_pressed(*key) && i < num_structures {
+                build_state.selected_structure = i;
+            }
+        }
+    }
+
     // --- Undo ---
     if keyboard.just_pressed(KeyCode::KeyZ) {
         // Use bypass_change_detection so proposal edits don't trigger ceiling-light recomputation.

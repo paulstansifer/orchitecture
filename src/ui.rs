@@ -231,9 +231,7 @@ pub fn ui_system(
             #[cfg(not(target_arch = "wasm32"))]
             {
                 ui.separator();
-                ui.add(
-                    egui::TextEdit::singleline(&mut ui_state.example_idx).desired_width(40.0),
-                );
+                ui.add(egui::TextEdit::singleline(&mut ui_state.example_idx).desired_width(40.0));
                 if ui.button("Load example").clicked() && !ui_state.example_idx.is_empty() {
                     if let Ok(idx) = ui_state.example_idx.parse::<usize>() {
                         let examples = crate::example_structures::make_structures();
@@ -255,8 +253,7 @@ pub fn ui_system(
         } else {
             #[cfg(not(target_arch = "wasm32"))]
             {
-                let path =
-                    std::path::PathBuf::from(crate::paths::USER_DIR).join(&name);
+                let path = std::path::PathBuf::from(crate::paths::USER_DIR).join(&name);
                 Some(serialization::load(&path, &wall_grid.structures))
             }
             #[cfg(target_arch = "wasm32")]
@@ -279,7 +276,12 @@ pub fn ui_system(
             let names = wall_grid.get_structure_names();
             for (i, name) in names.iter().enumerate() {
                 let selected = build_state.selected_structure == i;
-                if ui.selectable_label(selected, name).clicked() {
+                let label = if i < 9 {
+                    format!("{}. {}", i + 1, name)
+                } else {
+                    name.clone()
+                };
+                if ui.selectable_label(selected, &label).clicked() {
                     build_state.selected_structure = i;
                 }
             }

@@ -556,6 +556,5 @@ mod tests {
         check!(hidden_roof_tiles.len() == 9);
 
         check!(SHADOW_ONLY_LAYER == 1);
-
     }
 }
