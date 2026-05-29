@@ -52,7 +52,7 @@ pub struct Cnn<B: Backend> {
 }
 
 impl<B: Backend> Cnn<B> {
-    pub fn new(device: &<B as Backend>::Device, args: &Args) -> Self {
+    pub fn new(device: &B::Device, args: &Args) -> Self {
         let mut features = super::translate::EMBEDDING_SIZE;
         let mut conv = vec![];
         if args.conv.contains("/") {

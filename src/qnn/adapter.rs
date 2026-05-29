@@ -1,7 +1,7 @@
 use super::model::Cnn;
 use bevy::asset::{Asset, AssetLoader, Assets, Handle, LoadContext};
 use bevy::prelude::*;
-use burn::{prelude::Backend, record::Recorder};
+use burn::record::Recorder;
 use std::sync::Mutex;
 
 const MODEL_ARGS: &str = include_str!("../../models/model_args.ron");
@@ -60,7 +60,7 @@ impl ModelHolder {
         use burn::record::HalfPrecisionSettings;
         use burn::record::NamedMpkBytesRecorder;
 
-        let device: <AppBackend as Backend>::Device = Default::default();
+        let device = Default::default();
         let args: super::model::Args = ron::from_str(MODEL_ARGS).unwrap();
 
         let recorder = NamedMpkBytesRecorder::<HalfPrecisionSettings>::new();

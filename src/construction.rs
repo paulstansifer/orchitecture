@@ -26,7 +26,7 @@ impl WallGrid {
             for y in start.y..=end.y {
                 for z in start.z..=end.z {
                     let loc = SlotLocation::new(x, y, z, slot);
-                    if item.is_some() && crate::road::is_in_road_forbidden_zone(loc) {
+                    if item.is_some() && self.road_forbidden_zone && crate::road::is_in_road_forbidden_zone(loc) {
                         continue;
                     }
                     let real_cell = self.contents.get(loc).cloned();
@@ -304,7 +304,9 @@ mod tests {
                 striated: 0.0,
             },
         }];
-        WallGrid::new(structs)
+        let mut grid = WallGrid::new(structs);
+        grid.road_forbidden_zone = false;
+        grid
     }
 
     fn wall_cell(id: StructureId) -> Cell {
@@ -532,6 +534,7 @@ mod tests {
 
         let structures = load_structure_info();
         let mut grid = WallGrid::new(structures.clone());
+        grid.road_forbidden_zone = false;
 
         // 1. Load a saved building: one z-wall ('-') at (0,0,0).
         //    Save format: pairs of (room+zwall / xwall+floor) lines, then "~~~~~" per y-layer.
