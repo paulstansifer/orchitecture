@@ -188,7 +188,7 @@ pub fn ui_system(
     // Bottom panel must be added before side panels.
     egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Up/Dn=layer  R=rotate  Z=undo  Drag=place  Ctrl+drag=erase  V=evaluate");
+            ui.label("Up/Dn=layer  R=rotate  Ctrl-Z=undo  Drag=place  Ctrl+drag=erase  V=evaluate");
 
             ui.separator();
             if ui.button("Save").clicked() {
@@ -205,7 +205,6 @@ pub fn ui_system(
                     .load_file::<LoadDialog>();
             }
 
-            // Dropdown is visible on all platforms.
             if !ui_state.available_files.is_empty() {
                 ui.separator();
                 egui::ComboBox::from_id_salt("file_select")
@@ -267,7 +266,8 @@ pub fn ui_system(
     }
 
     egui::SidePanel::left("controls")
-        .min_width(140.0)
+        .min_width(100.0)
+        .max_width(120.0)
         .show(ctx, |ui| {
             ui.heading("Orchitecture");
             ui.separator();

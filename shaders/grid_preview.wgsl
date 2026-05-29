@@ -25,8 +25,8 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let line_dist_z = min(fract(wz), 1.0 - fract(wz));
     let fw_x = fwidth(wx);
     let fw_z = fwidth(wz);
-    let line_x = 1.0 - smoothstep(fw_x * 0.5, fw_x * 1.5, line_dist_x);
-    let line_z = 1.0 - smoothstep(fw_z * 0.5, fw_z * 1.5, line_dist_z);
+    let line_x = 1.0 - smoothstep(fw_x * 0.25, fw_x * 0.75, line_dist_x);
+    let line_z = 1.0 - smoothstep(fw_z * 0.25, fw_z * 0.75, line_dist_z);
     let on_line = max(line_x, line_z);
 
     if on_line < 0.01 {
