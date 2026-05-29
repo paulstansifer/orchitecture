@@ -111,4 +111,32 @@
             striated: 0.0,
         ),
     ),
+    (
+        name: "market stand",
+        main_mesh: "market_stand.gltf",
+        y_cut_mesh: None,
+        placement_style: RoomPlop,
+        x_char: Some('M'),
+        z_char: Some('M'),
+        embedding: (
+            tall: 0.9,
+            passable: 0.5,
+            decorative: 0.3,
+            striated: 0.3,
+        ),
+    ),
+    (
+        name: "rack",
+        main_mesh: "rack.gltf",
+        y_cut_mesh: None,
+        placement_style: RoomPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.9,
+            passable: 0.5,
+            decorative: 0.0,
+            striated: 0.5,
+        ),
+    ),
 ]
