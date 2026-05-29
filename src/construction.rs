@@ -26,6 +26,9 @@ impl WallGrid {
             for y in start.y..=end.y {
                 for z in start.z..=end.z {
                     let loc = SlotLocation::new(x, y, z, slot);
+                    if item.is_some() && crate::road::is_in_road_forbidden_zone(loc) {
+                        continue;
+                    }
                     let real_cell = self.contents.get(loc).cloned();
                     let prior_proposal = self.proposed_changes.get(loc).cloned();
 
