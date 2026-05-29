@@ -460,6 +460,8 @@ pub fn print_voxels<B: Backend>(voxels: &Tensor<B, 5, Float>) {
 #[cfg(test)]
 #[cfg(feature = "training")]
 mod tests {
+    use assert2::check;
+
     use burn::backend;
 
     use super::*;
@@ -509,32 +511,17 @@ mod tests {
             vec![semb.tall, semb.decorative, semb.passable, semb.striated]
         })?;
 
-        // Check the shape of the resulting tensor
         let expected_shape = Shape::new([1, EMBEDDING_SIZE, 23, 12, 23]);
-        assert_eq!(
-            tensor.dims(),
-            expected_shape.dims(),
-            "Tensor shape mismatch"
-        );
-
-        // Check that the tensor is not all zeros (some data should be present)
+        check!(tensor.dims() == expected_shape.dims());
 
         print_voxels(&tensor);
 
-        assert_ne!(
-            tensor.clone().sum().into_scalar(),
-            0.0,
-            "Tensor should have some entries"
-        );
+        check!(tensor.clone().sum().into_scalar() != 0.0);
 
         let tensor_way_far_away =
             sparse3d_to_tensor::<B, _, _>(&sparse_data, IVec3::new(50, 0, 0), embedding)?;
 
-        assert_eq!(
-            tensor_way_far_away.clone().sum().into_scalar(),
-            0.0,
-            "Tensor should be all zeros"
-        );
+        check!(tensor_way_far_away.clone().sum().into_scalar() == 0.0);
 
         Ok(())
     }

@@ -280,6 +280,8 @@ impl WallGrid {
 
 #[cfg(test)]
 mod tests {
+    use assert2::{assert, check};
+
     use bevy::math::IVec3;
 
     use crate::sparse3d::{Facing, RelSlot, SlotLocation};
@@ -330,22 +332,16 @@ mod tests {
 
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
 
-        assert!(
-            grid.contents.get(loc).is_none(),
-            "contents must not change on proposal"
-        );
-        assert!(matches!(
-            grid.proposed_changes.get(loc),
-            Some(Proposal::Place(_))
-        ));
+        check!(grid.contents.get(loc).is_none());
+        check!(matches!(grid.proposed_changes.get(loc), Some(Proposal::Place(_))));
     }
 
     #[test]
     fn propose_returns_add_view_for_empty_slot() {
         let mut grid = make_wall_grid();
         let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
-        assert_eq!(deltas.len(), 1);
-        assert!(matches!(deltas[0].1, ProposalView::Add(_)));
+        check!(deltas.len() == 1);
+        check!(matches!(deltas[0].1, ProposalView::Add(_)));
     }
 
     #[test]
@@ -358,8 +354,8 @@ mod tests {
         // Now propose a different cell (id=0 same, so let's make a distinct check)
         // propose removal to get a Remove view
         let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, None);
-        assert_eq!(deltas.len(), 1);
-        assert!(matches!(deltas[0].1, ProposalView::Remove));
+        check!(deltas.len() == 1);
+        check!(matches!(deltas[0].1, ProposalView::Remove));
     }
 
     #[test]
@@ -372,16 +368,16 @@ mod tests {
         // Propose placing the exact same cell
         let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
 
-        assert!(deltas.is_empty(), "identical proposal should be a no-op");
-        assert!(grid.proposed_changes.get(loc).is_none());
+        check!(deltas.is_empty(), "identical proposal should be a no-op");
+        check!(grid.proposed_changes.get(loc).is_none());
     }
 
     #[test]
     fn propose_remove_on_empty_slot_is_no_op() {
         let mut grid = make_wall_grid();
         let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, None);
-        assert!(deltas.is_empty());
-        assert_eq!(grid.proposed_changes.iter().count(), 0);
+        check!(deltas.is_empty());
+        check!(grid.proposed_changes.iter().count() == 0);
     }
 
     // ── undo ─────────────────────────────────────────────────────────────────
@@ -392,31 +388,28 @@ mod tests {
         let loc = xlowall(0, 0, 0);
 
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
-        assert!(grid.proposed_changes.get(loc).is_some());
+        check!(grid.proposed_changes.get(loc).is_some());
 
         let deltas = grid.undo();
-        assert!(
-            grid.proposed_changes.get(loc).is_none(),
-            "undo should clear the proposal"
-        );
-        assert_eq!(deltas.len(), 1);
-        assert!(matches!(deltas[0].1, ProposalView::None));
+        check!(grid.proposed_changes.get(loc).is_none());
+        check!(deltas.len() == 1);
+        check!(matches!(deltas[0].1, ProposalView::None));
     }
 
     #[test]
     fn undo_on_empty_stack_returns_empty() {
         let mut grid = make_wall_grid();
         let deltas = grid.undo();
-        assert!(deltas.is_empty());
+        check!(deltas.is_empty());
     }
 
     #[test]
     fn undo_clears_undo_record_entry() {
         let mut grid = make_wall_grid();
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
-        assert_eq!(grid.undo_record.len(), 1);
+        check!(grid.undo_record.len() == 1);
         grid.undo();
-        assert_eq!(grid.undo_record.len(), 0);
+        check!(grid.undo_record.len() == 0);
     }
 
     // ── construct ─────────────────────────────────────────────────────────────
@@ -433,14 +426,14 @@ mod tests {
             RelSlot::XLoWall,
             THING,
         );
-        assert!(grid.contents.get(loc).is_none());
+        check!(grid.contents.get(loc).is_none());
 
         let real_changes = grid.construct();
 
-        assert!(grid.proposed_changes.get(loc).is_none());
-        assert!(grid.contents.get(loc).is_some());
-        assert_eq!(real_changes.len(), 1);
-        assert!(real_changes[0].1.is_some());
+        check!(grid.proposed_changes.get(loc).is_none());
+        check!(grid.contents.get(loc).is_some());
+        check!(real_changes.len() == 1);
+        check!(real_changes[0].1.is_some());
     }
 
     #[test]
@@ -452,9 +445,9 @@ mod tests {
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, None);
         let real_changes = grid.construct();
 
-        assert!(grid.contents.get(loc).is_none());
-        assert_eq!(real_changes.len(), 1);
-        assert!(real_changes[0].1.is_none());
+        check!(grid.contents.get(loc).is_none());
+        check!(real_changes.len() == 1);
+        check!(real_changes[0].1.is_none());
     }
 
     #[test]
@@ -462,7 +455,7 @@ mod tests {
         let mut grid = make_wall_grid();
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
         grid.construct();
-        assert!(grid.undo_record.is_empty());
+        check!(grid.undo_record.is_empty());
     }
 
     // ── reset ─────────────────────────────────────────────────────────────────
@@ -471,14 +464,14 @@ mod tests {
     fn reset_clears_proposals_and_undo_record() {
         let mut grid = make_wall_grid();
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
-        assert!(!grid.undo_record.is_empty());
+        check!(!grid.undo_record.is_empty());
 
         grid.reset_proposals();
 
-        assert_eq!(grid.proposed_changes.iter().count(), 0);
-        assert!(grid.undo_record.is_empty());
+        check!(grid.proposed_changes.iter().count() == 0);
+        check!(grid.undo_record.is_empty());
         // Real contents untouched
-        assert!(grid.contents.get(xlowall(0, 0, 0)).is_none());
+        check!(grid.contents.get(xlowall(0, 0, 0)).is_none());
     }
 
     // ── get_real_or_proposed ──────────────────────────────────────────────────
@@ -492,7 +485,7 @@ mod tests {
         // Proposed removal
         grid.proposed_changes.set(loc, Proposal::Remove);
 
-        assert!(grid.get_real_or_proposed(loc).is_some());
+        check!(grid.get_real_or_proposed(loc).is_some());
     }
 
     #[test]
@@ -501,7 +494,7 @@ mod tests {
         let loc = xlowall(0, 0, 0);
         grid.contents.set(loc, wall_cell(StructureId(0)));
 
-        assert!(grid.get_real_or_proposed(loc).is_some());
+        check!(grid.get_real_or_proposed(loc).is_some());
     }
 
     // ── load_from_offline ─────────────────────────────────────────────────────
@@ -514,8 +507,8 @@ mod tests {
         use crate::sparse3d::Sparse3D;
         grid.load_from_offline(Sparse3D::new());
 
-        assert_eq!(grid.proposed_changes.iter().count(), 0);
-        assert!(grid.undo_record.is_empty());
+        check!(grid.proposed_changes.iter().count() == 0);
+        check!(grid.undo_record.is_empty());
     }
 
     // ── smoke ─────────────────────────────────────────────────────────────────
@@ -542,10 +535,9 @@ mod tests {
         let loaded = load_from_str(saved, &structures);
         let load_changes = grid.load_from_offline(loaded);
 
-        assert_eq!(load_changes.len(), 1);
-        let (loaded_loc, loaded_cell) = &load_changes[0];
-        assert_eq!(loaded_loc.rel_slot, RelSlot::ZLoWall);
-        assert_eq!(loaded_cell.as_ref().unwrap().id, WALL_ID);
+        assert!(let [(loaded_loc, loaded_cell)] = load_changes.as_slice());
+        check!(loaded_loc.rel_slot == RelSlot::ZLoWall);
+        check!(loaded_cell.as_ref().unwrap().id == WALL_ID);
 
         // 2. Propose two z-walls via drag (x=1..=2, z=0).
         let drag_deltas = grid.drag(
@@ -554,27 +546,27 @@ mod tests {
             WALL_ID,
             false,
         );
-        assert_eq!(drag_deltas.len(), 2);
-        assert_eq!(grid.proposed_changes.iter().count(), 2);
+        check!(drag_deltas.len() == 2);
+        check!(grid.proposed_changes.iter().count() == 2);
 
         // 3. Propose a desk at (2, 0, 2) via click.
         let click_deltas = grid.click(Vec3::new(2.0, 0.0, 2.0), DESK_ID, 0, false);
-        assert_eq!(click_deltas.len(), 1);
-        assert!(matches!(click_deltas[0].1, ProposalView::Add(_)));
-        assert_eq!(grid.proposed_changes.iter().count(), 3);
+        check!(click_deltas.len() == 1);
+        check!(matches!(click_deltas[0].1, ProposalView::Add(_)));
+        check!(grid.proposed_changes.iter().count() == 3);
 
         // 4. Undo the desk; the two wall proposals remain.
         let undo_deltas = grid.undo();
-        assert_eq!(undo_deltas.len(), 1);
-        assert!(matches!(undo_deltas[0].1, ProposalView::None));
-        assert_eq!(grid.proposed_changes.iter().count(), 2);
+        check!(undo_deltas.len() == 1);
+        check!(matches!(undo_deltas[0].1, ProposalView::None));
+        check!(grid.proposed_changes.iter().count() == 2);
 
         // 5. Construct: two new walls land in real contents; proposals clear.
         let real_changes = grid.construct();
-        assert_eq!(real_changes.len(), 2);
-        assert!(grid.proposed_changes.iter().count() == 0);
-        assert!(grid.undo_record.is_empty());
+        check!(real_changes.len() == 2);
+        check!(grid.proposed_changes.iter().count() == 0);
+        check!(grid.undo_record.is_empty());
         // Original loaded wall + 2 newly constructed walls
-        assert_eq!(grid.contents.iter().count(), 3);
+        check!(grid.contents.iter().count() == 3);
     }
 }

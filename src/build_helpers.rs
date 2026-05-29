@@ -402,6 +402,7 @@ pub fn add_noise(
 #[test]
 fn test_add_noise() {
     use crate::wall_grid::VantageEvaluation;
+    use assert2::{assert, check};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
@@ -436,26 +437,17 @@ fn test_add_noise() {
 
     let res = add_noise(s.clone(), &structures, &mut rng);
 
-    // We had one vantage, so expect one result
-    assert_eq!(res.len(), 1);
+    check!(res.len() == 1); // We had one vantage.
 
     let out = &res[0];
 
-    // Ensure all other evaluations are cleared
     for (loc, cell) in out.iter() {
         if !(loc.cube == v_loc.cube && loc.rel_slot == v_loc.rel_slot) {
-            assert!(cell.evaluation.is_none());
+            check!(cell.evaluation.is_none(), "other score should be cleared");
         }
     }
 
-    // Check coherence scaled
-    if let Some(cell) = out.get(v_loc) {
-        if let Some(eval) = &cell.evaluation {
-            assert!((eval.coherence.unwrap() - 0.1).abs() < 1e-6);
-        } else {
-            panic!("vantage evaluation missing");
-        }
-    } else {
-        panic!("vantage cell missing");
-    }
+    assert!(let Some(cell) = out.get(v_loc));
+    assert!(let Some(eval) = &cell.evaluation);
+    check!((eval.coherence.unwrap() - 0.1).abs() < 1e-6);
 }

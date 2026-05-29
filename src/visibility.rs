@@ -456,6 +456,8 @@ pub fn update_visibility_system(
 
 #[cfg(test)]
 mod tests {
+    use assert2::check;
+
     use super::*;
     use std::collections::HashSet;
 
@@ -535,10 +537,7 @@ mod tests {
         let (hidden_locs, _cut) = compute_visibility(&wg, (focus_pos, false), camera_pos, 0);
         let hidden_set: HashSet<SlotLocation> = hidden_locs.into_iter().collect();
 
-        assert!(
-            !hidden_set.is_empty(),
-            "cursor inside should produce hidden tiles"
-        );
+        check!(!hidden_set.is_empty());
 
         // The camera-facing right wall (XLoWall at x=3) must be hidden.
         let hidden_right_wall: Vec<SlotLocation> = hidden_set
@@ -546,11 +545,7 @@ mod tests {
             .filter(|l| l.rel_slot == RelSlot::XLoWall && l.cube.x == 3)
             .copied()
             .collect();
-        assert_eq!(
-            hidden_right_wall.len(),
-            3,
-            "3 right-wall segments (one per z) should be hidden"
-        );
+        check!(hidden_right_wall.len() == 3);
 
         // Upper floor fill should hide all 9 roof-floor tiles at Y=1.
         let hidden_roof_tiles: Vec<SlotLocation> = hidden_set
@@ -558,14 +553,9 @@ mod tests {
             .filter(|l| l.rel_slot == RelSlot::Floor && l.cube.y == 1)
             .copied()
             .collect();
-        assert_eq!(
-            hidden_roof_tiles.len(),
-            9,
-            "all 9 roof floor tiles should be hidden"
-        );
+        check!(hidden_roof_tiles.len() == 9);
 
-        // Confirm the shadow-only constant exists and is the expected layer index.
-        assert_eq!(SHADOW_ONLY_LAYER, 1);
+        check!(SHADOW_ONLY_LAYER == 1);
 
     }
 }

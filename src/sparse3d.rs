@@ -606,6 +606,8 @@ impl<T: Rotateable> IndexMut<SlotLocation> for Sparse3D<T> {
 
 #[cfg(test)]
 mod tests {
+    use assert2::check;
+
     use super::*;
     use crate::sparse3d::Sparse3D;
     use std::collections::HashSet;
@@ -627,19 +629,9 @@ mod tests {
         grid.set(SlotLocation::new(-1, 5, 0, RelSlot::XLoWall), RotInt(20));
         grid.set(SlotLocation::new(4, 0, 0, RelSlot::XLoWall), RotInt(30)); // Different chunk
 
-        // Get the values using indexing
-        assert_eq!(
-            grid[SlotLocation::new(1, 2, 3, RelSlot::XLoWall)],
-            RotInt(10)
-        );
-        assert_eq!(
-            grid[SlotLocation::new(-1, 5, 0, RelSlot::XLoWall)],
-            RotInt(20)
-        );
-        assert_eq!(
-            grid[SlotLocation::new(4, 0, 0, RelSlot::XLoWall)],
-            RotInt(30)
-        );
+        check!(grid[SlotLocation::new(1, 2, 3, RelSlot::XLoWall)] == RotInt(10));
+        check!(grid[SlotLocation::new(-1, 5, 0, RelSlot::XLoWall)] == RotInt(20));
+        check!(grid[SlotLocation::new(4, 0, 0, RelSlot::XLoWall)] == RotInt(30));
     }
 
     #[test]
@@ -661,7 +653,7 @@ mod tests {
         .into_iter()
         .collect();
 
-        assert_eq!(items, expected);
+        check!(items == expected);
     }
 
     #[test]
@@ -681,21 +673,14 @@ mod tests {
             SlotLocation::new(1, 0, 0, RelSlot::Room),
         );
 
-        // Expected sequence of sets of items found along the ray.
-        // We expect at least the rooms and the wall.
-        // Let's flatten and check presence.
         let flattened: HashSet<&RotInt> = trace.iter().flatten().cloned().collect();
-        assert!(flattened.contains(&RotInt(1)));
-        assert!(flattened.contains(&RotInt(2)));
-        assert!(flattened.contains(&RotInt(3)));
-
+        check!(flattened.contains(&RotInt(1)));
+        check!(flattened.contains(&RotInt(2)));
+        check!(flattened.contains(&RotInt(3)));
         // Verify structure roughly
         // Middle of trace should have 3 items (Room A, Wall, Room B)
         let crossing = trace.iter().find(|group| group.len() >= 3);
-        assert!(
-            crossing.is_some(),
-            "Should have a crossing event with multiple items"
-        );
+        check!(crossing.is_some());
     }
 
     #[test]
@@ -730,9 +715,9 @@ mod tests {
         let trace = grid.ray_trace(start, end);
         let flattened: HashSet<&RotInt> = trace.iter().flatten().cloned().collect();
 
-        assert!(flattened.contains(&RotInt(10)));
-        assert!(flattened.contains(&RotInt(20)));
-        assert!(flattened.contains(&RotInt(11)));
-        assert!(flattened.contains(&RotInt(12)));
+        check!(flattened.contains(&RotInt(10)));
+        check!(flattened.contains(&RotInt(20)));
+        check!(flattened.contains(&RotInt(11)));
+        check!(flattened.contains(&RotInt(12)));
     }
 }

@@ -226,6 +226,8 @@ pub fn update_ceiling_lights(
 
 #[cfg(test)]
 mod tests {
+    use assert2::check;
+
     use super::*;
 
     use bevy::math::IVec3;
@@ -261,37 +263,25 @@ mod tests {
         let contents = builder.get();
         let lights = compute_ceiling_lights(&contents);
 
-        assert!(
-            !lights.is_empty(),
-            "should place at least one ceiling light"
-        );
+        check!(!lights.is_empty());
 
         // No light at ground level (world Y ≈ 0.8).
         let at_ground = lights.iter().filter(|l| (l.y - 0.8).abs() < 0.1).count();
-        assert_eq!(
-            at_ground, 0,
-            "no lights should hang from the excluded ground floor"
-        );
+        check!(at_ground == 0);
 
         // At least one light for the interior ceiling (Y=2 → world Y ≈ 1.95).
         let at_y2 = lights.iter().filter(|l| (l.y - 1.95).abs() < 0.1).count();
-        assert!(
-            at_y2 >= 1,
-            "expected ceiling lights at Y=2 level, got {at_y2}"
-        );
+        check!(at_y2 >= 1);
 
         // At least one light for the roof level (Y=3 → world Y ≈ 2.95).
         let at_y3 = lights.iter().filter(|l| (l.y - 2.95).abs() < 0.1).count();
-        assert!(
-            at_y3 >= 1,
-            "expected ceiling lights at Y=3 level, got {at_y3}"
-        );
+        check!(at_y3 >= 1);
 
         // Sanity: all lights sit at one of the two expected world-Y heights.
         for l in &lights {
             let near_y2 = (l.y - 1.95).abs() < 0.1;
             let near_y3 = (l.y - 2.95).abs() < 0.1;
-            assert!(near_y2 || near_y3, "unexpected light Y={}", l.y);
+            check!(near_y2 || near_y3);
         }
     }
 
@@ -309,9 +299,6 @@ mod tests {
         );
 
         let lights = compute_ceiling_lights(&builder.get());
-        assert!(
-            lights.is_empty(),
-            "Flat plane should have no ceiling lights"
-        );
+        check!(lights.is_empty());
     }
 }
