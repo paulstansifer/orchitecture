@@ -168,14 +168,14 @@ pub fn load_training_data<B: Backend>(
     let mut structures_by_char = HashMap::new();
     for (id, structure) in structures.iter().enumerate() {
         if let Some(x_char) = structure.x_char {
-            structures_by_char.insert(x_char, id as i32);
+            structures_by_char.insert(x_char, crate::structure::StructureId(id as u32));
         }
         if let Some(z_char) = structure.z_char {
-            structures_by_char.insert(z_char, id as i32);
+            structures_by_char.insert(z_char, crate::structure::StructureId(id as u32));
         }
     }
 
-    for entry in fs::read_dir(path).expect("Failed to read directory") {
+    for entry in fs::read_dir(path).expect(&format!("Failed to read {:?}", path)) {
         let entry = entry.expect("Failed to read entry");
         let path = entry.path();
 
@@ -309,7 +309,7 @@ pub fn ground_truth_at_vantage<B: Backend>(
             };
 
             let tensor = sparse3d_to_tensor(&data.0, /*center_coord=*/ loc.cube, |cell| {
-                let semb = &structures[cell.id as usize].embedding;
+                let semb = &structures[cell.id.as_usize()].embedding;
 
                 vec![semb.tall, semb.decorative, semb.passable, semb.striated]
             })

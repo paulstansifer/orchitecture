@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use burn::{prelude::Backend, record::Recorder};
 use std::sync::Mutex;
 
-const MODEL_ARGS: &str = include_str!("../../models/model_args.json");
+const MODEL_ARGS: &str = include_str!("../../models/model_args.ron");
 
 #[cfg(not(target_arch = "wasm32"))]
 type AppBackend = burn::backend::Wgpu;
@@ -61,7 +61,7 @@ impl ModelHolder {
         use burn::record::NamedMpkBytesRecorder;
 
         let device: <AppBackend as Backend>::Device = Default::default();
-        let args: super::model::Args = serde_json::from_str(MODEL_ARGS).unwrap();
+        let args: super::model::Args = ron::from_str(MODEL_ARGS).unwrap();
 
         let recorder = NamedMpkBytesRecorder::<HalfPrecisionSettings>::new();
         let i_record: <Cnn<AppBackend> as Module<AppBackend>>::Record =
@@ -87,7 +87,7 @@ pub fn compute_metrics(
     let pos = location.round().as_ivec3();
     let tensor: burn::tensor::Tensor<AppBackend, 5> =
         super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::wall_grid::Cell| {
-            let semb = &structures[cell.id as usize].embedding;
+            let semb = &structures[cell.id.as_usize()].embedding;
             vec![semb.tall, semb.decorative, semb.passable, semb.striated]
         })
         .unwrap();

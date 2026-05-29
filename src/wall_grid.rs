@@ -9,7 +9,7 @@ use bevy::prelude::{
 use serde::{Deserialize, Serialize};
 
 use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
-use crate::structure::{StructureInfo, StructureList};
+use crate::structure::{StructureId, StructureInfo, StructureList};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct VantageEvaluation {
@@ -21,7 +21,7 @@ pub struct VantageEvaluation {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Cell {
-    pub id: i32,
+    pub id: StructureId,
     #[serde(default)]
     pub facing: Facing,
     pub evaluation: Option<VantageEvaluation>,
@@ -142,8 +142,8 @@ impl WallGrid {
             .collect()
     }
 
-    pub fn structure_is_room_plop(&self, id: i32) -> bool {
-        self.structures[id as usize].placement_style == crate::structure::PlacementStyle::RoomPlop
+    pub fn structure_is_room_plop(&self, id: StructureId) -> bool {
+        self.structures[id.as_usize()].placement_style == crate::structure::PlacementStyle::RoomPlop
     }
 
     /// Returns `(real, proposed_add)`:

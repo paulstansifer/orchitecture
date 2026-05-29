@@ -4,7 +4,7 @@ use bevy::math::IVec3;
 use enum_derived::Rand;
 
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
-use crate::structure::StructureInfo;
+use crate::structure::{StructureId, StructureInfo};
 use crate::wall_grid::VantageEvaluation;
 use crate::{
     sparse3d::{SlotLocation, Sparse3D},
@@ -38,14 +38,14 @@ impl Builder {
 
     fn wall(&self) -> Cell {
         Cell {
-            id: *self.structures.get("wall").unwrap() as i32,
+            id: StructureId(*self.structures.get("wall").unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
         }
     }
     fn flat(&self) -> Cell {
         Cell {
-            id: *self.structures.get("floor").unwrap() as i32,
+            id: StructureId(*self.structures.get("floor").unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
         }
@@ -157,7 +157,7 @@ impl Builder {
         };
 
         if let Some(name) = obj_name {
-            obj.id = *self.structures.get(name).unwrap() as i32;
+            obj.id = StructureId(*self.structures.get(name).unwrap() as u32);
         }
 
         let min = IVec3::min(corner_a, corner_b);
@@ -180,7 +180,7 @@ impl Builder {
         let y = min.y;
 
         let obj = Cell {
-            id: *self.structures.get(obj_name).unwrap() as i32,
+            id: StructureId(*self.structures.get(obj_name).unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
         };
@@ -214,7 +214,7 @@ impl Builder {
         self.map.set(
             SlotLocation::new(loc.x, loc.y, loc.z, RelSlot::Room),
             Cell {
-                id: *self.structures.get("desk").unwrap() as i32,
+                id: StructureId(*self.structures.get("desk").unwrap() as u32),
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation {
                     interest: Some(interest),
@@ -315,25 +315,25 @@ pub fn add_noise(
         // For each selected dest, pick a replacement (or deletion if present)
         for (dest_loc, slot) in selected.into_iter() {
             // Determine candidate structure IDs matching the placement style for this slot
-            let mut candidates_ids: Vec<i32> = Vec::new();
+            let mut candidates_ids: Vec<StructureId> = Vec::new();
 
             for (idx, info) in structure_info.iter().enumerate() {
                 match slot {
                     Room => {
                         if info.placement_style == crate::structure::PlacementStyle::RoomPlop {
-                            candidates_ids.push(idx as i32);
+                            candidates_ids.push(StructureId(idx as u32));
                         }
                     }
                     Floor => {
                         if info.placement_style == crate::structure::PlacementStyle::FloorDrag {
-                            candidates_ids.push(idx as i32);
+                            candidates_ids.push(StructureId(idx as u32));
                         }
                     }
                     XLoWall | ZLoWall => {
                         if info.placement_style == crate::structure::PlacementStyle::WallDrag
                             || info.placement_style == crate::structure::PlacementStyle::WallPlop
                         {
-                            candidates_ids.push(idx as i32);
+                            candidates_ids.push(StructureId(idx as u32));
                         }
                     }
                     _ => {}
@@ -342,7 +342,7 @@ pub fn add_noise(
 
             // If something is already present, allow deletion as one option
             let existing = new_s.get(dest_loc);
-            let mut options: Vec<Option<i32>> = Vec::new();
+            let mut options: Vec<Option<StructureId>> = Vec::new();
             if existing.is_some() {
                 options.push(None);
             }
@@ -413,7 +413,7 @@ fn test_add_noise() {
     s.set(
         v_loc,
         Cell {
-            id: 0,
+            id: StructureId(0),
             facing: crate::sparse3d::Facing::NegX,
             evaluation: Some(VantageEvaluation {
                 coherence: Some(1.0),
@@ -426,7 +426,7 @@ fn test_add_noise() {
     s.set(
         SlotLocation::new(1, 0, 0, RelSlot::XLoWall),
         Cell {
-            id: 1,
+            id: StructureId(1),
             facing: crate::sparse3d::Facing::NegX,
             evaluation: None,
         },

@@ -8,7 +8,7 @@ use bevy::window::PrimaryWindow;
 use crate::camera::GameCamera;
 use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, SlotLocation};
-use crate::structure::StructureList;
+use crate::structure::{StructureId, StructureList};
 use crate::wall_grid::{
     cell_transform, GridCellMarker, ProposalGhostMarker, ProposalOverlayMarker, ProposedCutMarker,
     WallGrid,
@@ -220,7 +220,7 @@ fn climb_wall_column(
     z_dir: i32,
     visited_walls: &mut HashSet<(i32, i32, i32, bool)>,
     hidden: &mut Vec<SlotLocation>,
-    mut cut: Option<&mut Vec<(SlotLocation, i32, bool)>>,
+    mut cut: Option<&mut Vec<(SlotLocation, StructureId, bool)>>,
     floor_seeds: &mut Vec<(i32, i32, i32, bool)>,
 ) {
     let is_x = bottom_loc.rel_slot == RelSlot::XLoWall;
@@ -277,9 +277,9 @@ pub fn compute_visibility(
     (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
     cur_y: i32,
-) -> (Vec<SlotLocation>, Vec<(SlotLocation, i32, bool)>) {
+) -> (Vec<SlotLocation>, Vec<(SlotLocation, StructureId, bool)>) {
     let mut hidden: Vec<SlotLocation> = Vec::new();
-    let mut cut: Vec<(SlotLocation, i32, bool)> = Vec::new();
+    let mut cut: Vec<(SlotLocation, StructureId, bool)> = Vec::new();
 
     let (x_dir, z_dir) = camera_facing_dirs(focus_location, camera_location);
     let (sx, sz) = cursor_cube(focus_location, camera_location, is_room_plop);
@@ -370,7 +370,8 @@ pub fn update_visibility_system(
     let focus_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32)
         .unwrap_or_else(|| Vec3::new(0.0, build_state.cur_y as f32, 0.0));
 
-    let is_room_plop = wall_grid.structure_is_room_plop(build_state.selected_structure as i32);
+    let is_room_plop =
+        wall_grid.structure_is_room_plop(StructureId(build_state.selected_structure as u32));
 
     for entity in cut_q.iter() {
         commands.entity(entity).despawn();
