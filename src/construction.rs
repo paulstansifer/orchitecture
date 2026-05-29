@@ -261,7 +261,8 @@ impl WallGrid {
         self.undo_record.clear();
         // Proposal entity cleanup is the caller's responsibility.
         // Shift the building into the no-road semiplane (south of the E-W road).
-        let shifted = new_contents.translate(crate::road::BUILDING_LOAD_OFFSET);
+        let z_shift = -new_contents.bounding_box().1.z;
+        let shifted = new_contents.translate(IVec3::new(0, 0, z_shift));
         self.replace_contents(shifted)
     }
 
