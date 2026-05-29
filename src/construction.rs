@@ -254,7 +254,9 @@ impl WallGrid {
         self.proposed_changes = Sparse3D::new();
         self.undo_record.clear();
         // Proposal entity cleanup is the caller's responsibility.
-        self.replace_contents(new_contents)
+        // Shift the building into the no-road semiplane (south of the E-W road).
+        let shifted = new_contents.translate(crate::road::BUILDING_LOAD_OFFSET);
+        self.replace_contents(shifted)
     }
 
     fn replace_contents(

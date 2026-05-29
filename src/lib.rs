@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 pub mod build_helpers;
+pub mod road;
 pub mod camera;
 pub mod ceiling_lights;
 pub mod construction;

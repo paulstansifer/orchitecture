@@ -395,6 +395,21 @@ impl<T> Sparse3D<T> {
         })
     }
 
+    pub fn translate(self, offset: IVec3) -> Self
+    where
+        T: Clone,
+    {
+        let mut new_grid = Sparse3D::new();
+        for (loc, cell) in self.iter() {
+            let new_loc = SlotLocation {
+                cube: loc.cube + offset,
+                rel_slot: loc.rel_slot,
+            };
+            new_grid.set(new_loc, cell.clone());
+        }
+        new_grid
+    }
+
     pub fn bounding_box(&self) -> (IVec3, IVec3) {
         if self.chunks.is_empty() {
             return (IVec3::ZERO, IVec3::ZERO);
