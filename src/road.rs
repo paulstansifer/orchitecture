@@ -17,9 +17,17 @@ pub fn road_forbidden_height(x: i32, z: i32) -> i32 {
     let in_north = x >= 0 && x < ROAD_WIDTH && z >= ROAD_WIDTH;
 
     if in_ew {
-        if z == 0 || z == ROAD_WIDTH - 1 { 3 } else { 4 }
+        if z == 0 || z == ROAD_WIDTH - 1 {
+            3
+        } else {
+            4
+        }
     } else if in_north {
-        if x == 0 || x == ROAD_WIDTH - 1 { 3 } else { 4 }
+        if x == 0 || x == ROAD_WIDTH - 1 {
+            3
+        } else {
+            4
+        }
     } else {
         0
     }

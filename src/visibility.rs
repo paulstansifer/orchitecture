@@ -370,7 +370,8 @@ pub fn update_visibility_system(
     let focus_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32)
         .unwrap_or_else(|| Vec3::new(0.0, build_state.cur_y as f32, 0.0));
 
-    let is_room_plop = wall_grid.structure_is_room_plop(StructureId(build_state.selected_structure as u32));
+    let is_room_plop =
+        wall_grid.structure_is_room_plop(StructureId(build_state.selected_structure as u32));
 
     for entity in cut_q.iter() {
         commands.entity(entity).despawn();

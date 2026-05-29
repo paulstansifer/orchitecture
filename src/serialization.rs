@@ -6,7 +6,11 @@ use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
 use crate::structure::{StructureId, StructureInfo};
 use crate::wall_grid::Cell;
 
-pub fn serialize_slot(id: StructureId, slot: RelSlot, structures: &HashMap<StructureId, StructureInfo>) -> char {
+pub fn serialize_slot(
+    id: StructureId,
+    slot: RelSlot,
+    structures: &HashMap<StructureId, StructureInfo>,
+) -> char {
     let structure_info = structures.get(&id).unwrap();
     match slot {
         RelSlot::XLoWall | RelSlot::XHiWall => structure_info.x_char.unwrap_or(' '),

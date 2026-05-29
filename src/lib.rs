@@ -1,7 +1,6 @@
 #![recursion_limit = "256"]
 
 pub mod build_helpers;
-pub mod road;
 pub mod camera;
 pub mod ceiling_lights;
 pub mod construction;
@@ -11,6 +10,7 @@ pub mod input;
 pub mod llm_rooms;
 pub mod paths;
 pub mod qnn;
+pub mod road;
 pub mod serialization;
 pub mod sparse3d;
 pub mod station;
