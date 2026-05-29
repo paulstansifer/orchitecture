@@ -185,8 +185,8 @@ fn train<B: Backend>() {
             )
             .expect("Trained model should be saved successfully");
 
-        let args_json = serde_json::to_string_pretty(&args).unwrap();
-        std::fs::write(format!("{artifact_dir}/model_args.json"), args_json).unwrap();
+        let args_ron = ron::to_string(&args).unwrap();
+        std::fs::write(format!("{artifact_dir}/model_args.ron"), args_ron).unwrap();
     }
 
     println!("Parameters: {:?}", Args::parse());

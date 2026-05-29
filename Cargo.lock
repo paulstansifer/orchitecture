@@ -7065,6 +7065,7 @@ dependencies = [
  "naga 26.0.0",
  "rand 0.9.2",
  "rgb",
+ "ron",
  "serde",
  "serde_json",
  "stdio-override",

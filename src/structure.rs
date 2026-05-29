@@ -63,8 +63,8 @@ impl StructureList {
 }
 
 pub fn load_structure_info() -> Vec<StructureInfo> {
-    let json_content = include_str!("../buildables/structures.json");
-    serde_json::from_str(json_content).unwrap()
+    let ron_content = include_str!("../buildables/structures.ron");
+    ron::from_str(ron_content).unwrap()
 }
 
 /// Register handles for every .gltf referenced in the given StructureInfo list.

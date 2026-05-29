@@ -45,6 +45,7 @@ bevy = { version = "0.18.1", default-features = false, features = [
 bevy_egui = "0.39"
 # Force naga 26's stderr feature on to fix a compile bug in naga 26.0.0 (used by burn's wgpu backend)
 naga = { version = "26.0.0", features = ["termcolor"] }
+ron = "0.12"
 
 [[bin]]
 name = "train"
