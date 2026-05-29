@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
+use bevy_file_dialog::prelude::*;
 
 use crate::input::BuildState;
 use crate::serialization;
@@ -93,10 +94,13 @@ fn find_bundled(name: &str) -> Option<&'static str> {
         .map(|(_, c)| *c)
 }
 
+pub struct SaveDialog;
+pub struct LoadDialog;
+
 #[derive(Resource, Default)]
 pub struct UiState {
-    pub save_filename: String,
     pub load_filename: String,
+    pub example_idx: String,
     pub available_files: Vec<String>,
 }
 
@@ -141,6 +145,30 @@ fn clear_proposal_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
     }
 }
 
+pub fn handle_file_save(mut ev_saved: MessageReader<DialogFileSaved<SaveDialog>>) {
+    for ev in ev_saved.read() {
+        if let Err(e) = &ev.result {
+            eprintln!("Failed to save file: {e}");
+        }
+    }
+}
+
+pub fn handle_file_load(
+    mut ev_loaded: MessageReader<DialogFileLoaded<LoadDialog>>,
+    mut commands: Commands,
+    structure_list: Res<StructureList>,
+    mut wall_grid: ResMut<WallGrid>,
+) {
+    for ev in ev_loaded.read() {
+        if let Ok(content) = std::str::from_utf8(&ev.contents) {
+            let new_contents = serialization::load_from_str(content, &wall_grid.structures);
+            clear_proposal_entities(&mut commands, &mut wall_grid);
+            let changes = wall_grid.load_from_offline(new_contents);
+            apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
+        }
+    }
+}
+
 pub fn ui_system(
     mut commands: Commands,
     mut contexts: EguiContexts,
@@ -155,44 +183,26 @@ pub fn ui_system(
     };
 
     // Captures a map name selected via the dropdown; handled after the egui block.
-    #[cfg(target_arch = "wasm32")]
-    let mut wasm_load: Option<String> = None;
+    let mut dropdown_load: Option<String> = None;
 
     // Bottom panel must be added before side panels.
     egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label("Up/Dn=layer  R=rotate  Z=undo  Drag=place  Ctrl+drag=erase  V=evaluate");
 
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let user_dir: std::path::PathBuf = crate::paths::USER_DIR.into();
-
-                ui.separator();
-                ui.label("Save:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut ui_state.save_filename).desired_width(110.0),
-                );
-                if ui.button("Save").clicked() && !ui_state.save_filename.is_empty() {
-                    let path = user_dir.join(&ui_state.save_filename);
-                    serialization::save(&wall_grid.contents, &wall_grid.structures, &path);
-                }
-
-                ui.separator();
-                ui.label("Load:");
-                ui.add(
-                    egui::TextEdit::singleline(&mut ui_state.load_filename).desired_width(110.0),
-                );
-                if ui.button("Load").clicked() && !ui_state.load_filename.is_empty() {
-                    let name = ui_state.load_filename.clone();
-                    let new_contents = if let Some(content) = find_bundled(&name) {
-                        serialization::load_from_str(content, &wall_grid.structures)
-                    } else {
-                        serialization::load(&user_dir.join(&name), &wall_grid.structures)
-                    };
-                    clear_proposal_entities(&mut commands, &mut wall_grid);
-                    let changes = wall_grid.load_from_offline(new_contents);
-                    apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
-                }
+            ui.separator();
+            if ui.button("Save").clicked() {
+                let bytes = serialization::serialize(&wall_grid.contents, &wall_grid.structures);
+                commands
+                    .dialog()
+                    .add_filter("Orchitecture Map", &["txt"])
+                    .save_file::<SaveDialog>(bytes);
+            }
+            if ui.button("Load").clicked() {
+                commands
+                    .dialog()
+                    .add_filter("Orchitecture Map", &["txt"])
+                    .load_file::<LoadDialog>();
             }
 
             // Dropdown is visible on all platforms.
@@ -206,14 +216,13 @@ pub fn ui_system(
                     })
                     .show_ui(ui, |ui| {
                         for name in ui_state.available_files.clone() {
-                            let _resp = ui.selectable_value(
+                            let resp = ui.selectable_value(
                                 &mut ui_state.load_filename,
                                 name.clone(),
                                 &name,
                             );
-                            #[cfg(target_arch = "wasm32")]
-                            if _resp.clicked() {
-                                wasm_load = Some(name);
+                            if resp.clicked() {
+                                dropdown_load = Some(name);
                             }
                         }
                     });
@@ -222,8 +231,11 @@ pub fn ui_system(
             #[cfg(not(target_arch = "wasm32"))]
             {
                 ui.separator();
-                if ui.button("Load example").clicked() && !ui_state.load_filename.is_empty() {
-                    if let Ok(idx) = ui_state.load_filename.parse::<usize>() {
+                ui.add(
+                    egui::TextEdit::singleline(&mut ui_state.example_idx).desired_width(40.0),
+                );
+                if ui.button("Load example").clicked() && !ui_state.example_idx.is_empty() {
+                    if let Ok(idx) = ui_state.example_idx.parse::<usize>() {
                         let examples = crate::example_structures::make_structures();
                         if let Some(map) = examples.into_iter().nth(idx) {
                             clear_proposal_entities(&mut commands, &mut wall_grid);
@@ -236,11 +248,21 @@ pub fn ui_system(
         });
     });
 
-    // On wasm, a dropdown click directly loads the selected bundled map.
-    #[cfg(target_arch = "wasm32")]
-    if let Some(name) = wasm_load {
-        if let Some(content) = find_bundled(&name) {
-            let new_contents = serialization::load_from_str(content, &wall_grid.structures);
+    // A dropdown click loads the selected map immediately on all platforms.
+    if let Some(name) = dropdown_load {
+        let new_contents_opt = if let Some(content) = find_bundled(&name) {
+            Some(serialization::load_from_str(content, &wall_grid.structures))
+        } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let path =
+                    std::path::PathBuf::from(crate::paths::USER_DIR).join(&name);
+                Some(serialization::load(&path, &wall_grid.structures))
+            }
+            #[cfg(target_arch = "wasm32")]
+            None
+        };
+        if let Some(new_contents) = new_contents_opt {
             clear_proposal_entities(&mut commands, &mut wall_grid);
             let changes = wall_grid.load_from_offline(new_contents);
             apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);

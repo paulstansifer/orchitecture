@@ -2,6 +2,7 @@
 
 use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
+use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     camera::{camera_input_system, spawn_camera, CameraState},
     ceiling_lights::update_ceiling_lights,
@@ -12,7 +13,10 @@ use orchitecture_lib::{
     },
     qnn::ModelPlugin,
     structure::{spawn_structures, StructureList},
-    ui::{discover_user_files, enable_ui_input_absorption, ui_system, UiState},
+    ui::{
+        discover_user_files, enable_ui_input_absorption, handle_file_load, handle_file_save,
+        ui_system, LoadDialog, SaveDialog, UiState,
+    },
     visibility::update_visibility_system,
     wall_grid::{spawn_grid, spawn_proposal_overlay_assets, WallGrid},
     world::spawn_world,
@@ -33,6 +37,11 @@ fn main() {
             ..default()
         }))
         .add_plugins(EguiPlugin::default())
+        .add_plugins(
+            FileDialogPlugin::new()
+                .with_save_file::<SaveDialog>()
+                .with_load_file::<LoadDialog>(),
+        )
         .add_plugins(GridPreviewPlugin)
         .add_plugins(ModelPlugin)
         .insert_resource(CameraState::default())
@@ -64,6 +73,7 @@ fn main() {
                 update_ceiling_lights.run_if(resource_changed::<WallGrid>),
             ),
         )
+        .add_systems(Update, (handle_file_save, handle_file_load))
         // ui_system must run in EguiPrimaryContextPass (not Update) to access Egui contexts.
         .add_systems(EguiPrimaryContextPass, ui_system)
         .run();

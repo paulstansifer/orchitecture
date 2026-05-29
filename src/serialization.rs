@@ -184,17 +184,21 @@ where
     Ok(grid)
 }
 
-pub fn save(contents: &Sparse3D<Cell>, structures: &[StructureInfo], path: &std::path::PathBuf) {
+pub fn serialize(contents: &Sparse3D<Cell>, structures: &[StructureInfo]) -> Vec<u8> {
     let mut structures_by_id = HashMap::new();
     for (id, info) in structures.iter().enumerate() {
         structures_by_id.insert(StructureId(id as u32), info.clone());
     }
-    let serialized = serialize_sparse3d(
+    serialize_sparse3d(
         contents,
         |cell, slot, structures| serialize_slot(cell.id, slot, structures),
         &structures_by_id,
-    );
-    std::fs::write(path, serialized).unwrap();
+    )
+    .into_bytes()
+}
+
+pub fn save(contents: &Sparse3D<Cell>, structures: &[StructureInfo], path: &std::path::PathBuf) {
+    std::fs::write(path, serialize(contents, structures)).unwrap();
 }
 
 pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Cell> {
