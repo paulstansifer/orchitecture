@@ -4,6 +4,20 @@ use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
 use crate::structure::{PlacementStyle, StructureId};
 use crate::wall_grid::{Cell, Proposal, ProposalView, UndoRecord, VantageEvaluation, WallGrid};
 
+fn proposal_view(proposal: &Option<Proposal>, has_real_cell: bool) -> ProposalView {
+    match proposal {
+        None => ProposalView::None,
+        Some(Proposal::Place(cell)) => {
+            if has_real_cell {
+                ProposalView::Replace
+            } else {
+                ProposalView::Add(cell.clone())
+            }
+        }
+        Some(Proposal::Remove) => ProposalView::Remove,
+    }
+}
+
 impl WallGrid {
     /// Propose placing or clearing cells in a rectangular range.
     ///
@@ -69,18 +83,7 @@ impl WallGrid {
 
                     undo_changed.push((loc, prior_proposal));
 
-                    let view = match &new_proposal {
-                        None => ProposalView::None,
-                        Some(Proposal::Place(cell)) => {
-                            if real_cell.is_none() {
-                                ProposalView::Add(cell.clone())
-                            } else {
-                                ProposalView::Replace(cell.clone())
-                            }
-                        }
-                        Some(Proposal::Remove) => ProposalView::Remove,
-                    };
-                    changes.push((loc, view));
+                    changes.push((loc, proposal_view(&new_proposal, real_cell.is_some())));
                 }
             }
         }
@@ -201,19 +204,8 @@ impl WallGrid {
             } else {
                 self.proposed_changes.take(loc);
             }
-            let real_cell = self.contents.get(loc);
-            let view = match &prior_proposal {
-                None => ProposalView::None,
-                Some(Proposal::Place(cell)) => {
-                    if real_cell.is_none() {
-                        ProposalView::Add(cell.clone())
-                    } else {
-                        ProposalView::Replace(cell.clone())
-                    }
-                }
-                Some(Proposal::Remove) => ProposalView::Remove,
-            };
-            changes.push((loc, view));
+            let has_real = self.contents.get(loc).is_some();
+            changes.push((loc, proposal_view(&prior_proposal, has_real)));
         }
         changes
     }

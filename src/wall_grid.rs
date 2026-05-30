@@ -53,7 +53,7 @@ pub enum ProposalView {
     /// Proposed removal (real cell exists): show real cell + red X.
     Remove,
     /// Proposed replacement (real cell exists, different new cell): show real cell + yellow ring.
-    Replace(Cell),
+    Replace,
 }
 
 pub(crate) struct UndoRecord {
@@ -171,12 +171,7 @@ impl WallGrid {
     }
 
     pub fn months_for_construction(&self) -> usize {
-        let n = self.num_proposed_changes();
-        if n == 0 {
-            0
-        } else {
-            (n + 9) / 80
-        }
+        (self.num_proposed_changes() + 79) / 80
     }
 }
 
@@ -404,7 +399,7 @@ pub fn apply_proposal_changes(
                 let entities = spawn_x_overlay(commands, overlay_assets, loc);
                 wall_grid.proposal_entities.insert(loc, entities);
             }
-            ProposalView::Replace(_) => {
+            ProposalView::Replace => {
                 let entities = spawn_ring_overlay(commands, overlay_assets, loc);
                 wall_grid.proposal_entities.insert(loc, entities);
             }
@@ -418,7 +413,7 @@ pub fn spawn_proposal_overlay_assets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    use bevy::prelude::{Cylinder, Torus};
+    use bevy::prelude::Torus;
 
     let arm_along_x = meshes.add(bevy::prelude::Cuboid::new(0.8, 0.07, 0.07));
     let arm_along_y = meshes.add(bevy::prelude::Cuboid::new(0.07, 0.8, 0.07));
@@ -451,8 +446,6 @@ pub fn spawn_proposal_overlay_assets(
         cull_mode: None,
         ..Default::default()
     });
-
-    let _ = Cylinder::new(0.0, 0.0); // suppress unused import warning
 
     commands.insert_resource(ProposalOverlayAssets {
         arm_along_x,
