@@ -11,12 +11,88 @@ use serde::{Deserialize, Serialize};
 use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
 use crate::structure::{StructureId, StructureInfo, StructureList};
 
+/// A score that may be an exact target or a one-sided inequality constraint.
+///
+/// Serializes as a bare float for `Exact` (backwards-compatible with old `f32` fields)
+/// and as `{"at_most": v}` / `{"at_least": v}` for the bounded variants.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ConstrainedScore {
+    /// Score must equal this value.
+    Exact(f32),
+    /// Score must be ≤ this value (no penalty for being lower).
+    AtMost { at_most: f32 },
+    /// Score must be ≥ this value (no penalty for being higher).
+    AtLeast { at_least: f32 },
+}
+
+impl ConstrainedScore {
+    pub fn value(self) -> f32 {
+        match self {
+            Self::Exact(v) | Self::AtMost { at_most: v } | Self::AtLeast { at_least: v } => v,
+        }
+    }
+}
+
+impl From<f32> for ConstrainedScore {
+    fn from(v: f32) -> Self {
+        Self::Exact(v)
+    }
+}
+
+/// Arithmetic and bound-relaxation operations, defined for both `ConstrainedScore`
+/// and `Option<ConstrainedScore>`.
+pub trait ConstrainedScoreExt: Sized {
+    /// Shift the threshold value by `delta`.
+    fn add(self, delta: f32) -> Self;
+    /// Shift the threshold value down by `delta`.
+    fn subtract(self, delta: f32) -> Self;
+    /// Relax to an **at-least** constraint: the score may be higher than the threshold.
+    fn unbound_higher(self) -> Self;
+    /// Relax to an **at-most** constraint: the score may be lower than the threshold.
+    fn unbound_lower(self) -> Self;
+}
+
+impl ConstrainedScoreExt for ConstrainedScore {
+    fn add(self, delta: f32) -> Self {
+        match self {
+            Self::Exact(v) => Self::Exact(v + delta),
+            Self::AtMost { at_most: v } => Self::AtMost { at_most: v + delta },
+            Self::AtLeast { at_least: v } => Self::AtLeast { at_least: v + delta },
+        }
+    }
+    fn subtract(self, delta: f32) -> Self {
+        self.add(-delta)
+    }
+    fn unbound_higher(self) -> Self {
+        Self::AtLeast { at_least: self.value() }
+    }
+    fn unbound_lower(self) -> Self {
+        Self::AtMost { at_most: self.value() }
+    }
+}
+
+impl ConstrainedScoreExt for Option<ConstrainedScore> {
+    fn add(self, delta: f32) -> Self {
+        self.map(|cs| cs.add(delta))
+    }
+    fn subtract(self, delta: f32) -> Self {
+        self.map(|cs| cs.subtract(delta))
+    }
+    fn unbound_higher(self) -> Self {
+        self.map(|cs| cs.unbound_higher())
+    }
+    fn unbound_lower(self) -> Self {
+        self.map(|cs| cs.unbound_lower())
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct VantageEvaluation {
     #[serde(default)]
-    pub coherence: Option<f32>,
+    pub coherence: Option<ConstrainedScore>,
     #[serde(default)]
-    pub interest: Option<f32>,
+    pub interest: Option<ConstrainedScore>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]

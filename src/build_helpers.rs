@@ -5,7 +5,7 @@ use enum_derived::Rand;
 
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::{StructureId, StructureInfo};
-use crate::wall_grid::VantageEvaluation;
+use crate::wall_grid::{ConstrainedScoreExt, VantageEvaluation};
 use crate::{
     sparse3d::{SlotLocation, Sparse3D},
     wall_grid::Cell,
@@ -210,15 +210,20 @@ impl Builder {
         }
     }
 
-    pub fn set_vantage(&mut self, loc: IVec3, coherence: f32, interest: f32) {
+    pub fn set_vantage(
+        &mut self,
+        loc: IVec3,
+        coherence: impl Into<crate::wall_grid::ConstrainedScore>,
+        interest: impl Into<crate::wall_grid::ConstrainedScore>,
+    ) {
         self.map.set(
             SlotLocation::new(loc.x, loc.y, loc.z, RelSlot::Room),
             Cell {
                 id: StructureId(*self.structures.get("desk").unwrap() as u32),
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation {
-                    interest: Some(interest),
-                    coherence: Some(coherence),
+                    interest: Some(interest.into()),
+                    coherence: Some(coherence.into()),
                 }),
             },
         );
@@ -383,11 +388,11 @@ pub fn add_noise(
             }
         }
 
-        // Edit the affected vantage: set coherence to 0.1 * original coherence
+        // Noisy room should score at least 0.3 worse on coherence than the original.
         if let Some(orig_eval) = v_cell.evaluation.as_ref() {
             if let Some(cell_mut) = new_s.get_mut(*v_loc) {
                 cell_mut.evaluation = Some(VantageEvaluation {
-                    coherence: orig_eval.coherence.map(|c| c * 0.1),
+                    coherence: orig_eval.coherence.subtract(0.3).unbound_lower(),
                     interest: orig_eval.interest,
                 });
             }
@@ -401,7 +406,7 @@ pub fn add_noise(
 
 #[test]
 fn test_add_noise() {
-    use crate::wall_grid::VantageEvaluation;
+    use crate::wall_grid::{ConstrainedScore, VantageEvaluation};
     use assert2::{assert, check};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
@@ -417,8 +422,8 @@ fn test_add_noise() {
             id: StructureId(0),
             facing: crate::sparse3d::Facing::NegX,
             evaluation: Some(VantageEvaluation {
-                coherence: Some(1.0),
-                interest: Some(0.5),
+                coherence: Some(ConstrainedScore::Exact(1.0)),
+                interest: Some(ConstrainedScore::Exact(0.5)),
             }),
         },
     );
@@ -449,5 +454,6 @@ fn test_add_noise() {
 
     assert!(let Some(cell) = out.get(v_loc));
     assert!(let Some(eval) = &cell.evaluation);
-    check!((eval.coherence.unwrap() - 0.1).abs() < 1e-6);
+    // original coherence 1.0, subtract 0.3, unbound_lower → AtMost { at_most: 0.7 }
+    check!(eval.coherence == Some(ConstrainedScore::AtMost { at_most: 0.7 }));
 }

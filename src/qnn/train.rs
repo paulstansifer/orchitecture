@@ -6,7 +6,6 @@ use burn::{
     optim::AdamConfig,
     prelude::*,
     record::{DefaultFileRecorder, HalfPrecisionSettings},
-    tensor::backend::AutodiffBackend,
     train::logger::FileMetricLogger,
 };
 use clap::Parser;
@@ -41,7 +40,7 @@ fn create_artifact_dir(artifact_dir: &str) {
 
 fn train<B: Backend>() {
     let args = Args::parse();
-    let device: <Autodiff<B> as Backend>::Device = Default::default();
+    let device = B::Device::default();
     let config = TrainingConfig::new(AdamConfig::new())
         .with_learning_rate(args.lr)
         .with_num_epochs(args.epochs)
@@ -101,19 +100,20 @@ fn train<B: Backend>() {
         // println!("### Model: {model}");
         // println!("### last layer: {:?}", model.fc.last().unwrap().weight);
 
-        let learner = burn::train::LearnerBuilder::new(artifact_dir)
-            .metric_train_numeric(burn::train::metric::LossMetric::new())
-            .metric_valid_numeric(burn::train::metric::LossMetric::new())
-            .num_epochs(config.num_epochs)
-            .with_metric_logger(FileMetricLogger::new(format!("/tmp/logs/{metric}/")))
-            .build(
-                model,
-                config.optimizer.init(),
-                config.learning_rate,
-                burn::train::LearningStrategy::SingleDevice(device.clone()),
-            );
-
-        let model_trained = { learner.fit(dataloader_train, dataloader_test) };
+        let model_trained = burn::train::SupervisedTraining::new(
+            artifact_dir,
+            dataloader_train,
+            dataloader_test,
+        )
+        .metric_train_numeric(burn::train::metric::LossMetric::new())
+        .metric_valid_numeric(burn::train::metric::LossMetric::new())
+        .num_epochs(config.num_epochs)
+        .with_metric_logger(FileMetricLogger::new(format!("/tmp/logs/{metric}/")))
+        .launch(burn::train::Learner::new(
+            model,
+            config.optimizer.init(),
+            config.learning_rate,
+        ));
         println!(
             "last layer: {:?}",
             model_trained.model.fc.last().unwrap().weight

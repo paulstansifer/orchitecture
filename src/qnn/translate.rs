@@ -21,6 +21,29 @@ use std::collections::HashMap;
 
 pub const EMBEDDING_SIZE: usize = 4 + 1; // Keep this in sync with structure.rs (+ 1 for "indoors")
 
+/// How to interpret a score target during training.
+#[cfg(feature = "training")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScoreConstraint {
+    /// Penalise any deviation from the target (standard MSE).
+    Exact,
+    /// Penalise only when prediction exceeds the target (pred should be ≤ target).
+    AtMost,
+    /// Penalise only when prediction falls below the target (pred should be ≥ target).
+    AtLeast,
+}
+
+#[cfg(feature = "training")]
+impl crate::wall_grid::ConstrainedScore {
+    pub fn disassemble(self) -> (f32, ScoreConstraint) {
+        match self {
+            Self::Exact(v) => (v, ScoreConstraint::Exact),
+            Self::AtMost { at_most: v } => (v, ScoreConstraint::AtMost),
+            Self::AtLeast { at_least: v } => (v, ScoreConstraint::AtLeast),
+        }
+    }
+}
+
 #[cfg(feature = "training")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Metric {
@@ -78,6 +101,7 @@ fn grid_coord_to_voxel_coord(
 pub struct GroundTruth<B: Backend> {
     pub voxels: Tensor<B, 5, Float>,
     pub scores: Tensor<B, 1, Float>,
+    pub constraint: ScoreConstraint,
     pub filename: String,
 }
 
@@ -86,6 +110,7 @@ fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTru
     GroundTruth {
         voxels: Tensor::from_inner(gt.voxels),
         scores: Tensor::from_inner(gt.scores),
+        constraint: gt.constraint,
         filename: gt.filename,
     }
 }
@@ -132,6 +157,8 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
         let mut voxels: Vec<Tensor<B, 5, Float>> = Vec::new();
         let mut scores: Vec<Tensor<B, 1, Float>> = Vec::new();
         let mut files: Vec<String> = Vec::new();
+        // batch_size=1; all items in a batch should have the same constraint
+        let constraint = ds[0].constraint;
 
         for gt in ds {
             voxels.push(gt.voxels);
@@ -144,6 +171,7 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
         GroundTruth {
             voxels,
             scores,
+            constraint,
             filename: files.join("/"),
         }
     }
@@ -294,7 +322,6 @@ pub fn load_training_data<B: Backend>(
 }
 
 // Just handles a single datum, but the tensors could hold a batch
-// Just handles a single datum, but the tensors could hold a batch
 #[cfg(feature = "training")]
 pub fn ground_truth_at_vantage<B: Backend>(
     data: &(Sparse3D<Cell>, String),
@@ -303,10 +330,11 @@ pub fn ground_truth_at_vantage<B: Backend>(
 ) -> Option<GroundTruth<B>> {
     for (loc, cell) in data.0.iter() {
         if let Some(eval) = &cell.evaluation {
-            let val = match metric {
+            let constrained = match metric {
                 Metric::Interest => eval.interest?,
                 Metric::Coherence => eval.coherence?,
             };
+            let (val, constraint) = constrained.disassemble();
 
             let tensor = sparse3d_to_tensor(&data.0, /*center_coord=*/ loc.cube, |cell| {
                 let semb = &structures[cell.id.as_usize()].embedding;
@@ -320,6 +348,7 @@ pub fn ground_truth_at_vantage<B: Backend>(
             return Some(GroundTruth {
                 voxels: tensor,
                 scores: Tensor::from_data(TensorData::from([val]), &Default::default()),
+                constraint,
                 filename: data.1.clone(),
             });
         }

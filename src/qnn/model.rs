@@ -9,10 +9,9 @@ use burn::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "training")]
-use super::translate::GroundTruth;
+use super::translate::{GroundTruth, ScoreConstraint};
 #[cfg(feature = "training")]
 use burn::{
-    backend::Autodiff,
     tensor::backend::AutodiffBackend,
     train::{RegressionOutput, TrainOutput},
 };
@@ -137,36 +136,53 @@ impl<B: Backend> Cnn<B> {
         &self,
         rooms: Tensor<B, 5>,
         targets: Tensor<B, 1, Float>,
+        constraint: ScoreConstraint,
     ) -> RegressionOutput<B> {
         let output = self.forward(rooms);
         let batch_size = output.dims()[0];
 
-        // We have only one output metric:
         let targets_reshaped = targets.clone().reshape([batch_size, 1]);
+        let output_reshaped = output.reshape([batch_size, 1]);
 
-        let loss = nn::loss::MseLoss::new().forward(
-            output.clone(),
-            targets_reshaped.clone(),
-            nn::loss::Reduction::Mean,
-        );
-
-        let output_reshaped = output.clone().reshape([batch_size, 1]);
+        let loss = match constraint {
+            ScoreConstraint::Exact => nn::loss::MseLoss::new().forward(
+                output_reshaped.clone(),
+                targets_reshaped.clone(),
+                nn::loss::Reduction::Mean,
+            ),
+            ScoreConstraint::AtMost => {
+                // Zero loss when pred ≤ target; penalise (pred - target)² otherwise.
+                let excess = (output_reshaped.clone() - targets_reshaped.clone()).clamp_min(0.0);
+                (excess.clone() * excess).mean()
+            }
+            ScoreConstraint::AtLeast => {
+                // Zero loss when pred ≥ target; penalise (target - pred)² otherwise.
+                let deficit = (targets_reshaped.clone() - output_reshaped.clone()).clamp_min(0.0);
+                (deficit.clone() * deficit).mean()
+            }
+        };
 
         RegressionOutput::new(loss, output_reshaped, targets_reshaped)
     }
 }
 
 #[cfg(feature = "training")]
-impl<B: AutodiffBackend> burn::train::TrainStep<GroundTruth<B>, RegressionOutput<B>> for Cnn<B> {
+impl<B: AutodiffBackend> burn::train::TrainStep for Cnn<B> {
+    type Input = GroundTruth<B>;
+    type Output = RegressionOutput<B>;
+
     fn step(&self, batch: GroundTruth<B>) -> TrainOutput<RegressionOutput<B>> {
-        let item = self.forward_classification(batch.voxels, batch.scores);
+        let item = self.forward_classification(batch.voxels, batch.scores, batch.constraint);
         TrainOutput::new::<B, Cnn<B>>(self, item.loss.backward(), item)
     }
 }
 
 #[cfg(feature = "training")]
-impl<B: Backend> burn::train::ValidStep<GroundTruth<B>, RegressionOutput<B>> for Cnn<B> {
+impl<B: Backend> burn::train::InferenceStep for Cnn<B> {
+    type Input = GroundTruth<B>;
+    type Output = RegressionOutput<B>;
+
     fn step(&self, batch: GroundTruth<B>) -> RegressionOutput<B> {
-        self.forward_classification(batch.voxels, batch.scores)
+        self.forward_classification(batch.voxels, batch.scores, batch.constraint)
     }
 }
