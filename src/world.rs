@@ -48,7 +48,7 @@ pub fn spawn_world(
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(ew_len, w))),
         MeshMaterial3d(dirt.clone()),
-        Transform::from_translation(Vec3::new(0.0, 0.003, w / 2.0)),
+        Transform::from_translation(Vec3::new(0.0, 0.01, w / 2.0)),
     ));
 
     // North arm: x in [0, ROAD_WIDTH), z >= ROAD_WIDTH. Raised a touch more to avoid overlap flicker.
@@ -56,7 +56,7 @@ pub fn spawn_world(
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(w, north_len))),
         MeshMaterial3d(dirt),
-        Transform::from_translation(Vec3::new(w / 2.0, 0.002, w + north_len / 2.0)),
+        Transform::from_translation(Vec3::new(w / 2.0, 0.01, w + north_len / 2.0)),
     ));
 
     // It seems like 0.001 is low enough to Z-fight with the terrain, somehow!
