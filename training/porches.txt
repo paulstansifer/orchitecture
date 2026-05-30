@@ -1,0 +1,181 @@
+ R R R R R R R R R R R  
+R# # # # # # # # # # #R 
+                        
+R# # # # # # # # # # #R 
+                        
+R# # # # # # # # # # #R 
+ R - D - - D - - D - R  
+P#|# # # # # # # # #|#P 
+                        
+P#D# # # # # # # # #D#P 
+                        
+P#D# # # # # # # # #D#P 
+      S       S         
+P#|# # # # # # # # #|#P 
+                        
+P#|# # # # # # # # #|#P 
+                        
+P#|# # # # # # # # #|#P 
+    V V V   V V V       
+P#|# # # # # # # # #|#P 
+    V V V   V V V       
+P#|# # # # # # # # #|#P 
+                        
+P#D# # # # # # # # #D#P 
+                        
+P#D# # # # # # # # #D#P 
+                        
+P#|# # # # # # # # #|#P 
+   - D - - D - - D -    
+P# # # # # # # # # # #P 
+ P P P P P P P P P P P  
+                        
+~~~~~
+                        
+                        
+                        
+                        
+                        
+                        
+ R - - - - - - - - - R  
+P#R                 R#P 
+                        
+P#R                 R#P 
+                        
+P#R                 R#P 
+                        
+P#R                 R#P 
+   R R   R R R   R R    
+P# # # # # # # # # # #P 
+                        
+P# # # # # # # # # # #P 
+                        
+P# # # # # # # # # # #P 
+                        
+P# # # # # # # # # # #P 
+                        
+P# # # # # # # # # # #P 
+  S  R R R R R R RS     
+P#                   #P 
+                        
+P#R                 R#P 
+   R R R R R R R R R    
+P# # # # # # # # # # #P 
+ P P P P P P P P P P P  
+                        
+~~~~~
+                        
+                        
+                        
+                        
+                        
+                        
+ R R R R R R R R R R R  
+R# # # # # # # # # # #R 
+                        
+R# # # # # # # # # # #R 
+   - DV-V- DV-V- D -    
+P#|# # # # # # # # #|#P 
+                        
+P#|# # # # # # # # #|#P 
+      M M M M M         
+P#|# # # # # # # # #|#P 
+                        
+P#W# # # # # # # # #W#P 
+                        
+P#W# # # # # # # # #W#P 
+                        
+P#W# # # # # # # # #W#P 
+                        
+P#|# # # # # # # # #|#P 
+   R  M M M M M    R    
+P#| R# # # # # # #R |#P 
+                        
+P#|# # # # # # # # #|#P 
+   - D - W - W - D -    
+P# # # # # # # # # # #P 
+ P P P P P P P P P P P  
+                        
+~~~~~
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+ # # # # # # # # # # #  
+                        
+                        
+~~~~~
+~*~*~
+(3,2,5,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(4,2,5,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(3,0,6,"Room")={"id":4,"facing":"NegX","evaluation":null}
+(3,0,7,"Room")={"id":9,"facing":"NegX","evaluation":null}
+(3,2,7,"Room")={"id":8,"facing":"PosX","evaluation":null}
+(4,2,7,"Room")={"id":8,"facing":"PosX","evaluation":null}
+(5,2,7,"Room")={"id":8,"facing":"PosX","evaluation":null}
+(6,2,5,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(7,2,5,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(9,2,5,"Room")={"id":9,"facing":"PosZ","evaluation":null}
+(7,0,6,"Room")={"id":4,"facing":"NegX","evaluation":null}
+(9,0,6,"Room")={"id":9,"facing":"PosZ","evaluation":null}
+(9,2,6,"Room")={"id":9,"facing":"PosZ","evaluation":null}
+(7,0,7,"Room")={"id":9,"facing":"NegX","evaluation":null}
+(9,0,7,"Room")={"id":9,"facing":"PosZ","evaluation":null}
+(6,2,7,"Room")={"id":8,"facing":"PosX","evaluation":null}
+(7,2,7,"Room")={"id":8,"facing":"PosX","evaluation":null}
+(9,2,7,"Room")={"id":9,"facing":"PosZ","evaluation":null}
+(9,1,12,"Room")={"id":4,"facing":"NegX","evaluation":null}
+(6,2,12,"Room")={"id":8,"facing":"NegX","evaluation":null}
+(7,2,12,"Room")={"id":8,"facing":"NegX","evaluation":null}
+(1,0,8,"Room")={"id":9,"facing":"NegZ","evaluation":null}
+(1,0,9,"Room")={"id":9,"facing":"NegZ","evaluation":null}
+(1,0,10,"Room")={"id":9,"facing":"NegZ","evaluation":null}
+(1,2,5,"Room")={"id":9,"facing":"NegZ","evaluation":null}
+(1,0,6,"Room")={"id":9,"facing":"NegZ","evaluation":null}
+(1,2,6,"Room")={"id":9,"facing":"NegZ","evaluation":null}
+(1,0,7,"Room")={"id":9,"facing":"NegZ","evaluation":null}
+(1,2,7,"Room")={"id":9,"facing":"NegZ","evaluation":null}
+(2,0,9,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(3,0,9,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(4,0,9,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(2,0,10,"Room")={"id":0,"facing":"PosX","evaluation":{"coherence":null,"interest":null}}
+(3,0,10,"Room")={"id":0,"facing":"PosX","evaluation":{"coherence":null,"interest":null}}
+(4,0,10,"Room")={"id":0,"facing":"PosX","evaluation":{"coherence":null,"interest":null}}
+(1,1,12,"Room")={"id":4,"facing":"NegX","evaluation":null}
+(3,2,12,"Room")={"id":8,"facing":"NegX","evaluation":null}
+(4,2,12,"Room")={"id":8,"facing":"NegX","evaluation":null}
+(5,2,12,"Room")={"id":8,"facing":"NegX","evaluation":null}
+(9,0,8,"Room")={"id":9,"facing":"PosZ","evaluation":null}
+(6,0,9,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(7,0,9,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(8,0,9,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
+(9,0,9,"Room")={"id":9,"facing":"PosZ","evaluation":null}
+(6,0,10,"Room")={"id":0,"facing":"PosX","evaluation":{"coherence":null,"interest":null}}
+(7,0,10,"Room")={"id":0,"facing":"PosX","evaluation":{"coherence":null,"interest":null}}
+(8,0,10,"Room")={"id":0,"facing":"PosX","evaluation":{"coherence":null,"interest":null}}
+(9,0,10,"Room")={"id":9,"facing":"PosZ","evaluation":null}

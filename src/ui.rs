@@ -11,81 +11,82 @@ use crate::wall_grid::{apply_changes, apply_proposal_changes, ProposalOverlayAss
 /// Maps bundled at compile time; always available on all platforms.
 const BUNDLED_MAPS: &[(&str, &str)] = &[
     (
-        "boring_room.txt",
+        "boring_room",
         include_str!("../training/boring_room.txt"),
     ),
     (
-        "boring_room_blob.txt",
+        "boring_room_blob",
         include_str!("../training/boring_room_blob.txt"),
     ),
     (
-        "boring_room_tall.txt",
+        "boring_room_tall",
         include_str!("../training/boring_room_tall.txt"),
     ),
     (
-        "boring_room_tall_with_boxes.txt",
+        "boring_room_tall_with_boxes",
         include_str!("../training/boring_room_tall_with_boxes.txt"),
     ),
     (
-        "boring_room_tiny.txt",
+        "boring_room_tiny",
         include_str!("../training/boring_room_tiny.txt"),
     ),
     (
-        "boring_room_with_alcove.txt",
+        "boring_room_with_alcove",
         include_str!("../training/boring_room_with_alcove.txt"),
     ),
-    ("cavern.txt", include_str!("../training/cavern.txt")),
+    ("cavern", include_str!("../training/cavern.txt")),
     (
-        "chaotic_apartment.txt",
+        "chaotic_apartment",
         include_str!("../training/chaotic_apartment.txt"),
     ),
     (
-        "corner_in_corner.txt",
+        "corner_in_corner",
         include_str!("../training/corner_in_corner.txt"),
     ),
-    ("corners.txt", include_str!("../training/corners.txt")),
+    ("corners", include_str!("../training/corners.txt")),
     (
-        "double_balconies.txt",
+        "double_balconies",
         include_str!("../training/double_balconies.txt"),
     ),
-    ("gallery.txt", include_str!("../training/gallery.txt")),
+    ("gallery", include_str!("../training/gallery.txt")),
     (
-        "hall_turn_fat_pillars.txt",
+        "hall_turn_fat_pillars",
         include_str!("../training/hall_turn_fat_pillars.txt"),
     ),
     (
-        "hall_turn_stations.txt",
+        "hall_turn_stations",
         include_str!("../training/hall_turn_stations.txt"),
     ),
     (
-        "long_apartment.txt",
+        "long_apartment",
         include_str!("../training/long_apartment.txt"),
     ),
     (
-        "meta_pillars.txt",
+        "meta_pillars",
         include_str!("../training/meta_pillars.txt"),
     ),
     (
-        "random_but_coherent.txt",
+        "random_but_coherent",
         include_str!("../training/random_but_coherent.txt"),
     ),
     (
-        "rotational_apartment.txt",
+        "rotational_apartment",
         include_str!("../training/rotational_apartment.txt"),
     ),
-    ("sanctuary.txt", include_str!("../training/sanctuary.txt")),
+    ("sanctuary", include_str!("../training/sanctuary.txt")),
     (
-        "simple_apartment.txt",
+        "simple_apartment",
         include_str!("../training/simple_apartment.txt"),
     ),
     (
-        "simple_balcony.txt",
+        "simple_balcony",
         include_str!("../training/simple_balcony.txt"),
     ),
     (
-        "two_level_apartment.txt",
+        "two_level_apartment",
         include_str!("../training/two_level_apartment.txt"),
     ),
+    ("porches", include_str!("../training/porches.txt")),
 ];
 
 fn find_bundled(name: &str) -> Option<&'static str> {
