@@ -86,7 +86,7 @@
     (
         name: "railing",
         main_mesh: "railing.gltf",
-        y_cut_mesh: None,
+        y_cut_mesh: Some("railing.gltf"),
         placement_style: WallDrag,
         x_char: Some('R'),
         z_char: Some('R'),
