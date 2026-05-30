@@ -16,6 +16,6 @@ pub mod sparse3d;
 pub mod station;
 pub mod structure;
 pub mod ui;
-pub mod visibility;
+pub mod cutaway;
 pub mod wall_grid;
 pub mod world;

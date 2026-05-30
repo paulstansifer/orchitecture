@@ -272,7 +272,7 @@ fn climb_wall_column(
     }
 }
 
-pub fn compute_visibility(
+pub fn compute_cutaway(
     wall_grid: &WallGrid,
     (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
@@ -345,7 +345,7 @@ pub fn compute_visibility(
     (hidden, cut)
 }
 
-pub fn update_visibility_system(
+pub fn update_cutaway_system(
     mut commands: Commands,
     mut wall_grid: ResMut<WallGrid>,
     structure_list: Res<StructureList>,
@@ -380,7 +380,7 @@ pub fn update_visibility_system(
     // as changed and don't trigger ceiling light rebuilds every frame.
     wall_grid.bypass_change_detection().cut_entities.clear();
 
-    let (hidden_locs, cut_entries) = compute_visibility(
+    let (hidden_locs, cut_entries) = compute_cutaway(
         &wall_grid,
         (focus_pos, is_room_plop),
         camera_pos,
@@ -513,7 +513,7 @@ mod tests {
             RelSlot::Floor,
             None,
         );
-        // Walls — using XLoWall/ZLoWall (canonical slots) so that compute_visibility
+        // Walls — using XLoWall/ZLoWall (canonical slots) so that compute_cutaway
         // can round-trip correctly through find_wall_seeds.
         builder.build_plane(
             IVec3::new(0, 0, 0),
@@ -559,7 +559,7 @@ mod tests {
         let camera_pos = Vec3::new(10.0, 5.0, 1.5);
         let focus_pos = Vec3::new(1.5, 0.0, 1.5);
 
-        let (hidden_locs, _cut) = compute_visibility(&wg, (focus_pos, false), camera_pos, 0);
+        let (hidden_locs, _cut) = compute_cutaway(&wg, (focus_pos, false), camera_pos, 0);
         let hidden_set: HashSet<SlotLocation> = hidden_locs.into_iter().collect();
 
         check!(!hidden_set.is_empty());

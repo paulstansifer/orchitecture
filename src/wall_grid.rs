@@ -187,7 +187,7 @@ pub struct WallGrid {
     pub cell_entities: HashMap<SlotLocation, Entity>,
     /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
     pub proposal_entities: HashMap<SlotLocation, Vec<Entity>>,
-    /// Entities spawned for the y-cut visibility layer (cleared each visibility update).
+    /// Entities spawned for the y-cut cutaway layer (cleared each cutaway update).
     pub cut_entities: Vec<Entity>,
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
     pub proposed_cut_entities: HashMap<SlotLocation, Entity>,

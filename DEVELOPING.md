@@ -18,7 +18,7 @@ Game parts:
     and `cell_transform`.
   * construction.rs: grid-mutation methods on `WallGrid` — `wall_drag`, `floor_drag`,
     `room_plop`, `drag`, `click`, `undo`, and `load_from_offline`.
-  * visibility.rs: hides parts of the `WallGrid` so we can see inside.
+  * cutaway.rs: hides parts of the `WallGrid` so we can see inside.
   * sparse3d.rs: storage for walls, ceilings and "room objects" on a sparse cubic grid
   * structure.rs: `Structure`s are the walls, doors, desks, etc. that occupy `Cell`s.
   * serialization.rs: text format for `Sparse3D<Cell>`
