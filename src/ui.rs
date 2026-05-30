@@ -145,6 +145,13 @@ fn clear_proposal_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
     }
 }
 
+/// Despawns all persistent proposed-cut entities and drains `proposed_cut_entities`.
+fn clear_proposed_cut_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
+    for (_, entity) in wall_grid.proposed_cut_entities.drain() {
+        commands.entity(entity).despawn();
+    }
+}
+
 pub fn handle_file_save(mut ev_saved: MessageReader<DialogFileSaved<SaveDialog>>) {
     for ev in ev_saved.read() {
         if let Err(e) = &ev.result {
@@ -163,6 +170,7 @@ pub fn handle_file_load(
         if let Ok(content) = std::str::from_utf8(&ev.contents) {
             let new_contents = serialization::load_from_str(content, &wall_grid.structures);
             clear_proposal_entities(&mut commands, &mut wall_grid);
+            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
             let changes = wall_grid.load_from_offline(new_contents);
             apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
         }
@@ -236,6 +244,7 @@ pub fn ui_system(
                         let examples = crate::example_structures::make_structures();
                         if let Some(map) = examples.into_iter().nth(idx) {
                             clear_proposal_entities(&mut commands, &mut wall_grid);
+                            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
                             let changes = wall_grid.load_from_offline(map);
                             apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
                         }
@@ -260,6 +269,7 @@ pub fn ui_system(
         };
         if let Some(new_contents) = new_contents_opt {
             clear_proposal_entities(&mut commands, &mut wall_grid);
+            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
             let changes = wall_grid.load_from_offline(new_contents);
             apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
         }
@@ -312,6 +322,7 @@ pub fn ui_system(
                     // commit() writes to contents (triggers ceiling-light recompute)
                     let real_changes = wall_grid.construct();
                     clear_proposal_entities(&mut commands, &mut wall_grid);
+                    clear_proposed_cut_entities(&mut commands, &mut wall_grid);
                     apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
                 }
                 if ui.button("Reset").clicked() {
@@ -333,6 +344,7 @@ pub fn ui_system(
                         &overlay_assets,
                         deltas,
                     );
+                    clear_proposed_cut_entities(&mut commands, &mut wall_grid);
                 }
             }
         });

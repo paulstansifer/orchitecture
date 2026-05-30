@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::math::Vec3;
@@ -361,7 +361,7 @@ pub fn update_visibility_system(
     mut ghost_q: Query<(Entity, &ProposalGhostMarker, Option<&RenderLayers>)>,
     mut overlay_q: Query<(Entity, &ProposalOverlayMarker, Option<&RenderLayers>)>,
     children_q: Query<&Children>,
-    cut_q: Query<Entity, With<CutCellMarker>>,
+    cut_q: Query<Entity, (With<CutCellMarker>, Without<ProposedCutMarker>)>,
 ) {
     let Ok((_, cam_gt)) = camera_q.single() else {
         return;
@@ -429,27 +429,52 @@ pub fn update_visibility_system(
         }
     }
 
+    // Separate proposed-only cuts from regular cuts.
+    let mut desired_proposed: HashMap<SlotLocation, StructureId> = HashMap::new();
     for (loc, id, is_proposed_only) in cut_entries {
-        if let Some(cut_handle) = structure_list.cut_handle(id) {
+        if is_proposed_only {
+            desired_proposed.insert(loc, id);
+        } else if let Some(cut_handle) = structure_list.cut_handle(id) {
             let transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
-            let entity = if is_proposed_only {
-                commands
+            let entity = commands
+                .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
+                .id();
+            wall_grid.bypass_change_detection().cut_entities.push(entity);
+        }
+    }
+
+    // Despawn proposed cut entities whose locations left the cut zone.
+    wall_grid
+        .bypass_change_detection()
+        .proposed_cut_entities
+        .retain(|loc, entity| {
+            if desired_proposed.contains_key(loc) {
+                true
+            } else {
+                commands.entity(*entity).despawn();
+                false
+            }
+        });
+
+    // Spawn proposed cut entities for locations newly entering the cut zone.
+    for (loc, id) in desired_proposed {
+        if let std::collections::hash_map::Entry::Vacant(v) = wall_grid
+            .bypass_change_detection()
+            .proposed_cut_entities
+            .entry(loc)
+        {
+            if let Some(cut_handle) = structure_list.cut_handle(id) {
+                let transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
+                let entity = commands
                     .spawn((
                         SceneRoot(cut_handle.clone()),
                         transform,
                         CutCellMarker,
                         ProposedCutMarker,
                     ))
-                    .id()
-            } else {
-                commands
-                    .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
-                    .id()
-            };
-            wall_grid
-                .bypass_change_detection()
-                .cut_entities
-                .push(entity);
+                    .id();
+                v.insert(entity);
+            }
         }
     }
 }

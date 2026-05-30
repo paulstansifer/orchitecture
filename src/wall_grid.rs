@@ -113,6 +113,8 @@ pub struct WallGrid {
     pub proposal_entities: HashMap<SlotLocation, Vec<Entity>>,
     /// Entities spawned for the y-cut visibility layer (cleared each visibility update).
     pub cut_entities: Vec<Entity>,
+    /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
+    pub proposed_cut_entities: HashMap<SlotLocation, Entity>,
     pub(crate) undo_record: Vec<UndoRecord>,
     pub road_forbidden_zone: bool,
 }
@@ -126,6 +128,7 @@ impl WallGrid {
             cell_entities: HashMap::new(),
             proposal_entities: HashMap::new(),
             cut_entities: Vec::new(),
+            proposed_cut_entities: HashMap::new(),
             undo_record: Vec::new(),
             road_forbidden_zone: true,
         }
