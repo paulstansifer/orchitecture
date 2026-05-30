@@ -361,22 +361,13 @@ pub fn compute_floor_edge(
 
 /// Returns true if `loc` falls inside the SimpleOctant hidden region.
 fn octant_hidden(loc: SlotLocation, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool) -> bool {
-    if loc.cube.y <= cur_y {
+    if loc.cube.y < cur_y || (loc.cube.y == cur_y && loc.rel_slot == RelSlot::Floor) {
         return false;
     }
     let x_ok = if x_neg { loc.cube.x < sx } else { loc.cube.x >= sx };
     let z_ok = if z_neg { loc.cube.z < sz } else { loc.cube.z >= sz };
     if x_ok && z_ok {
         return true;
-    }
-    // When the camera is on the negative side, the boundary wall at x=sx or z=sz sits
-    // just outside the standard half-space but IS on the cut face — hide it so cut
-    // geometry can be shown in its place.
-    if x_neg && loc.rel_slot == RelSlot::XLoWall && loc.cube.x == sx {
-        return z_ok;
-    }
-    if z_neg && loc.rel_slot == RelSlot::ZLoWall && loc.cube.z == sz {
-        return x_ok;
     }
     false
 }
@@ -390,15 +381,10 @@ fn simple_octant_cuts(
     x_neg: bool,
     z_neg: bool,
 ) -> Vec<(SlotLocation, StructureId, bool)> {
-    let x_ok = |x: i32| if x_neg { x < sx } else { x >= sx };
-    let z_ok = |z: i32| if z_neg { z < sz } else { z >= sz };
     let is_cut_face = |loc: SlotLocation| {
-        loc.cube.y > cut_y
-            && match loc.rel_slot {
-                RelSlot::XLoWall => loc.cube.x == sx && z_ok(loc.cube.z),
-                RelSlot::ZLoWall => loc.cube.z == sz && x_ok(loc.cube.x),
-                _ => false,
-            }
+        let x_ok = if x_neg { loc.cube.x < sx } else { loc.cube.x >= sx };
+        let z_ok = if z_neg { loc.cube.z < sz } else { loc.cube.z >= sz };
+        return x_ok && z_ok && loc.cube.y == cut_y && loc.rel_slot != RelSlot::Floor && loc.rel_slot != RelSlot::Ceiling 
     };
     let mut cuts = vec![];
     for (loc, cell) in wall_grid.contents.iter() {
