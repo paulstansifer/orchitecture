@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 use bevy_file_dialog::prelude::*;
 
+use crate::cutaway::CutawayMode;
 use crate::input::BuildState;
 use crate::serialization;
 use crate::structure::StructureList;
@@ -185,6 +186,7 @@ pub fn ui_system(
     mut build_state: ResMut<BuildState>,
     mut ui_state: ResMut<UiState>,
     overlay_assets: Res<ProposalOverlayAssets>,
+    mut cutaway_mode: ResMut<CutawayMode>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -212,6 +214,28 @@ pub fn ui_system(
                     .add_filter("Orchitecture Map", &["txt"])
                     .load_file::<LoadDialog>();
             }
+
+            ui.separator();
+            ui.label("Cutaway:");
+            egui::ComboBox::from_id_salt("cutaway_mode")
+                .selected_text(match *cutaway_mode {
+                    CutawayMode::FloorEdge => "FloorEdge",
+                    CutawayMode::SimpleOctant => "SimpleOctant",
+                    CutawayMode::FloorEdgePlusOctant => "FloorEdge+Octant",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut *cutaway_mode, CutawayMode::FloorEdge, "FloorEdge");
+                    ui.selectable_value(
+                        &mut *cutaway_mode,
+                        CutawayMode::SimpleOctant,
+                        "SimpleOctant",
+                    );
+                    ui.selectable_value(
+                        &mut *cutaway_mode,
+                        CutawayMode::FloorEdgePlusOctant,
+                        "FloorEdge+Octant",
+                    );
+                });
 
             if !ui_state.available_files.is_empty() {
                 ui.separator();

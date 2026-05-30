@@ -10,9 +10,23 @@ use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, SlotLocation};
 use crate::structure::{StructureId, StructureList};
 use crate::wall_grid::{
-    cell_transform, GridCellMarker, ProposalGhostMarker, ProposalOverlayMarker, ProposedCutMarker,
-    WallGrid,
+    cell_transform, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
+    ProposedCutMarker, WallGrid,
 };
+
+/// Selects which cutaway algorithm is active.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CutawayMode {
+    /// Traces camera-facing walls up from the cursor's floor, hiding each wall
+    /// column and the floors above it (the original algorithm).
+    #[default]
+    FloorEdge,
+    /// Hides every cell in the octant whose corner is at the cursor grid point
+    /// and which contains the camera.
+    SimpleOctant,
+    /// Union of FloorEdge and SimpleOctant.
+    FloorEdgePlusOctant,
+}
 
 /// Marker component for y-cut visibility variant entities.
 #[derive(Component)]
@@ -272,7 +286,7 @@ fn climb_wall_column(
     }
 }
 
-pub fn compute_cutaway(
+pub fn compute_floor_edge(
     wall_grid: &WallGrid,
     (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
@@ -345,11 +359,92 @@ pub fn compute_cutaway(
     (hidden, cut)
 }
 
+/// Returns true if `loc` falls inside the SimpleOctant hidden region.
+fn octant_hidden(loc: SlotLocation, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool) -> bool {
+    if loc.cube.y <= cur_y {
+        return false;
+    }
+    let x_ok = if x_neg { loc.cube.x < sx } else { loc.cube.x >= sx };
+    let z_ok = if z_neg { loc.cube.z < sz } else { loc.cube.z >= sz };
+    if x_ok && z_ok {
+        return true;
+    }
+    // When the camera is on the negative side, the boundary wall at x=sx or z=sz sits
+    // just outside the standard half-space but IS on the cut face — hide it so cut
+    // geometry can be shown in its place.
+    if x_neg && loc.rel_slot == RelSlot::XLoWall && loc.cube.x == sx {
+        return z_ok;
+    }
+    if z_neg && loc.rel_slot == RelSlot::ZLoWall && loc.cube.z == sz {
+        return x_ok;
+    }
+    false
+}
+
+/// Collects cut-face entries for the SimpleOctant algorithm.
+fn simple_octant_cuts(
+    wall_grid: &WallGrid,
+    sx: i32,
+    sz: i32,
+    cut_y: i32,
+    x_neg: bool,
+    z_neg: bool,
+) -> Vec<(SlotLocation, StructureId, bool)> {
+    let x_ok = |x: i32| if x_neg { x < sx } else { x >= sx };
+    let z_ok = |z: i32| if z_neg { z < sz } else { z >= sz };
+    let is_cut_face = |loc: SlotLocation| {
+        loc.cube.y > cut_y
+            && match loc.rel_slot {
+                RelSlot::XLoWall => loc.cube.x == sx && z_ok(loc.cube.z),
+                RelSlot::ZLoWall => loc.cube.z == sz && x_ok(loc.cube.x),
+                _ => false,
+            }
+    };
+    let mut cuts = vec![];
+    for (loc, cell) in wall_grid.contents.iter() {
+        if is_cut_face(loc) {
+            cuts.push((loc, cell.id, false));
+        }
+    }
+    for (loc, proposal) in wall_grid.proposed_changes.iter() {
+        if is_cut_face(loc) && wall_grid.contents.get(loc).is_none() {
+            if let Proposal::Place(cell) = proposal {
+                cuts.push((loc, cell.id, true));
+            }
+        }
+    }
+    cuts
+}
+
+/// Per-frame hidden-cell membership test, abstracted over algorithm.
+enum HiddenPredicate {
+    Set(HashSet<SlotLocation>),
+    /// `x_neg`/`z_neg`: true means the camera-side is the *negative* half-space.
+    Octant { sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool },
+    /// Union of a FloorEdge set and a SimpleOctant predicate.
+    Combined { set: HashSet<SlotLocation>, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool },
+}
+
+impl HiddenPredicate {
+    fn contains(&self, loc: SlotLocation) -> bool {
+        match self {
+            HiddenPredicate::Set(s) => s.contains(&loc),
+            HiddenPredicate::Octant { sx, sz, cur_y, x_neg, z_neg } => {
+                octant_hidden(loc, *sx, *sz, *cur_y, *x_neg, *z_neg)
+            }
+            HiddenPredicate::Combined { set, sx, sz, cur_y, x_neg, z_neg } => {
+                set.contains(&loc) || octant_hidden(loc, *sx, *sz, *cur_y, *x_neg, *z_neg)
+            }
+        }
+    }
+}
+
 pub fn update_cutaway_system(
     mut commands: Commands,
     mut wall_grid: ResMut<WallGrid>,
     structure_list: Res<StructureList>,
     build_state: Res<BuildState>,
+    cutaway_mode: Res<CutawayMode>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     mut vis_q: Query<(
@@ -370,9 +465,6 @@ pub fn update_cutaway_system(
     let focus_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32)
         .unwrap_or_else(|| Vec3::new(0.0, build_state.cur_y as f32, 0.0));
 
-    let is_room_plop =
-        wall_grid.structure_is_room_plop(StructureId(build_state.selected_structure as u32));
-
     for entity in cut_q.iter() {
         commands.entity(entity).despawn();
     }
@@ -380,13 +472,57 @@ pub fn update_cutaway_system(
     // as changed and don't trigger ceiling light rebuilds every frame.
     wall_grid.bypass_change_detection().cut_entities.clear();
 
-    let (hidden_locs, cut_entries) = compute_cutaway(
-        &wall_grid,
-        (focus_pos, is_room_plop),
-        camera_pos,
-        build_state.cur_y,
-    );
-    let hidden_set: HashSet<_> = hidden_locs.into_iter().collect();
+    let (hidden, cut_entries): (HiddenPredicate, Vec<(SlotLocation, StructureId, bool)>) =
+        match *cutaway_mode {
+            CutawayMode::FloorEdge => {
+                let is_room_plop = wall_grid
+                    .structure_is_room_plop(StructureId(build_state.selected_structure as u32));
+                let (locs, cuts) = compute_floor_edge(
+                    &wall_grid,
+                    (focus_pos, is_room_plop),
+                    camera_pos,
+                    build_state.cur_y,
+                );
+                (HiddenPredicate::Set(locs.into_iter().collect()), cuts)
+            }
+            CutawayMode::SimpleOctant => {
+                let sx = focus_pos.x.round() as i32;
+                let sz = focus_pos.z.round() as i32;
+                let cut_y = build_state.cur_y;
+                let x_neg = camera_pos.x < focus_pos.x;
+                let z_neg = camera_pos.z < focus_pos.z;
+                let cuts = simple_octant_cuts(&wall_grid, sx, sz, cut_y, x_neg, z_neg);
+                let pred = HiddenPredicate::Octant { sx, sz, cur_y: cut_y, x_neg, z_neg };
+                (pred, cuts)
+            }
+            CutawayMode::FloorEdgePlusOctant => {
+                let sx = focus_pos.x.round() as i32;
+                let sz = focus_pos.z.round() as i32;
+                let cut_y = build_state.cur_y;
+                let x_neg = camera_pos.x < focus_pos.x;
+                let z_neg = camera_pos.z < focus_pos.z;
+                let is_room_plop = wall_grid
+                    .structure_is_room_plop(StructureId(build_state.selected_structure as u32));
+                let (locs, mut cuts) = compute_floor_edge(
+                    &wall_grid,
+                    (focus_pos, is_room_plop),
+                    camera_pos,
+                    build_state.cur_y,
+                );
+                // Merge cut entries, deduplicating by location (real beats proposed-only).
+                let mut cut_map: HashMap<SlotLocation, (StructureId, bool)> =
+                    cuts.drain(..).map(|(loc, id, po)| (loc, (id, po))).collect();
+                for (loc, id, po) in simple_octant_cuts(&wall_grid, sx, sz, cut_y, x_neg, z_neg) {
+                    cut_map.entry(loc).and_modify(|e| { if !po { e.1 = false; } }).or_insert((id, po));
+                }
+                let cuts = cut_map.into_iter().map(|(loc, (id, po))| (loc, id, po)).collect();
+                let pred = HiddenPredicate::Combined {
+                    set: locs.into_iter().collect(),
+                    sx, sz, cur_y: cut_y, x_neg, z_neg,
+                };
+                (pred, cuts)
+            }
+        };
 
     for (entity, marker, mut vis, current_layers) in vis_q.iter_mut() {
         // Camera hiding is done via RenderLayers, not Visibility, so hidden geometry
@@ -395,7 +531,7 @@ pub fn update_cutaway_system(
             *vis = Visibility::Inherited;
         }
 
-        let desired = if hidden_set.contains(&marker.loc) {
+        let desired = if hidden.contains(marker.loc) {
             RenderLayers::layer(SHADOW_ONLY_LAYER)
         } else {
             RenderLayers::default()
@@ -408,7 +544,7 @@ pub fn update_cutaway_system(
     }
 
     for (entity, marker, current_layers) in ghost_q.iter_mut() {
-        let desired = if hidden_set.contains(&marker.loc) {
+        let desired = if hidden.contains(marker.loc) {
             RenderLayers::layer(SHADOW_ONLY_LAYER)
         } else {
             RenderLayers::default()
@@ -419,7 +555,7 @@ pub fn update_cutaway_system(
     }
 
     for (entity, marker, current_layers) in overlay_q.iter_mut() {
-        let desired = if hidden_set.contains(&marker.loc) {
+        let desired = if hidden.contains(marker.loc) {
             RenderLayers::layer(SHADOW_ONLY_LAYER)
         } else {
             RenderLayers::default()
@@ -559,7 +695,7 @@ mod tests {
         let camera_pos = Vec3::new(10.0, 5.0, 1.5);
         let focus_pos = Vec3::new(1.5, 0.0, 1.5);
 
-        let (hidden_locs, _cut) = compute_cutaway(&wg, (focus_pos, false), camera_pos, 0);
+        let (hidden_locs, _cut) = compute_floor_edge(&wg, (focus_pos, false), camera_pos, 0);
         let hidden_set: HashSet<SlotLocation> = hidden_locs.into_iter().collect();
 
         check!(!hidden_set.is_empty());

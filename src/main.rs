@@ -17,7 +17,7 @@ use orchitecture_lib::{
         discover_user_files, enable_ui_input_absorption, handle_file_load, handle_file_save,
         ui_system, LoadDialog, SaveDialog, UiState,
     },
-    cutaway::update_cutaway_system,
+    cutaway::{update_cutaway_system, CutawayMode},
     wall_grid::{spawn_grid, spawn_proposal_overlay_assets, WallGrid},
     world::spawn_world,
 };
@@ -48,6 +48,7 @@ fn main() {
         .insert_resource(BuildState::default())
         .insert_resource(UiState::default())
         .insert_resource(StructureList::default())
+        .insert_resource(CutawayMode::default())
         .add_systems(
             Startup,
             (

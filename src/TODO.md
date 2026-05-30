@@ -1,4 +1,5 @@
   * More architectural details?
+  * Shadows are currently pretty rough; tweak them?
   * Materials + textures (timber, fieldstone, crafted wood, quarried stone, brick)
 
 

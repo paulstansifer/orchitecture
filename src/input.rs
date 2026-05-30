@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::camera::GameCamera;
+use crate::cutaway::CutawayMode;
 use crate::sparse3d::{Facing, RelSlot};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::wall_grid::{
@@ -144,6 +145,7 @@ pub fn building_input_system(
     egui_wants_input: Res<bevy_egui::input::EguiWantsInput>,
     model_state: Res<crate::qnn::ModelState>,
     overlay_assets: Res<ProposalOverlayAssets>,
+    mut cutaway_mode: ResMut<CutawayMode>,
 ) {
     // --- Layer up/down ---
     if keyboard.just_pressed(KeyCode::ArrowUp) {
@@ -165,6 +167,15 @@ pub fn building_input_system(
     // --- Rotation ---
     if keyboard.just_pressed(KeyCode::KeyR) {
         build_state.cur_dir = (build_state.cur_dir + 3) % 4;
+    }
+
+    // --- Cutaway mode cycle ---
+    if keyboard.just_pressed(KeyCode::KeyC) {
+        *cutaway_mode = match *cutaway_mode {
+            CutawayMode::FloorEdge => CutawayMode::SimpleOctant,
+            CutawayMode::SimpleOctant => CutawayMode::FloorEdgePlusOctant,
+            CutawayMode::FloorEdgePlusOctant => CutawayMode::FloorEdge,
+        };
     }
 
     // --- Structure selection by digit key ---
