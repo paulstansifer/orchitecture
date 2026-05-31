@@ -450,6 +450,7 @@ fn build_pattern(
 //   W.
 //   ..
 
+/// From a grid location, determine what slot it represents
 fn grid_to_slot(pt: PatternType, (row, col): (i32, i32)) -> Option<UnorientedSlot> {
     match (pt, row % 2 == 1, col % 2 == 1) {
         (PatternType::H, false, true) => None,
@@ -787,6 +788,45 @@ H:
             } = &case.result
             {
                 check!(*rotation == case.rotation as i32);
+            }
+        }
+    }
+
+    // ── grid_to_slot / offset consistency ────────────────────────────────────
+
+    #[test]
+    fn grid_to_slot_and_offset_consistent() {
+        // All valid (pt, slot) anchor combinations (Floor panics, VNarrow only supports Wall).
+        let valid_combos = [
+            (PatternType::H, UnorientedSlot::Wall),
+            (PatternType::H, UnorientedSlot::Room),
+            (PatternType::VNarrow, UnorientedSlot::Wall),
+            (PatternType::VWide, UnorientedSlot::Wall),
+            (PatternType::VWide, UnorientedSlot::Room),
+        ];
+
+        for (pt, slot) in valid_combos {
+            for anchor_col in 0usize..2 {
+                for anchor_row in 0usize..2 {
+                    let (col_off, row_off) = offset(pt, slot, anchor_col, anchor_row);
+                    // After inserting col_off leading columns / row_off leading rows,
+                    // the anchor lands at (anchor_col + col_off, anchor_row + row_off).
+                    // What matters for slot identity is the parity.
+                    let target_col = (anchor_col + col_off) % 2;
+                    let target_row = (anchor_row + row_off) % 2;
+                    let result = grid_to_slot(pt, (target_row as i32, target_col as i32));
+                    check!(
+                        result == Some(slot),
+                        "pt={:?} slot={:?} anchor=({},{}) → target parity=({},{}) → {:?}",
+                        pt,
+                        slot,
+                        anchor_col,
+                        anchor_row,
+                        target_col,
+                        target_row,
+                        result
+                    );
+                }
             }
         }
     }
