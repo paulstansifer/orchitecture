@@ -5,7 +5,9 @@ use std::process::Command;
 
 // Re-use the parser and types from the main crate. The module only imports
 // from std, so it compiles cleanly as a build-dependency.
-#[allow(dead_code, unused_imports)]
+// `autotile_matching` is intentionally absent here; the cfg-gated matching
+// code is ignored when this file is included.
+#[allow(dead_code, unused_imports, unexpected_cfgs)]
 mod autotile {
     include!("src/autotile.rs");
 }
@@ -13,6 +15,11 @@ mod autotile {
 use autotile::{AutotileFile, AutotileResult, MeshSpec};
 
 fn main() {
+    // Register and set `autotile_matching` so the main crate can gate
+    // the bevy/crate-dependent matching code that build.rs doesn't need.
+    println!("cargo::rustc-check-cfg=cfg(autotile_matching)");
+    println!("cargo:rustc-cfg=autotile_matching");
+
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let buildables = manifest.join("buildables");
 

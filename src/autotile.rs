@@ -1,5 +1,16 @@
 use std::collections::HashMap;
 
+// These imports are only valid in the main crate (not the build script).
+// build.rs sets `cargo:rustc-cfg=autotile_matching` so the main crate sees them.
+#[cfg(autotile_matching)]
+use bevy::math::IVec3;
+#[cfg(autotile_matching)]
+use crate::sparse3d::{Sparse3D, SlotLocation};
+#[cfg(autotile_matching)]
+use crate::structure::StructureId;
+#[cfg(autotile_matching)]
+use crate::wall_grid::Cell;
+
 // ─── Core types ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +107,7 @@ pub struct AutotileFile {
 #[derive(Debug, Clone)]
 pub struct OrientedCase {
     pub pattern_type: PatternType,
-    /// Non-wildcard checks relative to @. Empty = else/fallback case.
+    /// Non-wildcard checks relative to @ (the "anchor"). Empty = else/fallback case.
     pub checks: HashMap<(i32, i32), char>,
     pub result: AutotileResult,
     /// 0=0°, 1=90° CW, 2=180°, 3=270° CW
@@ -192,36 +203,31 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
 
 // ─── Matching ─────────────────────────────────────────────────────────────────
 
-pub trait GridQuery {
-    /// What structure name occupies (dcol, drow) relative to @, or None if empty.
-    fn query(&self, dcol: i32, drow: i32) -> Option<&str>;
-    /// The name of the structure being autotiled (for matching '=').
-    fn self_name(&self) -> &str;
-}
-
-fn char_matches(ch: char, actual: Option<&str>, self_name: &str) -> bool {
-    match ch {
-        ' ' => true,
-        '.' => actual.is_none(),
-        '=' => actual == Some(self_name),
-        'W' => actual == Some("wall"),
-        'F' => actual == Some("floor"),
-        'S' => actual == Some("stairs"),
-        'R' => actual == Some("railing"),
-        _ => false,
-    }
-}
-
 /// Returns the result for the first matching oriented case.
-pub fn match_pattern<'a, Q: GridQuery>(
+///
+/// `char_matches_id` answers "does this neighbor's StructureId satisfy this pattern character?"
+/// for any character other than `' '` (wildcard, always true) and `'.'` (empty slot).
+#[cfg(autotile_matching)]
+pub fn match_pattern<'a>(
     oriented: &'a AutotileOriented,
-    query: &Q,
+    grid: &Sparse3D<Cell>,
+    anchor: SlotLocation,
+    char_matches_id: impl Fn(char, StructureId) -> bool,
 ) -> Option<&'a AutotileResult> {
     for case in &oriented.cases {
-        let matches = case
-            .checks
-            .iter()
-            .all(|(&(dc, dr), &ch)| char_matches(ch, query.query(dc, dr), query.self_name()));
+        let matches = case.checks.iter().all(|(&(dc, dr), &ch)| {
+            let dxyz = match case.pattern_type {
+                PatternType::H => IVec3::new(dc, 0, dr),
+                PatternType::VWide | PatternType::VNarrow => IVec3::new(dc, dr, 0),
+            };
+            let neighbor = SlotLocation { cube: anchor.cube + dxyz, rel_slot: anchor.rel_slot };
+            let cell = grid.get(neighbor);
+            match ch {
+                ' ' => true,
+                '.' => cell.is_none(),
+                _ => cell.map_or(false, |c| char_matches_id(ch, c.id)),
+            }
+        });
         if matches {
             return Some(&case.result);
         }
@@ -788,59 +794,72 @@ H:
 
     // ── Matching ──────────────────────────────────────────────────────────────
 
-    struct SimpleGrid(HashMap<(i32, i32), &'static str>);
+    #[cfg(autotile_matching)]
+    mod matching {
+        use super::*;
+        use crate::sparse3d::{RelSlot, Sparse3D, SlotLocation};
+        use crate::structure::StructureId;
+        use crate::wall_grid::Cell;
 
-    impl GridQuery for SimpleGrid {
-        fn query(&self, dc: i32, dr: i32) -> Option<&str> {
-            self.0.get(&(dc, dr)).copied()
+        // Test-local ID convention: 0=wall, 1=floor, 2=stairs, 3=railing
+        fn wall_cell() -> Cell {
+            Cell { id: StructureId(0), facing: Default::default(), evaluation: None }
         }
-        fn self_name(&self) -> &str {
-            "wall"
-        }
-    }
 
-    #[test]
-    fn else_case_always_matches() {
-        let input = "\
+        fn test_char_matches(ch: char, id: StructureId) -> bool {
+            match ch {
+                'W' => id.0 == 0,
+                'F' => id.0 == 1,
+                'S' => id.0 == 2,
+                'R' => id.0 == 3,
+                _ => false,
+            }
+        }
+
+        #[test]
+        fn else_case_always_matches() {
+            let input = "\
 == wall: wall ==
 --> none
 ";
-        let file = parse(input).unwrap();
-        let oriented = compile_rule(&file.rules[0]);
-        let grid = SimpleGrid(HashMap::new());
-        let result = match_pattern(&oriented, &grid);
-        check!(result == Some(&AutotileResult::None));
-    }
+            let file = parse(input).unwrap();
+            let oriented = compile_rule(&file.rules[0]);
+            let grid: Sparse3D<Cell> = Sparse3D::new();
+            let anchor = SlotLocation::new(0, 0, 0, RelSlot::XLoWall);
+            let result = match_pattern(&oriented, &grid, anchor, test_char_matches);
+            check!(result == Some(&AutotileResult::None));
+        }
 
-    #[test]
-    fn pattern_matches_correct_neighbor() {
-        // Pattern: wall to the right (dcol=+2)
-        let input = "\
+        #[test]
+        fn pattern_matches_correct_neighbor() {
+            // Pattern: wall to the right (dcol=+2); H mapping: dc→X, dr→Z
+            let input = "\
 == wall: wall ==
 H:
  @ W
 --> wall_across
 --> none
 ";
-        let file = parse(input).unwrap();
-        let oriented = compile_rule(&file.rules[0]);
+            let file = parse(input).unwrap();
+            let oriented = compile_rule(&file.rules[0]);
+            let anchor = SlotLocation::new(0, 0, 0, RelSlot::XLoWall);
 
-        // Grid with a wall at (2, 0) relative to @
-        let mut grid_data = HashMap::new();
-        grid_data.insert((2, 0), "wall");
-        let grid = SimpleGrid(grid_data);
-        let result = match_pattern(&oriented, &grid);
-        check!(
-            result
-                == Some(&AutotileResult::Mesh {
-                    multi: false,
-                    spec: atom("wall_across")
-                })
-        );
+            // Grid with a wall at (2, 0, 0) relative to anchor
+            let mut grid: Sparse3D<Cell> = Sparse3D::new();
+            grid.set(SlotLocation::new(2, 0, 0, RelSlot::XLoWall), wall_cell());
+            let result = match_pattern(&oriented, &grid, anchor, test_char_matches);
+            check!(
+                result
+                    == Some(&AutotileResult::Mesh {
+                        multi: false,
+                        spec: atom("wall_across")
+                    })
+            );
 
-        // Grid without wall: should fall through to else
-        let empty_grid = SimpleGrid(HashMap::new());
-        let result2 = match_pattern(&oriented, &empty_grid);
-        check!(result2 == Some(&AutotileResult::None));
+            // Empty grid: should fall through to else
+            let empty_grid: Sparse3D<Cell> = Sparse3D::new();
+            let result2 = match_pattern(&oriented, &empty_grid, anchor, test_char_matches);
+            check!(result2 == Some(&AutotileResult::None));
+        }
     }
 }
