@@ -70,6 +70,20 @@
         ),
     ),
     (
+        name: "roof",
+        main_mesh: "solid_roof.gltf",
+        y_cut_mesh: None,
+        placement_style: RoomPlop,
+        x_char: Some('O'),
+        z_char: Some('O'),
+        embedding: (
+            tall: 1.0,
+            passable: 0.0,
+            decorative: 0.7,
+            striated: 0.0,
+        ),
+    ),
+    (
         name: "wall",
         main_mesh: "wall.gltf",
         y_cut_mesh: Some("wall-cut-y-pos.gltf"),

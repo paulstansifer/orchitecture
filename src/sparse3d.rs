@@ -1,4 +1,7 @@
-#![allow(dead_code)]
+// This is a sparse way to represent buildings (etc.) constructed in a "thin walls"
+// style: the universe is a 3D grid, and walls and floors occupy the boundaries between grid cells,
+// so one cell's floor is the same entity as the ceiling of the cell below it.
+
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::{Index, IndexMut};
@@ -7,6 +10,7 @@ use bevy::math::IVec3;
 use enum_derived::Rand;
 use serde::{Deserialize, Serialize};
 
+// Arbitrarily canonicalized, so that we can assign each item to a single grid location
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Rand)]
 enum Slot {
     Room,
