@@ -464,18 +464,19 @@ fn grid_to_slot(pt: PatternType, (row, col): (i32, i32)) -> Option<UnorientedSlo
     }
 }
 
-/// Offset to apply to a raw pattern to make it line up with the 2x2 slot grid
-fn offset(pt: PatternType, slot: UnorientedSlot, at_col: usize, at_row: usize) -> (usize, usize) {
+/// Offset to apply to a raw pattern to make the anchor appear in the right spot in the 2x2 slot grid
+fn offset(pt: PatternType, slot: UnorientedSlot, anchor_col: usize, anchor_row: usize) -> (usize, usize) {
     // find desired parity:
     let (p_col, p_row) = match (pt, slot) {
         (PatternType::H, UnorientedSlot::Room) => (0, 1),
         (PatternType::H, UnorientedSlot::Wall) => (1, 1),
         (PatternType::VNarrow, _) => (0, 0), // Only wall is valid, though!
         (PatternType::VWide, UnorientedSlot::Room) => (0, 1),
+        // (0,0) would also work, but we need to pick a canonical version:
         (PatternType::VWide, UnorientedSlot::Wall) => (1, 1),
         (_, UnorientedSlot::Floor) => panic!("floors as anchors not yet supported!"),
     };
-    ((at_col + p_col) % 2, (at_row + p_row) % 2)
+    ((anchor_col + p_col) % 2, (anchor_row + p_row) % 2)
 }
 
 // TODO: I think `offset` and `is_dead_slot` may be insonsistent with each other!
