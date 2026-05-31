@@ -6,6 +6,7 @@ use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     camera::{camera_input_system, spawn_camera, CameraState},
     ceiling_lights::update_ceiling_lights,
+    cutaway::{update_cutaway_system, CutawayMode},
     grid_preview::GridPreviewPlugin,
     input::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
@@ -17,7 +18,6 @@ use orchitecture_lib::{
         discover_user_files, enable_ui_input_absorption, handle_file_load, handle_file_save,
         ui_system, LoadDialog, SaveDialog, UiState,
     },
-    cutaway::{update_cutaway_system, CutawayMode},
     wall_grid::{spawn_grid, spawn_proposal_overlay_assets, WallGrid},
     world::spawn_world,
 };

@@ -100,20 +100,17 @@ fn train<B: Backend>() {
         // println!("### Model: {model}");
         // println!("### last layer: {:?}", model.fc.last().unwrap().weight);
 
-        let model_trained = burn::train::SupervisedTraining::new(
-            artifact_dir,
-            dataloader_train,
-            dataloader_test,
-        )
-        .metric_train_numeric(burn::train::metric::LossMetric::new())
-        .metric_valid_numeric(burn::train::metric::LossMetric::new())
-        .num_epochs(config.num_epochs)
-        .with_metric_logger(FileMetricLogger::new(format!("/tmp/logs/{metric}/")))
-        .launch(burn::train::Learner::new(
-            model,
-            config.optimizer.init(),
-            config.learning_rate,
-        ));
+        let model_trained =
+            burn::train::SupervisedTraining::new(artifact_dir, dataloader_train, dataloader_test)
+                .metric_train_numeric(burn::train::metric::LossMetric::new())
+                .metric_valid_numeric(burn::train::metric::LossMetric::new())
+                .num_epochs(config.num_epochs)
+                .with_metric_logger(FileMetricLogger::new(format!("/tmp/logs/{metric}/")))
+                .launch(burn::train::Learner::new(
+                    model,
+                    config.optimizer.init(),
+                    config.learning_rate,
+                ));
         println!(
             "last layer: {:?}",
             model_trained.model.fc.last().unwrap().weight

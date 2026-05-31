@@ -412,6 +412,8 @@ fn test_add_noise() {
     use rand::SeedableRng;
 
     let structures = crate::structure::load_structure_info();
+    let desk_id = crate::structure::find_structure_by_name(&structures, "desk").unwrap();
+    let doorway_id = crate::structure::find_structure_by_name(&structures, "doorway").unwrap();
 
     let mut s: Sparse3D<Cell> = Sparse3D::new();
 
@@ -419,7 +421,7 @@ fn test_add_noise() {
     s.set(
         v_loc,
         Cell {
-            id: StructureId(0),
+            id: desk_id,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: Some(VantageEvaluation {
                 coherence: Some(ConstrainedScore::Exact(1.0)),
@@ -432,7 +434,7 @@ fn test_add_noise() {
     s.set(
         SlotLocation::new(1, 0, 0, RelSlot::XLoWall),
         Cell {
-            id: StructureId(1),
+            id: doorway_id,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: None,
         },

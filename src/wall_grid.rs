@@ -58,17 +58,23 @@ impl ConstrainedScoreExt for ConstrainedScore {
         match self {
             Self::Exact(v) => Self::Exact(v + delta),
             Self::AtMost { at_most: v } => Self::AtMost { at_most: v + delta },
-            Self::AtLeast { at_least: v } => Self::AtLeast { at_least: v + delta },
+            Self::AtLeast { at_least: v } => Self::AtLeast {
+                at_least: v + delta,
+            },
         }
     }
     fn subtract(self, delta: f32) -> Self {
         self.add(-delta)
     }
     fn unbound_higher(self) -> Self {
-        Self::AtLeast { at_least: self.value() }
+        Self::AtLeast {
+            at_least: self.value(),
+        }
     }
     fn unbound_lower(self) -> Self {
-        Self::AtMost { at_most: self.value() }
+        Self::AtMost {
+            at_most: self.value(),
+        }
     }
 }
 
@@ -225,6 +231,13 @@ impl WallGrid {
 
     pub fn structure_is_room_plop(&self, id: StructureId) -> bool {
         self.structures[id.as_usize()].placement_style == crate::structure::PlacementStyle::RoomPlop
+    }
+
+    pub fn find_structure_by_name(&self, name: &str) -> Option<StructureId> {
+        self.structures
+            .iter()
+            .position(|s| s.name == name)
+            .map(|idx| StructureId(idx as u32))
     }
 
     /// Returns `(real, proposed_add)`:

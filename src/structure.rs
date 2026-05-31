@@ -60,11 +60,25 @@ impl StructureList {
     pub fn cut_handle(&self, id: StructureId) -> Option<&Handle<Scene>> {
         self.structures[id.as_usize()].cut_handle.as_ref()
     }
+
+    pub fn find_by_name(&self, name: &str) -> Option<StructureId> {
+        self.structures
+            .iter()
+            .position(|s| s.info.name == name)
+            .map(|idx| StructureId(idx as u32))
+    }
 }
 
 pub fn load_structure_info() -> Vec<StructureInfo> {
     let ron_content = include_str!("../buildables/structures.ron");
     ron::from_str(ron_content).unwrap()
+}
+
+pub fn find_structure_by_name(structures: &[StructureInfo], name: &str) -> Option<StructureId> {
+    structures
+        .iter()
+        .position(|s| s.name == name)
+        .map(|idx| StructureId(idx as u32))
 }
 
 /// Register handles for every .gltf referenced in the given StructureInfo list.

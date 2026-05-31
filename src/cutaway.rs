@@ -360,12 +360,27 @@ pub fn compute_floor_edge(
 }
 
 /// Returns true if `loc` falls inside the SimpleOctant hidden region.
-fn octant_hidden(loc: SlotLocation, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool) -> bool {
+fn octant_hidden(
+    loc: SlotLocation,
+    sx: i32,
+    sz: i32,
+    cur_y: i32,
+    x_neg: bool,
+    z_neg: bool,
+) -> bool {
     if loc.cube.y < cur_y || (loc.cube.y == cur_y && loc.rel_slot == RelSlot::Floor) {
         return false;
     }
-    let x_ok = if x_neg { loc.cube.x < sx } else { loc.cube.x >= sx };
-    let z_ok = if z_neg { loc.cube.z < sz } else { loc.cube.z >= sz };
+    let x_ok = if x_neg {
+        loc.cube.x < sx
+    } else {
+        loc.cube.x >= sx
+    };
+    let z_ok = if z_neg {
+        loc.cube.z < sz
+    } else {
+        loc.cube.z >= sz
+    };
     if x_ok && z_ok {
         return true;
     }
@@ -382,9 +397,21 @@ fn simple_octant_cuts(
     z_neg: bool,
 ) -> Vec<(SlotLocation, StructureId, bool)> {
     let is_cut_face = |loc: SlotLocation| {
-        let x_ok = if x_neg { loc.cube.x < sx } else { loc.cube.x >= sx };
-        let z_ok = if z_neg { loc.cube.z < sz } else { loc.cube.z >= sz };
-        return x_ok && z_ok && loc.cube.y == cut_y && loc.rel_slot != RelSlot::Floor && loc.rel_slot != RelSlot::Ceiling 
+        let x_ok = if x_neg {
+            loc.cube.x < sx
+        } else {
+            loc.cube.x >= sx
+        };
+        let z_ok = if z_neg {
+            loc.cube.z < sz
+        } else {
+            loc.cube.z >= sz
+        };
+        return x_ok
+            && z_ok
+            && loc.cube.y == cut_y
+            && loc.rel_slot != RelSlot::Floor
+            && loc.rel_slot != RelSlot::Ceiling;
     };
     let mut cuts = vec![];
     for (loc, cell) in wall_grid.contents.iter() {
@@ -406,21 +433,43 @@ fn simple_octant_cuts(
 enum HiddenPredicate {
     Set(HashSet<SlotLocation>),
     /// `x_neg`/`z_neg`: true means the camera-side is the *negative* half-space.
-    Octant { sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool },
+    Octant {
+        sx: i32,
+        sz: i32,
+        cur_y: i32,
+        x_neg: bool,
+        z_neg: bool,
+    },
     /// Union of a FloorEdge set and a SimpleOctant predicate.
-    Combined { set: HashSet<SlotLocation>, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool },
+    Combined {
+        set: HashSet<SlotLocation>,
+        sx: i32,
+        sz: i32,
+        cur_y: i32,
+        x_neg: bool,
+        z_neg: bool,
+    },
 }
 
 impl HiddenPredicate {
     fn contains(&self, loc: SlotLocation) -> bool {
         match self {
             HiddenPredicate::Set(s) => s.contains(&loc),
-            HiddenPredicate::Octant { sx, sz, cur_y, x_neg, z_neg } => {
-                octant_hidden(loc, *sx, *sz, *cur_y, *x_neg, *z_neg)
-            }
-            HiddenPredicate::Combined { set, sx, sz, cur_y, x_neg, z_neg } => {
-                set.contains(&loc) || octant_hidden(loc, *sx, *sz, *cur_y, *x_neg, *z_neg)
-            }
+            HiddenPredicate::Octant {
+                sx,
+                sz,
+                cur_y,
+                x_neg,
+                z_neg,
+            } => octant_hidden(loc, *sx, *sz, *cur_y, *x_neg, *z_neg),
+            HiddenPredicate::Combined {
+                set,
+                sx,
+                sz,
+                cur_y,
+                x_neg,
+                z_neg,
+            } => set.contains(&loc) || octant_hidden(loc, *sx, *sz, *cur_y, *x_neg, *z_neg),
         }
     }
 }
@@ -478,7 +527,13 @@ pub fn update_cutaway_system(
                 let x_neg = camera_pos.x < focus_pos.x;
                 let z_neg = camera_pos.z < focus_pos.z;
                 let cuts = simple_octant_cuts(&wall_grid, sx, sz, cut_y, x_neg, z_neg);
-                let pred = HiddenPredicate::Octant { sx, sz, cur_y: cut_y, x_neg, z_neg };
+                let pred = HiddenPredicate::Octant {
+                    sx,
+                    sz,
+                    cur_y: cut_y,
+                    x_neg,
+                    z_neg,
+                };
                 (pred, cuts)
             }
             CutawayMode::FloorEdgePlusOctant => {
@@ -496,15 +551,31 @@ pub fn update_cutaway_system(
                     build_state.cur_y,
                 );
                 // Merge cut entries, deduplicating by location (real beats proposed-only).
-                let mut cut_map: HashMap<SlotLocation, (StructureId, bool)> =
-                    cuts.drain(..).map(|(loc, id, po)| (loc, (id, po))).collect();
+                let mut cut_map: HashMap<SlotLocation, (StructureId, bool)> = cuts
+                    .drain(..)
+                    .map(|(loc, id, po)| (loc, (id, po)))
+                    .collect();
                 for (loc, id, po) in simple_octant_cuts(&wall_grid, sx, sz, cut_y, x_neg, z_neg) {
-                    cut_map.entry(loc).and_modify(|e| { if !po { e.1 = false; } }).or_insert((id, po));
+                    cut_map
+                        .entry(loc)
+                        .and_modify(|e| {
+                            if !po {
+                                e.1 = false;
+                            }
+                        })
+                        .or_insert((id, po));
                 }
-                let cuts = cut_map.into_iter().map(|(loc, (id, po))| (loc, id, po)).collect();
+                let cuts = cut_map
+                    .into_iter()
+                    .map(|(loc, (id, po))| (loc, id, po))
+                    .collect();
                 let pred = HiddenPredicate::Combined {
                     set: locs.into_iter().collect(),
-                    sx, sz, cur_y: cut_y, x_neg, z_neg,
+                    sx,
+                    sz,
+                    cur_y: cut_y,
+                    x_neg,
+                    z_neg,
                 };
                 (pred, cuts)
             }
@@ -561,7 +632,10 @@ pub fn update_cutaway_system(
             let entity = commands
                 .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
                 .id();
-            wall_grid.bypass_change_detection().cut_entities.push(entity);
+            wall_grid
+                .bypass_change_detection()
+                .cut_entities
+                .push(entity);
         }
     }
 
@@ -586,7 +660,8 @@ pub fn update_cutaway_system(
             .entry(loc)
         {
             if let Some(cut_handle) = structure_list.cut_handle(id) {
-                let transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
+                let transform =
+                    cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
                 let entity = commands
                     .spawn((
                         SceneRoot(cut_handle.clone()),

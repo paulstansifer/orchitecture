@@ -10,10 +10,7 @@ use crate::wall_grid::{apply_changes, apply_proposal_changes, ProposalOverlayAss
 
 /// Maps bundled at compile time; always available on all platforms.
 const BUNDLED_MAPS: &[(&str, &str)] = &[
-    (
-        "boring_room",
-        include_str!("../training/boring_room.txt"),
-    ),
+    ("boring_room", include_str!("../training/boring_room.txt")),
     (
         "boring_room_blob",
         include_str!("../training/boring_room_blob.txt"),
@@ -61,10 +58,7 @@ const BUNDLED_MAPS: &[(&str, &str)] = &[
         "long_apartment",
         include_str!("../training/long_apartment.txt"),
     ),
-    (
-        "meta_pillars",
-        include_str!("../training/meta_pillars.txt"),
-    ),
+    ("meta_pillars", include_str!("../training/meta_pillars.txt")),
     (
         "random_but_coherent",
         include_str!("../training/random_but_coherent.txt"),

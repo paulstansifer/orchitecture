@@ -149,8 +149,7 @@ impl WallGrid {
     ) -> Vec<(SlotLocation, ProposalView)> {
         let pos = location.round().as_ivec3();
         let changes = self.propose(dir, pos, pos, RelSlot::Room, selected_mesh_id);
-        if selected_mesh_id == Some(StructureId(0)) {
-            // Desk's ID number. TODO: fix this!
+        if selected_mesh_id == self.find_structure_by_name("desk") {
             let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
             if let Some(Proposal::Place(cell)) = self.proposed_changes.get_mut(loc) {
                 cell.evaluation = Some(VantageEvaluation {
@@ -284,8 +283,6 @@ mod tests {
     use crate::structure::{PlacementStyle, StructureId, StructureInfo};
     use crate::wall_grid::{Cell, Proposal, ProposalView, WallGrid};
 
-    const THING: Option<StructureId> = Some(StructureId(0));
-
     fn make_wall_grid() -> WallGrid {
         use crate::structure::StructureEmbedding;
         let structs = vec![StructureInfo {
@@ -307,6 +304,10 @@ mod tests {
         grid
     }
 
+    fn thing(grid: &WallGrid) -> Option<StructureId> {
+        grid.find_structure_by_name("test_wall")
+    }
+
     fn wall_cell(id: StructureId) -> Cell {
         Cell {
             id,
@@ -326,7 +327,7 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
 
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
+        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, thing(&grid));
 
         check!(grid.contents.get(loc).is_none());
         check!(matches!(
@@ -338,7 +339,7 @@ mod tests {
     #[test]
     fn propose_returns_add_view_for_empty_slot() {
         let mut grid = make_wall_grid();
-        let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
+        let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, thing(&grid));
         check!(deltas.len() == 1);
         check!(matches!(deltas[0].1, ProposalView::Add(_)));
     }
@@ -348,7 +349,7 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
         // Place a real cell first
-        grid.contents.set(loc, wall_cell(StructureId(0)));
+        grid.contents.set(loc, wall_cell(thing(&grid).unwrap()));
 
         // Now propose a different cell (id=0 same, so let's make a distinct check)
         // propose removal to get a Remove view
@@ -362,10 +363,10 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
         // Put the same cell in real contents
-        grid.contents.set(loc, wall_cell(StructureId(0)));
+        grid.contents.set(loc, wall_cell(thing(&grid).unwrap()));
 
         // Propose placing the exact same cell
-        let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
+        let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, thing(&grid));
 
         check!(deltas.is_empty(), "identical proposal should be a no-op");
         check!(grid.proposed_changes.get(loc).is_none());
@@ -386,7 +387,7 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
 
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
+        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, thing(&grid));
         check!(grid.proposed_changes.get(loc).is_some());
 
         let deltas = grid.undo();
@@ -405,7 +406,7 @@ mod tests {
     #[test]
     fn undo_clears_undo_record_entry() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
+        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, thing(&grid));
         check!(grid.undo_record.len() == 1);
         grid.undo();
         check!(grid.undo_record.len() == 0);
@@ -423,7 +424,7 @@ mod tests {
             IVec3::new(1, 0, 0),
             IVec3::new(1, 0, 0),
             RelSlot::XLoWall,
-            THING,
+            thing(&grid),
         );
         check!(grid.contents.get(loc).is_none());
 
@@ -439,7 +440,7 @@ mod tests {
     fn construct_remove_proposal_deletes_from_contents() {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
-        grid.contents.set(loc, wall_cell(StructureId(0)));
+        grid.contents.set(loc, wall_cell(thing(&grid).unwrap()));
 
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, None);
         let real_changes = grid.construct();
@@ -452,7 +453,7 @@ mod tests {
     #[test]
     fn construct_clears_undo_record() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
+        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, thing(&grid));
         grid.construct();
         check!(grid.undo_record.is_empty());
     }
@@ -462,7 +463,7 @@ mod tests {
     #[test]
     fn reset_clears_proposals_and_undo_record() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
+        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, thing(&grid));
         check!(!grid.undo_record.is_empty());
 
         grid.reset_proposals();
@@ -480,7 +481,7 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
         // Real cell with id=0
-        grid.contents.set(loc, wall_cell(StructureId(0)));
+        grid.contents.set(loc, wall_cell(thing(&grid).unwrap()));
         // Proposed removal
         grid.proposed_changes.set(loc, Proposal::Remove);
 
@@ -491,7 +492,7 @@ mod tests {
     fn get_real_or_proposed_falls_back_to_real() {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
-        grid.contents.set(loc, wall_cell(StructureId(0)));
+        grid.contents.set(loc, wall_cell(thing(&grid).unwrap()));
 
         check!(grid.get_real_or_proposed(loc).is_some());
     }
@@ -501,7 +502,7 @@ mod tests {
     #[test]
     fn load_clears_proposals_and_undo() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, THING);
+        grid.propose(0, IVec3::ZERO, IVec3::ZERO, RelSlot::XLoWall, thing(&grid));
 
         use crate::sparse3d::Sparse3D;
         grid.load_from_offline(Sparse3D::new());
@@ -515,16 +516,13 @@ mod tests {
     #[test]
     fn smoke_load_propose_undo_construct() {
         use crate::serialization::load_from_str;
-        use crate::structure::load_structure_info;
+        use crate::structure::{find_structure_by_name, load_structure_info};
         use bevy::math::Vec3;
 
-        // Structure indices from buildables/structures.json:
-        //   0 = desk  (RoomPlop,  z_char='V')
-        //   5 = wall  (WallDrag,  x_char='|', z_char='-')
-        const DESK_ID: StructureId = StructureId(0);
-        const WALL_ID: StructureId = StructureId(5);
-
         let structures = load_structure_info();
+        let desk_id = find_structure_by_name(&structures, "desk").unwrap();
+        let wall_id = find_structure_by_name(&structures, "wall").unwrap();
+
         let mut grid = WallGrid::new(structures.clone());
         grid.road_forbidden_zone = false;
 
@@ -536,20 +534,20 @@ mod tests {
 
         assert!(let [(loaded_loc, loaded_cell)] = load_changes.as_slice());
         check!(loaded_loc.rel_slot == RelSlot::ZLoWall);
-        check!(loaded_cell.as_ref().unwrap().id == WALL_ID);
+        check!(loaded_cell.as_ref().unwrap().id == wall_id);
 
         // 2. Propose two z-walls via drag (x=1..=2, z=0).
         let drag_deltas = grid.drag(
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(3.0, 0.0, 0.0),
-            WALL_ID,
+            wall_id,
             false,
         );
         check!(drag_deltas.len() == 2);
         check!(grid.proposed_changes.iter().count() == 2);
 
         // 3. Propose a desk at (2, 0, 2) via click.
-        let click_deltas = grid.click(Vec3::new(2.0, 0.0, 2.0), DESK_ID, 0, false);
+        let click_deltas = grid.click(Vec3::new(2.0, 0.0, 2.0), desk_id, 0, false);
         check!(click_deltas.len() == 1);
         check!(matches!(click_deltas[0].1, ProposalView::Add(_)));
         check!(grid.proposed_changes.iter().count() == 3);
