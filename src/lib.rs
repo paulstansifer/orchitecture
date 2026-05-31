@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 
+pub mod autotile;
 pub mod build_helpers;
 pub mod camera;
 pub mod ceiling_lights;

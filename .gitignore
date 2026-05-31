@@ -24,3 +24,5 @@ rust-scripts/target/
 
 target/
 dist/
+
+buildables/autotile/*.scad

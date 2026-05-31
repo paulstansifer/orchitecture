@@ -1,0 +1,74 @@
+==column:wall==
+V wide:
+ F
+  @
+--> column_caps * top
+V wide:
+ =
+. .
+ @
+--> column_middle * top
+--> column_floating * top
+
+==column:wall==  # multiple stanzas produces multiple independent rules
+V wide:
+  @
+ F
+--> column_caps * bottom
+V wide:
+  @
+ . .
+  =
+--> column_middle * bottom
+--> column_floating * bottom
+
+==railing:wall==
+H:
+ @s
+--> none    # handled by staircase, since staircase knows its orientation
+H:
+..@..
+--> railing_cap * railing_cap:180
+H: 
+ @..
+--> railing_cap
+V wide:
+  @
+ F .
+--> reinforced_railing   # just for demonstration purposes
+--> railing     # by default, models meet at integer coordinates now
+
+==roof:room==
+V wide:
+ =
+ .
+ @
+--> solid_roof
+H:
+   =
+   .
+ =.@.=
+   .
+   =
+--> solid_roof
+H:
+ .@.=
+--> (multi) slant_roof   # this rule can fire in multiple orientations at the same spot
+H:
+ .@W
+--> (multi) slant_roof   # join up to walls, too
+H:
+   .
+   .
+ ..@..
+   .
+   .
+--> slant_roof * slant_roof:90 * slant_roof:180 * slant_roof:270
+
+
+==stairs:room==
+H:
+ @r
+--> stair_railing
+==stairs:room==
+--> stairs
