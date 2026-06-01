@@ -4,9 +4,9 @@ V wide:
   @
 --> column_caps * top
 V wide:
- =
-. .
- @
+  =
+ . .
+  @
 --> column_middle * top
 --> column_floating * top
 
@@ -27,7 +27,7 @@ H:
  @s
 --> none    # handled by staircase, since staircase knows its orientation
 H:
-..@..
+ ..@..
 --> railing_cap * railing_cap:180
 H: 
  @..

@@ -409,6 +409,8 @@ pub fn match_pattern<'a>(
 
 // ─── Parser ───────────────────────────────────────────────────────────────────
 
+// TODO: probably use `anyhow`
+// TODO: report error line numbers
 #[derive(Debug, PartialEq)]
 pub enum ParseError {
     UnexpectedLine(String),
@@ -542,6 +544,10 @@ fn parse_cases(
             if pline.is_empty() {
                 i += 1;
                 continue;
+            }
+            if !pline.starts_with(" ") {
+                // TODO: this should also be a ParseError
+                panic!("missing space on line");
             }
             // Strip the mandatory leading space
             let content: Vec<char> = pline.strip_prefix(' ').unwrap_or(pline).chars().collect();
