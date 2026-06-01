@@ -134,12 +134,11 @@ fn collect_scad_deps_rec(spec: &MeshSpec, buildables: &Path, deps: &mut Vec<Path
 // ─── OpenSCAD code generation ─────────────────────────────────────────────────
 
 /// Generate OpenSCAD source for a mesh spec.
-/// Atom paths are absolute so the generated .scad files work from any working directory.
-fn spec_to_scad(spec: &MeshSpec, buildables: &Path) -> String {
+/// Uses bare filenames — all source .scad files are copied into the output dir first.
+fn spec_to_scad(spec: &MeshSpec) -> String {
     match spec {
         MeshSpec::Atom { name, rotation } => {
-            let scad = buildables.join(format!("{name}.scad"));
-            let inc = format!("include <{}>", scad.display());
+            let inc = format!("include <{name}.scad>");
             if *rotation == 0 {
                 inc
             } else {
@@ -150,33 +149,30 @@ fn spec_to_scad(spec: &MeshSpec, buildables: &Path) -> String {
         }
         MeshSpec::Union(a, b) => format!(
             "union() {{\n    {}\n    {}\n}}",
-            spec_to_scad(a, buildables),
-            spec_to_scad(b, buildables)
+            spec_to_scad(a),
+            spec_to_scad(b)
         ),
         MeshSpec::Intersection(a, b) => format!(
             "intersection() {{\n    {}\n    {}\n}}",
-            spec_to_scad(a, buildables),
-            spec_to_scad(b, buildables)
+            spec_to_scad(a),
+            spec_to_scad(b)
         ),
     }
 }
 
 /// Generate the cut-view variant: intersect the mesh with a jagged floor plane.
-fn spec_to_cut_scad(spec: &MeshSpec, buildables: &Path) -> String {
-    let inner = spec_to_scad(spec, buildables);
-    // jagged.dat lives in buildables/; the cut .scad is written to buildables/autotile/
-    // so the relative path is ../jagged.dat.
-    let jagged = buildables.join("jagged.dat");
+fn spec_to_cut_scad(spec: &MeshSpec) -> String {
+    let inner = spec_to_scad(spec);
+    // jagged.dat is copied into the output dir alongside the generated .scad files.
     format!(
         "intersection() {{\n    \
          {inner}\n    \
          union() {{\n        \
-         surface(\"{jagged}\");\n        \
+         surface(\"jagged.dat\");\n        \
          translate([0,0,-13])\n        \
          cube([13,13,13]);\n    \
          }}\n\
-         }}",
-        jagged = jagged.display()
+         }}"
     )
 }
 
@@ -199,6 +195,34 @@ fn needs_rebuild(output: &Path, inputs: &[&Path]) -> bool {
 
 // ─── Mesh generation ──────────────────────────────────────────────────────────
 
+/// Copy all .scad files and jagged.dat from `buildables/` into `out_dir` so that
+/// OpenSCAD can resolve `include <>` and `surface()` calls without needing to
+/// traverse upward past the working directory.
+fn copy_scad_sources(buildables: &Path, out_dir: &Path) {
+    let Ok(entries) = fs::read_dir(buildables) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let src = entry.path();
+        let ext = src.extension().and_then(|s| s.to_str());
+        let name = src.file_name().and_then(|s| s.to_str());
+        let copy = ext == Some("scad") || name == Some("jagged.dat");
+        if !copy {
+            continue;
+        }
+        if let Some(fname) = src.file_name() {
+            let dst = out_dir.join(fname);
+            if let Err(e) = fs::copy(&src, &dst) {
+                println!(
+                    "cargo:warning=Failed to copy {} to {}: {e}",
+                    src.display(),
+                    dst.display()
+                );
+            }
+        }
+    }
+}
+
 fn generate_if_needed(
     stem: &str,
     spec: &MeshSpec,
@@ -216,15 +240,17 @@ fn generate_if_needed(
         return;
     }
 
+    copy_scad_sources(buildables, out_dir);
+
     if need_main {
         let scad_path = out_dir.join(format!("{stem}.scad"));
-        let scad_src = spec_to_scad(spec, buildables);
+        let scad_src = spec_to_scad(spec);
         write_and_compile(&scad_path, &scad_src, &main_gltf);
     }
 
     if need_cut {
         let cut_scad_path = out_dir.join(format!("{stem}-cut-y-pos.scad"));
-        let cut_src = spec_to_cut_scad(spec, buildables);
+        let cut_src = spec_to_cut_scad(spec);
         write_and_compile(&cut_scad_path, &cut_src, &cut_gltf);
     }
 }
