@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use anyhow::{bail, Context as _};
+
 // These imports are only valid in the main crate (not the build script).
 // build.rs sets `cargo:rustc-cfg=autotile_matching` so the main crate sees them.
 #[cfg(autotile_matching)]
@@ -216,13 +218,13 @@ pub struct AutotileOriented {
 // ─── Rotation helpers ─────────────────────────────────────────────────────────
 
 /// Rotate (dcol, drow) by `rot` 90°-CW steps in the XZ plane.
-/// 90° CW: (x, z) → (z, -x), so (dc, dr) → (dr, -dc).
+/// CW matches sparse3d's Rotation::Clockwise: (x, z) → (-z, x), so (dc, dr) → (-dr, dc).
 pub fn rotate_offset(dc: i32, dr: i32, rot: u8) -> (i32, i32) {
     match rot % 4 {
         0 => (dc, dr),
-        1 => (dr, -dc),
+        1 => (-dr, dc),
         2 => (-dc, -dr),
-        3 => (-dr, dc),
+        3 => (dr, -dc),
         _ => unreachable!(),
     }
 }
@@ -409,35 +411,6 @@ pub fn match_pattern<'a>(
 
 // ─── Parser ───────────────────────────────────────────────────────────────────
 
-// TODO: probably use `anyhow`
-// TODO: report error line numbers
-#[derive(Debug, PartialEq)]
-pub enum ParseError {
-    UnexpectedLine(String),
-    MissingAt,
-    MultipleAt,
-    InvalidSlot(String),
-    InvalidResult(String),
-    DeadSlotUsed { col: usize, row: usize, ch: char },
-    UnterminatedPattern,
-}
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParseError::UnexpectedLine(s) => write!(f, "Unexpected line: {s:?}"),
-            ParseError::MissingAt => write!(f, "Pattern has no @ character"),
-            ParseError::MultipleAt => write!(f, "Pattern has multiple @ characters"),
-            ParseError::InvalidSlot(s) => write!(f, "Invalid slot: {s:?}"),
-            ParseError::InvalidResult(s) => write!(f, "Invalid result: {s:?}"),
-            ParseError::DeadSlotUsed { col, row, ch } => {
-                write!(f, "Character {ch:?} in dead slot at ({col},{row})")
-            }
-            ParseError::UnterminatedPattern => write!(f, "Pattern with no --> result"),
-        }
-    }
-}
-
 fn strip_comment(line: &str) -> &str {
     if let Some(idx) = line.find('#') {
         line[..idx].trim_end()
@@ -446,13 +419,14 @@ fn strip_comment(line: &str) -> &str {
     }
 }
 
-pub fn parse(input: &str) -> Result<AutotileFile, ParseError> {
+pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
     let lines: Vec<&str> = input.lines().collect();
     let mut i = 0;
     let mut rules = Vec::new();
 
     while i < lines.len() {
         let line = strip_comment(lines[i]);
+        let lineno = i + 1;
         if line.is_empty() {
             i += 1;
             continue;
@@ -461,12 +435,12 @@ pub fn parse(input: &str) -> Result<AutotileFile, ParseError> {
             let inner = inner.trim();
             let colon = inner
                 .rfind(':')
-                .ok_or_else(|| ParseError::UnexpectedLine(line.to_owned()))?;
+                .with_context(|| format!("line {lineno}: unexpected line: {line:?}"))?;
             let structure_name = inner[..colon].trim().to_owned();
             let slot = match inner[colon + 1..].trim() {
                 "wall" => UnorientedSlot::Wall,
                 "room" => UnorientedSlot::Room,
-                other => return Err(ParseError::InvalidSlot(other.to_owned())),
+                other => bail!("line {lineno}: invalid slot: {other:?}"),
             };
             i += 1;
             let (cases, new_i) = parse_cases(&lines, i, slot)?;
@@ -477,7 +451,7 @@ pub fn parse(input: &str) -> Result<AutotileFile, ParseError> {
                 cases,
             });
         } else {
-            return Err(ParseError::UnexpectedLine(line.to_owned()));
+            bail!("line {lineno}: unexpected line: {line:?}");
         }
     }
 
@@ -488,7 +462,7 @@ fn parse_cases(
     lines: &[&str],
     mut i: usize,
     slot: UnorientedSlot,
-) -> Result<(Vec<PatternCase>, usize), ParseError> {
+) -> anyhow::Result<(Vec<PatternCase>, usize)> {
     let mut cases = Vec::new();
 
     loop {
@@ -499,13 +473,15 @@ fn parse_cases(
             break;
         }
         let line = strip_comment(lines[i]);
+        let lineno = i + 1;
 
         if line.starts_with("==") {
             break;
         }
 
         if let Some(rest) = line.strip_prefix("-->") {
-            let result = parse_result(rest.trim())?;
+            let result = parse_result(rest.trim())
+                .with_context(|| format!("line {lineno}"))?;
             cases.push(PatternCase {
                 pattern: None,
                 result,
@@ -518,19 +494,23 @@ fn parse_cases(
             "H:" => PatternType::H,
             "V wide:" => PatternType::VWide,
             "V narrow:" => PatternType::VNarrow,
-            _ => return Err(ParseError::UnexpectedLine(line.to_owned())),
+            _ => bail!("line {lineno}: unexpected line: {line:?}"),
         };
+        let pt_lineno = lineno;
         i += 1;
 
         let mut pattern_rows: Vec<Vec<char>> = Vec::new();
         loop {
             if i >= lines.len() {
-                return Err(ParseError::UnterminatedPattern);
+                bail!("line {pt_lineno}: pattern with no --> result");
             }
             let pline = strip_comment(lines[i]);
+            let plineno = i + 1;
             if let Some(rest) = pline.strip_prefix("-->") {
-                let pattern = build_pattern(pt, pattern_rows, slot)?;
-                let result = parse_result(rest.trim())?;
+                let pattern = build_pattern(pt, pattern_rows, slot)
+                    .with_context(|| format!("line {plineno}"))?;
+                let result = parse_result(rest.trim())
+                    .with_context(|| format!("line {plineno}"))?;
                 cases.push(PatternCase {
                     pattern: Some(pattern),
                     result,
@@ -539,18 +519,16 @@ fn parse_cases(
                 break;
             }
             if pline.starts_with("==") {
-                return Err(ParseError::UnterminatedPattern);
+                bail!("line {plineno}: pattern with no --> result");
             }
             if pline.is_empty() {
                 i += 1;
                 continue;
             }
-            if !pline.starts_with(" ") {
-                // TODO: this should also be a ParseError
-                panic!("missing space on line");
+            if !pline.starts_with(' ') {
+                bail!("line {plineno}: pattern line must start with a space, got: {pline:?}");
             }
-            // Strip the mandatory leading space
-            let content: Vec<char> = pline.strip_prefix(' ').unwrap_or(pline).chars().collect();
+            let content: Vec<char> = pline[1..].chars().collect();
             pattern_rows.push(content);
             i += 1;
         }
@@ -563,7 +541,7 @@ fn build_pattern(
     pt: PatternType,
     rows: Vec<Vec<char>>,
     slot: UnorientedSlot,
-) -> Result<Pattern, ParseError> {
+) -> anyhow::Result<Pattern> {
     let mut at_col = None;
     let mut at_row = None;
 
@@ -571,7 +549,7 @@ fn build_pattern(
         for (c, &ch) in row.iter().enumerate() {
             if ch == '@' {
                 if at_col.is_some() {
-                    return Err(ParseError::MultipleAt);
+                    bail!("pattern has multiple @ characters");
                 }
                 at_col = Some(c);
                 at_row = Some(r);
@@ -579,12 +557,12 @@ fn build_pattern(
         }
     }
 
-    let at_col = at_col.ok_or(ParseError::MissingAt)?;
+    let at_col = at_col.context("pattern has no @ character")?;
     let at_row = at_row.unwrap();
 
     let mut rows = rows;
 
-    let (col_offset, row_offset) = offset(pt, slot, at_col, at_row);
+    let (col_offset, row_offset) = offset(pt, slot, at_col, at_row)?;
 
     if col_offset % 2 != 0 {
         for row in &mut rows {
@@ -598,7 +576,7 @@ fn build_pattern(
     for (r, row) in rows.iter().enumerate() {
         for (c, &ch) in row.iter().enumerate() {
             if ch != ' ' && is_dead_slot(&pt, c, r) {
-                return Err(ParseError::DeadSlotUsed { col: c, row: r, ch });
+                bail!("character {ch:?} in dead slot at ({c},{r})");
             }
         }
     }
@@ -643,8 +621,7 @@ fn offset(
     slot: UnorientedSlot,
     anchor_col: usize,
     anchor_row: usize,
-) -> (usize, usize) {
-    // find desired parity:
+) -> anyhow::Result<(usize, usize)> {
     let (p_col, p_row) = match (pt, slot) {
         (PatternType::H, UnorientedSlot::Room) => (0, 1),
         (PatternType::H, UnorientedSlot::Wall) => (1, 1),
@@ -652,9 +629,9 @@ fn offset(
         (PatternType::VWide, UnorientedSlot::Room) => (0, 1),
         // (0,0) would also work, but we need to pick a canonical version:
         (PatternType::VWide, UnorientedSlot::Wall) => (1, 1),
-        (_, UnorientedSlot::Floor) => panic!("floors as anchors not yet supported!"),
+        (_, UnorientedSlot::Floor) => bail!("floors as anchors are not yet supported"),
     };
-    ((anchor_col + p_col) % 2, (anchor_row + p_row) % 2)
+    Ok(((anchor_col + p_col) % 2, (anchor_row + p_row) % 2))
 }
 
 // TODO: I think `offset` and `is_dead_slot` may be insonsistent with each other!
@@ -672,7 +649,7 @@ fn is_dead_slot(pt: &PatternType, col: usize, row: usize) -> bool {
 
 // ─── Mesh spec parser ─────────────────────────────────────────────────────────
 
-fn parse_result(s: &str) -> Result<AutotileResult, ParseError> {
+fn parse_result(s: &str) -> anyhow::Result<AutotileResult> {
     if s == "none" {
         return Ok(AutotileResult::None);
     }
@@ -681,7 +658,8 @@ fn parse_result(s: &str) -> Result<AutotileResult, ParseError> {
     } else {
         (false, s)
     };
-    let spec = parse_mesh_spec(rest).ok_or_else(|| ParseError::InvalidResult(s.to_owned()))?;
+    let spec = parse_mesh_spec(rest)
+        .with_context(|| format!("invalid result: {s:?}"))?;
     Ok(AutotileResult::Mesh { multi, spec })
 }
 
@@ -997,7 +975,7 @@ H:
         for (pt, slot) in valid_combos {
             for anchor_col in 0usize..2 {
                 for anchor_row in 0usize..2 {
-                    let (col_off, row_off) = offset(pt, slot, anchor_col, anchor_row);
+                    let (col_off, row_off) = offset(pt, slot, anchor_col, anchor_row).unwrap();
                     // After inserting col_off leading columns / row_off leading rows,
                     // the anchor lands at (anchor_col + col_off, anchor_row + row_off).
                     // What matters for slot identity is the parity.
@@ -1029,10 +1007,11 @@ H:
 
     #[test]
     fn rotate_offset_90cw() {
-        // (1, 0) [right] → (0, -1) [up in grid = -Z]
-        check!(rotate_offset(1, 0, 1) == (0, -1));
-        // (0, 1) [down] → (1, 0) [right]
-        check!(rotate_offset(0, 1, 1) == (1, 0));
+        // Matches sparse3d Clockwise: (x,z) → (-z,x).
+        // (1, 0) [+X] → (0, 1) [+Z]
+        check!(rotate_offset(1, 0, 1) == (0, 1));
+        // (0, 1) [+Z] → (-1, 0) [-X]
+        check!(rotate_offset(0, 1, 1) == (-1, 0));
     }
 
     #[test]
@@ -1048,6 +1027,32 @@ H:
             p = rotate_offset(p.0, p.1, 1);
         }
         check!(p == (dc, dr));
+    }
+
+    #[test]
+    fn rotate_offset_compose() {
+        // rot=2 must equal two rot=1 steps; rot=3 must equal three.
+        for (dc, dr) in [(1, 0), (0, 1), (-1, 0), (0, -1), (2, 3), (-1, 2)] {
+            let step1 = rotate_offset(dc, dr, 1);
+            let step2 = rotate_offset(step1.0, step1.1, 1);
+            let step3 = rotate_offset(step2.0, step2.1, 1);
+            check!(step2 == rotate_offset(dc, dr, 2), "({dc},{dr}): 90°×2 ≠ 180°");
+            check!(step3 == rotate_offset(dc, dr, 3), "({dc},{dr}): 90°×3 ≠ 270°");
+        }
+    }
+
+    #[test]
+    fn rotate_autotile_rel_slot_compose() {
+        use AutotileRelSlot::*;
+        for slot in [Room, XHiWall, XLoWall, Floor, Ceiling, ZHiWall, ZLoWall] {
+            let step1 = rotate_autotile_rel_slot(slot, 1);
+            let step2 = rotate_autotile_rel_slot(step1, 1);
+            let step3 = rotate_autotile_rel_slot(step2, 1);
+            let step4 = rotate_autotile_rel_slot(step3, 1);
+            check!(step2 == rotate_autotile_rel_slot(slot, 2), "{slot:?}: 90°×2 ≠ 180°");
+            check!(step3 == rotate_autotile_rel_slot(slot, 3), "{slot:?}: 90°×3 ≠ 270°");
+            check!(step4 == slot,                              "{slot:?}: 90°×4 ≠ identity");
+        }
     }
 
     // ── Matching ──────────────────────────────────────────────────────────────
@@ -1123,6 +1128,124 @@ H:
             let empty_grid: Sparse3D<Cell> = Sparse3D::new();
             let result2 = match_pattern(&oriented, &empty_grid, anchor, test_char_matches);
             check!(result2 == Some(&AutotileResult::None));
+        }
+
+        /// Verify that `rotate_autotile_rel_slot` agrees with sparse3d's slot rotation:
+        /// an XLoWall→XLoWall neighbor pattern (cases) should produce a matching
+        /// ZLoWall→ZLoWall neighbor pattern (cases_plus_90) after one CW turn.
+        #[test]
+        fn wall_slot_rotation_consistent_with_sparse3d() {
+            // Wall with a wall neighbor in the +X direction (both XLoWall slots).
+            let input = "\
+== wall: wall ==
+H:
+ @ W
+--> wall_across
+--> none
+";
+            let file = parse(input).unwrap();
+            let oriented = compile_rule(&file.rules[0]);
+
+            let anchor_x = SlotLocation::new(0, 0, 0, RelSlot::XLoWall);
+            let anchor_z = SlotLocation::new(0, 0, 0, RelSlot::ZLoWall);
+
+            // Base case (cases): XLoWall anchor, neighbor at XLoWall(1,0,0).
+            let mut grid_x: Sparse3D<Cell> = Sparse3D::new();
+            grid_x.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), wall_cell());
+            let r_x = match_pattern(&oriented, &grid_x, anchor_x, test_char_matches).unwrap();
+            check!(r_x == &AutotileResult::Mesh { multi: false, spec: atom("wall_across") });
+
+            // CW-rotated case (cases_plus_90): ZLoWall anchor.
+            // sparse3d CW moves the XLoWall neighbor at (1,0,0) to ZLoWall at (0,0,1),
+            // and the XLoWall anchor type becomes ZLoWall.
+            let mut grid_z: Sparse3D<Cell> = Sparse3D::new();
+            grid_z.set(SlotLocation::new(0, 0, 1, RelSlot::ZLoWall), wall_cell());
+            let r_z = match_pattern(&oriented, &grid_z, anchor_z, test_char_matches).unwrap();
+            check!(r_z == &AutotileResult::Mesh { multi: false, spec: atom("wall_across") },
+                "ZLoWall anchor with ZLoWall neighbor at (0,0,1): expected wall_across, got {r_z:?}");
+
+            // The 180°-rotated case: neighbor on the −Z side of the ZLoWall anchor.
+            // That is the counterpart to an XLoWall anchor with neighbor at (−1,0,0).
+            // It should also match wall_across, but via the rot=2 case (mesh rotation=2).
+            let mut grid_z_back: Sparse3D<Cell> = Sparse3D::new();
+            grid_z_back.set(SlotLocation::new(0, 0, -1, RelSlot::ZLoWall), wall_cell());
+            let r_z_back = match_pattern(&oriented, &grid_z_back, anchor_z, test_char_matches).unwrap();
+            check!(
+                r_z_back == &AutotileResult::Mesh { multi: false, spec: atom_r("wall_across", 2) },
+                "ZLoWall neighbor at (0,0,-1): expected wall_across:2, got {r_z_back:?}"
+            );
+        }
+
+        /// Verify that the rotation numbering in `compile_rule` is consistent with the
+        /// rotation directions in `sparse3d`.
+        ///
+        /// sparse3d's Clockwise transform is (x,y,z)→(-z,y,x), so a +X neighbor at (1,0,0)
+        /// moves to (0,0,1) after one CW turn.  The autotile compiled rule's rotation-1 case
+        /// must match that same configuration — and its mesh result must carry rotation=1.
+        #[test]
+        fn rotation_consistent_with_sparse3d() {
+            // Asymmetric room pattern: anchor desk has a matching neighbor in the +X direction.
+            let input = "\
+== desk: room ==
+H:
+ @ =
+--> my_mesh
+";
+            let file = parse(input).unwrap();
+            let oriented = compile_rule(&file.rules[0]);
+
+            fn desk_cell() -> Cell {
+                Cell {
+                    id: StructureId(1),
+                    facing: Default::default(),
+                    evaluation: None,
+                }
+            }
+            fn is_desk(ch: char, id: StructureId) -> bool {
+                ch == '=' && id.0 == 1
+            }
+            fn mesh_rotation(r: &AutotileResult) -> i32 {
+                match r {
+                    AutotileResult::Mesh {
+                        spec: MeshSpec::Atom { rotation, .. },
+                        ..
+                    } => *rotation,
+                    other => panic!("expected mesh atom, got {other:?}"),
+                }
+            }
+
+            let anchor = SlotLocation::new(0, 0, 0, RelSlot::Room);
+
+            // No neighbor: nothing matches (rule has no else case).
+            let empty: Sparse3D<Cell> = Sparse3D::new();
+            check!(match_pattern(&oriented, &empty, anchor, is_desk).is_none());
+
+            // rot=0: neighbor in +X direction → Room(1,0,0).
+            let mut g0: Sparse3D<Cell> = Sparse3D::new();
+            g0.set(SlotLocation::new(1, 0, 0, RelSlot::Room), desk_cell());
+            let r0 = match_pattern(&oriented, &g0, anchor, is_desk).unwrap();
+            check!(mesh_rotation(r0) == 0, "rot=0: expected mesh rotation 0, got {}", mesh_rotation(r0));
+
+            // Rotating the world CW (sparse3d Clockwise: (x,y,z)→(-z,y,x)) moves
+            // the +X neighbor (1,0,0) to (0,0,1).  The autotile rot=1 (CW) case must
+            // match this configuration and return mesh rotation=1.
+            let mut g1: Sparse3D<Cell> = Sparse3D::new();
+            g1.set(SlotLocation::new(0, 0, 1, RelSlot::Room), desk_cell());
+            let r1 = match_pattern(&oriented, &g1, anchor, is_desk).unwrap();
+            check!(mesh_rotation(r1) == 1, "rot=1 (CW): expected mesh rotation 1, got {}", mesh_rotation(r1));
+
+            // 180° (sparse3d OneEighty: (x,y,z)→(-x,y,-z)) moves (1,0,0) to (-1,0,0).
+            let mut g2: Sparse3D<Cell> = Sparse3D::new();
+            g2.set(SlotLocation::new(-1, 0, 0, RelSlot::Room), desk_cell());
+            let r2 = match_pattern(&oriented, &g2, anchor, is_desk).unwrap();
+            check!(mesh_rotation(r2) == 2, "rot=2 (180°): expected mesh rotation 2, got {}", mesh_rotation(r2));
+
+            // CCW / 270° CW (sparse3d CounterClockwise: (x,y,z)→(z,y,-x)) moves
+            // (1,0,0) to (0,0,-1).  The autotile rot=3 case must match.
+            let mut g3: Sparse3D<Cell> = Sparse3D::new();
+            g3.set(SlotLocation::new(0, 0, -1, RelSlot::Room), desk_cell());
+            let r3 = match_pattern(&oriented, &g3, anchor, is_desk).unwrap();
+            check!(mesh_rotation(r3) == 3, "rot=3 (CCW): expected mesh rotation 3, got {}", mesh_rotation(r3));
         }
     }
 }
