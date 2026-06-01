@@ -12,7 +12,7 @@ mod autotile {
     include!("src/autotile.rs");
 }
 
-use autotile::{AutotileFile, AutotileResult, MeshSpec};
+use autotile::{AutotileFile, AutotileResult, MeshSpec, UnorientedSlot};
 
 fn main() {
     // Register and set `autotile_matching` so the main crate can gate
@@ -40,7 +40,7 @@ fn main() {
         .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_dir.display()));
 
     // Parse all autotile files and collect specs that need to be generated.
-    let mut spec_map: HashMap<String, MeshSpec> = HashMap::new();
+    let mut spec_map: HashMap<String, (MeshSpec, UnorientedSlot)> = HashMap::new();
     for path in &autotile_files {
         let src = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
@@ -51,7 +51,7 @@ fn main() {
         }
     }
 
-    for (name, spec) in &spec_map {
+    for (name, (spec, slot)) in &spec_map {
         let scad_deps = collect_scad_deps(spec, &buildables);
         for dep in &scad_deps {
             println!("cargo:rerun-if-changed={}", dep.display());
@@ -63,7 +63,7 @@ fn main() {
             .chain(scad_deps.iter().map(PathBuf::as_path))
             .collect();
 
-        generate_if_needed(name, spec, &buildables, &out_dir, &all_inputs);
+        generate_if_needed(name, spec, *slot, &buildables, &out_dir, &all_inputs);
     }
 }
 
@@ -86,12 +86,13 @@ fn collect_autotile_files(dir: &Path) -> Vec<PathBuf> {
 
 /// Adds every non-trivial top-level result spec to `map` (key = generated filename stem).
 /// Atom:0 specs are trivial — they already exist as base meshes.
-fn collect_result_specs(file: &AutotileFile, map: &mut HashMap<String, MeshSpec>) {
+fn collect_result_specs(file: &AutotileFile, map: &mut HashMap<String, (MeshSpec, UnorientedSlot)>) {
     for rule in &file.rules {
+        let slot = rule.slot;
         for case in &rule.cases {
             if let AutotileResult::Mesh { spec, .. } = &case.result {
                 if !is_trivial(spec) {
-                    map.insert(spec_stem(spec), spec.clone());
+                    map.insert(spec_stem(spec, slot), (spec.clone(), slot));
                 }
             }
         }
@@ -102,13 +103,28 @@ fn is_trivial(spec: &MeshSpec) -> bool {
     matches!(spec, MeshSpec::Atom { rotation: 0, .. })
 }
 
+fn slot_tag(slot: UnorientedSlot) -> &'static str {
+    match slot {
+        UnorientedSlot::Wall => "w",
+        UnorientedSlot::Room => "ro",
+        UnorientedSlot::Floor => "fl",
+    }
+}
+
 /// Deterministic filename stem for a spec (no extension).
-pub fn spec_stem(spec: &MeshSpec) -> String {
+/// Slot is encoded for non-trivial atoms because the pivot translation differs by slot.
+pub fn spec_stem(spec: &MeshSpec, slot: UnorientedSlot) -> String {
     match spec {
         MeshSpec::Atom { name, rotation: 0 } => name.clone(),
-        MeshSpec::Atom { name, rotation } => format!("{name}_r{rotation}"),
-        MeshSpec::Union(a, b) => format!("union__{}__{}", spec_stem(a), spec_stem(b)),
-        MeshSpec::Intersection(a, b) => format!("isect__{}__{}", spec_stem(a), spec_stem(b)),
+        MeshSpec::Atom { name, rotation } => {
+            format!("{name}_{}_r{rotation}", slot_tag(slot))
+        }
+        MeshSpec::Union(a, b) => {
+            format!("union__{}__{}", spec_stem(a, slot), spec_stem(b, slot))
+        }
+        MeshSpec::Intersection(a, b) => {
+            format!("isect__{}__{}", spec_stem(a, slot), spec_stem(b, slot))
+        }
     }
 }
 
@@ -133,45 +149,57 @@ fn collect_scad_deps_rec(spec: &MeshSpec, buildables: &Path, deps: &mut Vec<Path
 
 // ─── OpenSCAD code generation ─────────────────────────────────────────────────
 
+/// Returns (pre_translate, post_translate) pivot strings for rotating around the
+/// correct centre point for a given slot.
+fn pivot_for_slot(slot: UnorientedSlot) -> (&'static str, &'static str) {
+    match slot {
+        UnorientedSlot::Wall => ("[-0.5, 0, 0]", "[0.5, 0, 0]"),
+        _ => ("[-0.5, -0.5, 0]", "[0.5, 0.5, 0]"),
+    }
+}
+
 /// Generate OpenSCAD source for a mesh spec.
 /// Uses bare filenames — all source .scad files are copied into the output dir first.
-fn spec_to_scad(spec: &MeshSpec) -> String {
+fn spec_to_scad(spec: &MeshSpec, slot: UnorientedSlot) -> String {
     match spec {
         MeshSpec::Atom { name, rotation } => {
             let inc = format!("include <{name}.scad>");
             if *rotation == 0 {
                 inc
             } else {
-                // Rotation is in 90° units around the Y axis.
-                // In OpenSCAD (Z-up), game-Y ≡ OpenSCAD-Z, so we rotate around Z.
-                format!("rotate([0, 0, {}])\n{}", rotation, inc)
+                // Rotation is in degrees around Z (OpenSCAD Z-up, game-Y ≡ OpenSCAD-Z).
+                // Translate so the pivot lands at the origin before rotating, then back.
+                let (pre, post) = pivot_for_slot(slot);
+                format!("translate({post})\nrotate([0, 0, {rotation}])\ntranslate({pre})\n{inc}")
             }
         }
         MeshSpec::Union(a, b) => format!(
             "union() {{\n    {}\n    {}\n}}",
-            spec_to_scad(a),
-            spec_to_scad(b)
+            spec_to_scad(a, slot),
+            spec_to_scad(b, slot)
         ),
         MeshSpec::Intersection(a, b) => format!(
             "intersection() {{\n    {}\n    {}\n}}",
-            spec_to_scad(a),
-            spec_to_scad(b)
+            spec_to_scad(a, slot),
+            spec_to_scad(b, slot)
         ),
     }
 }
 
 /// Generate the cut-view variant: intersect the mesh with a jagged floor plane.
-fn spec_to_cut_scad(spec: &MeshSpec) -> String {
-    let inner = spec_to_scad(spec);
+fn spec_to_cut_scad(spec: &MeshSpec, slot: UnorientedSlot) -> String {
+    let inner = spec_to_scad(spec, slot);
     // jagged.dat is copied into the output dir alongside the generated .scad files.
     format!(
         "intersection() {{\n    \
          {inner}\n    \
-         union() {{\n        \
-         surface(\"jagged.dat\");\n        \
-         translate([0,0,-13])\n        \
-         cube([13,13,13]);\n    \
-         }}\n\
+         translate([-.15,-.15,.25])\n \
+         scale([1/10,1/10, 1/13])\n \
+         union() {{\n \
+             surface(\"jagged.dat\");\n \
+             translate([0,0,-13])\n \
+             cube([13,13,13]);\n \
+         }}\n \
          }}"
     )
 }
@@ -226,6 +254,7 @@ fn copy_scad_sources(buildables: &Path, out_dir: &Path) {
 fn generate_if_needed(
     stem: &str,
     spec: &MeshSpec,
+    slot: UnorientedSlot,
     buildables: &Path,
     out_dir: &Path,
     inputs: &[&Path],
@@ -244,13 +273,13 @@ fn generate_if_needed(
 
     if need_main {
         let scad_path = out_dir.join(format!("{stem}.scad"));
-        let scad_src = spec_to_scad(spec);
+        let scad_src = spec_to_scad(spec, slot);
         write_and_compile(&scad_path, &scad_src, &main_gltf);
     }
 
     if need_cut {
         let cut_scad_path = out_dir.join(format!("{stem}-cut-y-pos.scad"));
-        let cut_src = spec_to_cut_scad(spec);
+        let cut_src = spec_to_cut_scad(spec, slot);
         write_and_compile(&cut_scad_path, &cut_src, &cut_gltf);
     }
 }

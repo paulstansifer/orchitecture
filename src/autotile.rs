@@ -600,6 +600,7 @@ fn build_pattern(
 //   W.
 //   ..
 
+#[allow(unused)] // Maybe we'll need this?
 /// From a grid location, determine what slot it represents
 fn grid_to_slot(pt: PatternType, (row, col): (i32, i32)) -> Option<UnorientedSlot> {
     match (pt, row % 2 == 1, col % 2 == 1) {
