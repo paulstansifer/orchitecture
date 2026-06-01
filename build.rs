@@ -145,7 +145,7 @@ fn spec_to_scad(spec: &MeshSpec, buildables: &Path) -> String {
             } else {
                 // Rotation is in 90° units around the Y axis.
                 // In OpenSCAD (Z-up), game-Y ≡ OpenSCAD-Z, so we rotate around Z.
-                format!("rotate([0, 0, {}])\n{}", rotation * 90, inc)
+                format!("rotate([0, 0, {}])\n{}", rotation, inc)
             }
         }
         MeshSpec::Union(a, b) => format!(
