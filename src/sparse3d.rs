@@ -25,14 +25,26 @@ pub struct SlotLocation {
     pub rel_slot: RelSlot,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RelSlotOffset {
+    /// When using relative slots, we need the origin, because slots are shared between two adjacent cubes
+    pub origin_slot: RelSlot,
+    pub cube_offset: IVec3,
+    pub dest_slot: RelSlot,
+}
+
+/// Every `RelSlot` other than `Room` is shared with an adjacent cube.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Rand)]
 pub enum RelSlot {
     Room,
     XHiWall,
+    /// Equivalent to the XLoWall of +(1,0,0)
     XLoWall,
     Floor,
+    /// Equivalent to the Ceiling of +(0,-1,1)
     Ceiling,
     ZHiWall,
+    /// Equivalent to the ZLoWall of +(0,0,1)
     ZLoWall,
 }
 
@@ -194,6 +206,37 @@ impl SlotLocation {
             RelSlot::Ceiling => (base.0, base.1 + 0.5, base.2),
             RelSlot::ZLoWall => (base.0, base.1, base.2 - 0.5),
             RelSlot::ZHiWall => (base.0, base.1, base.2 + 0.5),
+        }
+    }
+
+    pub fn apply_offset(self, by: RelSlotOffset) -> Self {
+        let same_type = matches!(
+            (self.rel_slot, by.origin_slot),
+            (RelSlot::Room, RelSlot::Room)
+                | (
+                    RelSlot::XLoWall | RelSlot::XHiWall,
+                    RelSlot::XLoWall | RelSlot::XHiWall
+                )
+                | (
+                    RelSlot::Floor | RelSlot::Ceiling,
+                    RelSlot::Floor | RelSlot::Ceiling
+                )
+                | (
+                    RelSlot::ZLoWall | RelSlot::ZHiWall,
+                    RelSlot::ZLoWall | RelSlot::ZHiWall
+                )
+        );
+        assert!(
+            same_type,
+            "apply_offset: slot type mismatch: {:?} vs {:?}",
+            self.rel_slot, by.origin_slot
+        );
+        // Re-express self in by.origin_slot's frame, then add cube_offset.
+        let cube = self.cube + self.rel_slot.absolute_offset() - by.origin_slot.absolute_offset()
+            + by.cube_offset;
+        SlotLocation {
+            cube,
+            rel_slot: by.dest_slot,
         }
     }
 }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 // These imports are only valid in the main crate (not the build script).
 // build.rs sets `cargo:rustc-cfg=autotile_matching` so the main crate sees them.
 #[cfg(autotile_matching)]
-use crate::sparse3d::{SlotLocation, Sparse3D};
+use crate::sparse3d::{SlotLocation, Sparse3D, RelSlot};
 #[cfg(autotile_matching)]
 use crate::structure::StructureId;
 #[cfg(autotile_matching)]
@@ -25,6 +25,31 @@ pub enum PatternType {
     H,
     VWide,
     VNarrow,
+}
+
+/// This matches a type in sparse3d, but we need this at build time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AutotileRelSlotOffset {
+    /// When using relative slots, we need the origin, because slots are shared between two adjacent cubes
+    pub origin_slot: AutotileRelSlot,
+    pub cube_offset: (i32, i32, i32),
+    pub dest_slot: AutotileRelSlot,
+}
+
+/// This matches a type in sparse3d, but we need this at build time.
+/// Every `RelSlot` other than `Room` is shared with an adjacent cube.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AutotileRelSlot {
+    Room,
+    XHiWall,
+    /// Equivalent to the XLoWall of +(1,0,0)
+    XLoWall,
+    Floor,
+    /// Equivalent to the Ceiling of +(0,-1,1)
+    Ceiling,
+    ZHiWall,
+    /// Equivalent to the ZLoWall of +(0,0,1)
+    ZLoWall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -68,20 +93,82 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    /// Returns non-wildcard, non-@ cells as relative (dcol, drow) → char.
-    pub fn relative_checks(&self) -> HashMap<(i32, i32), char> {
+    /// Returns non-wildcard, non-@ cells as AutotileRelSlotOffset → char.
+    ///
+    /// `at_col`/`at_row` store the pre-insert `@` position; the actual `@` in
+    /// `self.rows` may be shifted by one column/row due to parity adjustment in
+    /// `build_pattern`. We scan for the real `@` to get the correct origin slot.
+    pub fn relative_checks(&self) -> HashMap<AutotileRelSlotOffset, char> {
+        let (at_col_actual, at_row_actual) = self
+            .rows
+            .iter()
+            .enumerate()
+            .find_map(|(r, row)| {
+                row.iter()
+                    .enumerate()
+                    .find(|(_, &ch)| ch == '@')
+                    .map(|(c, _)| (c, r))
+            })
+            .expect("pattern has no @");
+
+        let (ax, ay, az, origin_slot) =
+            grid_pos_to_3d(self.pattern_type, at_col_actual, at_row_actual);
+
         let mut map = HashMap::new();
         for (r, row) in self.rows.iter().enumerate() {
             for (c, &ch) in row.iter().enumerate() {
                 if ch == ' ' || ch == '@' {
                     continue;
                 }
-                let dc = c as i32 - self.at_col as i32;
-                let dr = r as i32 - self.at_row as i32;
-                map.insert((dc, dr), ch);
+                let (tx, ty, tz, dest_slot) = grid_pos_to_3d(self.pattern_type, c, r);
+                map.insert(
+                    AutotileRelSlotOffset {
+                        origin_slot,
+                        cube_offset: (tx - ax, ty - ay, tz - az),
+                        dest_slot,
+                    },
+                    ch,
+                );
             }
         }
         map
+    }
+}
+
+/// Map a pattern-grid position to a 3D cube coordinate + canonical slot type.
+///
+/// For H patterns: col = X, row = Z, Y = 0.
+///   (even_row, even_col) → ZLoWall at (col/2, 0, row/2)
+///   (odd_row,  even_col) → Room    at (col/2, 0, row/2)
+///   (odd_row,  odd_col)  → XLoWall at (col/2+1, 0, row/2)
+///
+/// For VWide patterns: col = X, row = Y, Z = 0.
+///   (even_row, even_col) → Floor   at (col/2, row/2, 0)
+///   (odd_row,  even_col) → Room    at (col/2, row/2, 0)
+///   (odd_row,  odd_col)  → XLoWall at (col/2+1, row/2, 0)
+///
+/// For VNarrow patterns: col = X, row = Y, Z = 0; only (even, even) are valid.
+///   (even_row, even_col) → XLoWall at (col/2, row/2, 0)
+fn grid_pos_to_3d(pt: PatternType, col: usize, row: usize) -> (i32, i32, i32, AutotileRelSlot) {
+    let c = col as i32;
+    let r = row as i32;
+    match pt {
+        PatternType::H => match (row % 2, col % 2) {
+            (0, 0) => (c / 2, 0, r / 2, AutotileRelSlot::ZLoWall),
+            (1, 0) => (c / 2, 0, r / 2, AutotileRelSlot::Room),
+            (1, 1) => (c / 2 + 1, 0, r / 2, AutotileRelSlot::XLoWall),
+            _ => panic!("dead slot at ({col}, {row})"),
+        },
+        PatternType::VWide => match (row % 2, col % 2) {
+            (0, 0) => (c / 2, r / 2, 0, AutotileRelSlot::Floor),
+            (1, 0) => (c / 2, r / 2, 0, AutotileRelSlot::Room),
+            (1, 1) => (c / 2 + 1, r / 2, 0, AutotileRelSlot::XLoWall),
+            _ => panic!("dead slot at ({col}, {row})"),
+        },
+        PatternType::VNarrow => match (row % 2, col % 2) {
+            (0, 0) => (c / 2, r / 2, 0, AutotileRelSlot::XLoWall),
+            _ => panic!("dead slot at ({col}, {row})"),
+        },
     }
 }
 
@@ -109,7 +196,7 @@ pub struct AutotileFile {
 pub struct OrientedCase {
     pub pattern_type: PatternType,
     /// Non-wildcard checks relative to @ (the "anchor"). Empty = else/fallback case.
-    pub checks: HashMap<(i32, i32), char>,
+    pub checks: HashMap<AutotileRelSlotOffset, char>,
     pub result: AutotileResult,
     /// 0=0°, 1=90° CW, 2=180°, 3=270° CW
     pub rotation: u8,
@@ -121,6 +208,9 @@ pub struct AutotileOriented {
     pub slot: UnorientedSlot,
     /// Cases in priority order; else case (empty checks) is last.
     pub cases: Vec<OrientedCase>,
+    // If `slot` is Wall, this will be 90-degree-rotated versions of `cases`.
+    // Otherwise, it'll be empty
+    pub cases_plus_90: Vec<OrientedCase>,
 }
 
 // ─── Rotation helpers ─────────────────────────────────────────────────────────
@@ -137,10 +227,51 @@ pub fn rotate_offset(dc: i32, dr: i32, rot: u8) -> (i32, i32) {
     }
 }
 
-fn rotate_checks(checks: &HashMap<(i32, i32), char>, rot: u8) -> HashMap<(i32, i32), char> {
+fn rotate_autotile_rel_slot(slot: AutotileRelSlot, rot: u8) -> AutotileRelSlot {
+    match rot % 4 {
+        0 => slot,
+        1 => match slot {
+            AutotileRelSlot::XLoWall => AutotileRelSlot::ZLoWall,
+            AutotileRelSlot::XHiWall => AutotileRelSlot::ZHiWall,
+            AutotileRelSlot::ZLoWall => AutotileRelSlot::XHiWall,
+            AutotileRelSlot::ZHiWall => AutotileRelSlot::XLoWall,
+            other => other,
+        },
+        2 => match slot {
+            AutotileRelSlot::XLoWall => AutotileRelSlot::XHiWall,
+            AutotileRelSlot::XHiWall => AutotileRelSlot::XLoWall,
+            AutotileRelSlot::ZLoWall => AutotileRelSlot::ZHiWall,
+            AutotileRelSlot::ZHiWall => AutotileRelSlot::ZLoWall,
+            other => other,
+        },
+        3 => match slot {
+            AutotileRelSlot::XLoWall => AutotileRelSlot::ZHiWall,
+            AutotileRelSlot::XHiWall => AutotileRelSlot::ZLoWall,
+            AutotileRelSlot::ZLoWall => AutotileRelSlot::XLoWall,
+            AutotileRelSlot::ZHiWall => AutotileRelSlot::XHiWall,
+            other => other,
+        },
+        _ => unreachable!(),
+    }
+}
+
+fn rotate_slot_offset(offset: AutotileRelSlotOffset, rot: u8) -> AutotileRelSlotOffset {
+    let (x, y, z) = offset.cube_offset;
+    let (rx, rz) = rotate_offset(x, z, rot);
+    AutotileRelSlotOffset {
+        origin_slot: rotate_autotile_rel_slot(offset.origin_slot, rot),
+        cube_offset: (rx, y, rz),
+        dest_slot: rotate_autotile_rel_slot(offset.dest_slot, rot),
+    }
+}
+
+fn rotate_checks(
+    checks: &HashMap<AutotileRelSlotOffset, char>,
+    rot: u8,
+) -> HashMap<AutotileRelSlotOffset, char> {
     checks
         .iter()
-        .map(|(&(dc, dr), &ch)| (rotate_offset(dc, dr, rot), ch))
+        .map(|(&offset, &ch)| (rotate_slot_offset(offset, rot), ch))
         .collect()
 }
 
@@ -162,6 +293,7 @@ pub fn compile(file: &AutotileFile) -> Vec<AutotileOriented> {
 
 pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
     let mut cases = Vec::new();
+    let mut cases_plus_90 = Vec::new();
 
     for case in &rule.cases {
         match &case.pattern {
@@ -178,8 +310,14 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                 let base_checks = pattern.relative_checks();
                 let pt = pattern.pattern_type.clone();
 
-                let mut seen: Vec<HashMap<(i32, i32), char>> = Vec::new();
+                let mut seen: Vec<HashMap<AutotileRelSlotOffset, char>> = Vec::new();
                 for rot in 0u8..4 {
+                    if rule.slot == UnorientedSlot::Wall && rot % 2 == 1 {
+                        // A particular wall is only symmetric in 180 degrees, not 90
+                        // (But we need to store a 90-offset rotation for Z walls; the
+                        // patterns are constructed for X walls.)
+                        continue;
+                    }
                     let rotated = rotate_checks(&base_checks, rot);
                     if !seen.iter().any(|s| s == &rotated) {
                         seen.push(rotated.clone());
@@ -189,6 +327,14 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                             result: rotate_result(&case.result, rot),
                             rotation: rot,
                         });
+
+                        if rule.slot == UnorientedSlot::Wall {
+                            let rotated_plus_90 = rotate_checks(&base_checks, rot + 1);
+                            cases_plus_90.push(OrientedCase {
+                                checks: rotated_plus_90,
+                                ..cases.last().unwrap().clone()
+                            });
+                        }
                     }
                 }
             }
@@ -197,12 +343,28 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
 
     AutotileOriented {
         structure_name: rule.structure_name.clone(),
-        slot: rule.slot.clone(),
+        slot: rule.slot,
         cases,
+        cases_plus_90,
     }
 }
 
 // ─── Matching ─────────────────────────────────────────────────────────────────
+
+#[cfg(autotile_matching)]
+impl From<AutotileRelSlot> for crate::sparse3d::RelSlot {
+    fn from(s: AutotileRelSlot) -> Self {
+        match s {
+            AutotileRelSlot::Room => Self::Room,
+            AutotileRelSlot::XHiWall => Self::XHiWall,
+            AutotileRelSlot::XLoWall => Self::XLoWall,
+            AutotileRelSlot::Floor => Self::Floor,
+            AutotileRelSlot::Ceiling => Self::Ceiling,
+            AutotileRelSlot::ZHiWall => Self::ZHiWall,
+            AutotileRelSlot::ZLoWall => Self::ZLoWall,
+        }
+    }
+}
 
 /// Returns the result for the first matching oriented case.
 ///
@@ -217,16 +379,20 @@ pub fn match_pattern<'a>(
     anchor: SlotLocation,
     char_matches_id: impl Fn(char, StructureId) -> bool,
 ) -> Option<&'a AutotileResult> {
-    for case in &oriented.cases {
-        let matches = case.checks.iter().all(|(&(dc, dr), &ch)| {
-            let dxyz = match case.pattern_type {
-                PatternType::H => IVec3::new(dc, 0, dr),
-                PatternType::VWide | PatternType::VNarrow => IVec3::new(dc, dr, 0),
-            };
-            let neighbor = SlotLocation {
-                cube: anchor.cube + dxyz,
-                rel_slot: anchor.rel_slot, // This is wrong! Slot type should vary per check!
-            };
+    let turn_90 = matches!(anchor.rel_slot, RelSlot::ZLoWall | RelSlot::ZHiWall);
+    let cases = if turn_90 {
+        &oriented.cases_plus_90
+    } else {
+        &oriented.cases
+    };
+    for case in cases {
+        let matches = case.checks.iter().all(|(&offset, &ch)| {
+            let (cx, cy, cz) = offset.cube_offset;
+            let neighbor = anchor.apply_offset(crate::sparse3d::RelSlotOffset {
+                origin_slot: offset.origin_slot.into(),
+                cube_offset: IVec3::new(cx, cy, cz),
+                dest_slot: offset.dest_slot.into(),
+            });
             let cell = grid.get(neighbor);
             match ch {
                 ' ' => true,
@@ -466,7 +632,12 @@ fn grid_to_slot(pt: PatternType, (row, col): (i32, i32)) -> Option<UnorientedSlo
 }
 
 /// Offset to apply to a raw pattern to make the anchor appear in the right spot in the 2x2 slot grid
-fn offset(pt: PatternType, slot: UnorientedSlot, anchor_col: usize, anchor_row: usize) -> (usize, usize) {
+fn offset(
+    pt: PatternType,
+    slot: UnorientedSlot,
+    anchor_col: usize,
+    anchor_row: usize,
+) -> (usize, usize) {
     // find desired parity:
     let (p_col, p_row) = match (pt, slot) {
         (PatternType::H, UnorientedSlot::Room) => (0, 1),
@@ -637,10 +808,22 @@ H:
         check!(pat.pattern_type == PatternType::H);
         check!(pat.at_col == 2); // '@' is at index 2 after stripping leading space
         check!(pat.at_row == 0);
-        // The checks should be: col 0 = '.', col 4 = '.'
+        // After parity adjustment, '@' is at (col=3, row=1) = XLoWall at cube (2,0,0).
+        // '.' at (col=1, row=1) = XLoWall at cube (1,0,0): offset (-1,0,0).
+        // '.' at (col=5, row=1) = XLoWall at cube (3,0,0): offset (+1,0,0).
         let checks = pat.relative_checks();
-        check!(checks[&(-1, 1)] == '.');
-        check!(checks[&(3, 1)] == '.');
+        let lo = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::XLoWall,
+            cube_offset: (-1, 0, 0),
+            dest_slot: AutotileRelSlot::XLoWall,
+        };
+        let hi = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::XLoWall,
+            cube_offset: (1, 0, 0),
+            dest_slot: AutotileRelSlot::XLoWall,
+        };
+        check!(checks[&lo] == '.');
+        check!(checks[&hi] == '.');
         check!(checks.len() == 2);
     }
 
@@ -741,7 +924,7 @@ H:
     fn asymmetric_pattern_produces_four_orientations() {
         // Asymmetric: something only to the right of @.
         let input = "\
-== wall: wall ==
+== desk: room ==
 H:
  @ =
 --> mesh_a
@@ -770,7 +953,7 @@ H:
     #[test]
     fn rotation_propagates_to_mesh() {
         let input = "\
-== wall: wall ==
+== desk: room ==
 H:
  @ =
 --> my_mesh
@@ -904,7 +1087,6 @@ H:
         }
 
         #[test]
-        #[ignore = "Fix in progress"]
         fn pattern_matches_correct_neighbor() {
             // One wall across a room from another wall.
             let input = "\
