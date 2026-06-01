@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 // Arbitrarily canonicalized, so that we can assign each item to a single grid location
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Rand)]
-enum Slot {
+pub enum Slot {
     Room,
     XWall,
     YFloor,
@@ -31,6 +31,53 @@ pub struct RelSlotOffset {
     pub origin_slot: RelSlot,
     pub cube_offset: IVec3,
     pub dest_slot: RelSlot,
+}
+
+/// Canonical slot address: cube is already adjusted for Hi-variants (no relative offset).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SlotCoord {
+    pub cube: IVec3,
+    pub slot: Slot,
+}
+
+/// Like `RelSlotOffset` but canonical: no origin slot needed since `Slot` is unambiguous.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SlotCoordOffset {
+    pub cube_offset: IVec3,
+    pub dest_slot: Slot,
+}
+
+impl SlotCoord {
+    fn split_location(&self) -> (BigCoordinates, SmallCoordinates) {
+        let big_coords = BigCoordinates {
+            x: self.cube.x.div_euclid(4),
+            y: self.cube.y.div_euclid(4),
+            z: self.cube.z.div_euclid(4),
+        };
+        let small_coords = SmallCoordinates {
+            x: self.cube.x.rem_euclid(4) as u8,
+            y: self.cube.y.rem_euclid(4) as u8,
+            z: self.cube.z.rem_euclid(4) as u8,
+            slot: self.slot,
+        };
+        (big_coords, small_coords)
+    }
+
+    pub fn apply_offset(self, by: SlotCoordOffset) -> Self {
+        SlotCoord {
+            cube: self.cube + by.cube_offset,
+            slot: by.dest_slot,
+        }
+    }
+}
+
+impl From<SlotLocation> for SlotCoord {
+    fn from(sl: SlotLocation) -> Self {
+        SlotCoord {
+            cube: sl.cube + sl.rel_slot.absolute_offset(),
+            slot: sl.rel_slot.as_absolute_slot(),
+        }
+    }
 }
 
 /// Every `RelSlot` other than `Room` is shared with an adjacent cube.
@@ -651,6 +698,22 @@ impl<T: Rotateable> IndexMut<SlotLocation> for Sparse3D<T> {
     }
 }
 
+impl<T> Index<SlotCoord> for Sparse3D<T> {
+    type Output = T;
+
+    fn index(&self, loc: SlotCoord) -> &Self::Output {
+        let (bc, sc) = loc.split_location();
+        self.chunks.get(&bc).and_then(|chunk| chunk[sc].as_ref()).unwrap()
+    }
+}
+
+impl<T> IndexMut<SlotCoord> for Sparse3D<T> {
+    fn index_mut(&mut self, loc: SlotCoord) -> &mut Self::Output {
+        let (bc, sc) = loc.split_location();
+        self.chunks.get_mut(&bc).and_then(|chunk| chunk[sc].as_mut()).unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::check;
@@ -766,5 +829,46 @@ mod tests {
         check!(flattened.contains(&RotInt(20)));
         check!(flattened.contains(&RotInt(11)));
         check!(flattened.contains(&RotInt(12)));
+    }
+
+    #[test]
+    fn test_slot_coord_canonical() {
+        // XHiWall at cube (3,0,0) should shift to XWall at (4,0,0)
+        let hi_wall = SlotLocation::new(3, 0, 0, RelSlot::XHiWall);
+        let coord: SlotCoord = hi_wall.into();
+        check!(coord.cube == IVec3::new(4, 0, 0));
+        check!(coord.slot == Slot::XWall);
+
+        // XLoWall has no offset; cube stays the same
+        let lo_wall = SlotLocation::new(3, 0, 0, RelSlot::XLoWall);
+        let coord2: SlotCoord = lo_wall.into();
+        check!(coord2.cube == IVec3::new(3, 0, 0));
+        check!(coord2.slot == Slot::XWall);
+
+        // Indexing via SlotLocation and the equivalent SlotCoord reaches the same slot
+        let mut grid: Sparse3D<RotInt> = Sparse3D::new();
+        grid.set(SlotLocation::new(3, 0, 0, RelSlot::XHiWall), RotInt(99));
+        check!(grid[hi_wall] == RotInt(99));
+        check!(grid[coord] == RotInt(99));
+
+        // Ceiling shifts y by +1
+        let ceiling = SlotLocation::new(0, 2, 0, RelSlot::Ceiling);
+        let ceil_coord: SlotCoord = ceiling.into();
+        check!(ceil_coord.cube == IVec3::new(0, 3, 0));
+        check!(ceil_coord.slot == Slot::YFloor);
+    }
+
+    #[test]
+    fn test_slot_coord_offset() {
+        let origin = SlotCoord { cube: IVec3::new(2, 1, 0), slot: Slot::Room };
+        let offset = SlotCoordOffset { cube_offset: IVec3::new(1, 0, -1), dest_slot: Slot::XWall };
+        let dest = origin.apply_offset(offset);
+        check!(dest.cube == IVec3::new(3, 1, -1));
+        check!(dest.slot == Slot::XWall);
+
+        // Verify the result indexes into the grid correctly
+        let mut grid: Sparse3D<RotInt> = Sparse3D::new();
+        grid.set(SlotLocation::new(3, 1, -1, RelSlot::XLoWall), RotInt(7));
+        check!(grid[dest] == RotInt(7));
     }
 }
