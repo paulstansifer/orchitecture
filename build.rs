@@ -239,18 +239,22 @@ fn write_and_compile(scad_path: &Path, scad_src: &str, gltf_out: &Path) {
         .arg(scad_path)
         .arg("-o")
         .arg(&tmp_stl)
-        .status();
+        .output();
 
     match openscad {
         Err(e) => {
             println!("cargo:warning=Could not run openscad (is it installed?): {e}");
             return;
         }
-        Ok(s) if !s.success() => {
+        Ok(out) if !out.status.success() => {
             println!(
-                "cargo:warning=openscad failed (exit {s}) for {}",
+                "cargo:warning=openscad failed (exit {}) for {}",
+                out.status,
                 scad_path.display()
             );
+            for line in String::from_utf8_lossy(&out.stderr).lines() {
+                println!("cargo:warning=openscad stderr: {line}");
+            }
             return;
         }
         Ok(_) => {}
@@ -260,14 +264,20 @@ fn write_and_compile(scad_path: &Path, scad_src: &str, gltf_out: &Path) {
         .arg("export")
         .arg(&tmp_stl)
         .arg(gltf_out)
-        .status();
+        .output();
 
     match assimp {
         Err(e) => println!("cargo:warning=Could not run assimp (is it installed?): {e}"),
-        Ok(s) if !s.success() => println!(
-            "cargo:warning=assimp failed (exit {s}) for {}",
-            gltf_out.display()
-        ),
+        Ok(out) if !out.status.success() => {
+            println!(
+                "cargo:warning=assimp failed (exit {}) for {}",
+                out.status,
+                gltf_out.display()
+            );
+            for line in String::from_utf8_lossy(&out.stderr).lines() {
+                println!("cargo:warning=assimp stderr: {line}");
+            }
+        }
         Ok(_) => {}
     }
 }
