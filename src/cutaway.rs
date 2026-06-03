@@ -27,7 +27,7 @@ fn get_cut_handle<'a>(
         results.iter().find_map(|result| {
             if let AutotileResult::Mesh { spec, .. } = result {
                 let stem = spec_stem(spec, rel_slot_to_unoriented(loc.rel_slot));
-                autotile_handles.handles.get(&stem).map(|(_, cut)| cut)
+                autotile_handles.handles.get(&stem).and_then(|(_, cut)| cut.as_ref())
             } else {
                 None
             }
