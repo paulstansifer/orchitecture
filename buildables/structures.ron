@@ -112,8 +112,8 @@
         ),
     ),
     (
-        name: "pillar",
-        main_mesh: "pillar.gltf",
+        name: "column",
+        main_mesh: "column.gltf",
         y_cut_mesh: None,
         placement_style: WallDrag,
         x_char: Some('P'),

@@ -66,7 +66,7 @@ impl MeshSpec {
         match self {
             MeshSpec::Atom { name, rotation } => MeshSpec::Atom {
                 name,
-                rotation: (rotation + by).rem_euclid(4),
+                rotation: (rotation + by).rem_euclid(360),
             },
             MeshSpec::Union(a, b) => {
                 MeshSpec::Union(Box::new(a.rotate(by)), Box::new(b.rotate(by)))
@@ -282,7 +282,7 @@ fn rotate_result(result: &AutotileResult, rot: u8) -> AutotileResult {
         AutotileResult::None => AutotileResult::None,
         AutotileResult::Mesh { multi, spec } => AutotileResult::Mesh {
             multi: *multi,
-            spec: spec.clone().rotate(rot as i32),
+            spec: spec.clone().rotate(rot as i32 * 90),
         },
     }
 }
@@ -407,6 +407,49 @@ pub fn match_pattern<'a>(
         }
     }
     None
+}
+
+/// Map a `RelSlot` to the `UnorientedSlot` category used in autotile rule headers.
+#[cfg(autotile_matching)]
+pub fn rel_slot_to_unoriented(slot: RelSlot) -> UnorientedSlot {
+    match slot {
+        RelSlot::Room => UnorientedSlot::Room,
+        RelSlot::Floor | RelSlot::Ceiling => UnorientedSlot::Floor,
+        _ => UnorientedSlot::Wall,
+    }
+}
+
+/// Apply every autotile rule that matches `cell_name` and the slot implied by `loc`,
+/// returning one `AutotileResult` per rule (first-match-wins within each rule).
+///
+/// Returns `None` when no rules apply to this structure at all (so the caller can
+/// fall back to the default mesh).
+#[cfg(autotile_matching)]
+pub fn evaluate_autotile_rules(
+    loc: SlotLocation,
+    cell_name: &str,
+    rules: &[AutotileOriented],
+    grid: &Sparse3D<Cell>,
+    char_matches: impl Fn(char, StructureId) -> bool,
+) -> Option<Vec<AutotileResult>> {
+    let unoriented = rel_slot_to_unoriented(loc.rel_slot);
+    let matching: Vec<_> = rules
+        .iter()
+        .filter(|r| r.structure_name == cell_name && r.slot == unoriented)
+        .collect();
+    if matching.is_empty() {
+        return None;
+    }
+    Some(
+        matching
+            .iter()
+            .map(|rule| {
+                match_pattern(rule, grid, loc, &char_matches)
+                    .cloned()
+                    .unwrap_or(AutotileResult::None)
+            })
+            .collect(),
+    )
 }
 
 // ─── Parser ───────────────────────────────────────────────────────────────────
@@ -739,6 +782,187 @@ fn parse_factor(s: &str) -> Option<(MeshSpec, &str)> {
     Some((MeshSpec::Atom { name, rotation: 0 }, rest))
 }
 
+// ─── Bevy resources & systems ─────────────────────────────────────────────────
+
+#[cfg(autotile_matching)]
+pub use bevy_resources::*;
+
+#[cfg(autotile_matching)]
+mod bevy_resources {
+    use std::collections::HashMap;
+
+    use bevy::asset::{AssetServer, Handle};
+    use bevy::prelude::{Commands, Res, ResMut, Resource, SceneRoot};
+    use bevy::scene::Scene;
+
+    use crate::sparse3d::{RelSlot, SlotLocation};
+    use crate::structure::{StructureId, StructureList};
+    use crate::wall_grid::{cell_transform, GridCellMarker, WallGrid};
+
+    use super::{
+        compile, evaluate_autotile_rules, parse, rel_slot_to_unoriented, spec_stem,
+        AutotileOriented, AutotileResult, UnorientedSlot,
+    };
+
+    #[derive(Resource)]
+    pub struct AutotileRules(pub Vec<AutotileOriented>);
+
+    #[derive(Resource)]
+    pub struct AutotileHandles {
+        /// stem → (main handle, cut handle)
+        pub handles: HashMap<String, (Handle<Scene>, Handle<Scene>)>,
+    }
+
+    pub fn spawn_autotile_rules(mut commands: Commands) {
+        let src = include_str!("../buildables/structures.autotile");
+        let file = parse(src).expect("structures.autotile parse failed");
+        commands.insert_resource(AutotileRules(compile(&file)));
+    }
+
+    pub fn load_autotile_handles(asset_server: Res<AssetServer>, mut commands: Commands) {
+        let src = include_str!("../buildables/structures.autotile");
+        let file = parse(src).expect("structures.autotile parse failed");
+        let oriented = compile(&file);
+
+        let mut handles: HashMap<String, (Handle<Scene>, Handle<Scene>)> = HashMap::new();
+        for rule in &oriented {
+            for case in &rule.cases {
+                if let AutotileResult::Mesh { spec, .. } = &case.result {
+                    let stem = spec_stem(spec, rule.slot);
+                    if handles.contains_key(&stem) {
+                        continue;
+                    }
+                    let main: Handle<Scene> =
+                        asset_server.load(format!("buildables/autotile/{stem}.gltf#Scene0"));
+                    let cut: Handle<Scene> = asset_server
+                        .load(format!("buildables/autotile/{stem}-cut-y-pos.gltf#Scene0"));
+                    handles.insert(stem, (main, cut));
+                }
+            }
+        }
+        commands.insert_resource(AutotileHandles { handles });
+    }
+
+    pub fn autotile_update_system(
+        mut commands: Commands,
+        mut wall_grid: ResMut<WallGrid>,
+        autotile_rules: Res<AutotileRules>,
+        autotile_handles: Res<AutotileHandles>,
+        structure_list: Res<StructureList>,
+    ) {
+        // Pre-extract names to avoid repeated borrow conflicts in the closures below.
+        let struct_names: Vec<String> = structure_list
+            .structures
+            .iter()
+            .map(|s| s.info.name.clone())
+            .collect();
+
+        // Phase A: collect all locations with autotile rules, compute new results.
+        // Borrows wall_grid.contents immutably; all mutation is deferred to Phase B.
+        let updates: Vec<(SlotLocation, crate::wall_grid::Cell, Vec<AutotileResult>)> = {
+            wall_grid
+                .contents
+                .iter()
+                .filter_map(|(loc, cell)| {
+                    let struct_name = &struct_names[cell.id.as_usize()];
+                    let char_matches = |ch: char, id: StructureId| -> bool {
+                        let name = &struct_names[id.as_usize()];
+                        match ch {
+                            '=' => name.as_str() == struct_name.as_str(),
+                            'F' => name == "floor",
+                            'W' => name == "wall",
+                            'S' => name == "stairs",
+                            'R' => name == "railing",
+                            _ => false,
+                        }
+                    };
+                    let results = evaluate_autotile_rules(
+                        loc,
+                        struct_name,
+                        &autotile_rules.0,
+                        &wall_grid.contents,
+                        char_matches,
+                    )?;
+                    Some((loc, cell.clone(), results))
+                })
+                .collect()
+        };
+
+        // Phase B: apply changes where the results differ from last frame.
+        for (loc, cell, new_results) in updates {
+            if wall_grid.autotile_results.get(&loc) == Some(&new_results) {
+                continue;
+            }
+            // Despawn old entities for this location.
+            if let Some(entities) = wall_grid.cell_entities.remove(&loc) {
+                for e in entities {
+                    commands.entity(e).despawn();
+                }
+            }
+
+            let unoriented = rel_slot_to_unoriented(loc.rel_slot);
+            let mut new_entities = Vec::new();
+            for result in &new_results {
+                if let AutotileResult::Mesh { spec, .. } = result {
+                    let stem = spec_stem(spec, unoriented);
+                    if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
+                        let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+                        let entity = commands
+                            .spawn((
+                                SceneRoot(main_handle.clone()),
+                                transform,
+                                GridCellMarker { loc },
+                            ))
+                            .id();
+                        new_entities.push(entity);
+                    }
+                }
+            }
+
+            wall_grid.cell_entities.insert(loc, new_entities);
+            wall_grid.autotile_results.insert(loc, new_results);
+        }
+
+        // Purge stale entries for cells that no longer exist.
+        let stale: Vec<SlotLocation> = wall_grid
+            .autotile_results
+            .keys()
+            .filter(|&&loc| wall_grid.contents.get(loc).is_none())
+            .copied()
+            .collect();
+        for loc in stale {
+            wall_grid.autotile_results.remove(&loc);
+        }
+    }
+}
+
+// ─── Filename helpers ─────────────────────────────────────────────────────────
+
+pub fn slot_tag(slot: UnorientedSlot) -> &'static str {
+    match slot {
+        UnorientedSlot::Wall => "w",
+        UnorientedSlot::Room => "ro",
+        UnorientedSlot::Floor => "fl",
+    }
+}
+
+/// Deterministic filename stem for a mesh spec (no extension).
+/// Slot is encoded for non-trivial atoms because the pivot translation differs by slot.
+pub fn spec_stem(spec: &MeshSpec, slot: UnorientedSlot) -> String {
+    match spec {
+        MeshSpec::Atom { name, rotation: 0 } => name.clone(),
+        MeshSpec::Atom { name, rotation } => {
+            format!("{name}_{}_r{rotation}", slot_tag(slot))
+        }
+        MeshSpec::Union(a, b) => {
+            format!("union__{}__{}", spec_stem(a, slot), spec_stem(b, slot))
+        }
+        MeshSpec::Intersection(a, b) => {
+            format!("isect__{}__{}", spec_stem(a, slot), spec_stem(b, slot))
+        }
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -955,7 +1179,7 @@ H:
                 ..
             } = &case.result
             {
-                check!(*rotation == case.rotation as i32);
+                check!(*rotation == case.rotation as i32 * 90);
             }
         }
     }
@@ -1172,7 +1396,7 @@ H:
             grid_z_back.set(SlotLocation::new(0, 0, -1, RelSlot::ZLoWall), wall_cell());
             let r_z_back = match_pattern(&oriented, &grid_z_back, anchor_z, test_char_matches).unwrap();
             check!(
-                r_z_back == &AutotileResult::Mesh { multi: false, spec: atom_r("wall_across", 2) },
+                r_z_back == &AutotileResult::Mesh { multi: false, spec: atom_r("wall_across", 180) },
                 "ZLoWall neighbor at (0,0,-1): expected wall_across:2, got {r_z_back:?}"
             );
         }
@@ -1229,24 +1453,107 @@ H:
 
             // Rotating the world CW (sparse3d Clockwise: (x,y,z)→(-z,y,x)) moves
             // the +X neighbor (1,0,0) to (0,0,1).  The autotile rot=1 (CW) case must
-            // match this configuration and return mesh rotation=1.
+            // match this configuration and return mesh rotation=90°.
             let mut g1: Sparse3D<Cell> = Sparse3D::new();
             g1.set(SlotLocation::new(0, 0, 1, RelSlot::Room), desk_cell());
             let r1 = match_pattern(&oriented, &g1, anchor, is_desk).unwrap();
-            check!(mesh_rotation(r1) == 1, "rot=1 (CW): expected mesh rotation 1, got {}", mesh_rotation(r1));
+            check!(mesh_rotation(r1) == 90, "rot=1 (CW): expected mesh rotation 90, got {}", mesh_rotation(r1));
 
             // 180° (sparse3d OneEighty: (x,y,z)→(-x,y,-z)) moves (1,0,0) to (-1,0,0).
             let mut g2: Sparse3D<Cell> = Sparse3D::new();
             g2.set(SlotLocation::new(-1, 0, 0, RelSlot::Room), desk_cell());
             let r2 = match_pattern(&oriented, &g2, anchor, is_desk).unwrap();
-            check!(mesh_rotation(r2) == 2, "rot=2 (180°): expected mesh rotation 2, got {}", mesh_rotation(r2));
+            check!(mesh_rotation(r2) == 180, "rot=2 (180°): expected mesh rotation 180, got {}", mesh_rotation(r2));
 
             // CCW / 270° CW (sparse3d CounterClockwise: (x,y,z)→(z,y,-x)) moves
             // (1,0,0) to (0,0,-1).  The autotile rot=3 case must match.
             let mut g3: Sparse3D<Cell> = Sparse3D::new();
             g3.set(SlotLocation::new(0, 0, -1, RelSlot::Room), desk_cell());
             let r3 = match_pattern(&oriented, &g3, anchor, is_desk).unwrap();
-            check!(mesh_rotation(r3) == 3, "rot=3 (CCW): expected mesh rotation 3, got {}", mesh_rotation(r3));
+            check!(mesh_rotation(r3) == 270, "rot=3 (CCW): expected mesh rotation 270, got {}", mesh_rotation(r3));
+        }
+
+        // ── Column autotile tests ─────────────────────────────────────────────
+
+        fn all_rules() -> Vec<AutotileOriented> {
+            let src = include_str!("../buildables/structures.autotile");
+            compile(&parse(src).unwrap())
+        }
+
+        fn stems_from_results(results: &[AutotileResult]) -> Vec<String> {
+            results
+                .iter()
+                .filter_map(|r| {
+                    if let AutotileResult::Mesh { spec, .. } = r {
+                        Some(spec_stem(spec, UnorientedSlot::Wall))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+
+        // IDs used in column tests: 0 = floor, 1 = column
+        fn col_cell() -> Cell {
+            Cell { id: StructureId(1), facing: Default::default(), evaluation: None }
+        }
+
+        fn col_char_matches(ch: char, id: StructureId) -> bool {
+            match ch {
+                '=' => id.0 == 1, // column (same structure as anchor)
+                'F' => id.0 == 0, // floor
+                _ => false,
+            }
+        }
+
+        /// A lone column with no neighbours falls through to the else case in both
+        /// stanzas and produces two `column_floating` meshes.
+        #[test]
+        fn column_single_produces_two_floating() {
+            let rules = all_rules();
+            let anchor = SlotLocation::new(1, 0, 0, RelSlot::XLoWall);
+            let mut grid: Sparse3D<Cell> = Sparse3D::new();
+            grid.set(anchor, col_cell());
+
+            let results = evaluate_autotile_rules(anchor, "column", &rules, &grid, col_char_matches)
+                .expect("column has autotile rules");
+            let stems = stems_from_results(&results);
+
+            check!(stems.len() == 2, "expected 2 stems, got {stems:?}");
+            check!(stems.contains(&"isect__column_floating__top".to_string()), "stems={stems:?}");
+            check!(stems.contains(&"isect__column_floating__bottom".to_string()), "stems={stems:?}");
+        }
+
+        /// Two columns stacked vertically with no floors: the outer ends get
+        /// `column_floating` (no neighbour beyond them) and the joint gets
+        /// `column_middle` on both sides.
+        #[test]
+        fn column_stacked_produces_four_meshes() {
+            let rules = all_rules();
+            let anchor_lo = SlotLocation::new(1, 0, 0, RelSlot::XLoWall);
+            let anchor_hi = SlotLocation::new(1, 1, 0, RelSlot::XLoWall);
+            let mut grid: Sparse3D<Cell> = Sparse3D::new();
+            grid.set(anchor_lo, col_cell());
+            grid.set(anchor_hi, col_cell());
+
+            let results_lo = evaluate_autotile_rules(anchor_lo, "column", &rules, &grid, col_char_matches)
+                .expect("column has autotile rules");
+            let results_hi = evaluate_autotile_rules(anchor_hi, "column", &rules, &grid, col_char_matches)
+                .expect("column has autotile rules");
+
+            let stems_lo = stems_from_results(&results_lo);
+            let stems_hi = stems_from_results(&results_hi);
+            let all: Vec<_> = stems_lo.iter().chain(stems_hi.iter()).cloned().collect();
+
+            check!(all.len() == 4, "expected 4 stems total, got {all:?}");
+            for expected in &[
+                "isect__column_floating__top",    // bottom column, stanza 1: no column below
+                "isect__column_middle__bottom",   // bottom column, stanza 2: column above present
+                "isect__column_middle__top",      // top column,    stanza 1: column below present
+                "isect__column_floating__bottom", // top column,    stanza 2: no column above
+            ] {
+                check!(all.contains(&expected.to_string()), "missing {expected}; got {all:?}");
+            }
         }
     }
 }

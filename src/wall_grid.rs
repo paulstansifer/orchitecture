@@ -189,8 +189,10 @@ pub struct WallGrid {
     pub contents: Sparse3D<Cell>,
     /// Proposed changes not yet committed; does not affect shadows or ceiling lights.
     pub proposed_changes: Sparse3D<Proposal>,
-    /// Entity spawned for each placed (real) cell.
-    pub cell_entities: HashMap<SlotLocation, Entity>,
+    /// Entities spawned for each placed (real) cell (may be multiple for autotile cells).
+    pub cell_entities: HashMap<SlotLocation, Vec<Entity>>,
+    /// Last-rendered autotile results per location (one per matching rule), for change detection.
+    pub autotile_results: HashMap<SlotLocation, Vec<crate::autotile::AutotileResult>>,
     /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
     pub proposal_entities: HashMap<SlotLocation, Vec<Entity>>,
     /// Entities spawned for the y-cut cutaway layer (cleared each cutaway update).
@@ -208,6 +210,7 @@ impl WallGrid {
             contents: Sparse3D::new(),
             proposed_changes: Sparse3D::new(),
             cell_entities: HashMap::new(),
+            autotile_results: HashMap::new(),
             proposal_entities: HashMap::new(),
             cut_entities: Vec::new(),
             proposed_cut_entities: HashMap::new(),
@@ -304,16 +307,20 @@ pub fn apply_changes(
     changes: Vec<(SlotLocation, Option<Cell>)>,
 ) {
     for (loc, new_cell) in changes {
-        if let Some(old_entity) = wall_grid.cell_entities.remove(&loc) {
-            commands.entity(old_entity).despawn();
+        if let Some(old_entities) = wall_grid.cell_entities.remove(&loc) {
+            for e in old_entities {
+                commands.entity(e).despawn();
+            }
         }
+        // Clear autotile state so the per-frame system unconditionally re-evaluates.
+        wall_grid.autotile_results.remove(&loc);
         if let Some(cell) = new_cell {
             let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
             let handle = structure_list.scene_handle(cell.id).clone();
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
                 .id();
-            wall_grid.cell_entities.insert(loc, entity);
+            wall_grid.cell_entities.insert(loc, vec![entity]);
         }
     }
 }

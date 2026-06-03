@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
+    autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
     camera::{camera_input_system, spawn_camera, CameraState},
     ceiling_lights::update_ceiling_lights,
     cutaway::{update_cutaway_system, CutawayMode},
@@ -55,6 +56,8 @@ fn main() {
                 enable_ui_input_absorption,
                 // spawn_structures must run before spawn_grid (grid reads StructureList).
                 (spawn_structures, spawn_grid).chain(),
+                spawn_autotile_rules,
+                load_autotile_handles,
                 spawn_camera,
                 spawn_world,
                 spawn_cursors,
@@ -70,6 +73,7 @@ fn main() {
                 cursor_system,
                 update_room_cursor_mesh,
                 recolor_new_mesh_children,
+                autotile_update_system,
                 update_cutaway_system,
                 update_ceiling_lights.run_if(resource_changed::<WallGrid>),
             ),
