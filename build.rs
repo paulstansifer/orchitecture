@@ -3,13 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// Re-use the parser and types from the main crate. The module only imports
-// from std, so it compiles cleanly as a build-dependency.
-// `autotile_matching` is intentionally absent here; the cfg-gated matching
-// code is ignored when this file is included.
+// Re-use the parser and types from the main crate. parser.rs only imports
+// from std and anyhow, so it compiles cleanly as a build-dependency.
 #[allow(dead_code, unused_imports, unexpected_cfgs)]
 mod autotile {
-    include!("src/autotile.rs");
+    include!("src/autotile/parser.rs");
 }
 
 use autotile::{AutotileFile, AutotileResult, MeshSpec, UnorientedSlot, spec_stem};
