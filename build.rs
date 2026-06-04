@@ -95,6 +95,7 @@ fn collect_result_specs(file: &AutotileFile, map: &mut HashMap<String, (MeshSpec
 
 fn is_trivial(spec: &MeshSpec) -> bool {
     matches!(spec, MeshSpec::Atom { rotation: 0, .. })
+    // Rotation is a runtime-only variant; build.rs never produces it.
 }
 
 
@@ -114,6 +115,7 @@ fn collect_scad_deps_rec(spec: &MeshSpec, buildables: &Path, deps: &mut Vec<Path
             collect_scad_deps_rec(a, buildables, deps);
             collect_scad_deps_rec(b, buildables, deps);
         }
+        MeshSpec::Rotation(_, _) => unreachable!("Rotation is a runtime-only variant"),
     }
 }
 
@@ -153,6 +155,7 @@ fn spec_to_scad(spec: &MeshSpec, slot: UnorientedSlot) -> String {
             spec_to_scad(a, slot),
             spec_to_scad(b, slot)
         ),
+        MeshSpec::Rotation(_, _) => unreachable!("Rotation is a runtime-only variant"),
     }
 }
 

@@ -242,14 +242,10 @@ H:
         // rotation 0: my_mesh:0; rotation 1: my_mesh:1; etc.
         let rots: Vec<u8> = oriented.cases.iter().map(|c| c.rotation).collect();
         check!(rots == vec![0, 1, 2, 3]);
-        // Check that result meshes have incremented rotations
+        // Check that result meshes carry the correct outer rotation
         for case in &oriented.cases {
-            if let AutotileResult::Mesh {
-                spec: MeshSpec::Atom { rotation, .. },
-                ..
-            } = &case.result
-            {
-                check!(*rotation == case.rotation as i32 * 90);
+            if let AutotileResult::Mesh { spec, .. } = &case.result {
+                check!(spec.outer_rotation() == case.rotation as i32 * 90);
             }
         }
     }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use bevy::asset::{AssetServer, Handle};
+use bevy::math::{Quat, Vec3};
 use bevy::prelude::{Commands, Res, ResMut, Resource, SceneRoot};
 use bevy::scene::Scene;
 
@@ -130,7 +131,19 @@ pub fn autotile_update_system(
             if let AutotileResult::Mesh { spec, .. } = result {
                 let stem = spec_stem(spec, unoriented);
                 if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
-                    let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+                    let mut transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+                    let rot_deg = spec.outer_rotation();
+                    if rot_deg != 0 {
+                        let angle = rot_deg as f32 * std::f32::consts::TAU / 360.0;
+                        let q = Quat::from_rotation_z(-angle);
+                        let pivot = if unoriented == crate::autotile::UnorientedSlot::Wall {
+                            Vec3::new(0.5, 0.0, 0.0)
+                        } else {
+                            Vec3::new(0.5, 0.5, 0.0)
+                        };
+                        transform.translation += transform.rotation * (pivot - q * pivot);
+                        transform.rotation = transform.rotation * q;
+                    }
                     let entity = commands
                         .spawn((
                             SceneRoot(main_handle.clone()),

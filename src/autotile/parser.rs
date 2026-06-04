@@ -45,24 +45,35 @@ pub enum AutotileRelSlot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MeshSpec {
+    // TODO: get rid of `.rotation` here. The outermost `Rotation` will continue to be special,
+    // but that's okay.
     Atom { name: String, rotation: i32 },
+    /// Runtime rotation applied by the autotile matching system (degrees, CW in XZ plane).
+    /// Distinct from Atom's rotation, which is author-specified and baked into the mesh file.
+    Rotation(i32, Box<MeshSpec>),
     Union(Box<MeshSpec>, Box<MeshSpec>),
     Intersection(Box<MeshSpec>, Box<MeshSpec>),
 }
 
 impl MeshSpec {
+    /// Wraps this spec in a `Rotation` rather than pushing the angle into atoms,
+    /// so that the mesh filename is derived from the unrotated inner spec.
     pub fn rotate(self, by: i32) -> Self {
+        let by = by.rem_euclid(360);
+        if by == 0 {
+            return self;
+        }
         match self {
-            MeshSpec::Atom { name, rotation } => MeshSpec::Atom {
-                name,
-                rotation: (rotation + by).rem_euclid(360),
-            },
-            MeshSpec::Union(a, b) => {
-                MeshSpec::Union(Box::new(a.rotate(by)), Box::new(b.rotate(by)))
-            }
-            MeshSpec::Intersection(a, b) => {
-                MeshSpec::Intersection(Box::new(a.rotate(by)), Box::new(b.rotate(by)))
-            }
+            MeshSpec::Rotation(r, inner) => MeshSpec::Rotation((r + by).rem_euclid(360), inner),
+            other => MeshSpec::Rotation(by, Box::new(other)),
+        }
+    }
+
+    /// Returns the outermost runtime rotation in degrees (0 if none).
+    pub fn outer_rotation(&self) -> i32 {
+        match self {
+            MeshSpec::Rotation(r, _) => *r,
+            _ => 0,
         }
     }
 }
@@ -525,6 +536,7 @@ pub fn slot_tag(slot: UnorientedSlot) -> &'static str {
 /// Slot is encoded for non-trivial atoms because the pivot translation differs by slot.
 pub fn spec_stem(spec: &MeshSpec, slot: UnorientedSlot) -> String {
     match spec {
+        MeshSpec::Rotation(_, inner) => spec_stem(inner, slot),
         MeshSpec::Atom { name, rotation: 0 } => name.clone(),
         MeshSpec::Atom { name, rotation } => {
             format!("{name}_{}_r{rotation}", slot_tag(slot))

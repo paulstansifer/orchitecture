@@ -234,10 +234,14 @@ H:
         let mut grid_z_back: Sparse3D<Cell> = Sparse3D::new();
         grid_z_back.set(SlotLocation::new(0, 0, -1, RelSlot::ZLoWall), wall_cell());
         let r_z_back = match_pattern(&oriented, &grid_z_back, anchor_z, test_char_matches).unwrap();
-        check!(
-            r_z_back == &AutotileResult::Mesh { multi: false, spec: atom_r("wall_across", 180) },
-            "ZLoWall neighbor at (0,0,-1): expected wall_across:2, got {r_z_back:?}"
-        );
+        if let AutotileResult::Mesh { spec, .. } = r_z_back {
+            check!(
+                spec.outer_rotation() == 180 && spec_stem(spec, UnorientedSlot::Wall) == "wall_across",
+                "ZLoWall neighbor at (0,0,-1): expected wall_across with rotation 180, got {spec:?}"
+            );
+        } else {
+            panic!("ZLoWall neighbor at (0,0,-1): expected Mesh result, got {r_z_back:?}");
+        }
     }
 
     /// Verify that the rotation numbering in `compile_rule` is consistent with the
@@ -270,11 +274,8 @@ H:
         }
         fn mesh_rotation(r: &AutotileResult) -> i32 {
             match r {
-                AutotileResult::Mesh {
-                    spec: MeshSpec::Atom { rotation, .. },
-                    ..
-                } => *rotation,
-                other => panic!("expected mesh atom, got {other:?}"),
+                AutotileResult::Mesh { spec, .. } => spec.outer_rotation(),
+                other => panic!("expected mesh, got {other:?}"),
             }
         }
 
