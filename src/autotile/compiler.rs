@@ -111,12 +111,16 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
         match &case.pattern {
             None => {
                 // Else case: no constraints, matches always. One copy, rotation 0.
-                cases.push(OrientedCase {
+                let oc = OrientedCase {
                     pattern_type: PatternType::H,
                     checks: HashMap::new(),
                     result: case.result.clone(),
                     rotation: 0,
-                });
+                };
+                if rule.slot == UnorientedSlot::Wall {
+                    cases_plus_90.push(oc.clone());
+                }
+                cases.push(oc);
             }
             Some(pattern) => {
                 let base_checks = pattern.relative_checks();

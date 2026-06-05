@@ -364,6 +364,24 @@ H:
         check!(stems.contains(&"isect__column_floating__bottom".to_string()), "stems={stems:?}");
     }
 
+    /// Z-wall variant of `column_single_produces_two_floating`: the else case must
+    /// appear in `cases_plus_90` so that ZLoWall anchors also get the fallback mesh.
+    #[test]
+    fn column_single_zwall_produces_two_floating() {
+        let rules = all_rules();
+        let anchor = SlotLocation::new(1, 0, 0, RelSlot::ZLoWall);
+        let mut grid: Sparse3D<Cell> = Sparse3D::new();
+        grid.set(anchor, col_cell());
+
+        let results = evaluate_autotile_rules(anchor, "column", &rules, &grid, col_char_matches)
+            .expect("column has autotile rules");
+        let stems = stems_from_results(&results);
+
+        check!(stems.len() == 2, "expected 2 stems for ZLoWall column, got {stems:?}");
+        check!(stems.contains(&"isect__column_floating__top".to_string()), "stems={stems:?}");
+        check!(stems.contains(&"isect__column_floating__bottom".to_string()), "stems={stems:?}");
+    }
+
     /// Two columns stacked vertically with no floors: the outer ends get
     /// `column_floating` (no neighbour beyond them) and the joint gets
     /// `column_middle` on both sides.
