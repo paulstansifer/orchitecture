@@ -30,10 +30,9 @@ fn char_matches(ch: char, id: StructureId, anchor_name: &str, all_names: &[Strin
 
 /// Computes the world transform for an autotile mesh result, applying any
 /// spec-specified rotation on top of the base cell transform.
-fn autotile_transform(loc: SlotLocation, cell: &Cell, spec: &MeshSpec, scale: f32) -> Transform {
+fn autotile_transform(loc: SlotLocation, cell: &Cell, spec: &MeshSpec) -> Transform {
     let unoriented = rel_slot_to_unoriented(loc.rel_slot);
     let mut transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
-    transform.scale *= scale;
     let rot_deg = spec.outer_rotation();
     if rot_deg != 0 {
         let angle = rot_deg as f32 * std::f32::consts::TAU / 360.0;
@@ -58,7 +57,6 @@ fn spawn_entities_from_results(
     loc: SlotLocation,
     cell: &Cell,
     results: &[AutotileResult],
-    scale: f32,
     mut spawn_one: impl FnMut(&mut Commands, SceneRoot, Transform) -> Entity,
 ) -> Vec<Entity> {
     let unoriented = rel_slot_to_unoriented(loc.rel_slot);
@@ -67,7 +65,7 @@ fn spawn_entities_from_results(
         if let AutotileResult::Mesh { spec, .. } = result {
             let stem = spec_stem(spec, unoriented);
             if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
-                let transform = autotile_transform(loc, cell, spec, scale);
+                let transform = autotile_transform(loc, cell, spec);
                 entities.push(spawn_one(commands, SceneRoot(main_handle.clone()), transform));
             }
         }
@@ -116,7 +114,7 @@ pub fn autotile_update_system(
             for e in entities { commands.entity(e).despawn(); }
         }
         let new_entities = spawn_entities_from_results(
-            &mut commands, &autotile_handles, loc, &cell, &new_results, 1.0,
+            &mut commands, &autotile_handles, loc, &cell, &new_results,
             |cmd, scene, transform| cmd.spawn((scene, transform, GridCellMarker { loc })).id(),
         );
         wall_grid.cell_entities.insert(loc, new_entities);
@@ -192,11 +190,10 @@ pub fn proposal_autotile_update_system(
             // No autotile rules: fall back to the structure's default scene handle.
             let handle = structure_list.scene_handle(cell.id).clone();
             let mut transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
-            transform.scale *= 0.999;
             vec![commands.spawn((SceneRoot(handle), transform, ProposalGhostMarker { loc })).id()]
         } else {
             spawn_entities_from_results(
-                &mut commands, &autotile_handles, loc, &cell, &new_results, 0.999,
+                &mut commands, &autotile_handles, loc, &cell, &new_results,
                 |cmd, scene, transform| cmd.spawn((scene, transform, ProposalGhostMarker { loc })).id(),
             )
         };
