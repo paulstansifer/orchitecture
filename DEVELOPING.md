@@ -23,6 +23,12 @@ Game parts:
   * structure.rs: `Structure`s are the walls, doors, desks, etc. that occupy `Cell`s.
   * serialization.rs: text format for `Sparse3D<Cell>`
 
+3D autotile system (makes meshes responsive to nearby structures):
+  * autotile/parser.rs: Parse the "structures.autotile" file...
+  * autotile/compiler.rs: ...turn that representation into oriented match rules...
+  * autotile/matcher.rs: ...use that to figure out whether a rule is triggered...
+  * autotile/display.rs: ...and show the appropriate meshes
+
 Quality neural net (`qnn/` module):
   * qnn/train.rs: training binary entry point (`fn main`) and training loop
   * qnn/model.rs: `Cnn` model architecture and `Args` hyperparameters

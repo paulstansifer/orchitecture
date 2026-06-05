@@ -138,19 +138,6 @@ impl Pattern {
 }
 
 /// Map a pattern-grid position to a 3D cube coordinate + canonical slot type.
-///
-/// For H patterns: col = X, row = Z, Y = 0.
-///   (even_row, even_col) → ZLoWall at (col/2, 0, row/2)
-///   (odd_row,  even_col) → Room    at (col/2, 0, row/2)
-///   (odd_row,  odd_col)  → XLoWall at (col/2+1, 0, row/2)
-///
-/// For VWide patterns: col = X, row = Y, Z = 0.
-///   (even_row, even_col) → Floor   at (col/2, row/2, 0)
-///   (odd_row,  even_col) → Room    at (col/2, row/2, 0)
-///   (odd_row,  odd_col)  → XLoWall at (col/2+1, row/2, 0)
-///
-/// For VNarrow patterns: col = X, row = Y, Z = 0; only (even, even) are valid.
-///   (even_row, even_col) → XLoWall at (col/2, row/2, 0)
 fn grid_pos_to_3d(pt: PatternType, col: usize, row: usize) -> (i32, i32, i32, AutotileRelSlot) {
     let c = col as i32;
     let r = row as i32;
@@ -162,13 +149,13 @@ fn grid_pos_to_3d(pt: PatternType, col: usize, row: usize) -> (i32, i32, i32, Au
             _ => panic!("dead slot at ({col}, {row})"),
         },
         PatternType::VWide => match (row % 2, col % 2) {
-            (0, 0) => (c / 2, r / 2, 0, AutotileRelSlot::Floor),
-            (1, 0) => (c / 2, r / 2, 0, AutotileRelSlot::Room),
-            (1, 1) => (c / 2 + 1, r / 2, 0, AutotileRelSlot::XLoWall),
+            (0, 0) => (c / 2, -(r / 2) + 1, 0, AutotileRelSlot::Floor),
+            (1, 0) => (c / 2, -(r / 2), 0, AutotileRelSlot::Room),
+            (1, 1) => (c / 2 + 1, -(r / 2), 0, AutotileRelSlot::XLoWall),
             _ => panic!("dead slot at ({col}, {row})"),
         },
         PatternType::VNarrow => match (row % 2, col % 2) {
-            (0, 0) => (c / 2, r / 2, 0, AutotileRelSlot::XLoWall),
+            (0, 0) => (c / 2, -(r / 2), 0, AutotileRelSlot::XLoWall),
             _ => panic!("dead slot at ({col}, {row})"),
         },
     }
