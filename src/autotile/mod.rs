@@ -16,4 +16,4 @@ pub use resources::{
     load_autotile_handles, spawn_autotile_rules, AutotileHandles, AutotileRules,
 };
 #[cfg(autotile_matching)]
-pub use display::{autotile_update_system, proposal_autotile_update_system};
+pub use display::autotile_update_system;
