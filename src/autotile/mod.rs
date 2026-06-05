@@ -3,11 +3,17 @@ pub mod parser;
 #[cfg(autotile_matching)]
 pub mod matcher;
 #[cfg(autotile_matching)]
-pub mod bevy_resources;
+pub mod resources;
+#[cfg(autotile_matching)]
+pub mod display;
 
 pub use compiler::*;
 pub use parser::*;
 #[cfg(autotile_matching)]
 pub use matcher::*;
 #[cfg(autotile_matching)]
-pub use bevy_resources::*;
+pub use resources::{
+    load_autotile_handles, spawn_autotile_rules, AutotileHandles, AutotileRules,
+};
+#[cfg(autotile_matching)]
+pub use display::{autotile_update_system, proposal_autotile_update_system};

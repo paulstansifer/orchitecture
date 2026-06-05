@@ -172,19 +172,6 @@ mod tests {
     use super::*;
     use assert2::check;
 
-    fn atom(name: &str) -> MeshSpec {
-        MeshSpec::Atom {
-            name: name.to_owned(),
-            rotation: 0,
-        }
-    }
-    fn atom_r(name: &str, r: i32) -> MeshSpec {
-        MeshSpec::Atom {
-            name: name.to_owned(),
-            rotation: r,
-        }
-    }
-
     // ── Compilation / orientation expansion ──────────────────────────────────
 
     #[test]

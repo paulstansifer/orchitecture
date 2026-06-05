@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
-    autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
+    autotile::{autotile_update_system, load_autotile_handles, proposal_autotile_update_system, spawn_autotile_rules},
     camera::{camera_input_system, spawn_camera, CameraState},
     ceiling_lights::update_ceiling_lights,
     cutaway::{update_cutaway_system, CutawayMode},
@@ -73,7 +73,8 @@ fn main() {
                 cursor_system,
                 update_room_cursor_mesh,
                 recolor_new_mesh_children,
-                autotile_update_system,
+                autotile_update_system.after(building_input_system),
+                proposal_autotile_update_system.after(building_input_system),
                 update_cutaway_system,
                 update_ceiling_lights.run_if(resource_changed::<WallGrid>),
             ),
