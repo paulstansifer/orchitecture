@@ -24,13 +24,19 @@ V wide:
 
 ==railing:wall==
 H:
- @s
+ @S
 --> none    # handled by staircase, since staircase knows its orientation
 H:
- ..@..
+  .
+  
+  @
+  
+  .
 --> railing_cap * railing_cap:180
-H: 
- @..
+H:
+ .
+  
+ @
 --> railing_cap
 V wide:
   @
@@ -47,16 +53,21 @@ V wide:
 H:
    =
    .
- =.@.=
+ =.@
    .
    =
---> solid_roof
+--> slant_roof
 H:
- .@.=
---> (multi) slant_roof   # this rule can fire in multiple orientations at the same spot
+ =.@
+   .
+   =
+--> slant_roof * slant_roof:90
+H:
+ =.@
+--> slant_roof * slant_roof:90 * slant_roof:270
 H:
  .@W
---> (multi) slant_roof   # join up to walls, too
+--> (multi) slant_roof   # TODO: walls somehow?
 H:
    .
    .
@@ -64,7 +75,7 @@ H:
    .
    .
 --> slant_roof * slant_roof:90 * slant_roof:180 * slant_roof:270
-
+--> solid_roof
 
 ==stairs:room==
 H:

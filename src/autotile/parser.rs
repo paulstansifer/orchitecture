@@ -305,6 +305,7 @@ fn parse_cases(
                 bail!("line {plineno}: pattern with no --> result");
             }
             if pline.is_empty() {
+                pattern_rows.push(vec![]);
                 i += 1;
                 continue;
             }
@@ -681,6 +682,38 @@ H:
                     spec: atom("mesh_b")
                 }
         );
+    }
+
+    #[test]
+    fn parse_h_wall_vertical_neighbors() {
+        // Dots above and below @ are in the same slot kind (XLoWall at odd col, odd row).
+        // Blank lines between rows must be preserved as spacer rows, not skipped.
+        let input = "\
+== wall: wall ==
+H:
+  .
+
+  @
+
+  .
+--> wall_mesh
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        let checks = pat.relative_checks();
+        let north = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::XLoWall,
+            cube_offset: (0, 0, -1),
+            dest_slot: AutotileRelSlot::XLoWall,
+        };
+        let south = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::XLoWall,
+            cube_offset: (0, 0, 1),
+            dest_slot: AutotileRelSlot::XLoWall,
+        };
+        check!(checks[&north] == '.');
+        check!(checks[&south] == '.');
+        check!(checks.len() == 2);
     }
 
     #[test]
