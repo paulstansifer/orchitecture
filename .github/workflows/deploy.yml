@@ -38,6 +38,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Install OpenSCAD
+        run: sudo apt-get install -y openscad
+
       - name: Install Dart Sass
         run: |
           npm install -g sass
