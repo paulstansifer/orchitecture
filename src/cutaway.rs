@@ -379,6 +379,33 @@ pub fn compute_floor_edge(
         }
     }
 
+    // For each hidden floor, also hide Room objects above it until the next floor.
+    let hidden_floors: Vec<SlotLocation> = hidden
+        .iter()
+        .filter(|loc| loc.rel_slot == RelSlot::Floor)
+        .copied()
+        .collect();
+    for floor_loc in hidden_floors {
+        let (x, z) = (floor_loc.cube.x, floor_loc.cube.z);
+        let mut y = floor_loc.cube.y;
+        loop {
+            let room_loc = SlotLocation::new(x, y, z, RelSlot::Room);
+            if wall_grid.get_real_or_proposed(room_loc).is_some() {
+                hidden.push(room_loc);
+            }
+            if wall_grid
+                .get_real_or_proposed(SlotLocation::new(x, y + 1, z, RelSlot::Floor))
+                .is_some()
+            {
+                break;
+            }
+            y += 1;
+            if y > floor_loc.cube.y + 30 {
+                break;
+            }
+        }
+    }
+
     (hidden, cut)
 }
 
