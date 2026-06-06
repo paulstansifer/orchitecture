@@ -327,8 +327,8 @@ pub fn update_room_cursor_mesh(
                     }
                 })
             });
-        let handle = autotile_handle
-            .unwrap_or_else(|| structure_list.scene_handle(struct_id).clone());
+        let handle =
+            autotile_handle.unwrap_or_else(|| structure_list.scene_handle(struct_id).clone());
         commands
             .entity(cursor_entities.room)
             .insert(SceneRoot(handle));
@@ -429,12 +429,17 @@ pub fn spawn_cursors(
         .spawn((Transform::default(), Visibility::Hidden))
         .with_children(|p| {
             p.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.02, 1.0))),
+                MeshMaterial3d(cursor_mat.clone()),
+                Transform::from_xyz(0.0, 0.5, 0.0),
+            ));
+            p.spawn((
                 Mesh3d(meshes.add(Cylinder::new(0.04, 0.5))),
                 MeshMaterial3d(cursor_mat.clone()),
                 Transform::from_xyz(0.0, 0.5, 0.0),
             ));
             p.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.12))),
+                Mesh3d(meshes.add(Sphere::new(0.1))),
                 MeshMaterial3d(cursor_mat.clone()),
                 Transform::from_xyz(0.0, 1.12, 0.0),
             ));
