@@ -85,8 +85,8 @@ H:
 --> solid_roof
 
 ==stairs:room==
-H:
- R@
---> stair_railing
-==stairs:room==
 --> stairs
+==stairs:room==
+H:
+ @R
+--> stair_railing
