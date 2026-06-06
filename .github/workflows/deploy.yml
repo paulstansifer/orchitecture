@@ -54,6 +54,8 @@ jobs:
           version: 'latest'
 
       - name: Build with Trunk
+        env:
+          ASSET_BASE_URL: /orchitecture/
         run: trunk build --release --public-url /orchitecture/
 
       - name: Deploy to GitHub Pages
