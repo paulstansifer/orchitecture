@@ -7,13 +7,15 @@ use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 
 use crate::sparse3d::SlotLocation;
 use crate::structure::{StructureId, StructureList};
-use crate::wall_grid::{cell_transform, Cell, GridCellMarker, Proposal, ProposalGhostMarker, WallGrid};
-
-use super::{
-    evaluate_autotile_rules, rel_slot_to_unoriented, spec_stem,
-    AutotileResult, MeshSpec, UnorientedSlot,
+use crate::wall_grid::{
+    cell_transform, Cell, GridCellMarker, Proposal, ProposalGhostMarker, WallGrid,
 };
+
 use super::resources::{AutotileHandles, AutotileRules};
+use super::{
+    evaluate_autotile_rules, rel_slot_to_unoriented, spec_stem, AutotileResult, MeshSpec,
+    UnorientedSlot,
+};
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -29,9 +31,10 @@ fn char_matches(ch: char, id: StructureId, anchor_name: &str, all_names: &[Strin
     }
 }
 
-fn autotile_transform(loc: SlotLocation, cell: &Cell, spec: &MeshSpec) -> Transform {
+fn autotile_transform(loc: SlotLocation, _cell: &Cell, spec: &MeshSpec) -> Transform {
     let unoriented = rel_slot_to_unoriented(loc.rel_slot);
-    let mut transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+    // Ignore the direction of the input cell! Only the direction the rule matched in matters.
+    let mut transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
     let rot_deg = spec.outer_rotation();
     if rot_deg != 0 {
         let angle = rot_deg as f32 * std::f32::consts::TAU / 360.0;
@@ -62,7 +65,11 @@ fn spawn_entities_from_results(
             let stem = spec_stem(spec, unoriented);
             if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
                 let transform = autotile_transform(loc, cell, spec);
-                entities.push(spawn_one(commands, SceneRoot(main_handle.clone()), transform));
+                entities.push(spawn_one(
+                    commands,
+                    SceneRoot(main_handle.clone()),
+                    transform,
+                ));
             }
         }
     }
@@ -85,15 +92,23 @@ fn apply_autotile_updates<M: Bundle>(
             continue;
         }
         if let Some(entities) = entity_cache.remove(&loc) {
-            for e in entities { commands.entity(e).despawn(); }
+            for e in entities {
+                commands.entity(e).despawn();
+            }
         }
         let new_entities = if use_fallback && new_results.is_empty() {
             let handle = structure_list.scene_handle(cell.id).clone();
             let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
-            vec![commands.spawn((SceneRoot(handle), transform, make_marker(loc))).id()]
+            vec![commands
+                .spawn((SceneRoot(handle), transform, make_marker(loc)))
+                .id()]
         } else {
             spawn_entities_from_results(
-                commands, autotile_handles, loc, &cell, &new_results,
+                commands,
+                autotile_handles,
+                loc,
+                &cell,
+                &new_results,
                 |cmd, scene, transform| cmd.spawn((scene, transform, make_marker(loc))).id(),
             )
         };
@@ -176,8 +191,10 @@ pub fn autotile_update_system(
         .proposal_autotile_results
         .keys()
         .filter(|&&loc| {
-            !matches!(wall_grid.proposed_changes.get(loc), Some(Proposal::Place(_)))
-                || wall_grid.contents.get(loc).is_some()
+            !matches!(
+                wall_grid.proposed_changes.get(loc),
+                Some(Proposal::Place(_))
+            ) || wall_grid.contents.get(loc).is_some()
         })
         .copied()
         .collect();
@@ -185,16 +202,24 @@ pub fn autotile_update_system(
     // Apply — split-borrow the four cache fields so both calls can proceed.
     let wg = &mut *wall_grid;
     apply_autotile_updates(
-        &mut commands, &autotile_handles, &structure_list,
-        real_updates, real_stale,
-        &mut wg.autotile_results, &mut wg.cell_entities,
+        &mut commands,
+        &autotile_handles,
+        &structure_list,
+        real_updates,
+        real_stale,
+        &mut wg.autotile_results,
+        &mut wg.cell_entities,
         false,
         |loc| GridCellMarker { loc },
     );
     apply_autotile_updates(
-        &mut commands, &autotile_handles, &structure_list,
-        proposal_updates, proposal_stale,
-        &mut wg.proposal_autotile_results, &mut wg.proposal_entities,
+        &mut commands,
+        &autotile_handles,
+        &structure_list,
+        proposal_updates,
+        proposal_stale,
+        &mut wg.proposal_autotile_results,
+        &mut wg.proposal_entities,
         true,
         |loc| ProposalGhostMarker { loc },
     );
