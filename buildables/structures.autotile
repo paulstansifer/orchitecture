@@ -28,20 +28,16 @@ H:
 --> none    # handled by staircase, since staircase knows its orientation
 H:
   .
-  
+ . .
   @
-  
+ . .
   .
 --> railing_cap * railing_cap:180
 H:
- .
-
- @
---> railing_cap
-V wide:
+  .
+ . .
   @
- F .
---> reinforced_railing   # just for demonstration purposes
+--> railing_cap
 --> railing     # by default, models meet at integer coordinates now
 
 ==roof:room==
