@@ -41,6 +41,9 @@ jobs:
       - name: Install OpenSCAD
         run: sudo apt-get install -y openscad
 
+      - name: Install Assimp
+        run: sudo apt-get install -y assimp-utils
+
       - name: Install Dart Sass
         run: |
           npm install -g sass

@@ -1,7 +1,7 @@
 
 For development, you need to (in Ubuntu) do 
 ```
-sudo apt install assimp-utils
+sudo apt install openscad assimp-utils
 ```
 
 Then you can do the following to bulk-export OpenSCAD files:
