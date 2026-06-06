@@ -63,6 +63,9 @@ jobs:
           ASSET_BASE_URL: /orchitecture/
         run: trunk build --release --public-url /orchitecture/
 
+      - name: Copy generated autotile assets into dist
+        run: cp -r buildables/autotile dist/buildables/autotile
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
