@@ -53,6 +53,13 @@ V wide:
 H:
    =
    .
+ =.@.=
+   .
+   =
+--> solid_roof
+H:
+   =
+   .
  =.@
    .
    =
@@ -79,7 +86,7 @@ H:
 
 ==stairs:room==
 H:
- @R
+ R@
 --> stair_railing
 ==stairs:room==
 --> stairs

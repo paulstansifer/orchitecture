@@ -2,6 +2,7 @@ use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
 use crate::camera::GameCamera;
 use crate::cutaway::CutawayMode;
 use crate::sparse3d::{Facing, RelSlot};
@@ -289,6 +290,8 @@ pub fn update_room_cursor_mesh(
     cursor_entities: Res<CursorEntities>,
     structure_list: Res<StructureList>,
     wall_grid: Res<WallGrid>,
+    autotile_rules: Res<AutotileRules>,
+    autotile_handles: Res<AutotileHandles>,
     mut commands: Commands,
     mut last_id: Local<Option<usize>>,
 ) {
@@ -297,8 +300,26 @@ pub fn update_room_cursor_mesh(
         return;
     }
     *last_id = Some(id);
-    if wall_grid.structure_is_room_plop(StructureId(id as u32)) {
-        let handle = structure_list.scene_handle(StructureId(id as u32)).clone();
+    let struct_id = StructureId(id as u32);
+    // The last case of the first rule is used as the preview
+    if wall_grid.structure_is_room_plop(struct_id) {
+        let name = &structure_list.structures[id].info.name;
+        let autotile_handle = autotile_rules
+            .0
+            .iter()
+            .find(|rule| &rule.structure_name == name)
+            .and_then(|rule| {
+                rule.cases.last().and_then(|case| {
+                    if let AutotileResult::Mesh { spec, .. } = &case.result {
+                        let stem = spec_stem(spec, rule.slot);
+                        autotile_handles.handles.get(&stem).map(|(h, _)| h.clone())
+                    } else {
+                        None
+                    }
+                })
+            });
+        let handle = autotile_handle
+            .unwrap_or_else(|| structure_list.scene_handle(struct_id).clone());
         commands
             .entity(cursor_entities.room)
             .insert(SceneRoot(handle));

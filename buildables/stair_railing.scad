@@ -16,6 +16,8 @@ for (i = [0:0.2:1]) {
     }
 }
 
+
+rotate([0,0,90]) // This is in *room* position, because it's attached to the stairs rule.
 translate([-.1, -.1, height-.15])
 multmatrix(skew)
 cube([1.2, .2, .1]);
