@@ -10,8 +10,6 @@ pub struct OrientedCase {
     /// Non-wildcard checks relative to @ (the "anchor"). Empty = else/fallback case.
     pub checks: HashMap<AutotileRelSlotOffset, char>,
     pub result: AutotileResult,
-    /// 0=0°, 1=90° CW, 2=180°, 3=270° CW
-    pub rotation: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -110,12 +108,11 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
     for case in &rule.cases {
         match &case.pattern {
             None => {
-                // Else case: no constraints, matches always. One copy, rotation 0.
+                // Else case: no constraints, matches always. One copy.
                 let oc = OrientedCase {
                     pattern_type: PatternType::H,
                     checks: HashMap::new(),
                     result: case.result.clone(),
-                    rotation: 0,
                 };
                 if rule.slot == UnorientedSlot::Wall {
                     cases_plus_90.push(oc.clone());
@@ -134,21 +131,23 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                         // patterns are constructed for X walls.)
                         continue;
                     }
+                    // The rotation of `result` in these is kind of bizarre; it's just how to make this match up correctly with
+                    // `wall_grid::cell_transform`.
                     let rotated = rotate_checks(&base_checks, rot);
                     if !seen.iter().any(|s| s == &rotated) {
                         seen.push(rotated.clone());
                         cases.push(OrientedCase {
                             pattern_type: pt.clone(),
                             checks: rotated,
-                            result: rotate_result(&case.result, rot),
-                            rotation: rot,
+                            result: rotate_result(&case.result, rot + 2),
                         });
 
                         if rule.slot == UnorientedSlot::Wall {
                             let rotated_plus_90 = rotate_checks(&base_checks, rot + 1);
                             cases_plus_90.push(OrientedCase {
+                                pattern_type: pt.clone(),
                                 checks: rotated_plus_90,
-                                ..cases.last().unwrap().clone()
+                                result: rotate_result(&case.result, rot),
                             });
                         }
                     }
@@ -279,8 +278,14 @@ H:
             let step1 = rotate_offset(dc, dr, 1);
             let step2 = rotate_offset(step1.0, step1.1, 1);
             let step3 = rotate_offset(step2.0, step2.1, 1);
-            check!(step2 == rotate_offset(dc, dr, 2), "({dc},{dr}): 90°×2 ≠ 180°");
-            check!(step3 == rotate_offset(dc, dr, 3), "({dc},{dr}): 90°×3 ≠ 270°");
+            check!(
+                step2 == rotate_offset(dc, dr, 2),
+                "({dc},{dr}): 90°×2 ≠ 180°"
+            );
+            check!(
+                step3 == rotate_offset(dc, dr, 3),
+                "({dc},{dr}): 90°×3 ≠ 270°"
+            );
         }
     }
 
@@ -292,10 +297,15 @@ H:
             let step2 = rotate_autotile_rel_slot(step1, 1);
             let step3 = rotate_autotile_rel_slot(step2, 1);
             let step4 = rotate_autotile_rel_slot(step3, 1);
-            check!(step2 == rotate_autotile_rel_slot(slot, 2), "{slot:?}: 90°×2 ≠ 180°");
-            check!(step3 == rotate_autotile_rel_slot(slot, 3), "{slot:?}: 90°×3 ≠ 270°");
-            check!(step4 == slot,                              "{slot:?}: 90°×4 ≠ identity");
+            check!(
+                step2 == rotate_autotile_rel_slot(slot, 2),
+                "{slot:?}: 90°×2 ≠ 180°"
+            );
+            check!(
+                step3 == rotate_autotile_rel_slot(slot, 3),
+                "{slot:?}: 90°×3 ≠ 270°"
+            );
+            check!(step4 == slot, "{slot:?}: 90°×4 ≠ identity");
         }
     }
-
 }
