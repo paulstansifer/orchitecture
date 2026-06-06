@@ -118,6 +118,15 @@ fn drag_preview_rect(
             let center = Vec3::new((min.x + max.x) * 0.5, y + H * 0.5, (min.z + max.z) * 0.5);
             Some((center, Vec3::new(max.x - min.x, H, max.z - min.z)))
         }
+        PlacementStyle::RoomDrag => {
+            let min = start.round().min(end.round());
+            let max = start.round().max(end.round());
+            if max.x <= min.x || max.z <= min.z {
+                return None;
+            }
+            let center = Vec3::new((min.x + max.x) * 0.5, y + 0.5, (min.z + max.z) * 0.5);
+            Some((center, Vec3::new(max.x - min.x, H, max.z - min.z)))
+        }
         _ => None,
     }
 }
@@ -265,7 +274,7 @@ pub fn building_input_system(
             } else {
                 wall_grid
                     .bypass_change_detection()
-                    .drag(start, end, id, remove)
+                    .drag(start, end, dir, id, remove)
             };
 
             if !changes.is_empty() {
