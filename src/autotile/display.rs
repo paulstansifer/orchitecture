@@ -4,7 +4,7 @@ use bevy::ecs::entity::Entity;
 use bevy::math::{Quat, Vec3};
 use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 
-use crate::sparse3d::RelSlotCoord;
+use crate::sparse3d::SlotCoord;
 use crate::structure::{StructureId, StructureList};
 use crate::wall_grid::{
     cell_transform, Cell, GridCellMarker, Proposal, ProposalGhostMarker, WallGrid,
@@ -13,7 +13,7 @@ use crate::wall_grid::{
 use super::parser::char_matches_name;
 use super::resources::{AutotileHandles, AutotileRules};
 use super::{
-    evaluate_autotile_rules, rel_slot_to_unoriented, spec_stem, AutotileResult, MeshSpec,
+    evaluate_autotile_rules, slot_to_unoriented, spec_stem, AutotileResult, MeshSpec,
     UnorientedSlot,
 };
 
@@ -27,10 +27,10 @@ fn char_matches(ch: char, id: StructureId, anchor_name: &str, all_names: &[Strin
     }
 }
 
-fn autotile_transform(loc: RelSlotCoord, _cell: &Cell, spec: &MeshSpec) -> Transform {
-    let unoriented = rel_slot_to_unoriented(loc.rel_slot);
+fn autotile_transform(loc: SlotCoord, _cell: &Cell, spec: &MeshSpec) -> Transform {
+    let unoriented = slot_to_unoriented(loc.slot);
     // Ignore the direction of the input cell! Only the direction the rule matched in matters.
-    let mut transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
+    let mut transform = cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube);
     let rot_deg = spec.outer_rotation();
     if rot_deg != 0 {
         let angle = rot_deg as f32 * std::f32::consts::TAU / 360.0;
@@ -49,12 +49,12 @@ fn autotile_transform(loc: RelSlotCoord, _cell: &Cell, spec: &MeshSpec) -> Trans
 fn spawn_entities_from_results(
     commands: &mut Commands,
     autotile_handles: &AutotileHandles,
-    loc: RelSlotCoord,
+    loc: SlotCoord,
     cell: &Cell,
     results: &[AutotileResult],
     mut spawn_one: impl FnMut(&mut Commands, SceneRoot, Transform) -> Entity,
 ) -> Vec<Entity> {
-    let unoriented = rel_slot_to_unoriented(loc.rel_slot);
+    let unoriented = slot_to_unoriented(loc.slot);
     let mut entities = Vec::new();
     for result in results {
         if let AutotileResult::Mesh { spec, .. } = result {
@@ -76,12 +76,12 @@ fn apply_autotile_updates(
     commands: &mut Commands,
     autotile_handles: &AutotileHandles,
     structure_list: &StructureList,
-    updates: Vec<(RelSlotCoord, Cell, Vec<AutotileResult>)>,
-    stale_locs: Vec<RelSlotCoord>,
-    results_cache: &mut HashMap<RelSlotCoord, Vec<AutotileResult>>,
-    entity_cache: &mut HashMap<RelSlotCoord, Vec<Entity>>,
+    updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)>,
+    stale_locs: Vec<SlotCoord>,
+    results_cache: &mut HashMap<SlotCoord, Vec<AutotileResult>>,
+    entity_cache: &mut HashMap<SlotCoord, Vec<Entity>>,
     use_fallback: bool,
-    make_entity: impl Fn(&mut Commands, SceneRoot, Transform, RelSlotCoord) -> Entity,
+    make_entity: impl Fn(&mut Commands, SceneRoot, Transform, SlotCoord) -> Entity,
 ) {
     for (loc, cell, new_results) in updates {
         if results_cache.get(&loc) == Some(&new_results) {
@@ -94,7 +94,7 @@ fn apply_autotile_updates(
         }
         let new_entities = if use_fallback && new_results.is_empty() {
             let handle = structure_list.scene_handle(cell.id).clone();
-            let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+            let transform = cell_transform(loc.slot, cell.facing, loc.cube);
             vec![make_entity(commands, SceneRoot(handle), transform, loc)]
         } else {
             spawn_entities_from_results(
@@ -130,14 +130,13 @@ pub fn autotile_update_system(
         .collect();
 
     // Real cells.
-    let real_updates: Vec<(RelSlotCoord, Cell, Vec<AutotileResult>)> = wall_grid
+    let real_updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)> = wall_grid
         .contents
         .iter()
         .filter_map(|(loc, cell)| {
-            let loc: RelSlotCoord = loc.into();
             let anchor = &struct_names[cell.id.as_usize()];
             let results = evaluate_autotile_rules(
-                loc,
+                loc.into(),
                 anchor,
                 &autotile_rules.0,
                 |nloc| wall_grid.contents.get(nloc).map(|c| c.id),
@@ -147,7 +146,7 @@ pub fn autotile_update_system(
         })
         .collect();
 
-    let real_stale: Vec<RelSlotCoord> = wall_grid
+    let real_stale: Vec<SlotCoord> = wall_grid
         .autotile_results
         .keys()
         .filter(|&&loc| wall_grid.contents.get(loc).is_none())
@@ -155,26 +154,23 @@ pub fn autotile_update_system(
         .collect();
 
     // Proposed additions (snapshot before calling get_proposed_or_real).
-    let proposed_additions: Vec<(RelSlotCoord, Cell)> = wall_grid
+    let proposed_additions: Vec<(SlotCoord, Cell)> = wall_grid
         .proposed_changes
         .iter()
-        .filter_map(|(loc, proposal)| {
-            let loc: RelSlotCoord = loc.into();
-            match proposal {
-                Proposal::Place(cell) if wall_grid.contents.get(loc).is_none() => {
-                    Some((loc, cell.clone()))
-                }
-                _ => None,
+        .filter_map(|(loc, proposal)| match proposal {
+            Proposal::Place(cell) if wall_grid.contents.get(loc).is_none() => {
+                Some((loc, cell.clone()))
             }
+            _ => None,
         })
         .collect();
 
-    let proposal_updates: Vec<(RelSlotCoord, Cell, Vec<AutotileResult>)> = proposed_additions
+    let proposal_updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)> = proposed_additions
         .into_iter()
         .map(|(loc, cell)| {
             let anchor = &struct_names[cell.id.as_usize()];
             let results = evaluate_autotile_rules(
-                loc,
+                loc.into(),
                 anchor,
                 &autotile_rules.0,
                 |nloc| wall_grid.get_proposed_or_real(nloc).map(|c| c.id),
@@ -185,7 +181,7 @@ pub fn autotile_update_system(
         })
         .collect();
 
-    let proposal_stale: Vec<RelSlotCoord> = wall_grid
+    let proposal_stale: Vec<SlotCoord> = wall_grid
         .proposal_autotile_results
         .keys()
         .filter(|&&loc| {

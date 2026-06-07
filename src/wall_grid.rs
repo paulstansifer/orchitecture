@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
-use bevy::math::{IVec3, Quat, Vec3};
 #[cfg(autotile_matching)]
 use crate::autotile::AutotileResult;
+use bevy::math::{IVec3, Quat, Vec3};
 use bevy::prelude::{
     AlphaMode, Assets, Color, Commands, Component, Entity, Mesh, Mesh3d, MeshMaterial3d, ResMut,
     Resource, SceneRoot, StandardMaterial, Transform,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, SlotCoord, Sparse3D};
+use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureId, StructureInfo, StructureList};
 
 /// A score that may be an exact target or a one-sided inequality constraint.
@@ -142,25 +142,25 @@ pub enum ProposalView {
 
 pub(crate) struct UndoRecord {
     // (location, what proposal was there before — None = no proposal)
-    pub(crate) changed: Vec<(RelSlotCoord, Option<Proposal>)>,
+    pub(crate) changed: Vec<(SlotCoord, Option<Proposal>)>,
 }
 
 /// Marker component for entities that represent placed grid cells.
 #[derive(Component)]
 pub struct GridCellMarker {
-    pub loc: RelSlotCoord,
+    pub loc: SlotCoord,
 }
 
 /// Marker component for translucent ghost entities representing proposed additions.
 #[derive(Component)]
 pub struct ProposalGhostMarker {
-    pub loc: RelSlotCoord,
+    pub loc: SlotCoord,
 }
 
 /// Marker component for X or ring overlay entities on proposed removals/replacements.
 #[derive(Component)]
 pub struct ProposalOverlayMarker {
-    pub loc: RelSlotCoord,
+    pub loc: SlotCoord,
 }
 
 /// Marker component for cut-plane entities that replace a proposed-only (ghost) wall.
@@ -192,20 +192,20 @@ pub struct WallGrid {
     /// Proposed changes not yet committed; does not affect shadows or ceiling lights.
     pub proposed_changes: Sparse3D<Proposal>,
     /// Entities spawned for each placed (real) cell (may be multiple for autotile cells).
-    pub cell_entities: HashMap<RelSlotCoord, Vec<Entity>>,
+    pub cell_entities: HashMap<SlotCoord, Vec<Entity>>,
     /// Last-rendered autotile results per location (one per matching rule), for change detection.
-    pub autotile_results: HashMap<RelSlotCoord, Vec<crate::autotile::AutotileResult>>,
+    pub autotile_results: HashMap<SlotCoord, Vec<crate::autotile::AutotileResult>>,
     /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
-    pub proposal_entities: HashMap<RelSlotCoord, Vec<Entity>>,
+    pub proposal_entities: HashMap<SlotCoord, Vec<Entity>>,
     /// Entities spawned for the y-cut cutaway layer (cleared each cutaway update).
     pub cut_entities: Vec<Entity>,
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
-    pub proposed_cut_entities: HashMap<RelSlotCoord, Entity>,
+    pub proposed_cut_entities: HashMap<SlotCoord, Entity>,
     pub(crate) undo_record: Vec<UndoRecord>,
     pub road_forbidden_zone: bool,
     /// Last-rendered autotile results per proposed-addition location, for change detection.
     #[cfg(autotile_matching)]
-    pub proposal_autotile_results: HashMap<RelSlotCoord, Vec<AutotileResult>>,
+    pub proposal_autotile_results: HashMap<SlotCoord, Vec<AutotileResult>>,
 }
 
 impl WallGrid {
@@ -253,7 +253,10 @@ impl WallGrid {
     /// Returns `(real, proposed_add)`:
     /// - `real`: the cell in `contents`, if any (present even under a `Proposal::Remove`).
     /// - `proposed_add`: the proposed cell only when it is an addition with no real cell beneath it.
-    pub fn get_real_and_proposed(&self, loc: impl Into<SlotCoord>) -> (Option<&Cell>, Option<&Cell>) {
+    pub fn get_real_and_proposed(
+        &self,
+        loc: impl Into<SlotCoord>,
+    ) -> (Option<&Cell>, Option<&Cell>) {
         let loc: SlotCoord = loc.into();
         let real = self.contents.get(loc);
         let proposed_add = match self.proposed_changes.get(loc) {
@@ -275,7 +278,6 @@ impl WallGrid {
         proposed.or(real)
     }
 
-
     pub fn num_proposed_changes(&self) -> usize {
         self.proposed_changes.iter().count()
     }
@@ -286,12 +288,12 @@ impl WallGrid {
 }
 
 /// Computes the Bevy Transform for a cell at the given grid position.
-pub fn cell_transform(slot: RelSlot, facing: Facing, cube: IVec3) -> Transform {
+pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
     let rx = Quat::from_rotation_x(-TAU / 4.0);
     let ry_neg90 = Quat::from_rotation_y(-TAU / 4.0);
 
     let (rotation, translation) = match slot {
-        RelSlot::Room => {
+        Slot::Room => {
             let facing_angle = (1.0 - facing as u8 as f32) * (-TAU / 4.0);
             let rotation = Quat::from_rotation_y(-TAU / 4.0 + facing_angle) * rx;
             // Rotate around the cell center rather than the cell corner, so the
@@ -301,10 +303,8 @@ pub fn cell_transform(slot: RelSlot, facing: Facing, cube: IVec3) -> Transform {
             let translation = cell_center + facing_rot.mul_vec3(Vec3::splat(-0.5));
             (rotation, translation)
         }
-        RelSlot::XLoWall | RelSlot::XHiWall | RelSlot::Floor | RelSlot::Ceiling => {
-            (ry_neg90 * rx, cube.as_vec3())
-        }
-        RelSlot::ZLoWall | RelSlot::ZHiWall => (rx, cube.as_vec3()),
+        Slot::XLoWall | Slot::Floor => (ry_neg90 * rx, cube.as_vec3()),
+        Slot::ZLoWall => (rx, cube.as_vec3()),
     };
 
     Transform {
@@ -319,7 +319,7 @@ pub fn apply_changes(
     commands: &mut Commands,
     wall_grid: &mut WallGrid,
     structure_list: &StructureList,
-    changes: Vec<(RelSlotCoord, Option<Cell>)>,
+    changes: Vec<(SlotCoord, Option<Cell>)>,
 ) {
     for (loc, new_cell) in changes {
         if let Some(old_entities) = wall_grid.cell_entities.remove(&loc) {
@@ -330,7 +330,7 @@ pub fn apply_changes(
         // Clear autotile state so the per-frame system unconditionally re-evaluates.
         wall_grid.autotile_results.remove(&loc);
         if let Some(cell) = new_cell {
-            let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
+            let transform = cell_transform(loc.slot, cell.facing, loc.cube);
             let handle = structure_list.scene_handle(cell.id).clone();
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
@@ -341,16 +341,13 @@ pub fn apply_changes(
 }
 
 /// World-space center of a slot, used for positioning overlays.
-fn slot_center(loc: RelSlotCoord) -> Vec3 {
+fn slot_center(loc: SlotCoord) -> Vec3 {
     let base = loc.cube.as_vec3() + Vec3::splat(0.5);
-    match loc.rel_slot {
-        RelSlot::Room => base,
-        RelSlot::XLoWall => Vec3::new(base.x - 0.5, base.y, base.z),
-        RelSlot::XHiWall => Vec3::new(base.x + 0.5, base.y, base.z),
-        RelSlot::Floor => Vec3::new(base.x, base.y - 0.5, base.z),
-        RelSlot::Ceiling => Vec3::new(base.x, base.y + 0.5, base.z),
-        RelSlot::ZLoWall => Vec3::new(base.x, base.y, base.z - 0.5),
-        RelSlot::ZHiWall => Vec3::new(base.x, base.y, base.z + 0.5),
+    match loc.slot {
+        Slot::Room => base,
+        Slot::XLoWall => Vec3::new(base.x - 0.5, base.y, base.z),
+        Slot::Floor => Vec3::new(base.x, base.y - 0.5, base.z),
+        Slot::ZLoWall => Vec3::new(base.x, base.y, base.z - 0.5),
     }
 }
 
@@ -363,23 +360,20 @@ fn slot_center(loc: RelSlotCoord) -> Vec3 {
 ///   Floor/Ceiling/Room: X in XZ plane  — arm along X, rotate ±45° around Y
 ///   XLoWall/XHiWall:    X in YZ plane  — arm along Y, rotate ±45° around X
 ///   ZLoWall/ZHiWall:    X in XY plane  — arm along X, rotate ±45° around Z
-fn x_mesh_and_rotations(
-    slot: RelSlot,
-    assets: &ProposalOverlayAssets,
-) -> (Handle<Mesh>, Quat, Quat) {
+fn x_mesh_and_rotations(slot: Slot, assets: &ProposalOverlayAssets) -> (Handle<Mesh>, Quat, Quat) {
     const ANGLE: f32 = TAU / 8.0;
     match slot {
-        RelSlot::Floor | RelSlot::Ceiling | RelSlot::Room => (
+        Slot::Floor | Slot::Room => (
             assets.arm_along_x.clone(),
             Quat::from_rotation_y(ANGLE),
             Quat::from_rotation_y(-ANGLE),
         ),
-        RelSlot::XLoWall | RelSlot::XHiWall => (
+        Slot::XLoWall => (
             assets.arm_along_y.clone(),
             Quat::from_rotation_x(ANGLE),
             Quat::from_rotation_x(-ANGLE),
         ),
-        RelSlot::ZLoWall | RelSlot::ZHiWall => (
+        Slot::ZLoWall => (
             assets.arm_along_x.clone(),
             Quat::from_rotation_z(ANGLE),
             Quat::from_rotation_z(-ANGLE),
@@ -388,38 +382,38 @@ fn x_mesh_and_rotations(
 }
 
 /// Rotation to orient a Torus (default normal = +Y) to face the slot's surface normal.
-fn ring_rotation(slot: RelSlot) -> Quat {
+fn ring_rotation(slot: Slot) -> Quat {
     match slot {
-        RelSlot::Floor | RelSlot::Ceiling | RelSlot::Room => Quat::IDENTITY,
+        Slot::Floor | Slot::Room => Quat::IDENTITY,
         // Rotate normal from +Y to +X: rotate -90° around Z
-        RelSlot::XLoWall | RelSlot::XHiWall => Quat::from_rotation_z(-TAU / 4.0),
+        Slot::XLoWall => Quat::from_rotation_z(-TAU / 4.0),
         // Rotate normal from +Y to +Z: rotate +90° around X
-        RelSlot::ZLoWall | RelSlot::ZHiWall => Quat::from_rotation_x(TAU / 4.0),
+        Slot::ZLoWall => Quat::from_rotation_x(TAU / 4.0),
     }
 }
 
 /// Returns the axis along which overlays should be duplicated so they protrude
 /// from the slot surface and remain visible rather than buried in the mesh.
-fn protrude_axis(slot: RelSlot) -> Option<Vec3> {
+fn protrude_axis(slot: Slot) -> Option<Vec3> {
     match slot {
-        RelSlot::XLoWall | RelSlot::XHiWall => Some(Vec3::X),
-        RelSlot::ZLoWall | RelSlot::ZHiWall => Some(Vec3::Z),
-        RelSlot::Floor | RelSlot::Ceiling => Some(Vec3::Y),
-        RelSlot::Room => None,
+        Slot::XLoWall => Some(Vec3::X),
+        Slot::ZLoWall => Some(Vec3::Z),
+        Slot::Floor => Some(Vec3::Y),
+        Slot::Room => None,
     }
 }
 
 fn spawn_x_overlay(
     commands: &mut Commands,
     assets: &ProposalOverlayAssets,
-    loc: RelSlotCoord,
+    loc: SlotCoord,
 ) -> Vec<Entity> {
     let center = slot_center(loc);
-    let (arm_mesh, rot1, rot2) = x_mesh_and_rotations(loc.rel_slot, assets);
+    let (arm_mesh, rot1, rot2) = x_mesh_and_rotations(loc.slot, assets);
 
     // For wall slots spawn on both faces so the X is never buried.
     const PROTRUDE: f32 = 0.15;
-    let offsets: &[Vec3] = match protrude_axis(loc.rel_slot) {
+    let offsets: &[Vec3] = match protrude_axis(loc.slot) {
         Some(n) => &[n * PROTRUDE, n * -PROTRUDE],
         None => &[Vec3::ZERO],
     };
@@ -454,15 +448,15 @@ fn spawn_x_overlay(
 fn spawn_ring_overlay(
     commands: &mut Commands,
     assets: &ProposalOverlayAssets,
-    loc: RelSlotCoord,
+    loc: SlotCoord,
 ) -> Vec<Entity> {
     let mut center = slot_center(loc);
-    if loc.rel_slot == RelSlot::Room {
+    if loc.slot == Slot::Room {
         center.y += 0.25; // Float in upper half of cell for room objects
     }
 
     const PROTRUDE: f32 = 0.15;
-    let offsets: &[Vec3] = match protrude_axis(loc.rel_slot) {
+    let offsets: &[Vec3] = match protrude_axis(loc.slot) {
         Some(n) => &[n * PROTRUDE, n * -PROTRUDE],
         None => &[Vec3::ZERO],
     };
@@ -475,7 +469,7 @@ fn spawn_ring_overlay(
                     Mesh3d(assets.ring_mesh.clone()),
                     MeshMaterial3d(assets.yellow_mat.clone()),
                     Transform::from_translation(center + offset)
-                        .with_rotation(ring_rotation(loc.rel_slot)),
+                        .with_rotation(ring_rotation(loc.slot)),
                     ProposalOverlayMarker { loc },
                 ))
                 .id(),
@@ -490,7 +484,7 @@ pub fn apply_proposal_changes(
     wall_grid: &mut WallGrid,
     _structure_list: &StructureList,
     overlay_assets: &ProposalOverlayAssets,
-    changes: Vec<(RelSlotCoord, ProposalView)>,
+    changes: Vec<(SlotCoord, ProposalView)>,
 ) {
     for (loc, view) in changes {
         if let Some(entities) = wall_grid.proposal_entities.remove(&loc) {

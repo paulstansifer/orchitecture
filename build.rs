@@ -10,7 +10,7 @@ mod autotile {
     include!("src/autotile/parser.rs");
 }
 
-use autotile::{AutotileFile, AutotileResult, MeshSpec, UnorientedSlot, spec_stem};
+use autotile::{spec_stem, AutotileFile, AutotileResult, MeshSpec, UnorientedSlot};
 
 fn main() {
     // Register and set `autotile_matching` so the main crate can gate
@@ -82,7 +82,10 @@ fn collect_autotile_files(dir: &Path) -> Vec<PathBuf> {
 
 // ─── Spec collection ──────────────────────────────────────────────────────────
 
-fn collect_result_specs(file: &AutotileFile, map: &mut HashMap<String, (MeshSpec, UnorientedSlot)>) {
+fn collect_result_specs(
+    file: &AutotileFile,
+    map: &mut HashMap<String, (MeshSpec, UnorientedSlot)>,
+) {
     for rule in &file.rules {
         let slot = rule.slot;
         for case in &rule.cases {
@@ -97,7 +100,6 @@ fn is_trivial(spec: &MeshSpec) -> bool {
     matches!(spec, MeshSpec::Atom { rotation: 0, .. })
     // Rotation is a runtime-only variant; build.rs never produces it.
 }
-
 
 /// All atom .scad source files referenced by a spec.
 fn collect_scad_deps(spec: &MeshSpec, buildables: &Path) -> Vec<PathBuf> {
@@ -265,7 +267,10 @@ fn generate_if_needed(
 
 fn compile_scad(scad_path: &Path, gltf_out: &Path) {
     let tmp_stl = std::env::temp_dir().join("orchitecture_autotile.stl");
-    println!("cargo:warning=### processing {:?} -> {:?}", scad_path, gltf_out);
+    println!(
+        "cargo:warning=### processing {:?} -> {:?}",
+        scad_path, gltf_out
+    );
 
     let openscad = Command::new("openscad")
         .arg(scad_path)

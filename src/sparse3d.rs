@@ -236,24 +236,6 @@ impl RelSlotCoord {
         }
     }
 
-    fn split_location(&self) -> (BigCoordinates, SmallCoordinates) {
-        let slot = self.rel_slot.as_absolute_slot();
-        let abs_loc = self.cube + self.rel_slot.absolute_offset();
-        let big_coords = BigCoordinates {
-            x: abs_loc.x.div_euclid(4),
-            y: abs_loc.y.div_euclid(4),
-            z: abs_loc.z.div_euclid(4),
-        };
-
-        let small_coords = SmallCoordinates {
-            x: abs_loc.x.rem_euclid(4) as u8,
-            y: abs_loc.y.rem_euclid(4) as u8,
-            z: abs_loc.z.rem_euclid(4) as u8,
-            slot,
-        };
-        (big_coords, small_coords)
-    }
-
     fn get_center(&self) -> (f64, f64, f64) {
         let base = (
             self.cube.x as f64 + 0.5,
@@ -514,7 +496,13 @@ impl<T> Sparse3D<T> {
     {
         let mut new_grid = Sparse3D::new();
         for (loc, cell) in self.iter() {
-            new_grid.set(SlotCoord { cube: loc.cube + offset, slot: loc.slot }, cell.clone());
+            new_grid.set(
+                SlotCoord {
+                    cube: loc.cube + offset,
+                    slot: loc.slot,
+                },
+                cell.clone(),
+            );
         }
         new_grid
     }
@@ -769,9 +757,27 @@ mod tests {
         let items: HashSet<_> = grid.iter().collect();
 
         let expected: HashSet<_> = vec![
-            (SlotCoord { cube: IVec3::new(1, 2, 3), slot: Slot::XLoWall }, &RotInt(10)),
-            (SlotCoord { cube: IVec3::new(-1, 5, 0), slot: Slot::Floor }, &RotInt(20)),
-            (SlotCoord { cube: IVec3::new(4, 0, 0), slot: Slot::ZLoWall }, &RotInt(30)),
+            (
+                SlotCoord {
+                    cube: IVec3::new(1, 2, 3),
+                    slot: Slot::XLoWall,
+                },
+                &RotInt(10),
+            ),
+            (
+                SlotCoord {
+                    cube: IVec3::new(-1, 5, 0),
+                    slot: Slot::Floor,
+                },
+                &RotInt(20),
+            ),
+            (
+                SlotCoord {
+                    cube: IVec3::new(4, 0, 0),
+                    slot: Slot::ZLoWall,
+                },
+                &RotInt(30),
+            ),
         ]
         .into_iter()
         .collect();

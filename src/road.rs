@@ -1,6 +1,6 @@
 use bevy::math::IVec3;
 
-use crate::sparse3d::{RelSlot, RelSlotCoord};
+use crate::sparse3d::{Slot, SlotCoord};
 
 /// Width of each road arm in grid units.
 pub const ROAD_WIDTH: i32 = 4;
@@ -38,23 +38,18 @@ pub fn road_forbidden_height(x: i32, z: i32) -> i32 {
 /// Returns true if `loc` is inside the road's forbidden zone, taking slot geometry
 /// into account so that boundary slots (walls flush with the road edge, floors/ceilings
 /// flush with the vertical limit) are permitted.
-pub fn is_in_road_forbidden_zone(loc: RelSlotCoord) -> bool {
-    // This implementation probably could be simplified.
+pub fn is_in_road_forbidden_zone(loc: SlotCoord) -> bool {
     let x = loc.cube.x;
     let y = loc.cube.y;
     let z = loc.cube.z;
 
     let cube_forbidden = |cx: i32, cy: i32, cz: i32| cy < road_forbidden_height(cx, cz);
 
-    match loc.rel_slot {
-        RelSlot::Room | RelSlot::Floor => cube_forbidden(x, y, z),
-        // Ceiling surface is at y+1; flush when y+1 == limit.
-        RelSlot::Ceiling => y + 1 < road_forbidden_height(x, z),
+    match loc.slot {
+        Slot::Room | Slot::Floor => cube_forbidden(x, y, z),
         // Walls are between two cubes; forbidden only if both sides are inside the zone.
-        RelSlot::ZLoWall => cube_forbidden(x, y, z - 1) && cube_forbidden(x, y, z),
-        RelSlot::ZHiWall => cube_forbidden(x, y, z) && cube_forbidden(x, y, z + 1),
-        RelSlot::XLoWall => cube_forbidden(x - 1, y, z) && cube_forbidden(x, y, z),
-        RelSlot::XHiWall => cube_forbidden(x, y, z) && cube_forbidden(x + 1, y, z),
+        Slot::ZLoWall => cube_forbidden(x, y, z - 1) && cube_forbidden(x, y, z),
+        Slot::XLoWall => cube_forbidden(x - 1, y, z) && cube_forbidden(x, y, z),
     }
 }
 

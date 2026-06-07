@@ -19,7 +19,9 @@ pub struct AutotileHandles {
 fn gltf_is_empty(stem: &str, suffix: &str) -> bool {
     let path = std::path::Path::new(crate::paths::MANIFEST_DIR)
         .join(format!("buildables/autotile/{stem}{suffix}.gltf"));
-    std::fs::metadata(&path).map(|m| m.len() == 0).unwrap_or(false)
+    std::fs::metadata(&path)
+        .map(|m| m.len() == 0)
+        .unwrap_or(false)
 }
 
 pub fn spawn_autotile_rules(mut commands: Commands) {
@@ -50,8 +52,10 @@ pub fn load_autotile_handles(asset_server: Res<AssetServer>, mut commands: Comma
                 let cut: Option<Handle<Scene>> = if gltf_is_empty(&stem, "-cut-y-pos") {
                     None
                 } else {
-                    Some(asset_server
-                        .load(format!("buildables/autotile/{stem}-cut-y-pos.gltf#Scene0")))
+                    Some(
+                        asset_server
+                            .load(format!("buildables/autotile/{stem}-cut-y-pos.gltf#Scene0")),
+                    )
                 };
                 handles.insert(stem, (main, cut));
             }

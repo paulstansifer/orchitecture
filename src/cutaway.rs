@@ -5,7 +5,7 @@ use bevy::math::Vec3;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::autotile::{AutotileHandles, AutotileResult, rel_slot_to_unoriented, spec_stem};
+use crate::autotile::{slot_to_unoriented, spec_stem, AutotileHandles, AutotileResult};
 use crate::camera::GameCamera;
 use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
@@ -16,7 +16,7 @@ use crate::wall_grid::{
 };
 
 fn get_cut_handle<'a>(
-    loc: RelSlotCoord,
+    loc: SlotCoord,
     id: StructureId,
     wall_grid: &WallGrid,
     structure_list: &'a StructureList,
@@ -26,8 +26,11 @@ fn get_cut_handle<'a>(
         // Use the first Mesh result's cut handle; fall through to None if all are None.
         results.iter().find_map(|result| {
             if let AutotileResult::Mesh { spec, .. } = result {
-                let stem = spec_stem(spec, rel_slot_to_unoriented(loc.rel_slot));
-                autotile_handles.handles.get(&stem).and_then(|(_, cut)| cut.as_ref())
+                let stem = spec_stem(spec, slot_to_unoriented(loc.slot));
+                autotile_handles
+                    .handles
+                    .get(&stem)
+                    .and_then(|(_, cut)| cut.as_ref())
             } else {
                 None
             }
@@ -159,8 +162,9 @@ fn upper_floor_fill(
     sy: i32,
     sz: i32,
     floor_visited: &mut HashSet<(i32, i32, i32)>,
-    hidden: &mut Vec<RelSlotCoord>,
+    hidden: &mut Vec<SlotCoord>,
 ) -> Vec<(i32, i32)> {
+    use bevy::math::IVec3;
     let mut cells: Vec<(i32, i32)> = Vec::new();
     if floor_visited.contains(&(sx, sy, sz)) {
         return cells;
@@ -172,24 +176,47 @@ fn upper_floor_fill(
         return cells;
     }
     floor_visited.insert((sx, sy, sz));
-    hidden.push(RelSlotCoord::new(sx, sy, sz, RelSlot::Floor));
+    hidden.push(SlotCoord {
+        cube: IVec3::new(sx, sy, sz),
+        slot: Slot::Floor,
+    });
     cells.push((sx, sz));
     let mut queue: VecDeque<(i32, i32)> = VecDeque::new();
     queue.push_back((sx, sz));
     while let Some((fx, fz)) = queue.pop_front() {
-        let neighbors: [(i32, i32, RelSlotCoord); 4] = [
+        let neighbors: [(i32, i32, SlotCoord); 4] = [
             (
                 fx + 1,
                 fz,
-                RelSlotCoord::new(fx + 1, sy, fz, RelSlot::XLoWall),
+                SlotCoord {
+                    cube: IVec3::new(fx + 1, sy, fz),
+                    slot: Slot::XLoWall,
+                },
             ),
-            (fx - 1, fz, RelSlotCoord::new(fx, sy, fz, RelSlot::XLoWall)),
+            (
+                fx - 1,
+                fz,
+                SlotCoord {
+                    cube: IVec3::new(fx, sy, fz),
+                    slot: Slot::XLoWall,
+                },
+            ),
             (
                 fx,
                 fz + 1,
-                RelSlotCoord::new(fx, sy, fz + 1, RelSlot::ZLoWall),
+                SlotCoord {
+                    cube: IVec3::new(fx, sy, fz + 1),
+                    slot: Slot::ZLoWall,
+                },
             ),
-            (fx, fz - 1, RelSlotCoord::new(fx, sy, fz, RelSlot::ZLoWall)),
+            (
+                fx,
+                fz - 1,
+                SlotCoord {
+                    cube: IVec3::new(fx, sy, fz),
+                    slot: Slot::ZLoWall,
+                },
+            ),
         ];
         for (nx, nz, wall_loc) in neighbors {
             if floor_visited.contains(&(nx, sy, nz)) {
@@ -203,7 +230,10 @@ fn upper_floor_fill(
                 .is_some()
             {
                 floor_visited.insert((nx, sy, nz));
-                hidden.push(RelSlotCoord::new(nx, sy, nz, RelSlot::Floor));
+                hidden.push(SlotCoord {
+                    cube: IVec3::new(nx, sy, nz),
+                    slot: Slot::Floor,
+                });
                 cells.push((nx, nz));
                 queue.push_back((nx, nz));
             }
@@ -221,24 +251,31 @@ fn find_wall_seeds(
     x_dir: i32,
     z_dir: i32,
     inverted: bool,
-) -> Vec<RelSlotCoord> {
+) -> Vec<SlotCoord> {
+    use bevy::math::IVec3;
     let (x_dir, z_dir) = if inverted {
         (-x_dir, -z_dir)
     } else {
         (x_dir, z_dir)
     };
-    let mut walls: Vec<RelSlotCoord> = Vec::new();
+    let mut walls: Vec<SlotCoord> = Vec::new();
     for &(fx, fz) in floor_cells {
         if x_dir != 0 && !floor_cells.contains(&(fx + x_dir, fz)) {
             let wx = if x_dir > 0 { fx + 1 } else { fx };
-            let loc = RelSlotCoord::new(wx, floor_y, fz, RelSlot::XLoWall);
+            let loc = SlotCoord {
+                cube: IVec3::new(wx, floor_y, fz),
+                slot: Slot::XLoWall,
+            };
             if wall_grid.get_real_or_proposed(loc).is_some() {
                 walls.push(loc);
             }
         }
         if z_dir != 0 && !floor_cells.contains(&(fx, fz + z_dir)) {
             let wz = if z_dir > 0 { fz + 1 } else { fz };
-            let loc = RelSlotCoord::new(fx, floor_y, wz, RelSlot::ZLoWall);
+            let loc = SlotCoord {
+                cube: IVec3::new(fx, floor_y, wz),
+                slot: Slot::ZLoWall,
+            };
             if wall_grid.get_real_or_proposed(loc).is_some() {
                 walls.push(loc);
             }
@@ -252,15 +289,16 @@ fn find_wall_seeds(
 /// adjacent to the top of the column. Uses `visited_walls` to avoid re-processing.
 fn climb_wall_column(
     wall_grid: &WallGrid,
-    bottom_loc: RelSlotCoord,
+    bottom_loc: SlotCoord,
     x_dir: i32,
     z_dir: i32,
     visited_walls: &mut HashSet<(i32, i32, i32, bool)>,
-    hidden: &mut Vec<RelSlotCoord>,
-    mut cut: Option<&mut Vec<(RelSlotCoord, StructureId, bool)>>,
+    hidden: &mut Vec<SlotCoord>,
+    mut cut: Option<&mut Vec<(SlotCoord, StructureId, bool)>>,
     floor_seeds: &mut Vec<(i32, i32, i32, bool)>,
 ) {
-    let is_x = bottom_loc.rel_slot == RelSlot::XLoWall;
+    use bevy::math::IVec3;
+    let is_x = bottom_loc.slot == Slot::XLoWall;
     let mut y = bottom_loc.cube.y;
     let mut first = true;
     loop {
@@ -268,8 +306,10 @@ fn climb_wall_column(
         if !visited_walls.insert(key) {
             break;
         }
-        let cur_loc =
-            RelSlotCoord::new(bottom_loc.cube.x, y, bottom_loc.cube.z, bottom_loc.rel_slot);
+        let cur_loc = SlotCoord {
+            cube: IVec3::new(bottom_loc.cube.x, y, bottom_loc.cube.z),
+            slot: bottom_loc.slot,
+        };
         let (real, proposed) = wall_grid.get_real_and_proposed(cur_loc);
         let Some(cell) = real.or(proposed) else {
             break;
@@ -282,21 +322,19 @@ fn climb_wall_column(
             }
             first = false;
         }
-        let next_loc = RelSlotCoord::new(
-            bottom_loc.cube.x,
-            y + 1,
-            bottom_loc.cube.z,
-            bottom_loc.rel_slot,
-        );
+        let next_loc = SlotCoord {
+            cube: IVec3::new(bottom_loc.cube.x, y + 1, bottom_loc.cube.z),
+            slot: bottom_loc.slot,
+        };
         if wall_grid.get_real_or_proposed(next_loc).is_none() {
             let y_above = y + 1;
-            match bottom_loc.rel_slot {
-                RelSlot::XLoWall => {
+            match bottom_loc.slot {
+                Slot::XLoWall => {
                     let wx = bottom_loc.cube.x;
                     floor_seeds.push((wx - 1, y_above, bottom_loc.cube.z, x_dir > 0));
                     floor_seeds.push((wx, y_above, bottom_loc.cube.z, x_dir < 0));
                 }
-                RelSlot::ZLoWall => {
+                Slot::ZLoWall => {
                     let wz = bottom_loc.cube.z;
                     floor_seeds.push((bottom_loc.cube.x, y_above, wz - 1, z_dir > 0));
                     floor_seeds.push((bottom_loc.cube.x, y_above, wz, z_dir < 0));
@@ -314,9 +352,10 @@ pub fn compute_floor_edge(
     (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
     cur_y: i32,
-) -> (Vec<RelSlotCoord>, Vec<(RelSlotCoord, StructureId, bool)>) {
-    let mut hidden: Vec<RelSlotCoord> = Vec::new();
-    let mut cut: Vec<(RelSlotCoord, StructureId, bool)> = Vec::new();
+) -> (Vec<SlotCoord>, Vec<(SlotCoord, StructureId, bool)>) {
+    use bevy::math::IVec3;
+    let mut hidden: Vec<SlotCoord> = Vec::new();
+    let mut cut: Vec<(SlotCoord, StructureId, bool)> = Vec::new();
 
     let (x_dir, z_dir) = camera_facing_dirs(focus_location, camera_location);
     let (sx, sz) = cursor_cube(focus_location, camera_location, is_room_plop);
@@ -331,7 +370,7 @@ pub fn compute_floor_edge(
 
     let mut visited_walls: HashSet<(i32, i32, i32, bool)> = HashSet::new();
     let mut floor_visited: HashSet<(i32, i32, i32)> = HashSet::new();
-    let mut pending_walls: VecDeque<RelSlotCoord> = VecDeque::new();
+    let mut pending_walls: VecDeque<SlotCoord> = VecDeque::new();
     let mut pending_floors: VecDeque<(i32, i32, i32, bool)> = VecDeque::new();
 
     for wall_loc in find_wall_seeds(wall_grid, &ground_cells, floor_y, x_dir, z_dir, false) {
@@ -380,21 +419,27 @@ pub fn compute_floor_edge(
     }
 
     // For each hidden floor, also hide Room objects above it until the next floor.
-    let hidden_floors: Vec<RelSlotCoord> = hidden
+    let hidden_floors: Vec<SlotCoord> = hidden
         .iter()
-        .filter(|loc| loc.rel_slot == RelSlot::Floor)
+        .filter(|loc| loc.slot == Slot::Floor)
         .copied()
         .collect();
     for floor_loc in hidden_floors {
         let (x, z) = (floor_loc.cube.x, floor_loc.cube.z);
         let mut y = floor_loc.cube.y;
         loop {
-            let room_loc = RelSlotCoord::new(x, y, z, RelSlot::Room);
+            let room_loc = SlotCoord {
+                cube: IVec3::new(x, y, z),
+                slot: Slot::Room,
+            };
             if wall_grid.get_real_or_proposed(room_loc).is_some() {
                 hidden.push(room_loc);
             }
             if wall_grid
-                .get_real_or_proposed(RelSlotCoord::new(x, y + 1, z, RelSlot::Floor))
+                .get_real_or_proposed(SlotCoord {
+                    cube: IVec3::new(x, y + 1, z),
+                    slot: Slot::Floor,
+                })
                 .is_some()
             {
                 break;
@@ -410,15 +455,8 @@ pub fn compute_floor_edge(
 }
 
 /// Returns true if `loc` falls inside the SimpleOctant hidden region.
-fn octant_hidden(
-    loc: RelSlotCoord,
-    sx: i32,
-    sz: i32,
-    cur_y: i32,
-    x_neg: bool,
-    z_neg: bool,
-) -> bool {
-    if loc.cube.y < cur_y || (loc.cube.y == cur_y && loc.rel_slot == RelSlot::Floor) {
+fn octant_hidden(loc: SlotCoord, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool) -> bool {
+    if loc.cube.y < cur_y || (loc.cube.y == cur_y && loc.slot == Slot::Floor) {
         return false;
     }
     let x_ok = if x_neg {
@@ -445,7 +483,7 @@ fn simple_octant_cuts(
     cut_y: i32,
     x_neg: bool,
     z_neg: bool,
-) -> Vec<(RelSlotCoord, StructureId, bool)> {
+) -> Vec<(SlotCoord, StructureId, bool)> {
     let is_cut_face = |loc: SlotCoord| {
         let x_ok = if x_neg {
             loc.cube.x < sx
@@ -457,18 +495,18 @@ fn simple_octant_cuts(
         } else {
             loc.cube.z >= sz
         };
-        return x_ok && z_ok && loc.cube.y == cut_y && loc.slot != Slot::Floor;
+        x_ok && z_ok && loc.cube.y == cut_y && loc.slot != Slot::Floor
     };
     let mut cuts = vec![];
     for (loc, cell) in wall_grid.contents.iter() {
         if is_cut_face(loc) {
-            cuts.push((RelSlotCoord::from(loc), cell.id, false));
+            cuts.push((loc, cell.id, false));
         }
     }
     for (loc, proposal) in wall_grid.proposed_changes.iter() {
         if is_cut_face(loc) && wall_grid.contents.get(loc).is_none() {
             if let Proposal::Place(cell) = proposal {
-                cuts.push((RelSlotCoord::from(loc), cell.id, true));
+                cuts.push((loc, cell.id, true));
             }
         }
     }
@@ -477,7 +515,7 @@ fn simple_octant_cuts(
 
 /// Per-frame hidden-cell membership test, abstracted over algorithm.
 enum HiddenPredicate {
-    Set(HashSet<RelSlotCoord>),
+    Set(HashSet<SlotCoord>),
     /// `x_neg`/`z_neg`: true means the camera-side is the *negative* half-space.
     Octant {
         sx: i32,
@@ -488,7 +526,7 @@ enum HiddenPredicate {
     },
     /// Union of a FloorEdge set and a SimpleOctant predicate.
     Combined {
-        set: HashSet<RelSlotCoord>,
+        set: HashSet<SlotCoord>,
         sx: i32,
         sz: i32,
         cur_y: i32,
@@ -498,7 +536,7 @@ enum HiddenPredicate {
 }
 
 impl HiddenPredicate {
-    fn contains(&self, loc: RelSlotCoord) -> bool {
+    fn contains(&self, loc: SlotCoord) -> bool {
         match self {
             HiddenPredicate::Set(s) => s.contains(&loc),
             HiddenPredicate::Octant {
@@ -554,7 +592,7 @@ pub fn update_cutaway_system(
     // as changed and don't trigger ceiling light rebuilds every frame.
     wall_grid.bypass_change_detection().cut_entities.clear();
 
-    let (hidden, cut_entries): (HiddenPredicate, Vec<(RelSlotCoord, StructureId, bool)>) =
+    let (hidden, cut_entries): (HiddenPredicate, Vec<(SlotCoord, StructureId, bool)>) =
         match *cutaway_mode {
             CutawayMode::FloorEdge => {
                 let is_room_plop = wall_grid
@@ -598,7 +636,7 @@ pub fn update_cutaway_system(
                     build_state.cur_y,
                 );
                 // Merge cut entries, deduplicating by location (real beats proposed-only).
-                let mut cut_map: HashMap<RelSlotCoord, (StructureId, bool)> = cuts
+                let mut cut_map: HashMap<SlotCoord, (StructureId, bool)> = cuts
                     .drain(..)
                     .map(|(loc, id, po)| (loc, (id, po)))
                     .collect();
@@ -670,12 +708,14 @@ pub fn update_cutaway_system(
     }
 
     // Separate proposed-only cuts from regular cuts.
-    let mut desired_proposed: HashMap<RelSlotCoord, StructureId> = HashMap::new();
+    let mut desired_proposed: HashMap<SlotCoord, StructureId> = HashMap::new();
     for (loc, id, is_proposed_only) in cut_entries {
         if is_proposed_only {
             desired_proposed.insert(loc, id);
-        } else if let Some(cut_handle) = get_cut_handle(loc, id, &wall_grid, &structure_list, &autotile_handles) {
-            let transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
+        } else if let Some(cut_handle) =
+            get_cut_handle(loc, id, &wall_grid, &structure_list, &autotile_handles)
+        {
+            let transform = cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube);
             let entity = commands
                 .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
                 .id();
@@ -702,16 +742,15 @@ pub fn update_cutaway_system(
     // Spawn proposed cut entities for locations newly entering the cut zone.
     for (loc, id) in desired_proposed {
         // Resolve the cut handle before entering the Entry API (which borrows wall_grid mutably).
-        let cut_handle = get_cut_handle(loc, id, &wall_grid, &structure_list, &autotile_handles)
-            .cloned();
+        let cut_handle =
+            get_cut_handle(loc, id, &wall_grid, &structure_list, &autotile_handles).cloned();
         if let Some(cut_handle) = cut_handle {
             if let std::collections::hash_map::Entry::Vacant(v) = wall_grid
                 .bypass_change_detection()
                 .proposed_cut_entities
                 .entry(loc)
             {
-                let transform =
-                    cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
+                let transform = cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube);
                 let entity = commands
                     .spawn((
                         SceneRoot(cut_handle),
@@ -807,22 +846,22 @@ mod tests {
         let focus_pos = Vec3::new(1.5, 0.0, 1.5);
 
         let (hidden_locs, _cut) = compute_floor_edge(&wg, (focus_pos, false), camera_pos, 0);
-        let hidden_set: HashSet<RelSlotCoord> = hidden_locs.into_iter().collect();
+        let hidden_set: HashSet<SlotCoord> = hidden_locs.into_iter().collect();
 
         check!(!hidden_set.is_empty());
 
         // The camera-facing right wall (XLoWall at x=3) must be hidden.
-        let hidden_right_wall: Vec<RelSlotCoord> = hidden_set
+        let hidden_right_wall: Vec<SlotCoord> = hidden_set
             .iter()
-            .filter(|l| l.rel_slot == RelSlot::XLoWall && l.cube.x == 3)
+            .filter(|l| l.slot == Slot::XLoWall && l.cube.x == 3)
             .copied()
             .collect();
         check!(hidden_right_wall.len() == 3);
 
         // Upper floor fill should hide all 9 roof-floor tiles at Y=1.
-        let hidden_roof_tiles: Vec<RelSlotCoord> = hidden_set
+        let hidden_roof_tiles: Vec<SlotCoord> = hidden_set
             .iter()
-            .filter(|l| l.rel_slot == RelSlot::Floor && l.cube.y == 1)
+            .filter(|l| l.slot == Slot::Floor && l.cube.y == 1)
             .copied()
             .collect();
         check!(hidden_roof_tiles.len() == 9);

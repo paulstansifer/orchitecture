@@ -5,7 +5,7 @@ use bevy::window::PrimaryWindow;
 use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
 use crate::camera::GameCamera;
 use crate::cutaway::CutawayMode;
-use crate::sparse3d::{Facing, RelSlot};
+use crate::sparse3d::{Facing, Slot};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::wall_grid::{
     apply_proposal_changes, cell_transform, ProposalGhostMarker, ProposalOverlayAssets,
@@ -50,7 +50,7 @@ pub fn cursor_system(
                 let s = pos.round();
                 let cube = IVec3::new(s.x as i32, build_state.cur_y, s.z as i32);
                 let facing = Facing::from_number(build_state.cur_dir);
-                let tr = cell_transform(RelSlot::Room, facing, cube);
+                let tr = cell_transform(Slot::Room, facing, cube);
                 t.translation = tr.translation;
                 t.rotation = tr.rotation;
                 t.scale = Vec3::splat(0.999);

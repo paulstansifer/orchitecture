@@ -1,7 +1,7 @@
 use super::compiler::*;
 use super::parser::*;
 
-use crate::sparse3d::{RelSlot, RelSlotCoord};
+use crate::sparse3d::{RelSlot, RelSlotCoord, Slot};
 use crate::structure::StructureId;
 use bevy::math::IVec3;
 
@@ -70,6 +70,15 @@ pub fn rel_slot_to_unoriented(slot: RelSlot) -> UnorientedSlot {
         RelSlot::Room => UnorientedSlot::Room,
         RelSlot::Floor | RelSlot::Ceiling => UnorientedSlot::Floor,
         _ => UnorientedSlot::Wall,
+    }
+}
+
+/// Map a canonical `Slot` to the `UnorientedSlot` category used in autotile rule headers.
+pub fn slot_to_unoriented(slot: Slot) -> UnorientedSlot {
+    match slot {
+        Slot::Room => UnorientedSlot::Room,
+        Slot::Floor => UnorientedSlot::Floor,
+        Slot::XLoWall | Slot::ZLoWall => UnorientedSlot::Wall,
     }
 }
 

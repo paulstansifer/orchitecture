@@ -4,7 +4,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use bevy::prelude::*;
 
-use crate::sparse3d::{RelSlot, Slot, Sparse3D};
+use crate::sparse3d::{Slot, Sparse3D};
 use crate::wall_grid::{Cell, WallGrid};
 
 const GRID_PERIOD: i32 = 6;
@@ -232,6 +232,7 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::build_helpers::Builder;
+    use crate::sparse3d::RelSlot;
     use crate::structure::load_structure_info;
 
     /// Three floor planes — Y=1 (ground, excluded by min-y rule), Y=2 (interior
