@@ -231,7 +231,7 @@ impl WallGrid {
         let proposals: Vec<(RelSlotCoord, Proposal)> = self
             .proposed_changes
             .iter()
-            .map(|(loc, p)| (loc, p.clone()))
+            .map(|(loc, p)| (RelSlotCoord::from(loc), p.clone()))
             .collect();
 
         self.proposed_changes = Sparse3D::new();
@@ -279,10 +279,10 @@ impl WallGrid {
     ) -> Vec<(RelSlotCoord, Option<Cell>)> {
         let mut changes: Vec<(RelSlotCoord, Option<Cell>)> = Vec::new();
         for (loc, _) in self.contents.iter() {
-            changes.push((loc, None));
+            changes.push((loc.into(), None));
         }
         for (loc, cell) in new_contents.iter() {
-            changes.push((loc, Some(cell.clone())));
+            changes.push((loc.into(), Some(cell.clone())));
         }
         self.contents = new_contents;
         changes

@@ -80,6 +80,21 @@ impl From<RelSlotCoord> for SlotCoord {
     }
 }
 
+impl From<SlotCoord> for RelSlotCoord {
+    fn from(sl: SlotCoord) -> Self {
+        RelSlotCoord {
+            cube: sl.cube,
+            rel_slot: RelSlot::from_absolute_slot(sl.slot),
+        }
+    }
+}
+
+impl Rotateable for SlotCoord {
+    fn rotate(self, rotation: Rotation) -> Self {
+        RelSlotCoord::from(self).rotate(rotation).into()
+    }
+}
+
 /// Every `RelSlot` other than `Room` is shared with an adjacent cube.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Rand)]
 pub enum RelSlot {
@@ -438,52 +453,56 @@ impl<T> Sparse3D<T> {
         self.chunks.entry(chunk_coords).or_insert_with(Chunk::new)
     }
 
-    pub fn get(&self, loc: RelSlotCoord) -> Option<&T> {
-        let (bc, sc) = loc.split_location();
+    pub fn get(&self, loc: impl Into<SlotCoord>) -> Option<&T> {
+        let (bc, sc) = loc.into().split_location();
         self.chunks.get(&bc).and_then(|chunk| chunk[sc].as_ref())
     }
 
-    pub fn take(&mut self, loc: RelSlotCoord) -> Option<T> {
-        let (bc, sc) = loc.split_location();
+    pub fn take(&mut self, loc: impl Into<SlotCoord>) -> Option<T> {
+        let (bc, sc) = loc.into().split_location();
         self.chunks.get_mut(&bc).and_then(|chunk| chunk[sc].take())
     }
 
-    pub fn get_mut(&mut self, loc: RelSlotCoord) -> Option<&mut T> {
-        let (bc, sc) = loc.split_location();
+    pub fn get_mut(&mut self, loc: impl Into<SlotCoord>) -> Option<&mut T> {
+        let (bc, sc) = loc.into().split_location();
         self.chunks
             .get_mut(&bc)
             .and_then(|chunk| chunk[sc].as_mut())
     }
 
-    pub fn set(&mut self, loc: RelSlotCoord, value: T) {
-        let (bc, sc) = loc.split_location();
+    pub fn set(&mut self, loc: impl Into<SlotCoord>, value: T) {
+        let (bc, sc) = loc.into().split_location();
         let chunk = self.get_or_create_chunk(bc);
         chunk[sc] = Some(value);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (RelSlotCoord, &T)> {
+    pub fn iter(&self) -> impl Iterator<Item = (SlotCoord, &T)> {
         self.chunks.iter().flat_map(|(bc, chunk)| {
             chunk.iter().map(move |(sc, value)| {
-                let loc = RelSlotCoord::new(
-                    bc.x * 4 + sc.x as i32,
-                    bc.y * 4 + sc.y as i32,
-                    bc.z * 4 + sc.z as i32,
-                    RelSlot::from_absolute_slot(sc.slot),
-                );
+                let loc = SlotCoord {
+                    cube: IVec3::new(
+                        bc.x * 4 + sc.x as i32,
+                        bc.y * 4 + sc.y as i32,
+                        bc.z * 4 + sc.z as i32,
+                    ),
+                    slot: sc.slot,
+                };
                 (loc, value)
             })
         })
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (RelSlotCoord, &mut T)> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (SlotCoord, &mut T)> {
         self.chunks.iter_mut().flat_map(|(bc, chunk)| {
             chunk.iter_mut().map(move |(sc, value)| {
-                let loc = RelSlotCoord::new(
-                    bc.x * 4 + sc.x as i32,
-                    bc.y * 4 + sc.y as i32,
-                    bc.z * 4 + sc.z as i32,
-                    RelSlot::from_absolute_slot(sc.slot),
-                );
+                let loc = SlotCoord {
+                    cube: IVec3::new(
+                        bc.x * 4 + sc.x as i32,
+                        bc.y * 4 + sc.y as i32,
+                        bc.z * 4 + sc.z as i32,
+                    ),
+                    slot: sc.slot,
+                };
                 (loc, value)
             })
         })
@@ -495,11 +514,7 @@ impl<T> Sparse3D<T> {
     {
         let mut new_grid = Sparse3D::new();
         for (loc, cell) in self.iter() {
-            let new_loc = RelSlotCoord {
-                cube: loc.cube + offset,
-                rel_slot: loc.rel_slot,
-            };
-            new_grid.set(new_loc, cell.clone());
+            new_grid.set(SlotCoord { cube: loc.cube + offset, slot: loc.slot }, cell.clone());
         }
         new_grid
     }
@@ -684,7 +699,7 @@ impl<T: Rotateable + Clone> Rotateable for Sparse3D<T> {
     }
 }
 
-impl<T: Rotateable> Index<RelSlotCoord> for Sparse3D<T> {
+impl<T> Index<RelSlotCoord> for Sparse3D<T> {
     type Output = T;
 
     fn index(&self, loc: RelSlotCoord) -> &Self::Output {
@@ -692,7 +707,7 @@ impl<T: Rotateable> Index<RelSlotCoord> for Sparse3D<T> {
     }
 }
 
-impl<T: Rotateable> IndexMut<RelSlotCoord> for Sparse3D<T> {
+impl<T> IndexMut<RelSlotCoord> for Sparse3D<T> {
     fn index_mut(&mut self, loc: RelSlotCoord) -> &mut Self::Output {
         self.get_mut(loc).unwrap()
     }
@@ -702,21 +717,13 @@ impl<T> Index<SlotCoord> for Sparse3D<T> {
     type Output = T;
 
     fn index(&self, loc: SlotCoord) -> &Self::Output {
-        let (bc, sc) = loc.split_location();
-        self.chunks
-            .get(&bc)
-            .and_then(|chunk| chunk[sc].as_ref())
-            .unwrap()
+        self.get(loc).unwrap()
     }
 }
 
 impl<T> IndexMut<SlotCoord> for Sparse3D<T> {
     fn index_mut(&mut self, loc: SlotCoord) -> &mut Self::Output {
-        let (bc, sc) = loc.split_location();
-        self.chunks
-            .get_mut(&bc)
-            .and_then(|chunk| chunk[sc].as_mut())
-            .unwrap()
+        self.get_mut(loc).unwrap()
     }
 }
 
@@ -762,9 +769,9 @@ mod tests {
         let items: HashSet<_> = grid.iter().collect();
 
         let expected: HashSet<_> = vec![
-            (RelSlotCoord::new(1, 2, 3, RelSlot::XLoWall), &RotInt(10)),
-            (RelSlotCoord::new(-1, 5, 0, RelSlot::Floor), &RotInt(20)),
-            (RelSlotCoord::new(4, 0, 0, RelSlot::ZLoWall), &RotInt(30)),
+            (SlotCoord { cube: IVec3::new(1, 2, 3), slot: Slot::XLoWall }, &RotInt(10)),
+            (SlotCoord { cube: IVec3::new(-1, 5, 0), slot: Slot::Floor }, &RotInt(20)),
+            (SlotCoord { cube: IVec3::new(4, 0, 0), slot: Slot::ZLoWall }, &RotInt(30)),
         ]
         .into_iter()
         .collect();

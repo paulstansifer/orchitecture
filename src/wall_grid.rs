@@ -10,7 +10,7 @@ use bevy::prelude::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
+use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, SlotCoord, Sparse3D};
 use crate::structure::{StructureId, StructureInfo, StructureList};
 
 /// A score that may be an exact target or a one-sided inequality constraint.
@@ -253,7 +253,8 @@ impl WallGrid {
     /// Returns `(real, proposed_add)`:
     /// - `real`: the cell in `contents`, if any (present even under a `Proposal::Remove`).
     /// - `proposed_add`: the proposed cell only when it is an addition with no real cell beneath it.
-    pub fn get_real_and_proposed(&self, loc: RelSlotCoord) -> (Option<&Cell>, Option<&Cell>) {
+    pub fn get_real_and_proposed(&self, loc: impl Into<SlotCoord>) -> (Option<&Cell>, Option<&Cell>) {
+        let loc: SlotCoord = loc.into();
         let real = self.contents.get(loc);
         let proposed_add = match self.proposed_changes.get(loc) {
             Some(Proposal::Place(cell)) if real.is_none() => Some(cell),
@@ -263,13 +264,13 @@ impl WallGrid {
     }
 
     /// If both, returns `real`.
-    pub fn get_real_or_proposed(&self, loc: RelSlotCoord) -> Option<&Cell> {
+    pub fn get_real_or_proposed(&self, loc: impl Into<SlotCoord>) -> Option<&Cell> {
         let (real, proposed) = self.get_real_and_proposed(loc);
         real.or(proposed)
     }
 
     /// If both, returns `real`.
-    pub fn get_proposed_or_real(&self, loc: RelSlotCoord) -> Option<&Cell> {
+    pub fn get_proposed_or_real(&self, loc: impl Into<SlotCoord>) -> Option<&Cell> {
         let (real, proposed) = self.get_real_and_proposed(loc);
         proposed.or(real)
     }

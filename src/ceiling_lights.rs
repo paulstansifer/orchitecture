@@ -4,7 +4,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
 use bevy::prelude::*;
 
-use crate::sparse3d::{RelSlot, Sparse3D};
+use crate::sparse3d::{RelSlot, Slot, Sparse3D};
 use crate::wall_grid::{Cell, WallGrid};
 
 const GRID_PERIOD: i32 = 6;
@@ -24,8 +24,7 @@ pub struct CeilingLight;
 pub fn compute_ceiling_lights(contents: &Sparse3D<Cell>) -> Vec<Vec3> {
     let mut ceilings: Vec<(i32, i32, i32)> = contents
         .iter()
-        // HACK: `.iter()` provides `RelSlot`s, but we know that it's always floors, never ceilings.
-        .filter(|(loc, _)| loc.rel_slot == RelSlot::Floor)
+        .filter(|(loc, _)| loc.slot == Slot::Floor)
         .map(|(loc, _)| (loc.cube.x, loc.cube.y, loc.cube.z))
         .collect();
 

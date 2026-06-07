@@ -2,7 +2,7 @@ use bevy::math::IVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
+use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, Sparse3D};
 use crate::structure::{StructureId, StructureInfo};
 use crate::wall_grid::Cell;
 
@@ -97,8 +97,8 @@ pub fn serialize_sparse3d(
     }
     serialized.push_str("~*~*~\n");
     for (loc, cell) in grid.iter() {
-        if loc.rel_slot == RelSlot::Room {
-            let extended_ser = extended_serialize_at(loc.cube - min, loc.rel_slot, cell);
+        if loc.slot == Slot::Room {
+            let extended_ser = extended_serialize_at(loc.cube - min, RelSlot::Room, cell);
             serialized.push_str(&extended_ser);
         }
     }

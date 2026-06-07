@@ -134,6 +134,7 @@ pub fn autotile_update_system(
         .contents
         .iter()
         .filter_map(|(loc, cell)| {
+            let loc: RelSlotCoord = loc.into();
             let anchor = &struct_names[cell.id.as_usize()];
             let results = evaluate_autotile_rules(
                 loc,
@@ -157,11 +158,14 @@ pub fn autotile_update_system(
     let proposed_additions: Vec<(RelSlotCoord, Cell)> = wall_grid
         .proposed_changes
         .iter()
-        .filter_map(|(loc, proposal)| match proposal {
-            Proposal::Place(cell) if wall_grid.contents.get(loc).is_none() => {
-                Some((loc, cell.clone()))
+        .filter_map(|(loc, proposal)| {
+            let loc: RelSlotCoord = loc.into();
+            match proposal {
+                Proposal::Place(cell) if wall_grid.contents.get(loc).is_none() => {
+                    Some((loc, cell.clone()))
+                }
+                _ => None,
             }
-            _ => None,
         })
         .collect();
 

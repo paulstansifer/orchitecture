@@ -352,7 +352,7 @@ pub fn ui_system(
                         let locs: Vec<_> = wg.proposed_changes.iter().map(|(l, _)| l).collect();
                         wg.reset_proposals();
                         locs.into_iter()
-                            .map(|loc| (loc, crate::wall_grid::ProposalView::None))
+                            .map(|loc| (crate::sparse3d::RelSlotCoord::from(loc), crate::wall_grid::ProposalView::None))
                             .collect::<Vec<_>>()
                     };
                     // Despawn all proposal entities (bypassing is fine since we already have mut wg above)

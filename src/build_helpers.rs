@@ -7,7 +7,7 @@ use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::{StructureId, StructureInfo};
 use crate::wall_grid::{ConstrainedScoreExt, VantageEvaluation};
 use crate::{
-    sparse3d::{RelSlotCoord, Sparse3D},
+    sparse3d::{RelSlotCoord, SlotCoord, Sparse3D},
     wall_grid::Cell,
 };
 use rand::{prelude::SliceRandom, rngs::StdRng, Rng};
@@ -264,7 +264,7 @@ pub fn add_noise(
     let mut results: Vec<Sparse3D<Cell>> = Vec::new();
 
     // Collect all vantages (locations with an evaluation)
-    let mut vantages: Vec<(RelSlotCoord, Cell)> = Vec::new();
+    let mut vantages: Vec<(SlotCoord, Cell)> = Vec::new();
     for (loc, cell) in s.iter() {
         if cell.evaluation.is_some() {
             vantages.push((loc, cell.clone()));
@@ -383,7 +383,7 @@ pub fn add_noise(
 
         // Remove all other vantages (clear evaluations except for this one)
         for (loc, cell) in new_s.iter_mut() {
-            if !(loc.cube == v_loc.cube && loc.rel_slot == v_loc.rel_slot) {
+            if !(loc.cube == v_loc.cube && loc.slot == v_loc.slot) {
                 cell.evaluation = None;
             }
         }
@@ -449,7 +449,7 @@ fn test_add_noise() {
     let out = &res[0];
 
     for (loc, cell) in out.iter() {
-        if !(loc.cube == v_loc.cube && loc.rel_slot == v_loc.rel_slot) {
+        if loc != SlotCoord::from(v_loc) {
             check!(cell.evaluation.is_none(), "other score should be cleared");
         }
     }

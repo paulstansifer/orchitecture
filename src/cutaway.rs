@@ -8,7 +8,7 @@ use bevy::window::PrimaryWindow;
 use crate::autotile::{AutotileHandles, AutotileResult, rel_slot_to_unoriented, spec_stem};
 use crate::camera::GameCamera;
 use crate::input::{cursor_world_pos, BuildState};
-use crate::sparse3d::{RelSlot, RelSlotCoord};
+use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
 use crate::structure::{StructureId, StructureList};
 use crate::wall_grid::{
     cell_transform, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
@@ -446,7 +446,7 @@ fn simple_octant_cuts(
     x_neg: bool,
     z_neg: bool,
 ) -> Vec<(RelSlotCoord, StructureId, bool)> {
-    let is_cut_face = |loc: RelSlotCoord| {
+    let is_cut_face = |loc: SlotCoord| {
         let x_ok = if x_neg {
             loc.cube.x < sx
         } else {
@@ -457,22 +457,18 @@ fn simple_octant_cuts(
         } else {
             loc.cube.z >= sz
         };
-        return x_ok
-            && z_ok
-            && loc.cube.y == cut_y
-            && loc.rel_slot != RelSlot::Floor
-            && loc.rel_slot != RelSlot::Ceiling;
+        return x_ok && z_ok && loc.cube.y == cut_y && loc.slot != Slot::Floor;
     };
     let mut cuts = vec![];
     for (loc, cell) in wall_grid.contents.iter() {
         if is_cut_face(loc) {
-            cuts.push((loc, cell.id, false));
+            cuts.push((RelSlotCoord::from(loc), cell.id, false));
         }
     }
     for (loc, proposal) in wall_grid.proposed_changes.iter() {
         if is_cut_face(loc) && wall_grid.contents.get(loc).is_none() {
             if let Proposal::Place(cell) = proposal {
-                cuts.push((loc, cell.id, true));
+                cuts.push((RelSlotCoord::from(loc), cell.id, true));
             }
         }
     }
