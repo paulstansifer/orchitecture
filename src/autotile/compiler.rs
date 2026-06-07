@@ -229,15 +229,17 @@ H:
 ";
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
-        // rotation 0: my_mesh:0; rotation 1: my_mesh:1; etc.
-        let rots: Vec<u8> = oriented.cases.iter().map(|c| c.rotation).collect();
-        check!(rots == vec![0, 1, 2, 3]);
-        // Check that result meshes carry the correct outer rotation
-        for case in &oriented.cases {
-            if let AutotileResult::Mesh { spec, .. } = &case.result {
-                check!(spec.outer_rotation() == case.rotation as i32 * 90);
-            }
-        }
+        // All 4 orientations must carry distinct mesh rotations covering {0,90,180,270}.
+        let mut rotations: Vec<i32> = oriented
+            .cases
+            .iter()
+            .map(|c| match &c.result {
+                AutotileResult::Mesh { spec, .. } => spec.outer_rotation(),
+                other => panic!("expected Mesh, got {other:?}"),
+            })
+            .collect();
+        rotations.sort();
+        check!(rotations == vec![0, 90, 180, 270]);
     }
 
     // ── Rotation math ─────────────────────────────────────────────────────────

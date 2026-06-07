@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use bevy::ecs::bundle::Bundle;
 use bevy::ecs::entity::Entity;
 use bevy::math::{Quat, Vec3};
 use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
@@ -16,6 +15,7 @@ use super::{
     evaluate_autotile_rules, rel_slot_to_unoriented, spec_stem, AutotileResult, MeshSpec,
     UnorientedSlot,
 };
+use super::parser::char_matches_name;
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -23,11 +23,7 @@ fn char_matches(ch: char, id: StructureId, anchor_name: &str, all_names: &[Strin
     let name = &all_names[id.as_usize()];
     match ch {
         '=' => name == anchor_name,
-        'F' => name == "floor",
-        'W' => name == "wall",
-        'S' => name == "stairs",
-        'R' => name == "railing",
-        _ => false,
+        other => char_matches_name(other, name),
     }
 }
 
@@ -76,7 +72,7 @@ fn spawn_entities_from_results(
     entities
 }
 
-fn apply_autotile_updates<M: Bundle>(
+fn apply_autotile_updates(
     commands: &mut Commands,
     autotile_handles: &AutotileHandles,
     structure_list: &StructureList,
@@ -85,7 +81,7 @@ fn apply_autotile_updates<M: Bundle>(
     results_cache: &mut HashMap<SlotLocation, Vec<AutotileResult>>,
     entity_cache: &mut HashMap<SlotLocation, Vec<Entity>>,
     use_fallback: bool,
-    make_marker: impl Fn(SlotLocation) -> M,
+    make_entity: impl Fn(&mut Commands, SceneRoot, Transform, SlotLocation) -> Entity,
 ) {
     for (loc, cell, new_results) in updates {
         if results_cache.get(&loc) == Some(&new_results) {
@@ -99,9 +95,7 @@ fn apply_autotile_updates<M: Bundle>(
         let new_entities = if use_fallback && new_results.is_empty() {
             let handle = structure_list.scene_handle(cell.id).clone();
             let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
-            vec![commands
-                .spawn((SceneRoot(handle), transform, make_marker(loc)))
-                .id()]
+            vec![make_entity(commands, SceneRoot(handle), transform, loc)]
         } else {
             spawn_entities_from_results(
                 commands,
@@ -109,7 +103,7 @@ fn apply_autotile_updates<M: Bundle>(
                 loc,
                 &cell,
                 &new_results,
-                |cmd, scene, transform| cmd.spawn((scene, transform, make_marker(loc))).id(),
+                |cmd, scene, transform| make_entity(cmd, scene, transform, loc),
             )
         };
         entity_cache.insert(loc, new_entities);
@@ -210,7 +204,7 @@ pub fn autotile_update_system(
         &mut wg.autotile_results,
         &mut wg.cell_entities,
         false,
-        |loc| GridCellMarker { loc },
+        |cmd, scene, transform, loc| cmd.spawn((scene, transform, GridCellMarker { loc })).id(),
     );
     apply_autotile_updates(
         &mut commands,
@@ -221,6 +215,6 @@ pub fn autotile_update_system(
         &mut wg.proposal_autotile_results,
         &mut wg.proposal_entities,
         true,
-        |loc| ProposalGhostMarker { loc },
+        |cmd, scene, transform, loc| cmd.spawn((scene, transform, ProposalGhostMarker { loc })).id(),
     );
 }

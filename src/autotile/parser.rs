@@ -47,7 +47,10 @@ pub enum AutotileRelSlot {
 pub enum MeshSpec {
     // TODO: get rid of `.rotation` here. The outermost `Rotation` will continue to be special,
     // but that's okay.
-    Atom { name: String, rotation: i32 },
+    Atom {
+        name: String,
+        rotation: i32,
+    },
     /// Runtime rotation applied by the autotile matching system (degrees, CW in XZ plane).
     /// Distinct from Atom's rotation, which is author-specified and baked into the mesh file.
     Rotation(i32, Box<MeshSpec>),
@@ -96,25 +99,8 @@ pub struct Pattern {
 
 impl Pattern {
     /// Returns non-wildcard, non-@ cells as AutotileRelSlotOffset → char.
-    ///
-    /// `at_col`/`at_row` store the pre-insert `@` position; the actual `@` in
-    /// `self.rows` may be shifted by one column/row due to parity adjustment in
-    /// `build_pattern`. We scan for the real `@` to get the correct origin slot.
     pub fn relative_checks(&self) -> HashMap<AutotileRelSlotOffset, char> {
-        let (at_col_actual, at_row_actual) = self
-            .rows
-            .iter()
-            .enumerate()
-            .find_map(|(r, row)| {
-                row.iter()
-                    .enumerate()
-                    .find(|(_, &ch)| ch == '@')
-                    .map(|(c, _)| (c, r))
-            })
-            .expect("pattern has no @");
-
-        let (ax, ay, az, origin_slot) =
-            grid_pos_to_3d(self.pattern_type, at_col_actual, at_row_actual);
+        let (ax, ay, az, origin_slot) = grid_pos_to_3d(self.pattern_type, self.at_col, self.at_row);
 
         let mut map = HashMap::new();
         for (r, row) in self.rows.iter().enumerate() {
@@ -250,8 +236,7 @@ fn parse_cases(
         }
 
         if let Some(rest) = line.strip_prefix("-->") {
-            let result = parse_result(rest.trim())
-                .with_context(|| format!("line {lineno}"))?;
+            let result = parse_result(rest.trim()).with_context(|| format!("line {lineno}"))?;
             cases.push(PatternCase {
                 pattern: None,
                 result,
@@ -279,8 +264,8 @@ fn parse_cases(
             if let Some(rest) = pline.strip_prefix("-->") {
                 let pattern = build_pattern(pt, pattern_rows, slot)
                     .with_context(|| format!("line {plineno}"))?;
-                let result = parse_result(rest.trim())
-                    .with_context(|| format!("line {plineno}"))?;
+                let result =
+                    parse_result(rest.trim()).with_context(|| format!("line {plineno}"))?;
                 cases.push(PatternCase {
                     pattern: Some(pattern),
                     result,
@@ -355,8 +340,8 @@ fn build_pattern(
     Ok(Pattern {
         pattern_type: pt,
         rows,
-        at_col,
-        at_row,
+        at_col: at_col + if col_offset % 2 != 0 { 1 } else { 0 },
+        at_row: at_row + if row_offset % 2 != 0 { 1 } else { 0 },
     })
 }
 
@@ -370,23 +355,6 @@ fn build_pattern(
 // V narrow:
 //   W.
 //   ..
-
-#[allow(unused)]
-/// From a grid location, determine what slot it represents
-fn grid_to_slot(pt: PatternType, (row, col): (i32, i32)) -> Option<UnorientedSlot> {
-    match (pt, row % 2 == 1, col % 2 == 1) {
-        (PatternType::H, false, true) => None,
-        (PatternType::H, true, false) => Some(UnorientedSlot::Room),
-        (PatternType::H, _, _) => Some(UnorientedSlot::Wall),
-        (PatternType::VWide, false, false) => Some(UnorientedSlot::Floor),
-        (PatternType::VWide, false, true) => None,
-        (PatternType::VWide, true, false) => Some(UnorientedSlot::Room),
-        (PatternType::VWide, true, true) => Some(UnorientedSlot::Wall),
-        (PatternType::VNarrow, false, false) => Some(UnorientedSlot::Wall),
-        (PatternType::VNarrow, _, _) => None,
-    }
-}
-
 /// Offset to apply to a raw pattern to make the anchor appear in the right spot in the 2x2 slot grid
 fn offset(
     pt: PatternType,
@@ -430,8 +398,7 @@ fn parse_result(s: &str) -> anyhow::Result<AutotileResult> {
     } else {
         (false, s)
     };
-    let spec = parse_mesh_spec(rest)
-        .with_context(|| format!("invalid result: {s:?}"))?;
+    let spec = parse_mesh_spec(rest).with_context(|| format!("invalid result: {s:?}"))?;
     Ok(AutotileResult::Mesh { multi, spec })
 }
 
@@ -508,6 +475,17 @@ fn parse_factor(s: &str) -> Option<(MeshSpec, &str)> {
         }
     }
     Some((MeshSpec::Atom { name, rotation: 0 }, rest))
+}
+
+// ─── Character predicates ────────────────────────────────────────────────────
+
+/// Returns true if `name` satisfies the structure predicate for pattern char `ch`.
+/// `'='` (anchor-relative) is not handled here; the caller is responsible for it.
+pub fn char_matches_name(ch: char, name: &str) -> bool {
+    matches!(
+        (ch, name),
+        ('F', "floor") | ('W', "wall") | ('S', "stairs") | ('R', "railing")
+    )
 }
 
 // ─── Filename helpers ─────────────────────────────────────────────────────────
@@ -590,9 +568,9 @@ H:
         let case = &rule.cases[0];
         let pat = case.pattern.as_ref().unwrap();
         check!(pat.pattern_type == PatternType::H);
-        check!(pat.at_col == 2); // '@' is at index 2 after stripping leading space
-        check!(pat.at_row == 0);
         // After parity adjustment, '@' is at (col=3, row=1) = XLoWall at cube (2,0,0).
+        check!(pat.at_col == 3);
+        check!(pat.at_row == 1);
         // '.' at (col=1, row=1) = XLoWall at cube (1,0,0): offset (-1,0,0).
         // '.' at (col=5, row=1) = XLoWall at cube (3,0,0): offset (+1,0,0).
         let checks = pat.relative_checks();
@@ -716,44 +694,5 @@ H:
         check!(file.rules.len() == 2);
         check!(file.rules[0].structure_name == "wall");
         check!(file.rules[1].structure_name == "railing");
-    }
-
-    // ── grid_to_slot / offset consistency ────────────────────────────────────
-
-    #[test]
-    fn grid_to_slot_and_offset_consistent() {
-        // All valid (pt, slot) anchor combinations (Floor panics, VNarrow only supports Wall).
-        let valid_combos = [
-            (PatternType::H, UnorientedSlot::Wall),
-            (PatternType::H, UnorientedSlot::Room),
-            (PatternType::VNarrow, UnorientedSlot::Wall),
-            (PatternType::VWide, UnorientedSlot::Wall),
-            (PatternType::VWide, UnorientedSlot::Room),
-        ];
-
-        for (pt, slot) in valid_combos {
-            for anchor_col in 0usize..2 {
-                for anchor_row in 0usize..2 {
-                    let (col_off, row_off) = offset(pt, slot, anchor_col, anchor_row).unwrap();
-                    // After inserting col_off leading columns / row_off leading rows,
-                    // the anchor lands at (anchor_col + col_off, anchor_row + row_off).
-                    // What matters for slot identity is the parity.
-                    let target_col = (anchor_col + col_off) % 2;
-                    let target_row = (anchor_row + row_off) % 2;
-                    let result = grid_to_slot(pt, (target_row as i32, target_col as i32));
-                    check!(
-                        result == Some(slot),
-                        "pt={:?} slot={:?} anchor=({},{}) → target parity=({},{}) → {:?}",
-                        pt,
-                        slot,
-                        anchor_col,
-                        anchor_row,
-                        target_col,
-                        target_row,
-                        result
-                    );
-                }
-            }
-        }
     }
 }

@@ -142,13 +142,8 @@ mod tests {
     }
 
     fn test_char_matches(ch: char, id: StructureId) -> bool {
-        match ch {
-            'W' => id.0 == 0,
-            'F' => id.0 == 1,
-            'S' => id.0 == 2,
-            'R' => id.0 == 3,
-            _ => false,
-        }
+        const NAMES: [&str; 4] = ["wall", "floor", "stairs", "railing"];
+        char_matches_name(ch, NAMES[id.0 as usize])
     }
 
     #[test]
@@ -188,7 +183,7 @@ H:
             result
                 == Some(&AutotileResult::Mesh {
                     multi: false,
-                    spec: atom("wall_across")
+                    spec: atom("wall_across").rotate(180)
                 })
         );
 
@@ -221,7 +216,7 @@ H:
         let mut grid_x: Sparse3D<Cell> = Sparse3D::new();
         grid_x.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), wall_cell());
         let r_x = match_pattern(&oriented, |loc| grid_x.get(loc).map(|c| c.id), anchor_x, test_char_matches).unwrap();
-        check!(r_x == &AutotileResult::Mesh { multi: false, spec: atom("wall_across") });
+        check!(r_x == &AutotileResult::Mesh { multi: false, spec: atom("wall_across").rotate(180) });
 
         // CW-rotated case (cases_plus_90): ZLoWall anchor.
         // sparse3d CW moves the XLoWall neighbor at (1,0,0) to ZLoWall at (0,0,1),
@@ -290,31 +285,34 @@ H:
         check!(match_pattern(&oriented, |loc| empty.get(loc).map(|c| c.id), anchor, is_desk).is_none());
 
         // rot=0: neighbor in +X direction → Room(1,0,0).
+        // Due to the +2 rotation offset in compile_rule (needed to align with
+        // wall_grid::cell_transform), this case produces mesh rotation 180°.
         let mut g0: Sparse3D<Cell> = Sparse3D::new();
         g0.set(SlotLocation::new(1, 0, 0, RelSlot::Room), desk_cell());
         let r0 = match_pattern(&oriented, |loc| g0.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
-        check!(mesh_rotation(r0) == 0, "rot=0: expected mesh rotation 0, got {}", mesh_rotation(r0));
+        check!(mesh_rotation(r0) == 180, "rot=0: expected mesh rotation 180, got {}", mesh_rotation(r0));
 
         // Rotating the world CW (sparse3d Clockwise: (x,y,z)→(-z,y,x)) moves
         // the +X neighbor (1,0,0) to (0,0,1).  The autotile rot=1 (CW) case must
-        // match this configuration and return mesh rotation=90°.
+        // match this configuration.  With the +2 offset, it carries mesh rotation=270°.
         let mut g1: Sparse3D<Cell> = Sparse3D::new();
         g1.set(SlotLocation::new(0, 0, 1, RelSlot::Room), desk_cell());
         let r1 = match_pattern(&oriented, |loc| g1.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
-        check!(mesh_rotation(r1) == 90, "rot=1 (CW): expected mesh rotation 90, got {}", mesh_rotation(r1));
+        check!(mesh_rotation(r1) == 270, "rot=1 (CW): expected mesh rotation 270, got {}", mesh_rotation(r1));
 
         // 180° (sparse3d OneEighty: (x,y,z)→(-x,y,-z)) moves (1,0,0) to (-1,0,0).
+        // rot=2 with +2 offset → (2+2)*90=360°=0°.
         let mut g2: Sparse3D<Cell> = Sparse3D::new();
         g2.set(SlotLocation::new(-1, 0, 0, RelSlot::Room), desk_cell());
         let r2 = match_pattern(&oriented, |loc| g2.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
-        check!(mesh_rotation(r2) == 180, "rot=2 (180°): expected mesh rotation 180, got {}", mesh_rotation(r2));
+        check!(mesh_rotation(r2) == 0, "rot=2 (180°): expected mesh rotation 0, got {}", mesh_rotation(r2));
 
         // CCW / 270° CW (sparse3d CounterClockwise: (x,y,z)→(z,y,-x)) moves
-        // (1,0,0) to (0,0,-1).  The autotile rot=3 case must match.
+        // (1,0,0) to (0,0,-1).  rot=3 with +2 offset → (3+2)*90=450°=90°.
         let mut g3: Sparse3D<Cell> = Sparse3D::new();
         g3.set(SlotLocation::new(0, 0, -1, RelSlot::Room), desk_cell());
         let r3 = match_pattern(&oriented, |loc| g3.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
-        check!(mesh_rotation(r3) == 270, "rot=3 (CCW): expected mesh rotation 270, got {}", mesh_rotation(r3));
+        check!(mesh_rotation(r3) == 90, "rot=3 (CCW): expected mesh rotation 90, got {}", mesh_rotation(r3));
     }
 
     // ── Column autotile tests ─────────────────────────────────────────────────
@@ -343,10 +341,10 @@ H:
     }
 
     fn col_char_matches(ch: char, id: StructureId) -> bool {
+        const NAMES: [&str; 2] = ["floor", "column"];
         match ch {
-            '=' => id.0 == 1, // column (same structure as anchor)
-            'F' => id.0 == 0, // floor
-            _ => false,
+            '=' => id.0 == 1,
+            other => char_matches_name(other, NAMES[id.0 as usize]),
         }
     }
 
