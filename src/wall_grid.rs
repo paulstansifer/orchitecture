@@ -10,7 +10,7 @@ use bevy::prelude::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
+use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
 use crate::structure::{StructureId, StructureInfo, StructureList};
 
 /// A score that may be an exact target or a one-sided inequality constraint.
@@ -142,25 +142,25 @@ pub enum ProposalView {
 
 pub(crate) struct UndoRecord {
     // (location, what proposal was there before — None = no proposal)
-    pub(crate) changed: Vec<(SlotLocation, Option<Proposal>)>,
+    pub(crate) changed: Vec<(RelSlotCoord, Option<Proposal>)>,
 }
 
 /// Marker component for entities that represent placed grid cells.
 #[derive(Component)]
 pub struct GridCellMarker {
-    pub loc: SlotLocation,
+    pub loc: RelSlotCoord,
 }
 
 /// Marker component for translucent ghost entities representing proposed additions.
 #[derive(Component)]
 pub struct ProposalGhostMarker {
-    pub loc: SlotLocation,
+    pub loc: RelSlotCoord,
 }
 
 /// Marker component for X or ring overlay entities on proposed removals/replacements.
 #[derive(Component)]
 pub struct ProposalOverlayMarker {
-    pub loc: SlotLocation,
+    pub loc: RelSlotCoord,
 }
 
 /// Marker component for cut-plane entities that replace a proposed-only (ghost) wall.
@@ -192,20 +192,20 @@ pub struct WallGrid {
     /// Proposed changes not yet committed; does not affect shadows or ceiling lights.
     pub proposed_changes: Sparse3D<Proposal>,
     /// Entities spawned for each placed (real) cell (may be multiple for autotile cells).
-    pub cell_entities: HashMap<SlotLocation, Vec<Entity>>,
+    pub cell_entities: HashMap<RelSlotCoord, Vec<Entity>>,
     /// Last-rendered autotile results per location (one per matching rule), for change detection.
-    pub autotile_results: HashMap<SlotLocation, Vec<crate::autotile::AutotileResult>>,
+    pub autotile_results: HashMap<RelSlotCoord, Vec<crate::autotile::AutotileResult>>,
     /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
-    pub proposal_entities: HashMap<SlotLocation, Vec<Entity>>,
+    pub proposal_entities: HashMap<RelSlotCoord, Vec<Entity>>,
     /// Entities spawned for the y-cut cutaway layer (cleared each cutaway update).
     pub cut_entities: Vec<Entity>,
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
-    pub proposed_cut_entities: HashMap<SlotLocation, Entity>,
+    pub proposed_cut_entities: HashMap<RelSlotCoord, Entity>,
     pub(crate) undo_record: Vec<UndoRecord>,
     pub road_forbidden_zone: bool,
     /// Last-rendered autotile results per proposed-addition location, for change detection.
     #[cfg(autotile_matching)]
-    pub proposal_autotile_results: HashMap<SlotLocation, Vec<AutotileResult>>,
+    pub proposal_autotile_results: HashMap<RelSlotCoord, Vec<AutotileResult>>,
 }
 
 impl WallGrid {
@@ -253,7 +253,7 @@ impl WallGrid {
     /// Returns `(real, proposed_add)`:
     /// - `real`: the cell in `contents`, if any (present even under a `Proposal::Remove`).
     /// - `proposed_add`: the proposed cell only when it is an addition with no real cell beneath it.
-    pub fn get_real_and_proposed(&self, loc: SlotLocation) -> (Option<&Cell>, Option<&Cell>) {
+    pub fn get_real_and_proposed(&self, loc: RelSlotCoord) -> (Option<&Cell>, Option<&Cell>) {
         let real = self.contents.get(loc);
         let proposed_add = match self.proposed_changes.get(loc) {
             Some(Proposal::Place(cell)) if real.is_none() => Some(cell),
@@ -263,13 +263,13 @@ impl WallGrid {
     }
 
     /// If both, returns `real`.
-    pub fn get_real_or_proposed(&self, loc: SlotLocation) -> Option<&Cell> {
+    pub fn get_real_or_proposed(&self, loc: RelSlotCoord) -> Option<&Cell> {
         let (real, proposed) = self.get_real_and_proposed(loc);
         real.or(proposed)
     }
 
     /// If both, returns `real`.
-    pub fn get_proposed_or_real(&self, loc: SlotLocation) -> Option<&Cell> {
+    pub fn get_proposed_or_real(&self, loc: RelSlotCoord) -> Option<&Cell> {
         let (real, proposed) = self.get_real_and_proposed(loc);
         proposed.or(real)
     }
@@ -318,7 +318,7 @@ pub fn apply_changes(
     commands: &mut Commands,
     wall_grid: &mut WallGrid,
     structure_list: &StructureList,
-    changes: Vec<(SlotLocation, Option<Cell>)>,
+    changes: Vec<(RelSlotCoord, Option<Cell>)>,
 ) {
     for (loc, new_cell) in changes {
         if let Some(old_entities) = wall_grid.cell_entities.remove(&loc) {
@@ -340,7 +340,7 @@ pub fn apply_changes(
 }
 
 /// World-space center of a slot, used for positioning overlays.
-fn slot_center(loc: SlotLocation) -> Vec3 {
+fn slot_center(loc: RelSlotCoord) -> Vec3 {
     let base = loc.cube.as_vec3() + Vec3::splat(0.5);
     match loc.rel_slot {
         RelSlot::Room => base,
@@ -411,7 +411,7 @@ fn protrude_axis(slot: RelSlot) -> Option<Vec3> {
 fn spawn_x_overlay(
     commands: &mut Commands,
     assets: &ProposalOverlayAssets,
-    loc: SlotLocation,
+    loc: RelSlotCoord,
 ) -> Vec<Entity> {
     let center = slot_center(loc);
     let (arm_mesh, rot1, rot2) = x_mesh_and_rotations(loc.rel_slot, assets);
@@ -453,7 +453,7 @@ fn spawn_x_overlay(
 fn spawn_ring_overlay(
     commands: &mut Commands,
     assets: &ProposalOverlayAssets,
-    loc: SlotLocation,
+    loc: RelSlotCoord,
 ) -> Vec<Entity> {
     let mut center = slot_center(loc);
     if loc.rel_slot == RelSlot::Room {
@@ -489,7 +489,7 @@ pub fn apply_proposal_changes(
     wall_grid: &mut WallGrid,
     _structure_list: &StructureList,
     overlay_assets: &ProposalOverlayAssets,
-    changes: Vec<(SlotLocation, ProposalView)>,
+    changes: Vec<(RelSlotCoord, ProposalView)>,
 ) {
     for (loc, view) in changes {
         if let Some(entities) = wall_grid.proposal_entities.remove(&loc) {

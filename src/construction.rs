@@ -1,6 +1,6 @@
 use bevy::math::{IVec3, Vec3};
 
-use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
+use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
 use crate::structure::{PlacementStyle, StructureId};
 use crate::wall_grid::{Cell, Proposal, ProposalView, UndoRecord, VantageEvaluation, WallGrid};
 
@@ -30,16 +30,16 @@ impl WallGrid {
         position2: IVec3,
         slot: RelSlot,
         item: Option<StructureId>,
-    ) -> Vec<(SlotLocation, ProposalView)> {
+    ) -> Vec<(RelSlotCoord, ProposalView)> {
         let start = position1.min(position2);
         let end = position1.max(position2);
-        let mut changes: Vec<(SlotLocation, ProposalView)> = Vec::new();
-        let mut undo_changed: Vec<(SlotLocation, Option<Proposal>)> = Vec::new();
+        let mut changes: Vec<(RelSlotCoord, ProposalView)> = Vec::new();
+        let mut undo_changed: Vec<(RelSlotCoord, Option<Proposal>)> = Vec::new();
 
         for x in start.x..=end.x {
             for y in start.y..=end.y {
                 for z in start.z..=end.z {
-                    let loc = SlotLocation::new(x, y, z, slot);
+                    let loc = RelSlotCoord::new(x, y, z, slot);
                     if item.is_some()
                         && self.road_forbidden_zone
                         && crate::road::is_in_road_forbidden_zone(loc)
@@ -101,7 +101,7 @@ impl WallGrid {
         from: Vec3,
         to: Vec3,
         selected_mesh_id: Option<StructureId>,
-    ) -> Vec<(SlotLocation, ProposalView)> {
+    ) -> Vec<(RelSlotCoord, ProposalView)> {
         let along_x = (to.x - from.x).abs() > (to.z - from.z).abs();
 
         let from_i = from.round().as_ivec3();
@@ -133,7 +133,7 @@ impl WallGrid {
         from: Vec3,
         to: Vec3,
         selected_mesh_id: Option<StructureId>,
-    ) -> Vec<(SlotLocation, ProposalView)> {
+    ) -> Vec<(RelSlotCoord, ProposalView)> {
         let from_i = from.round().as_ivec3();
         let to_i = to.round().as_ivec3();
         let start = from_i.min(to_i);
@@ -147,7 +147,7 @@ impl WallGrid {
         to: Vec3,
         dir: i32,
         selected_mesh_id: Option<StructureId>,
-    ) -> Vec<(SlotLocation, ProposalView)> {
+    ) -> Vec<(RelSlotCoord, ProposalView)> {
         let from_i = from.round().as_ivec3();
         let to_i = to.round().as_ivec3();
         let start = from_i.min(to_i);
@@ -160,11 +160,11 @@ impl WallGrid {
         location: Vec3,
         dir: i32,
         selected_mesh_id: Option<StructureId>,
-    ) -> Vec<(SlotLocation, ProposalView)> {
+    ) -> Vec<(RelSlotCoord, ProposalView)> {
         let pos = location.round().as_ivec3();
         let changes = self.propose(dir, pos, pos, RelSlot::Room, selected_mesh_id);
         if selected_mesh_id == self.find_structure_by_name("desk") {
-            let loc = SlotLocation::new(pos.x, pos.y, pos.z, RelSlot::Room);
+            let loc = RelSlotCoord::new(pos.x, pos.y, pos.z, RelSlot::Room);
             if let Some(Proposal::Place(cell)) = self.proposed_changes.get_mut(loc) {
                 cell.evaluation = Some(VantageEvaluation {
                     coherence: None,
@@ -182,7 +182,7 @@ impl WallGrid {
         dir: i32,
         selected_mesh_id: StructureId,
         remove: bool,
-    ) -> Vec<(SlotLocation, ProposalView)> {
+    ) -> Vec<(RelSlotCoord, ProposalView)> {
         let id = (!remove).then_some(selected_mesh_id);
         match self.structures[selected_mesh_id.as_usize()].placement_style {
             PlacementStyle::WallDrag => self.wall_drag(from, to, id),
@@ -198,7 +198,7 @@ impl WallGrid {
         selected_mesh_id: StructureId,
         dir: i32,
         remove: bool,
-    ) -> Vec<(SlotLocation, ProposalView)> {
+    ) -> Vec<(RelSlotCoord, ProposalView)> {
         match self.structures[selected_mesh_id.as_usize()].placement_style {
             PlacementStyle::RoomPlop => {
                 self.room_plop(position, dir, (!remove).then_some(selected_mesh_id))
@@ -208,7 +208,7 @@ impl WallGrid {
     }
 
     /// Undo the last proposal action. Returns view deltas so proposal rendering can be updated.
-    pub fn undo(&mut self) -> Vec<(SlotLocation, ProposalView)> {
+    pub fn undo(&mut self) -> Vec<(RelSlotCoord, ProposalView)> {
         let Some(record) = self.undo_record.pop() else {
             return vec![];
         };
@@ -227,8 +227,8 @@ impl WallGrid {
 
     /// Commits all proposed changes into real contents. Returns real-cell deltas for `apply_changes`.
     /// Clears `proposed_changes` and `undo_record`; entity cleanup is the caller's responsibility.
-    pub fn construct(&mut self) -> Vec<(SlotLocation, Option<Cell>)> {
-        let proposals: Vec<(SlotLocation, Proposal)> = self
+    pub fn construct(&mut self) -> Vec<(RelSlotCoord, Option<Cell>)> {
+        let proposals: Vec<(RelSlotCoord, Proposal)> = self
             .proposed_changes
             .iter()
             .map(|(loc, p)| (loc, p.clone()))
@@ -263,7 +263,7 @@ impl WallGrid {
     pub fn load_from_offline(
         &mut self,
         new_contents: Sparse3D<Cell>,
-    ) -> Vec<(SlotLocation, Option<Cell>)> {
+    ) -> Vec<(RelSlotCoord, Option<Cell>)> {
         self.proposed_changes = Sparse3D::new();
         self.undo_record.clear();
         // Proposal entity cleanup is the caller's responsibility.
@@ -276,8 +276,8 @@ impl WallGrid {
     fn replace_contents(
         &mut self,
         new_contents: Sparse3D<Cell>,
-    ) -> Vec<(SlotLocation, Option<Cell>)> {
-        let mut changes: Vec<(SlotLocation, Option<Cell>)> = Vec::new();
+    ) -> Vec<(RelSlotCoord, Option<Cell>)> {
+        let mut changes: Vec<(RelSlotCoord, Option<Cell>)> = Vec::new();
         for (loc, _) in self.contents.iter() {
             changes.push((loc, None));
         }
@@ -295,7 +295,7 @@ mod tests {
 
     use bevy::math::IVec3;
 
-    use crate::sparse3d::{Facing, RelSlot, SlotLocation};
+    use crate::sparse3d::{Facing, RelSlot, RelSlotCoord};
     use crate::structure::{PlacementStyle, StructureId, StructureInfo};
     use crate::wall_grid::{Cell, Proposal, ProposalView, WallGrid};
 
@@ -332,8 +332,8 @@ mod tests {
         }
     }
 
-    fn xlowall(x: i32, y: i32, z: i32) -> SlotLocation {
-        SlotLocation::new(x, y, z, RelSlot::XLoWall)
+    fn xlowall(x: i32, y: i32, z: i32) -> RelSlotCoord {
+        RelSlotCoord::new(x, y, z, RelSlot::XLoWall)
     }
 
     // ── propose ──────────────────────────────────────────────────────────────

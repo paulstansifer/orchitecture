@@ -2,7 +2,7 @@ use bevy::math::IVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::sparse3d::{Facing, RelSlot, SlotLocation, Sparse3D};
+use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
 use crate::structure::{StructureId, StructureInfo};
 use crate::wall_grid::Cell;
 
@@ -71,7 +71,7 @@ pub fn serialize_sparse3d(
         for z in min.z..=max.z {
             for x in min.x..=max.x {
                 for slot in [RelSlot::Room, RelSlot::ZLoWall] {
-                    let loc = SlotLocation::new(x, y, z, slot);
+                    let loc = RelSlotCoord::new(x, y, z, slot);
                     if let Some(value) = grid.get(loc) {
                         serialized.push(f(value, slot, structures))
                     } else {
@@ -82,7 +82,7 @@ pub fn serialize_sparse3d(
             serialized.push_str("\n");
             for x in min.x..=max.x {
                 for slot in [RelSlot::XLoWall, RelSlot::Floor] {
-                    let loc = SlotLocation::new(x, y, z, slot);
+                    let loc = RelSlotCoord::new(x, y, z, slot);
                     if let Some(value) = grid.get(loc) {
                         serialized.push(f(value, slot, structures));
                     } else {
@@ -137,7 +137,7 @@ where
             // Start of evaluated cells data
             for line in lines_it {
                 let (pos, slot, cell) = extended_deserialize_at(line);
-                let loc = SlotLocation::new(pos.x, pos.y, pos.z, slot);
+                let loc = RelSlotCoord::new(pos.x, pos.y, pos.z, slot);
                 grid.set(loc, cell);
             }
             break;
@@ -172,7 +172,7 @@ where
                 (xwall_ch, RelSlot::XLoWall),
             ] {
                 if ch != ' ' {
-                    let loc = SlotLocation::new(x as i32, y, z, slot);
+                    let loc = RelSlotCoord::new(x as i32, y, z, slot);
                     grid.set(loc, f(ch, slot, structures_by_char)?);
                 }
             }

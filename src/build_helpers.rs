@@ -7,7 +7,7 @@ use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::{StructureId, StructureInfo};
 use crate::wall_grid::{ConstrainedScoreExt, VantageEvaluation};
 use crate::{
-    sparse3d::{SlotLocation, Sparse3D},
+    sparse3d::{RelSlotCoord, Sparse3D},
     wall_grid::Cell,
 };
 use rand::{prelude::SliceRandom, rngs::StdRng, Rng};
@@ -58,9 +58,9 @@ impl Builder {
         for x in min.x..=max.x {
             for z in min.z..=max.z {
                 self.map
-                    .set(SlotLocation::new(x, min.y, z, RelSlot::Floor), self.flat());
+                    .set(RelSlotCoord::new(x, min.y, z, RelSlot::Floor), self.flat());
                 self.map.set(
-                    SlotLocation::new(x, max.y, z, RelSlot::Ceiling),
+                    RelSlotCoord::new(x, max.y, z, RelSlot::Ceiling),
                     self.flat(),
                 );
             }
@@ -69,11 +69,11 @@ impl Builder {
         for x in min.x..=max.x {
             for y in min.y..=max.y {
                 self.map.set(
-                    SlotLocation::new(x, y, min.z, RelSlot::ZLoWall),
+                    RelSlotCoord::new(x, y, min.z, RelSlot::ZLoWall),
                     self.wall(),
                 );
                 self.map.set(
-                    SlotLocation::new(x, y, max.z, RelSlot::ZHiWall),
+                    RelSlotCoord::new(x, y, max.z, RelSlot::ZHiWall),
                     self.wall(),
                 );
             }
@@ -82,11 +82,11 @@ impl Builder {
         for y in min.y..=max.y {
             for z in min.z..=max.z {
                 self.map.set(
-                    SlotLocation::new(min.x, y, z, RelSlot::XLoWall),
+                    RelSlotCoord::new(min.x, y, z, RelSlot::XLoWall),
                     self.wall(),
                 );
                 self.map.set(
-                    SlotLocation::new(max.x, y, z, RelSlot::XHiWall),
+                    RelSlotCoord::new(max.x, y, z, RelSlot::XHiWall),
                     self.wall(),
                 );
             }
@@ -125,7 +125,7 @@ impl Builder {
                         self.wall()
                     };
                     self.map
-                        .set(SlotLocation::new(coord.x, coord.y, coord.z, slot), cell);
+                        .set(RelSlotCoord::new(coord.x, coord.y, coord.z, slot), cell);
                 }
             }
         }
@@ -166,7 +166,7 @@ impl Builder {
         for x in min.x..=max.x {
             for y in min.y..=max.y {
                 for z in min.z..=max.z {
-                    self.map.set(SlotLocation::new(x, y, z, slot), obj.clone());
+                    self.map.set(RelSlotCoord::new(x, y, z, slot), obj.clone());
                 }
             }
         }
@@ -193,9 +193,9 @@ impl Builder {
                     RelSlot::ZLoWall,
                     RelSlot::ZHiWall,
                 ] {
-                    let here = SlotLocation::new(x, y, z, RelSlot::Floor);
+                    let here = RelSlotCoord::new(x, y, z, RelSlot::Floor);
                     let neighbor = here + slot.direction_of_neighbor();
-                    let separator = SlotLocation {
+                    let separator = RelSlotCoord {
                         rel_slot: slot,
                         ..here
                     };
@@ -217,7 +217,7 @@ impl Builder {
         interest: impl Into<crate::wall_grid::ConstrainedScore>,
     ) {
         self.map.set(
-            SlotLocation::new(loc.x, loc.y, loc.z, RelSlot::Room),
+            RelSlotCoord::new(loc.x, loc.y, loc.z, RelSlot::Room),
             Cell {
                 id: StructureId(*self.structures.get("desk").unwrap() as u32),
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
@@ -264,7 +264,7 @@ pub fn add_noise(
     let mut results: Vec<Sparse3D<Cell>> = Vec::new();
 
     // Collect all vantages (locations with an evaluation)
-    let mut vantages: Vec<(SlotLocation, Cell)> = Vec::new();
+    let mut vantages: Vec<(RelSlotCoord, Cell)> = Vec::new();
     for (loc, cell) in s.iter() {
         if cell.evaluation.is_some() {
             vantages.push((loc, cell.clone()));
@@ -290,7 +290,7 @@ pub fn add_noise(
         candidates.shuffle(rng);
 
         // We'll select up to 9 coordinates that are visible (ray_trace returns empty)
-        let mut selected: Vec<(SlotLocation, RelSlot)> = Vec::new();
+        let mut selected: Vec<(RelSlotCoord, RelSlot)> = Vec::new();
 
         for (cx, cy, cz) in candidates.into_iter() {
             if selected.len() >= 13 {
@@ -298,10 +298,10 @@ pub fn add_noise(
             }
 
             let slot = RelSlot::rand();
-            let dest = SlotLocation::new(cx, cy, cz, slot);
+            let dest = RelSlotCoord::new(cx, cy, cz, slot);
 
             // Ray trace from the vantage room center to this slot; only accept if no obstacles
-            let vantage_room = SlotLocation::new(v_loc.cube.x, v_loc.cube.y, v_loc.cube.z, Room);
+            let vantage_room = RelSlotCoord::new(v_loc.cube.x, v_loc.cube.y, v_loc.cube.z, Room);
             let obstacles = s.ray_trace(vantage_room, dest);
             if obstacles.len() > 1 {
                 selected.push((dest, slot));
@@ -417,7 +417,7 @@ fn test_add_noise() {
 
     let mut s: Sparse3D<Cell> = Sparse3D::new();
 
-    let v_loc = SlotLocation::new(0, 0, 0, RelSlot::Room);
+    let v_loc = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
     s.set(
         v_loc,
         Cell {
@@ -432,7 +432,7 @@ fn test_add_noise() {
 
     // Add a nearby wall so there's something to possibly replace/delete
     s.set(
-        SlotLocation::new(1, 0, 0, RelSlot::XLoWall),
+        RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall),
         Cell {
             id: doorway_id,
             facing: crate::sparse3d::Facing::NegX,

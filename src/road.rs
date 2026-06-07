@@ -1,6 +1,6 @@
 use bevy::math::IVec3;
 
-use crate::sparse3d::{RelSlot, SlotLocation};
+use crate::sparse3d::{RelSlot, RelSlotCoord};
 
 /// Width of each road arm in grid units.
 pub const ROAD_WIDTH: i32 = 4;
@@ -38,7 +38,7 @@ pub fn road_forbidden_height(x: i32, z: i32) -> i32 {
 /// Returns true if `loc` is inside the road's forbidden zone, taking slot geometry
 /// into account so that boundary slots (walls flush with the road edge, floors/ceilings
 /// flush with the vertical limit) are permitted.
-pub fn is_in_road_forbidden_zone(loc: SlotLocation) -> bool {
+pub fn is_in_road_forbidden_zone(loc: RelSlotCoord) -> bool {
     // This implementation probably could be simplified.
     let x = loc.cube.x;
     let y = loc.cube.y;

@@ -1,7 +1,7 @@
 use super::compiler::*;
 use super::parser::*;
 
-use crate::sparse3d::{RelSlot, SlotLocation};
+use crate::sparse3d::{RelSlot, RelSlotCoord};
 use crate::structure::StructureId;
 use bevy::math::IVec3;
 
@@ -32,8 +32,8 @@ impl From<AutotileRelSlot> for crate::sparse3d::RelSlot {
 /// which rules use that structure as the anchor, and then call `match_pattern` on them.
 pub fn match_pattern<'a>(
     oriented: &'a AutotileOriented,
-    get_cell: impl Fn(SlotLocation) -> Option<StructureId>,
-    anchor: SlotLocation,
+    get_cell: impl Fn(RelSlotCoord) -> Option<StructureId>,
+    anchor: RelSlotCoord,
     char_matches_id: impl Fn(char, StructureId) -> bool,
 ) -> Option<&'a AutotileResult> {
     let turn_90 = matches!(anchor.rel_slot, RelSlot::ZLoWall | RelSlot::ZHiWall);
@@ -45,7 +45,7 @@ pub fn match_pattern<'a>(
     for case in cases {
         let matches = case.checks.iter().all(|(&offset, &ch)| {
             let (cx, cy, cz) = offset.cube_offset;
-            let neighbor = anchor.apply_offset(crate::sparse3d::RelSlotOffset {
+            let neighbor = anchor.apply_offset(crate::sparse3d::RelSlotCoordOffset {
                 origin_slot: offset.origin_slot.into(),
                 cube_offset: IVec3::new(cx, cy, cz),
                 dest_slot: offset.dest_slot.into(),
@@ -83,10 +83,10 @@ pub fn rel_slot_to_unoriented(slot: RelSlot) -> UnorientedSlot {
 /// Returns `None` when no rules apply to this structure at all (so the caller can
 /// fall back to the default mesh).
 pub fn evaluate_autotile_rules(
-    loc: SlotLocation,
+    loc: RelSlotCoord,
     cell_name: &str,
     rules: &[AutotileOriented],
-    get_cell: impl Fn(SlotLocation) -> Option<StructureId>,
+    get_cell: impl Fn(RelSlotCoord) -> Option<StructureId>,
     char_matches: impl Fn(char, StructureId) -> bool,
 ) -> Option<Vec<AutotileResult>> {
     let unoriented = rel_slot_to_unoriented(loc.rel_slot);
@@ -114,10 +114,10 @@ pub fn evaluate_autotile_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assert2::check;
-    use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
+    use crate::sparse3d::{RelSlot, RelSlotCoord, Sparse3D};
     use crate::structure::StructureId;
     use crate::wall_grid::Cell;
+    use assert2::check;
 
     fn atom(name: &str) -> MeshSpec {
         MeshSpec::Atom {
@@ -155,8 +155,13 @@ mod tests {
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         let grid: Sparse3D<Cell> = Sparse3D::new();
-        let anchor = SlotLocation::new(0, 0, 0, RelSlot::XLoWall);
-        let result = match_pattern(&oriented, |loc| grid.get(loc).map(|c| c.id), anchor, test_char_matches);
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
+        let result = match_pattern(
+            &oriented,
+            |loc| grid.get(loc).map(|c| c.id),
+            anchor,
+            test_char_matches,
+        );
         check!(result == Some(&AutotileResult::None));
     }
 
@@ -172,12 +177,17 @@ H:
 ";
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
-        let anchor = SlotLocation::new(0, 0, 0, RelSlot::XLoWall);
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
 
         // Grid with a wall at (1, 0, 0) relative to anchor
         let mut grid: Sparse3D<Cell> = Sparse3D::new();
-        grid.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), wall_cell());
-        let result = match_pattern(&oriented, |loc| grid.get(loc).map(|c| c.id), anchor, test_char_matches);
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall), wall_cell());
+        let result = match_pattern(
+            &oriented,
+            |loc| grid.get(loc).map(|c| c.id),
+            anchor,
+            test_char_matches,
+        );
 
         check!(
             result
@@ -189,7 +199,12 @@ H:
 
         // Empty grid: should fall through to else
         let empty_grid: Sparse3D<Cell> = Sparse3D::new();
-        let result2 = match_pattern(&oriented, |loc| empty_grid.get(loc).map(|c| c.id), anchor, test_char_matches);
+        let result2 = match_pattern(
+            &oriented,
+            |loc| empty_grid.get(loc).map(|c| c.id),
+            anchor,
+            test_char_matches,
+        );
         check!(result2 == Some(&AutotileResult::None));
     }
 
@@ -209,30 +224,58 @@ H:
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
-        let anchor_x = SlotLocation::new(0, 0, 0, RelSlot::XLoWall);
-        let anchor_z = SlotLocation::new(0, 0, 0, RelSlot::ZLoWall);
+        let anchor_x = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
+        let anchor_z = RelSlotCoord::new(0, 0, 0, RelSlot::ZLoWall);
 
         // Base case (cases): XLoWall anchor, neighbor at XLoWall(1,0,0).
         let mut grid_x: Sparse3D<Cell> = Sparse3D::new();
-        grid_x.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), wall_cell());
-        let r_x = match_pattern(&oriented, |loc| grid_x.get(loc).map(|c| c.id), anchor_x, test_char_matches).unwrap();
-        check!(r_x == &AutotileResult::Mesh { multi: false, spec: atom("wall_across").rotate(180) });
+        grid_x.set(RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall), wall_cell());
+        let r_x = match_pattern(
+            &oriented,
+            |loc| grid_x.get(loc).map(|c| c.id),
+            anchor_x,
+            test_char_matches,
+        )
+        .unwrap();
+        check!(
+            r_x == &AutotileResult::Mesh {
+                multi: false,
+                spec: atom("wall_across").rotate(180)
+            }
+        );
 
         // CW-rotated case (cases_plus_90): ZLoWall anchor.
         // sparse3d CW moves the XLoWall neighbor at (1,0,0) to ZLoWall at (0,0,1),
         // and the XLoWall anchor type becomes ZLoWall.
         let mut grid_z: Sparse3D<Cell> = Sparse3D::new();
-        grid_z.set(SlotLocation::new(0, 0, 1, RelSlot::ZLoWall), wall_cell());
-        let r_z = match_pattern(&oriented, |loc| grid_z.get(loc).map(|c| c.id), anchor_z, test_char_matches).unwrap();
-        check!(r_z == &AutotileResult::Mesh { multi: false, spec: atom("wall_across") },
-            "ZLoWall anchor with ZLoWall neighbor at (0,0,1): expected wall_across, got {r_z:?}");
+        grid_z.set(RelSlotCoord::new(0, 0, 1, RelSlot::ZLoWall), wall_cell());
+        let r_z = match_pattern(
+            &oriented,
+            |loc| grid_z.get(loc).map(|c| c.id),
+            anchor_z,
+            test_char_matches,
+        )
+        .unwrap();
+        check!(
+            r_z == &AutotileResult::Mesh {
+                multi: false,
+                spec: atom("wall_across")
+            },
+            "ZLoWall anchor with ZLoWall neighbor at (0,0,1): expected wall_across, got {r_z:?}"
+        );
 
         // The 180°-rotated case: neighbor on the −Z side of the ZLoWall anchor.
         // That is the counterpart to an XLoWall anchor with neighbor at (−1,0,0).
         // It should also match wall_across, but via the rot=2 case (mesh rotation=2).
         let mut grid_z_back: Sparse3D<Cell> = Sparse3D::new();
-        grid_z_back.set(SlotLocation::new(0, 0, -1, RelSlot::ZLoWall), wall_cell());
-        let r_z_back = match_pattern(&oriented, |loc| grid_z_back.get(loc).map(|c| c.id), anchor_z, test_char_matches).unwrap();
+        grid_z_back.set(RelSlotCoord::new(0, 0, -1, RelSlot::ZLoWall), wall_cell());
+        let r_z_back = match_pattern(
+            &oriented,
+            |loc| grid_z_back.get(loc).map(|c| c.id),
+            anchor_z,
+            test_char_matches,
+        )
+        .unwrap();
         if let AutotileResult::Mesh { spec, .. } = r_z_back {
             check!(
                 spec.outer_rotation() == 180 && spec_stem(spec, UnorientedSlot::Wall) == "wall_across",
@@ -278,41 +321,67 @@ H:
             }
         }
 
-        let anchor = SlotLocation::new(0, 0, 0, RelSlot::Room);
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
         // No neighbor: nothing matches (rule has no else case).
         let empty: Sparse3D<Cell> = Sparse3D::new();
-        check!(match_pattern(&oriented, |loc| empty.get(loc).map(|c| c.id), anchor, is_desk).is_none());
+        check!(match_pattern(
+            &oriented,
+            |loc| empty.get(loc).map(|c| c.id),
+            anchor,
+            is_desk
+        )
+        .is_none());
 
         // rot=0: neighbor in +X direction → Room(1,0,0).
         // Due to the +2 rotation offset in compile_rule (needed to align with
         // wall_grid::cell_transform), this case produces mesh rotation 180°.
         let mut g0: Sparse3D<Cell> = Sparse3D::new();
-        g0.set(SlotLocation::new(1, 0, 0, RelSlot::Room), desk_cell());
-        let r0 = match_pattern(&oriented, |loc| g0.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
-        check!(mesh_rotation(r0) == 180, "rot=0: expected mesh rotation 180, got {}", mesh_rotation(r0));
+        g0.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), desk_cell());
+        let r0 =
+            match_pattern(&oriented, |loc| g0.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
+        check!(
+            mesh_rotation(r0) == 180,
+            "rot=0: expected mesh rotation 180, got {}",
+            mesh_rotation(r0)
+        );
 
         // Rotating the world CW (sparse3d Clockwise: (x,y,z)→(-z,y,x)) moves
         // the +X neighbor (1,0,0) to (0,0,1).  The autotile rot=1 (CW) case must
         // match this configuration.  With the +2 offset, it carries mesh rotation=270°.
         let mut g1: Sparse3D<Cell> = Sparse3D::new();
-        g1.set(SlotLocation::new(0, 0, 1, RelSlot::Room), desk_cell());
-        let r1 = match_pattern(&oriented, |loc| g1.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
-        check!(mesh_rotation(r1) == 270, "rot=1 (CW): expected mesh rotation 270, got {}", mesh_rotation(r1));
+        g1.set(RelSlotCoord::new(0, 0, 1, RelSlot::Room), desk_cell());
+        let r1 =
+            match_pattern(&oriented, |loc| g1.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
+        check!(
+            mesh_rotation(r1) == 270,
+            "rot=1 (CW): expected mesh rotation 270, got {}",
+            mesh_rotation(r1)
+        );
 
         // 180° (sparse3d OneEighty: (x,y,z)→(-x,y,-z)) moves (1,0,0) to (-1,0,0).
         // rot=2 with +2 offset → (2+2)*90=360°=0°.
         let mut g2: Sparse3D<Cell> = Sparse3D::new();
-        g2.set(SlotLocation::new(-1, 0, 0, RelSlot::Room), desk_cell());
-        let r2 = match_pattern(&oriented, |loc| g2.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
-        check!(mesh_rotation(r2) == 0, "rot=2 (180°): expected mesh rotation 0, got {}", mesh_rotation(r2));
+        g2.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), desk_cell());
+        let r2 =
+            match_pattern(&oriented, |loc| g2.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
+        check!(
+            mesh_rotation(r2) == 0,
+            "rot=2 (180°): expected mesh rotation 0, got {}",
+            mesh_rotation(r2)
+        );
 
         // CCW / 270° CW (sparse3d CounterClockwise: (x,y,z)→(z,y,-x)) moves
         // (1,0,0) to (0,0,-1).  rot=3 with +2 offset → (3+2)*90=450°=90°.
         let mut g3: Sparse3D<Cell> = Sparse3D::new();
-        g3.set(SlotLocation::new(0, 0, -1, RelSlot::Room), desk_cell());
-        let r3 = match_pattern(&oriented, |loc| g3.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
-        check!(mesh_rotation(r3) == 90, "rot=3 (CCW): expected mesh rotation 90, got {}", mesh_rotation(r3));
+        g3.set(RelSlotCoord::new(0, 0, -1, RelSlot::Room), desk_cell());
+        let r3 =
+            match_pattern(&oriented, |loc| g3.get(loc).map(|c| c.id), anchor, is_desk).unwrap();
+        check!(
+            mesh_rotation(r3) == 90,
+            "rot=3 (CCW): expected mesh rotation 90, got {}",
+            mesh_rotation(r3)
+        );
     }
 
     // ── Column autotile tests ─────────────────────────────────────────────────
@@ -337,7 +406,11 @@ H:
 
     // IDs used in column tests: 0 = floor, 1 = column
     fn col_cell() -> Cell {
-        Cell { id: StructureId(1), facing: Default::default(), evaluation: None }
+        Cell {
+            id: StructureId(1),
+            facing: Default::default(),
+            evaluation: None,
+        }
     }
 
     fn col_char_matches(ch: char, id: StructureId) -> bool {
@@ -353,17 +426,29 @@ H:
     #[test]
     fn column_single_produces_two_floating() {
         let rules = all_rules();
-        let anchor = SlotLocation::new(1, 0, 0, RelSlot::XLoWall);
+        let anchor = RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall);
         let mut grid: Sparse3D<Cell> = Sparse3D::new();
         grid.set(anchor, col_cell());
 
-        let results = evaluate_autotile_rules(anchor, "column", &rules, |loc| grid.get(loc).map(|c| c.id), col_char_matches)
-            .expect("column has autotile rules");
+        let results = evaluate_autotile_rules(
+            anchor,
+            "column",
+            &rules,
+            |loc| grid.get(loc).map(|c| c.id),
+            col_char_matches,
+        )
+        .expect("column has autotile rules");
         let stems = stems_from_results(&results);
 
         check!(stems.len() == 2, "expected 2 stems, got {stems:?}");
-        check!(stems.contains(&"isect__column_floating__top".to_string()), "stems={stems:?}");
-        check!(stems.contains(&"isect__column_floating__bottom".to_string()), "stems={stems:?}");
+        check!(
+            stems.contains(&"isect__column_floating__top".to_string()),
+            "stems={stems:?}"
+        );
+        check!(
+            stems.contains(&"isect__column_floating__bottom".to_string()),
+            "stems={stems:?}"
+        );
     }
 
     /// Z-wall variant of `column_single_produces_two_floating`: the else case must
@@ -371,17 +456,32 @@ H:
     #[test]
     fn column_single_zwall_produces_two_floating() {
         let rules = all_rules();
-        let anchor = SlotLocation::new(1, 0, 0, RelSlot::ZLoWall);
+        let anchor = RelSlotCoord::new(1, 0, 0, RelSlot::ZLoWall);
         let mut grid: Sparse3D<Cell> = Sparse3D::new();
         grid.set(anchor, col_cell());
 
-        let results = evaluate_autotile_rules(anchor, "column", &rules, |loc| grid.get(loc).map(|c| c.id), col_char_matches)
-            .expect("column has autotile rules");
+        let results = evaluate_autotile_rules(
+            anchor,
+            "column",
+            &rules,
+            |loc| grid.get(loc).map(|c| c.id),
+            col_char_matches,
+        )
+        .expect("column has autotile rules");
         let stems = stems_from_results(&results);
 
-        check!(stems.len() == 2, "expected 2 stems for ZLoWall column, got {stems:?}");
-        check!(stems.contains(&"isect__column_floating__top".to_string()), "stems={stems:?}");
-        check!(stems.contains(&"isect__column_floating__bottom".to_string()), "stems={stems:?}");
+        check!(
+            stems.len() == 2,
+            "expected 2 stems for ZLoWall column, got {stems:?}"
+        );
+        check!(
+            stems.contains(&"isect__column_floating__top".to_string()),
+            "stems={stems:?}"
+        );
+        check!(
+            stems.contains(&"isect__column_floating__bottom".to_string()),
+            "stems={stems:?}"
+        );
     }
 
     /// Two columns stacked vertically with no floors: the outer ends get
@@ -390,16 +490,28 @@ H:
     #[test]
     fn column_stacked_produces_four_meshes() {
         let rules = all_rules();
-        let anchor_lo = SlotLocation::new(1, 0, 0, RelSlot::XLoWall);
-        let anchor_hi = SlotLocation::new(1, 1, 0, RelSlot::XLoWall);
+        let anchor_lo = RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall);
+        let anchor_hi = RelSlotCoord::new(1, 1, 0, RelSlot::XLoWall);
         let mut grid: Sparse3D<Cell> = Sparse3D::new();
         grid.set(anchor_lo, col_cell());
         grid.set(anchor_hi, col_cell());
 
-        let results_lo = evaluate_autotile_rules(anchor_lo, "column", &rules, |loc| grid.get(loc).map(|c| c.id), col_char_matches)
-            .expect("column has autotile rules");
-        let results_hi = evaluate_autotile_rules(anchor_hi, "column", &rules, |loc| grid.get(loc).map(|c| c.id), col_char_matches)
-            .expect("column has autotile rules");
+        let results_lo = evaluate_autotile_rules(
+            anchor_lo,
+            "column",
+            &rules,
+            |loc| grid.get(loc).map(|c| c.id),
+            col_char_matches,
+        )
+        .expect("column has autotile rules");
+        let results_hi = evaluate_autotile_rules(
+            anchor_hi,
+            "column",
+            &rules,
+            |loc| grid.get(loc).map(|c| c.id),
+            col_char_matches,
+        )
+        .expect("column has autotile rules");
 
         let stems_lo = stems_from_results(&results_lo);
         let stems_hi = stems_from_results(&results_hi);
@@ -407,12 +519,15 @@ H:
 
         check!(all.len() == 4, "expected 4 stems total, got {all:?}");
         for expected in &[
-            "isect__column_floating__top",    // bottom column, stanza 1: no column below
-            "isect__column_middle__bottom",   // bottom column, stanza 2: column above present
-            "isect__column_middle__top",      // top column,    stanza 1: column below present
+            "isect__column_floating__top", // bottom column, stanza 1: no column below
+            "isect__column_middle__bottom", // bottom column, stanza 2: column above present
+            "isect__column_middle__top",   // top column,    stanza 1: column below present
             "isect__column_floating__bottom", // top column,    stanza 2: no column above
         ] {
-            check!(all.contains(&expected.to_string()), "missing {expected}; got {all:?}");
+            check!(
+                all.contains(&expected.to_string()),
+                "missing {expected}; got {all:?}"
+            );
         }
     }
 }

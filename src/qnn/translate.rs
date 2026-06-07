@@ -1,4 +1,4 @@
-use crate::sparse3d::{RelSlot, SlotLocation, Sparse3D};
+use crate::sparse3d::{RelSlot, RelSlotCoord, Sparse3D};
 use bevy::math::IVec3;
 use burn::prelude::*;
 use burn::tensor::Float;
@@ -382,7 +382,7 @@ where
 
     let mut voxels = Tensor::<B, 5>::zeros(shape, &device);
 
-    let vantage = SlotLocation::new(
+    let vantage = RelSlotCoord::new(
         center_coord.x,
         center_coord.y,
         center_coord.z,
@@ -399,7 +399,7 @@ where
                     RelSlot::ZLoWall,
                 ] {
                     let grid_pos = IVec3::new(grid_x, grid_y, grid_z);
-                    let slot_location = SlotLocation::new(grid_x, grid_y, grid_z, slot);
+                    let slot_location = RelSlotCoord::new(grid_x, grid_y, grid_z, slot);
 
                     let obstacles = sparse_data.ray_trace(vantage, slot_location);
 
@@ -523,11 +523,11 @@ mod tests {
 
         let mut sparse_data: Sparse3D<usize> = Sparse3D::new();
         // Add some dummy data to the sparse grid
-        sparse_data.set(SlotLocation::new(0, 0, 0, RelSlot::Room), 0);
-        sparse_data.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), 5);
-        sparse_data.set(SlotLocation::new(0, 1, 0, RelSlot::Floor), 3);
-        sparse_data.set(SlotLocation::new(0, 0, 1, RelSlot::ZLoWall), 5);
-        sparse_data.set(SlotLocation::new(3, 0, 0, RelSlot::XLoWall), 6);
+        sparse_data.set(RelSlotCoord::new(0, 0, 0, RelSlot::Room), 0);
+        sparse_data.set(RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall), 5);
+        sparse_data.set(RelSlotCoord::new(0, 1, 0, RelSlot::Floor), 3);
+        sparse_data.set(RelSlotCoord::new(0, 0, 1, RelSlot::ZLoWall), 5);
+        sparse_data.set(RelSlotCoord::new(3, 0, 0, RelSlot::XLoWall), 6);
 
         let embedding = |id: &usize| vec![*id as f32, 0.0, 0.0, 0.0];
 

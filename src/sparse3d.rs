@@ -14,19 +14,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Rand)]
 pub enum Slot {
     Room,
-    XWall,
-    YFloor,
-    ZWall,
+    XLoWall,
+    Floor,
+    ZLoWall,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SlotLocation {
+pub struct RelSlotCoord {
     pub cube: IVec3,
     pub rel_slot: RelSlot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RelSlotOffset {
+pub struct RelSlotCoordOffset {
     /// When using relative slots, we need the origin, because slots are shared between two adjacent cubes
     pub origin_slot: RelSlot,
     pub cube_offset: IVec3,
@@ -71,8 +71,8 @@ impl SlotCoord {
     }
 }
 
-impl From<SlotLocation> for SlotCoord {
-    fn from(sl: SlotLocation) -> Self {
+impl From<RelSlotCoord> for SlotCoord {
+    fn from(sl: RelSlotCoord) -> Self {
         SlotCoord {
             cube: sl.cube + sl.rel_slot.absolute_offset(),
             slot: sl.rel_slot.as_absolute_slot(),
@@ -156,18 +156,18 @@ impl RelSlot {
 
     fn as_absolute_slot(self) -> Slot {
         match self {
-            RelSlot::XLoWall | RelSlot::XHiWall => Slot::XWall,
-            RelSlot::Floor | RelSlot::Ceiling => Slot::YFloor,
-            RelSlot::ZLoWall | RelSlot::ZHiWall => Slot::ZWall,
+            RelSlot::XLoWall | RelSlot::XHiWall => Slot::XLoWall,
+            RelSlot::Floor | RelSlot::Ceiling => Slot::Floor,
+            RelSlot::ZLoWall | RelSlot::ZHiWall => Slot::ZLoWall,
             RelSlot::Room => Slot::Room,
         }
     }
 
     fn from_absolute_slot(slot: Slot) -> Self {
         match slot {
-            Slot::XWall => RelSlot::XLoWall,
-            Slot::YFloor => RelSlot::Floor,
-            Slot::ZWall => RelSlot::ZLoWall,
+            Slot::XLoWall => RelSlot::XLoWall,
+            Slot::Floor => RelSlot::Floor,
+            Slot::ZLoWall => RelSlot::ZLoWall,
             Slot::Room => RelSlot::Room,
         }
     }
@@ -213,9 +213,9 @@ impl Rotateable for RelSlot {
     }
 }
 
-impl SlotLocation {
+impl RelSlotCoord {
     pub fn new(x: i32, y: i32, z: i32, rel_slot: RelSlot) -> Self {
-        SlotLocation {
+        RelSlotCoord {
             cube: IVec3::new(x, y, z),
             rel_slot,
         }
@@ -256,7 +256,7 @@ impl SlotLocation {
         }
     }
 
-    pub fn apply_offset(self, by: RelSlotOffset) -> Self {
+    pub fn apply_offset(self, by: RelSlotCoordOffset) -> Self {
         let same_type = matches!(
             (self.rel_slot, by.origin_slot),
             (RelSlot::Room, RelSlot::Room)
@@ -281,32 +281,32 @@ impl SlotLocation {
         // Re-express self in by.origin_slot's frame, then add cube_offset.
         let cube = self.cube + self.rel_slot.absolute_offset() - by.origin_slot.absolute_offset()
             + by.cube_offset;
-        SlotLocation {
+        RelSlotCoord {
             cube,
             rel_slot: by.dest_slot,
         }
     }
 }
 
-impl Rotateable for SlotLocation {
+impl Rotateable for RelSlotCoord {
     fn rotate(self, rotation: Rotation) -> Self {
         let new_coord = match rotation {
             Rotation::Clockwise => IVec3::new(-self.cube.z, self.cube.y, self.cube.x),
             Rotation::CounterClockwise => IVec3::new(self.cube.z, self.cube.y, -self.cube.x),
             Rotation::OneEighty => IVec3::new(-self.cube.x, self.cube.y, -self.cube.z),
         };
-        SlotLocation {
+        RelSlotCoord {
             cube: new_coord,
             rel_slot: self.rel_slot.rotate(rotation),
         }
     }
 }
 
-impl std::ops::Add<IVec3> for SlotLocation {
+impl std::ops::Add<IVec3> for RelSlotCoord {
     type Output = Self;
 
     fn add(self, other: IVec3) -> Self {
-        SlotLocation {
+        RelSlotCoord {
             cube: self.cube + other,
             rel_slot: self.rel_slot,
         }
@@ -352,9 +352,9 @@ impl<T> Chunk<T> {
             item.as_ref().map(|value| {
                 let slot = match i % 4 {
                     0 => Slot::Room,
-                    1 => Slot::XWall,
-                    2 => Slot::YFloor,
-                    3 => Slot::ZWall,
+                    1 => Slot::XLoWall,
+                    2 => Slot::Floor,
+                    3 => Slot::ZLoWall,
                     _ => unreachable!(),
                 };
                 let x = ((i / 4) % 4) as u8;
@@ -370,9 +370,9 @@ impl<T> Chunk<T> {
             item.as_mut().map(|value| {
                 let slot = match i % 4 {
                     0 => Slot::Room,
-                    1 => Slot::XWall,
-                    2 => Slot::YFloor,
-                    3 => Slot::ZWall,
+                    1 => Slot::XLoWall,
+                    2 => Slot::Floor,
+                    3 => Slot::ZLoWall,
                     _ => unreachable!(),
                 };
                 let x = ((i / 4) % 4) as u8;
@@ -438,33 +438,33 @@ impl<T> Sparse3D<T> {
         self.chunks.entry(chunk_coords).or_insert_with(Chunk::new)
     }
 
-    pub fn get(&self, loc: SlotLocation) -> Option<&T> {
+    pub fn get(&self, loc: RelSlotCoord) -> Option<&T> {
         let (bc, sc) = loc.split_location();
         self.chunks.get(&bc).and_then(|chunk| chunk[sc].as_ref())
     }
 
-    pub fn take(&mut self, loc: SlotLocation) -> Option<T> {
+    pub fn take(&mut self, loc: RelSlotCoord) -> Option<T> {
         let (bc, sc) = loc.split_location();
         self.chunks.get_mut(&bc).and_then(|chunk| chunk[sc].take())
     }
 
-    pub fn get_mut(&mut self, loc: SlotLocation) -> Option<&mut T> {
+    pub fn get_mut(&mut self, loc: RelSlotCoord) -> Option<&mut T> {
         let (bc, sc) = loc.split_location();
         self.chunks
             .get_mut(&bc)
             .and_then(|chunk| chunk[sc].as_mut())
     }
 
-    pub fn set(&mut self, loc: SlotLocation, value: T) {
+    pub fn set(&mut self, loc: RelSlotCoord, value: T) {
         let (bc, sc) = loc.split_location();
         let chunk = self.get_or_create_chunk(bc);
         chunk[sc] = Some(value);
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (SlotLocation, &T)> {
+    pub fn iter(&self) -> impl Iterator<Item = (RelSlotCoord, &T)> {
         self.chunks.iter().flat_map(|(bc, chunk)| {
             chunk.iter().map(move |(sc, value)| {
-                let loc = SlotLocation::new(
+                let loc = RelSlotCoord::new(
                     bc.x * 4 + sc.x as i32,
                     bc.y * 4 + sc.y as i32,
                     bc.z * 4 + sc.z as i32,
@@ -475,10 +475,10 @@ impl<T> Sparse3D<T> {
         })
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (SlotLocation, &mut T)> {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (RelSlotCoord, &mut T)> {
         self.chunks.iter_mut().flat_map(|(bc, chunk)| {
             chunk.iter_mut().map(move |(sc, value)| {
-                let loc = SlotLocation::new(
+                let loc = RelSlotCoord::new(
                     bc.x * 4 + sc.x as i32,
                     bc.y * 4 + sc.y as i32,
                     bc.z * 4 + sc.z as i32,
@@ -495,7 +495,7 @@ impl<T> Sparse3D<T> {
     {
         let mut new_grid = Sparse3D::new();
         for (loc, cell) in self.iter() {
-            let new_loc = SlotLocation {
+            let new_loc = RelSlotCoord {
                 cube: loc.cube + offset,
                 rel_slot: loc.rel_slot,
             };
@@ -522,7 +522,7 @@ impl<T> Sparse3D<T> {
         (min, max)
     }
 
-    pub fn ray_trace(&self, origin: SlotLocation, destination: SlotLocation) -> Vec<Vec<&T>> {
+    pub fn ray_trace(&self, origin: RelSlotCoord, destination: RelSlotCoord) -> Vec<Vec<&T>> {
         let p0 = origin.get_center();
         let p1 = destination.get_center();
         let dir = (p1.0 - p0.0, p1.1 - p0.1, p1.2 - p0.2);
@@ -618,7 +618,7 @@ impl<T> Sparse3D<T> {
         for &x in &xs {
             for &y in &ys {
                 for &z in &zs {
-                    if let Some(val) = self.get(SlotLocation::new(x, y, z, RelSlot::Room)) {
+                    if let Some(val) = self.get(RelSlotCoord::new(x, y, z, RelSlot::Room)) {
                         items.push(val);
                     }
                 }
@@ -632,7 +632,7 @@ impl<T> Sparse3D<T> {
             let x_idx = p.0.round() as i32;
             for &y in &ys {
                 for &z in &zs {
-                    if let Some(val) = self.get(SlotLocation::new(x_idx, y, z, RelSlot::XLoWall)) {
+                    if let Some(val) = self.get(RelSlotCoord::new(x_idx, y, z, RelSlot::XLoWall)) {
                         items.push(val);
                     }
                 }
@@ -644,7 +644,7 @@ impl<T> Sparse3D<T> {
             let y_idx = p.1.round() as i32;
             for &x in &xs {
                 for &z in &zs {
-                    if let Some(val) = self.get(SlotLocation::new(x, y_idx, z, RelSlot::Floor)) {
+                    if let Some(val) = self.get(RelSlotCoord::new(x, y_idx, z, RelSlot::Floor)) {
                         items.push(val);
                     }
                 }
@@ -656,7 +656,7 @@ impl<T> Sparse3D<T> {
             let z_idx = p.2.round() as i32;
             for &x in &xs {
                 for &y in &ys {
-                    if let Some(val) = self.get(SlotLocation::new(x, y, z_idx, RelSlot::ZLoWall)) {
+                    if let Some(val) = self.get(RelSlotCoord::new(x, y, z_idx, RelSlot::ZLoWall)) {
                         items.push(val);
                     }
                 }
@@ -684,16 +684,16 @@ impl<T: Rotateable + Clone> Rotateable for Sparse3D<T> {
     }
 }
 
-impl<T: Rotateable> Index<SlotLocation> for Sparse3D<T> {
+impl<T: Rotateable> Index<RelSlotCoord> for Sparse3D<T> {
     type Output = T;
 
-    fn index(&self, loc: SlotLocation) -> &Self::Output {
+    fn index(&self, loc: RelSlotCoord) -> &Self::Output {
         self.get(loc).unwrap()
     }
 }
 
-impl<T: Rotateable> IndexMut<SlotLocation> for Sparse3D<T> {
-    fn index_mut(&mut self, loc: SlotLocation) -> &mut Self::Output {
+impl<T: Rotateable> IndexMut<RelSlotCoord> for Sparse3D<T> {
+    fn index_mut(&mut self, loc: RelSlotCoord) -> &mut Self::Output {
         self.get_mut(loc).unwrap()
     }
 }
@@ -703,14 +703,20 @@ impl<T> Index<SlotCoord> for Sparse3D<T> {
 
     fn index(&self, loc: SlotCoord) -> &Self::Output {
         let (bc, sc) = loc.split_location();
-        self.chunks.get(&bc).and_then(|chunk| chunk[sc].as_ref()).unwrap()
+        self.chunks
+            .get(&bc)
+            .and_then(|chunk| chunk[sc].as_ref())
+            .unwrap()
     }
 }
 
 impl<T> IndexMut<SlotCoord> for Sparse3D<T> {
     fn index_mut(&mut self, loc: SlotCoord) -> &mut Self::Output {
         let (bc, sc) = loc.split_location();
-        self.chunks.get_mut(&bc).and_then(|chunk| chunk[sc].as_mut()).unwrap()
+        self.chunks
+            .get_mut(&bc)
+            .and_then(|chunk| chunk[sc].as_mut())
+            .unwrap()
     }
 }
 
@@ -735,13 +741,13 @@ mod tests {
         let mut grid: Sparse3D<RotInt> = Sparse3D::new();
 
         // Set some values
-        grid.set(SlotLocation::new(1, 2, 3, RelSlot::XLoWall), RotInt(10));
-        grid.set(SlotLocation::new(-1, 5, 0, RelSlot::XLoWall), RotInt(20));
-        grid.set(SlotLocation::new(4, 0, 0, RelSlot::XLoWall), RotInt(30)); // Different chunk
+        grid.set(RelSlotCoord::new(1, 2, 3, RelSlot::XLoWall), RotInt(10));
+        grid.set(RelSlotCoord::new(-1, 5, 0, RelSlot::XLoWall), RotInt(20));
+        grid.set(RelSlotCoord::new(4, 0, 0, RelSlot::XLoWall), RotInt(30)); // Different chunk
 
-        check!(grid[SlotLocation::new(1, 2, 3, RelSlot::XLoWall)] == RotInt(10));
-        check!(grid[SlotLocation::new(-1, 5, 0, RelSlot::XLoWall)] == RotInt(20));
-        check!(grid[SlotLocation::new(4, 0, 0, RelSlot::XLoWall)] == RotInt(30));
+        check!(grid[RelSlotCoord::new(1, 2, 3, RelSlot::XLoWall)] == RotInt(10));
+        check!(grid[RelSlotCoord::new(-1, 5, 0, RelSlot::XLoWall)] == RotInt(20));
+        check!(grid[RelSlotCoord::new(4, 0, 0, RelSlot::XLoWall)] == RotInt(30));
     }
 
     #[test]
@@ -749,16 +755,16 @@ mod tests {
         let mut grid: Sparse3D<RotInt> = Sparse3D::new();
 
         // Set some values
-        grid.set(SlotLocation::new(1, 2, 3, RelSlot::XLoWall), RotInt(10));
-        grid.set(SlotLocation::new(-1, 5, 0, RelSlot::Floor), RotInt(20));
-        grid.set(SlotLocation::new(4, 0, 0, RelSlot::ZLoWall), RotInt(30));
+        grid.set(RelSlotCoord::new(1, 2, 3, RelSlot::XLoWall), RotInt(10));
+        grid.set(RelSlotCoord::new(-1, 5, 0, RelSlot::Floor), RotInt(20));
+        grid.set(RelSlotCoord::new(4, 0, 0, RelSlot::ZLoWall), RotInt(30));
 
         let items: HashSet<_> = grid.iter().collect();
 
         let expected: HashSet<_> = vec![
-            (SlotLocation::new(1, 2, 3, RelSlot::XLoWall), &RotInt(10)),
-            (SlotLocation::new(-1, 5, 0, RelSlot::Floor), &RotInt(20)),
-            (SlotLocation::new(4, 0, 0, RelSlot::ZLoWall), &RotInt(30)),
+            (RelSlotCoord::new(1, 2, 3, RelSlot::XLoWall), &RotInt(10)),
+            (RelSlotCoord::new(-1, 5, 0, RelSlot::Floor), &RotInt(20)),
+            (RelSlotCoord::new(4, 0, 0, RelSlot::ZLoWall), &RotInt(30)),
         ]
         .into_iter()
         .collect();
@@ -770,17 +776,17 @@ mod tests {
     fn test_ray_trace_simple() {
         let mut grid: Sparse3D<RotInt> = Sparse3D::new();
         // Room at (0,0,0) -> "Room A" (1)
-        grid.set(SlotLocation::new(0, 0, 0, RelSlot::Room), RotInt(1));
+        grid.set(RelSlotCoord::new(0, 0, 0, RelSlot::Room), RotInt(1));
         // Wall at (1,0,0) (XLoWall for (1,0,0) or XHiWall for (0,0,0)) -> "Wall" (2)
         // XLoWall at (1,0,0) is at x=1.
-        grid.set(SlotLocation::new(1, 0, 0, RelSlot::XLoWall), RotInt(2));
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall), RotInt(2));
         // Room at (1,0,0) -> "Room B" (3)
-        grid.set(SlotLocation::new(1, 0, 0, RelSlot::Room), RotInt(3));
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), RotInt(3));
 
         // Ray from Center of Rule 0 (0.5, 0.5, 0.5) to Center of Room 1 (1.5, 0.5, 0.5)
         let trace = grid.ray_trace(
-            SlotLocation::new(0, 0, 0, RelSlot::Room),
-            SlotLocation::new(1, 0, 0, RelSlot::Room),
+            RelSlotCoord::new(0, 0, 0, RelSlot::Room),
+            RelSlotCoord::new(1, 0, 0, RelSlot::Room),
         );
 
         let flattened: HashSet<&RotInt> = trace.iter().flatten().cloned().collect();
@@ -802,8 +808,8 @@ mod tests {
 
         // Ray from (0,0,0) to (1,0,1). (x,z plane).
 
-        let start = SlotLocation::new(0, 0, 0, RelSlot::Room);
-        let end = SlotLocation::new(1, 0, 1, RelSlot::Room);
+        let start = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
+        let end = RelSlotCoord::new(1, 0, 1, RelSlot::Room);
 
         grid.set(start, RotInt(10)); // Room 0,0
         grid.set(end, RotInt(20)); // Room 1,1
@@ -819,8 +825,8 @@ mod tests {
         // Should touch ZWall at (0,0,1) etc.
 
         // Let's just set the rooms and verify we hit them all.
-        grid.set(SlotLocation::new(1, 0, 0, RelSlot::Room), RotInt(11));
-        grid.set(SlotLocation::new(0, 0, 1, RelSlot::Room), RotInt(12));
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), RotInt(11));
+        grid.set(RelSlotCoord::new(0, 0, 1, RelSlot::Room), RotInt(12));
 
         let trace = grid.ray_trace(start, end);
         let flattened: HashSet<&RotInt> = trace.iter().flatten().cloned().collect();
@@ -834,41 +840,47 @@ mod tests {
     #[test]
     fn test_slot_coord_canonical() {
         // XHiWall at cube (3,0,0) should shift to XWall at (4,0,0)
-        let hi_wall = SlotLocation::new(3, 0, 0, RelSlot::XHiWall);
+        let hi_wall = RelSlotCoord::new(3, 0, 0, RelSlot::XHiWall);
         let coord: SlotCoord = hi_wall.into();
         check!(coord.cube == IVec3::new(4, 0, 0));
-        check!(coord.slot == Slot::XWall);
+        check!(coord.slot == Slot::XLoWall);
 
         // XLoWall has no offset; cube stays the same
-        let lo_wall = SlotLocation::new(3, 0, 0, RelSlot::XLoWall);
+        let lo_wall = RelSlotCoord::new(3, 0, 0, RelSlot::XLoWall);
         let coord2: SlotCoord = lo_wall.into();
         check!(coord2.cube == IVec3::new(3, 0, 0));
-        check!(coord2.slot == Slot::XWall);
+        check!(coord2.slot == Slot::XLoWall);
 
         // Indexing via SlotLocation and the equivalent SlotCoord reaches the same slot
         let mut grid: Sparse3D<RotInt> = Sparse3D::new();
-        grid.set(SlotLocation::new(3, 0, 0, RelSlot::XHiWall), RotInt(99));
+        grid.set(RelSlotCoord::new(3, 0, 0, RelSlot::XHiWall), RotInt(99));
         check!(grid[hi_wall] == RotInt(99));
         check!(grid[coord] == RotInt(99));
 
         // Ceiling shifts y by +1
-        let ceiling = SlotLocation::new(0, 2, 0, RelSlot::Ceiling);
+        let ceiling = RelSlotCoord::new(0, 2, 0, RelSlot::Ceiling);
         let ceil_coord: SlotCoord = ceiling.into();
         check!(ceil_coord.cube == IVec3::new(0, 3, 0));
-        check!(ceil_coord.slot == Slot::YFloor);
+        check!(ceil_coord.slot == Slot::Floor);
     }
 
     #[test]
     fn test_slot_coord_offset() {
-        let origin = SlotCoord { cube: IVec3::new(2, 1, 0), slot: Slot::Room };
-        let offset = SlotCoordOffset { cube_offset: IVec3::new(1, 0, -1), dest_slot: Slot::XWall };
+        let origin = SlotCoord {
+            cube: IVec3::new(2, 1, 0),
+            slot: Slot::Room,
+        };
+        let offset = SlotCoordOffset {
+            cube_offset: IVec3::new(1, 0, -1),
+            dest_slot: Slot::XLoWall,
+        };
         let dest = origin.apply_offset(offset);
         check!(dest.cube == IVec3::new(3, 1, -1));
-        check!(dest.slot == Slot::XWall);
+        check!(dest.slot == Slot::XLoWall);
 
         // Verify the result indexes into the grid correctly
         let mut grid: Sparse3D<RotInt> = Sparse3D::new();
-        grid.set(SlotLocation::new(3, 1, -1, RelSlot::XLoWall), RotInt(7));
+        grid.set(RelSlotCoord::new(3, 1, -1, RelSlot::XLoWall), RotInt(7));
         check!(grid[dest] == RotInt(7));
     }
 }
