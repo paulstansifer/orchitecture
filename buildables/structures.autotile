@@ -66,6 +66,9 @@ H:
    =
 --> slant_roof * slant_roof:90
 H:
+ =.@.=
+--> slant_roof:90 * slant_roof:270
+H:
  =.@
 --> slant_roof * slant_roof:90 * slant_roof:270
 H:
