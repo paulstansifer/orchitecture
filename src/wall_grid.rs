@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use bevy::math::{IVec3, Quat, Vec3};
+#[cfg(autotile_matching)]
+use crate::autotile::AutotileResult;
 use bevy::prelude::{
     AlphaMode, Assets, Color, Commands, Component, Entity, Mesh, Mesh3d, MeshMaterial3d, ResMut,
     Resource, SceneRoot, StandardMaterial, Transform,
@@ -189,8 +191,10 @@ pub struct WallGrid {
     pub contents: Sparse3D<Cell>,
     /// Proposed changes not yet committed; does not affect shadows or ceiling lights.
     pub proposed_changes: Sparse3D<Proposal>,
-    /// Entity spawned for each placed (real) cell.
-    pub cell_entities: HashMap<SlotLocation, Entity>,
+    /// Entities spawned for each placed (real) cell (may be multiple for autotile cells).
+    pub cell_entities: HashMap<SlotLocation, Vec<Entity>>,
+    /// Last-rendered autotile results per location (one per matching rule), for change detection.
+    pub autotile_results: HashMap<SlotLocation, Vec<crate::autotile::AutotileResult>>,
     /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
     pub proposal_entities: HashMap<SlotLocation, Vec<Entity>>,
     /// Entities spawned for the y-cut cutaway layer (cleared each cutaway update).
@@ -199,6 +203,9 @@ pub struct WallGrid {
     pub proposed_cut_entities: HashMap<SlotLocation, Entity>,
     pub(crate) undo_record: Vec<UndoRecord>,
     pub road_forbidden_zone: bool,
+    /// Last-rendered autotile results per proposed-addition location, for change detection.
+    #[cfg(autotile_matching)]
+    pub proposal_autotile_results: HashMap<SlotLocation, Vec<AutotileResult>>,
 }
 
 impl WallGrid {
@@ -208,11 +215,14 @@ impl WallGrid {
             contents: Sparse3D::new(),
             proposed_changes: Sparse3D::new(),
             cell_entities: HashMap::new(),
+            autotile_results: HashMap::new(),
             proposal_entities: HashMap::new(),
             cut_entities: Vec::new(),
             proposed_cut_entities: HashMap::new(),
             undo_record: Vec::new(),
             road_forbidden_zone: true,
+            #[cfg(autotile_matching)]
+            proposal_autotile_results: HashMap::new(),
         }
     }
 
@@ -257,6 +267,13 @@ impl WallGrid {
         let (real, proposed) = self.get_real_and_proposed(loc);
         real.or(proposed)
     }
+
+    /// If both, returns `real`.
+    pub fn get_proposed_or_real(&self, loc: SlotLocation) -> Option<&Cell> {
+        let (real, proposed) = self.get_real_and_proposed(loc);
+        proposed.or(real)
+    }
+
 
     pub fn num_proposed_changes(&self) -> usize {
         self.proposed_changes.iter().count()
@@ -304,16 +321,20 @@ pub fn apply_changes(
     changes: Vec<(SlotLocation, Option<Cell>)>,
 ) {
     for (loc, new_cell) in changes {
-        if let Some(old_entity) = wall_grid.cell_entities.remove(&loc) {
-            commands.entity(old_entity).despawn();
+        if let Some(old_entities) = wall_grid.cell_entities.remove(&loc) {
+            for e in old_entities {
+                commands.entity(e).despawn();
+            }
         }
+        // Clear autotile state so the per-frame system unconditionally re-evaluates.
+        wall_grid.autotile_results.remove(&loc);
         if let Some(cell) = new_cell {
             let transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
             let handle = structure_list.scene_handle(cell.id).clone();
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
                 .id();
-            wall_grid.cell_entities.insert(loc, entity);
+            wall_grid.cell_entities.insert(loc, vec![entity]);
         }
     }
 }
@@ -466,7 +487,7 @@ fn spawn_ring_overlay(
 pub fn apply_proposal_changes(
     commands: &mut Commands,
     wall_grid: &mut WallGrid,
-    structure_list: &StructureList,
+    _structure_list: &StructureList,
     overlay_assets: &ProposalOverlayAssets,
     changes: Vec<(SlotLocation, ProposalView)>,
 ) {
@@ -477,21 +498,25 @@ pub fn apply_proposal_changes(
             }
         }
         match view {
-            ProposalView::None => {}
-            ProposalView::Add(cell) => {
-                let mut transform = cell_transform(loc.rel_slot, cell.facing, loc.cube);
-                transform.scale *= 0.999;
-                let handle = structure_list.scene_handle(cell.id).clone();
-                let entity = commands
-                    .spawn((SceneRoot(handle), transform, ProposalGhostMarker { loc }))
-                    .id();
-                wall_grid.proposal_entities.insert(loc, vec![entity]);
+            ProposalView::None => {
+                #[cfg(autotile_matching)]
+                wall_grid.proposal_autotile_results.remove(&loc);
+            }
+            ProposalView::Add(_) => {
+                // Ghost entities for additions are managed by `proposal_autotile_update_system`.
+                // Clear the cached results so that system re-evaluates this location next frame.
+                #[cfg(autotile_matching)]
+                wall_grid.proposal_autotile_results.remove(&loc);
             }
             ProposalView::Remove => {
+                #[cfg(autotile_matching)]
+                wall_grid.proposal_autotile_results.remove(&loc);
                 let entities = spawn_x_overlay(commands, overlay_assets, loc);
                 wall_grid.proposal_entities.insert(loc, entities);
             }
             ProposalView::Replace => {
+                #[cfg(autotile_matching)]
+                wall_grid.proposal_autotile_results.remove(&loc);
                 let entities = spawn_ring_overlay(commands, overlay_assets, loc);
                 wall_grid.proposal_entities.insert(loc, entities);
             }

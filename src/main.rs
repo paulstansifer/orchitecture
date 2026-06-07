@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
+    autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
     camera::{camera_input_system, spawn_camera, CameraState},
     ceiling_lights::update_ceiling_lights,
     cutaway::{update_cutaway_system, CutawayMode},
@@ -26,12 +27,13 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(AssetPlugin {
             // Absolute path so assets load correctly regardless of working directory.
-            // On wasm, Bevy uses HTTP. Default file_path is "assets", but our files
-            // are at the server root, so use "" to fetch them without a prefix.
+            // On wasm, Bevy uses HTTP. ASSET_BASE_URL can be set at compile time to
+            // a subpath prefix (e.g. "/orchitecture/") for GitHub Pages deployments;
+            // defaults to "" for trunk serve / local builds.
             #[cfg(not(target_arch = "wasm32"))]
             file_path: orchitecture_lib::paths::MANIFEST_DIR.to_string(),
             #[cfg(target_arch = "wasm32")]
-            file_path: "".to_string(),
+            file_path: option_env!("ASSET_BASE_URL").unwrap_or("").to_string(),
             // On wasm, Bevy fetches .meta files over HTTP and gets 404s it can't handle.
             meta_check: bevy::asset::AssetMetaCheck::Never,
             ..default()
@@ -55,6 +57,8 @@ fn main() {
                 enable_ui_input_absorption,
                 // spawn_structures must run before spawn_grid (grid reads StructureList).
                 (spawn_structures, spawn_grid).chain(),
+                spawn_autotile_rules,
+                load_autotile_handles,
                 spawn_camera,
                 spawn_world,
                 spawn_cursors,
@@ -70,6 +74,7 @@ fn main() {
                 cursor_system,
                 update_room_cursor_mesh,
                 recolor_new_mesh_children,
+                autotile_update_system.after(building_input_system),
                 update_cutaway_system,
                 update_ceiling_lights.run_if(resource_changed::<WallGrid>),
             ),

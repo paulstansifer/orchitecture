@@ -141,6 +141,20 @@ impl WallGrid {
         self.propose(0, start, end, RelSlot::Floor, selected_mesh_id)
     }
 
+    pub fn room_drag(
+        &mut self,
+        from: Vec3,
+        to: Vec3,
+        dir: i32,
+        selected_mesh_id: Option<StructureId>,
+    ) -> Vec<(SlotLocation, ProposalView)> {
+        let from_i = from.round().as_ivec3();
+        let to_i = to.round().as_ivec3();
+        let start = from_i.min(to_i);
+        let end = from_i.max(to_i) - IVec3::new(1, 0, 1);
+        self.propose(dir, start, end, RelSlot::Room, selected_mesh_id)
+    }
+
     pub fn room_plop(
         &mut self,
         location: Vec3,
@@ -165,6 +179,7 @@ impl WallGrid {
         &mut self,
         from: Vec3,
         to: Vec3,
+        dir: i32,
         selected_mesh_id: StructureId,
         remove: bool,
     ) -> Vec<(SlotLocation, ProposalView)> {
@@ -172,6 +187,7 @@ impl WallGrid {
         match self.structures[selected_mesh_id.as_usize()].placement_style {
             PlacementStyle::WallDrag => self.wall_drag(from, to, id),
             PlacementStyle::FloorDrag => self.floor_drag(from, to, id),
+            PlacementStyle::RoomDrag => self.room_drag(from, to, dir, id),
             _ => vec![],
         }
     }
@@ -540,6 +556,7 @@ mod tests {
         let drag_deltas = grid.drag(
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(3.0, 0.0, 0.0),
+            0,
             wall_id,
             false,
         );

@@ -2,6 +2,7 @@ use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
 use crate::camera::GameCamera;
 use crate::cutaway::CutawayMode;
 use crate::sparse3d::{Facing, RelSlot};
@@ -115,6 +116,15 @@ fn drag_preview_rect(
                 return None;
             }
             let center = Vec3::new((min.x + max.x) * 0.5, y + H * 0.5, (min.z + max.z) * 0.5);
+            Some((center, Vec3::new(max.x - min.x, H, max.z - min.z)))
+        }
+        PlacementStyle::RoomDrag => {
+            let min = start.round().min(end.round());
+            let max = start.round().max(end.round());
+            if max.x <= min.x || max.z <= min.z {
+                return None;
+            }
+            let center = Vec3::new((min.x + max.x) * 0.5, y + 0.5, (min.z + max.z) * 0.5);
             Some((center, Vec3::new(max.x - min.x, H, max.z - min.z)))
         }
         _ => None,
@@ -264,7 +274,7 @@ pub fn building_input_system(
             } else {
                 wall_grid
                     .bypass_change_detection()
-                    .drag(start, end, id, remove)
+                    .drag(start, end, dir, id, remove)
             };
 
             if !changes.is_empty() {
@@ -289,6 +299,8 @@ pub fn update_room_cursor_mesh(
     cursor_entities: Res<CursorEntities>,
     structure_list: Res<StructureList>,
     wall_grid: Res<WallGrid>,
+    autotile_rules: Res<AutotileRules>,
+    autotile_handles: Res<AutotileHandles>,
     mut commands: Commands,
     mut last_id: Local<Option<usize>>,
 ) {
@@ -297,8 +309,26 @@ pub fn update_room_cursor_mesh(
         return;
     }
     *last_id = Some(id);
-    if wall_grid.structure_is_room_plop(StructureId(id as u32)) {
-        let handle = structure_list.scene_handle(StructureId(id as u32)).clone();
+    let struct_id = StructureId(id as u32);
+    // The last case of the first rule is used as the preview
+    if wall_grid.structure_is_room_plop(struct_id) {
+        let name = &structure_list.structures[id].info.name;
+        let autotile_handle = autotile_rules
+            .0
+            .iter()
+            .find(|rule| &rule.structure_name == name)
+            .and_then(|rule| {
+                rule.cases.last().and_then(|case| {
+                    if let AutotileResult::Mesh { spec, .. } = &case.result {
+                        let stem = spec_stem(spec, rule.slot);
+                        autotile_handles.handles.get(&stem).map(|(h, _)| h.clone())
+                    } else {
+                        None
+                    }
+                })
+            });
+        let handle =
+            autotile_handle.unwrap_or_else(|| structure_list.scene_handle(struct_id).clone());
         commands
             .entity(cursor_entities.room)
             .insert(SceneRoot(handle));
@@ -399,12 +429,17 @@ pub fn spawn_cursors(
         .spawn((Transform::default(), Visibility::Hidden))
         .with_children(|p| {
             p.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.02, 1.0))),
+                MeshMaterial3d(cursor_mat.clone()),
+                Transform::from_xyz(0.0, 0.5, 0.0),
+            ));
+            p.spawn((
                 Mesh3d(meshes.add(Cylinder::new(0.04, 0.5))),
                 MeshMaterial3d(cursor_mat.clone()),
                 Transform::from_xyz(0.0, 0.5, 0.0),
             ));
             p.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.12))),
+                Mesh3d(meshes.add(Sphere::new(0.1))),
                 MeshMaterial3d(cursor_mat.clone()),
                 Transform::from_xyz(0.0, 1.12, 0.0),
             ));

@@ -5,6 +5,7 @@ use bevy::math::Vec3;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::autotile::{AutotileHandles, AutotileResult, rel_slot_to_unoriented, spec_stem};
 use crate::camera::GameCamera;
 use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, SlotLocation};
@@ -13,6 +14,28 @@ use crate::wall_grid::{
     cell_transform, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
     ProposedCutMarker, WallGrid,
 };
+
+fn get_cut_handle<'a>(
+    loc: SlotLocation,
+    id: StructureId,
+    wall_grid: &WallGrid,
+    structure_list: &'a StructureList,
+    autotile_handles: &'a AutotileHandles,
+) -> Option<&'a Handle<Scene>> {
+    if let Some(results) = wall_grid.autotile_results.get(&loc) {
+        // Use the first Mesh result's cut handle; fall through to None if all are None.
+        results.iter().find_map(|result| {
+            if let AutotileResult::Mesh { spec, .. } = result {
+                let stem = spec_stem(spec, rel_slot_to_unoriented(loc.rel_slot));
+                autotile_handles.handles.get(&stem).and_then(|(_, cut)| cut.as_ref())
+            } else {
+                None
+            }
+        })
+    } else {
+        structure_list.cut_handle(id)
+    }
+}
 
 /// Selects which cutaway algorithm is active.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
@@ -356,6 +379,33 @@ pub fn compute_floor_edge(
         }
     }
 
+    // For each hidden floor, also hide Room objects above it until the next floor.
+    let hidden_floors: Vec<SlotLocation> = hidden
+        .iter()
+        .filter(|loc| loc.rel_slot == RelSlot::Floor)
+        .copied()
+        .collect();
+    for floor_loc in hidden_floors {
+        let (x, z) = (floor_loc.cube.x, floor_loc.cube.z);
+        let mut y = floor_loc.cube.y;
+        loop {
+            let room_loc = SlotLocation::new(x, y, z, RelSlot::Room);
+            if wall_grid.get_real_or_proposed(room_loc).is_some() {
+                hidden.push(room_loc);
+            }
+            if wall_grid
+                .get_real_or_proposed(SlotLocation::new(x, y + 1, z, RelSlot::Floor))
+                .is_some()
+            {
+                break;
+            }
+            y += 1;
+            if y > floor_loc.cube.y + 30 {
+                break;
+            }
+        }
+    }
+
     (hidden, cut)
 }
 
@@ -478,6 +528,7 @@ pub fn update_cutaway_system(
     mut commands: Commands,
     mut wall_grid: ResMut<WallGrid>,
     structure_list: Res<StructureList>,
+    autotile_handles: Res<AutotileHandles>,
     build_state: Res<BuildState>,
     cutaway_mode: Res<CutawayMode>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -627,7 +678,7 @@ pub fn update_cutaway_system(
     for (loc, id, is_proposed_only) in cut_entries {
         if is_proposed_only {
             desired_proposed.insert(loc, id);
-        } else if let Some(cut_handle) = structure_list.cut_handle(id) {
+        } else if let Some(cut_handle) = get_cut_handle(loc, id, &wall_grid, &structure_list, &autotile_handles) {
             let transform = cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
             let entity = commands
                 .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
@@ -654,17 +705,20 @@ pub fn update_cutaway_system(
 
     // Spawn proposed cut entities for locations newly entering the cut zone.
     for (loc, id) in desired_proposed {
-        if let std::collections::hash_map::Entry::Vacant(v) = wall_grid
-            .bypass_change_detection()
-            .proposed_cut_entities
-            .entry(loc)
-        {
-            if let Some(cut_handle) = structure_list.cut_handle(id) {
+        // Resolve the cut handle before entering the Entry API (which borrows wall_grid mutably).
+        let cut_handle = get_cut_handle(loc, id, &wall_grid, &structure_list, &autotile_handles)
+            .cloned();
+        if let Some(cut_handle) = cut_handle {
+            if let std::collections::hash_map::Entry::Vacant(v) = wall_grid
+                .bypass_change_detection()
+                .proposed_cut_entities
+                .entry(loc)
+            {
                 let transform =
                     cell_transform(loc.rel_slot, crate::sparse3d::Facing::NegX, loc.cube);
                 let entity = commands
                     .spawn((
-                        SceneRoot(cut_handle.clone()),
+                        SceneRoot(cut_handle),
                         transform,
                         CutCellMarker,
                         ProposedCutMarker,

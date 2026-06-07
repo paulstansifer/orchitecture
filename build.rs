@@ -3,16 +3,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// Re-use the parser and types from the main crate. The module only imports
-// from std, so it compiles cleanly as a build-dependency.
-// `autotile_matching` is intentionally absent here; the cfg-gated matching
-// code is ignored when this file is included.
+// Re-use the parser and types from the main crate. parser.rs only imports
+// from std and anyhow, so it compiles cleanly as a build-dependency.
 #[allow(dead_code, unused_imports, unexpected_cfgs)]
 mod autotile {
-    include!("src/autotile.rs");
+    include!("src/autotile/parser.rs");
 }
 
-use autotile::{AutotileFile, AutotileResult, MeshSpec, UnorientedSlot};
+use autotile::{AutotileFile, AutotileResult, MeshSpec, UnorientedSlot, spec_stem};
 
 fn main() {
     // Register and set `autotile_matching` so the main crate can gate
@@ -84,16 +82,12 @@ fn collect_autotile_files(dir: &Path) -> Vec<PathBuf> {
 
 // ─── Spec collection ──────────────────────────────────────────────────────────
 
-/// Adds every non-trivial top-level result spec to `map` (key = generated filename stem).
-/// Atom:0 specs are trivial — they already exist as base meshes.
 fn collect_result_specs(file: &AutotileFile, map: &mut HashMap<String, (MeshSpec, UnorientedSlot)>) {
     for rule in &file.rules {
         let slot = rule.slot;
         for case in &rule.cases {
             if let AutotileResult::Mesh { spec, .. } = &case.result {
-                if !is_trivial(spec) {
-                    map.insert(spec_stem(spec, slot), (spec.clone(), slot));
-                }
+                map.insert(spec_stem(spec, slot), (spec.clone(), slot));
             }
         }
     }
@@ -101,32 +95,9 @@ fn collect_result_specs(file: &AutotileFile, map: &mut HashMap<String, (MeshSpec
 
 fn is_trivial(spec: &MeshSpec) -> bool {
     matches!(spec, MeshSpec::Atom { rotation: 0, .. })
+    // Rotation is a runtime-only variant; build.rs never produces it.
 }
 
-fn slot_tag(slot: UnorientedSlot) -> &'static str {
-    match slot {
-        UnorientedSlot::Wall => "w",
-        UnorientedSlot::Room => "ro",
-        UnorientedSlot::Floor => "fl",
-    }
-}
-
-/// Deterministic filename stem for a spec (no extension).
-/// Slot is encoded for non-trivial atoms because the pivot translation differs by slot.
-pub fn spec_stem(spec: &MeshSpec, slot: UnorientedSlot) -> String {
-    match spec {
-        MeshSpec::Atom { name, rotation: 0 } => name.clone(),
-        MeshSpec::Atom { name, rotation } => {
-            format!("{name}_{}_r{rotation}", slot_tag(slot))
-        }
-        MeshSpec::Union(a, b) => {
-            format!("union__{}__{}", spec_stem(a, slot), spec_stem(b, slot))
-        }
-        MeshSpec::Intersection(a, b) => {
-            format!("isect__{}__{}", spec_stem(a, slot), spec_stem(b, slot))
-        }
-    }
-}
 
 /// All atom .scad source files referenced by a spec.
 fn collect_scad_deps(spec: &MeshSpec, buildables: &Path) -> Vec<PathBuf> {
@@ -144,6 +115,7 @@ fn collect_scad_deps_rec(spec: &MeshSpec, buildables: &Path, deps: &mut Vec<Path
             collect_scad_deps_rec(a, buildables, deps);
             collect_scad_deps_rec(b, buildables, deps);
         }
+        MeshSpec::Rotation(_, _) => unreachable!("Rotation is a runtime-only variant"),
     }
 }
 
@@ -183,6 +155,7 @@ fn spec_to_scad(spec: &MeshSpec, slot: UnorientedSlot) -> String {
             spec_to_scad(a, slot),
             spec_to_scad(b, slot)
         ),
+        MeshSpec::Rotation(_, _) => unreachable!("Rotation is a runtime-only variant"),
     }
 }
 
@@ -273,8 +246,14 @@ fn generate_if_needed(
 
     if need_main {
         let scad_path = out_dir.join(format!("{stem}.scad"));
-        let scad_src = spec_to_scad(spec, slot);
-        write_and_compile(&scad_path, &scad_src, &main_gltf);
+        if is_trivial(spec) {
+            // The atom source was already copied into out_dir; compile it directly
+            // to avoid writing "include <stem.scad>" into stem.scad (circular).
+            compile_scad(&scad_path, &main_gltf);
+        } else {
+            let scad_src = spec_to_scad(spec, slot);
+            write_and_compile(&scad_path, &scad_src, &main_gltf);
+        }
     }
 
     if need_cut {
@@ -284,11 +263,9 @@ fn generate_if_needed(
     }
 }
 
-fn write_and_compile(scad_path: &Path, scad_src: &str, gltf_out: &Path) {
-    fs::write(scad_path, scad_src)
-        .unwrap_or_else(|e| panic!("Failed to write {}: {e}", scad_path.display()));
-
+fn compile_scad(scad_path: &Path, gltf_out: &Path) {
     let tmp_stl = std::env::temp_dir().join("orchitecture_autotile.stl");
+    println!("cargo:warning=### processing {:?} -> {:?}", scad_path, gltf_out);
 
     let openscad = Command::new("openscad")
         .arg(scad_path)
@@ -302,12 +279,20 @@ fn write_and_compile(scad_path: &Path, scad_src: &str, gltf_out: &Path) {
             return;
         }
         Ok(out) if !out.status.success() => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if stderr.contains("Current top level object is empty.") {
+                println!("cargo:warning=### Empty object: {:?}", scad_path);
+
+                // Empty geometry is a valid signal; write a sentinel empty .gltf.
+                let _ = fs::write(gltf_out, "");
+                return;
+            }
             println!(
                 "cargo:warning=openscad failed (exit {}) for {}",
                 out.status,
                 scad_path.display()
             );
-            for line in String::from_utf8_lossy(&out.stderr).lines() {
+            for line in stderr.lines() {
                 println!("cargo:warning=openscad stderr: {line}");
             }
             return;
@@ -335,4 +320,10 @@ fn write_and_compile(scad_path: &Path, scad_src: &str, gltf_out: &Path) {
         }
         Ok(_) => {}
     }
+}
+
+fn write_and_compile(scad_path: &Path, scad_src: &str, gltf_out: &Path) {
+    fs::write(scad_path, scad_src)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {e}", scad_path.display()));
+    compile_scad(scad_path, gltf_out);
 }

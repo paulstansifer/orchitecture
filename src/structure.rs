@@ -19,6 +19,7 @@ pub enum PlacementStyle {
     WallDrag,
     FloorDrag,
     RoomPlop,
+    RoomDrag,
     WallPlop,
 }
 

@@ -73,7 +73,7 @@
         name: "roof",
         main_mesh: "solid_roof.gltf",
         y_cut_mesh: None,
-        placement_style: RoomPlop,
+        placement_style: RoomDrag,
         x_char: Some('O'),
         z_char: Some('O'),
         embedding: (
@@ -112,8 +112,8 @@
         ),
     ),
     (
-        name: "pillar",
-        main_mesh: "pillar.gltf",
+        name: "column",
+        main_mesh: "column.gltf",
         y_cut_mesh: None,
         placement_style: WallDrag,
         x_char: Some('P'),

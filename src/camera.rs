@@ -16,7 +16,7 @@ pub struct CameraState {
 impl Default for CameraState {
     fn default() -> Self {
         CameraState {
-            target_position: Vec3::ZERO,
+            target_position: Vec3::new(0.0, 0.0, -5.0),
             target_yaw: 0.0,
             target_pitch: 0.7,
             target_dist: 30.0,
