@@ -267,10 +267,6 @@ fn generate_if_needed(
 
 fn compile_scad(scad_path: &Path, gltf_out: &Path) {
     let tmp_stl = std::env::temp_dir().join("orchitecture_autotile.stl");
-    println!(
-        "cargo:warning=### processing {:?} -> {:?}",
-        scad_path, gltf_out
-    );
 
     let openscad = Command::new("openscad")
         .arg(scad_path)
@@ -286,8 +282,6 @@ fn compile_scad(scad_path: &Path, gltf_out: &Path) {
         Ok(out) if !out.status.success() => {
             let stderr = String::from_utf8_lossy(&out.stderr);
             if stderr.contains("Current top level object is empty.") {
-                println!("cargo:warning=### Empty object: {:?}", scad_path);
-
                 // Empty geometry is a valid signal; write a sentinel empty .gltf.
                 let _ = fs::write(gltf_out, "");
                 return;
