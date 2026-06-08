@@ -4,7 +4,7 @@ use bevy::ecs::entity::Entity;
 use bevy::math::{Quat, Vec3};
 use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 
-use crate::sparse3d::SlotCoord;
+use crate::sparse3d::{Facing, SlotCoord};
 use crate::structure::{StructureId, StructureList};
 use crate::wall_grid::{
     cell_transform, Cell, GridCellMarker, Proposal, ProposalGhostMarker, WallGrid,
@@ -19,7 +19,7 @@ use super::{
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
-fn char_matches(ch: char, id: StructureId, anchor_name: &str, all_names: &[String]) -> bool {
+fn char_matches(ch: char, id: StructureId, _facing: Facing, anchor_name: &str, all_names: &[String]) -> bool {
     let name = &all_names[id.as_usize()];
     match ch {
         '=' => name == anchor_name,
@@ -139,8 +139,9 @@ pub fn autotile_update_system(
                 loc.into(),
                 anchor,
                 &autotile_rules.0,
-                |nloc| wall_grid.contents.get(nloc).map(|c| c.id),
-                |ch, id| char_matches(ch, id, anchor, &struct_names),
+                |nloc| wall_grid.contents.get(nloc).map(|c| (c.id, c.facing)),
+                |ch, id, facing| char_matches(ch, id, facing, anchor, &struct_names),
+                |name, id| struct_names[id.as_usize()] == name,
             )?;
             Some((loc, cell.clone(), results))
         })
@@ -173,8 +174,9 @@ pub fn autotile_update_system(
                 loc.into(),
                 anchor,
                 &autotile_rules.0,
-                |nloc| wall_grid.get_proposed_or_real(nloc).map(|c| c.id),
-                |ch, id| char_matches(ch, id, anchor, &struct_names),
+                |nloc| wall_grid.get_proposed_or_real(nloc).map(|c| (c.id, c.facing)),
+                |ch, id, facing| char_matches(ch, id, facing, anchor, &struct_names),
+                |name, id| struct_names[id.as_usize()] == name,
             )
             .unwrap_or_default();
             (loc, cell, results)

@@ -1,8 +1,17 @@
 use std::collections::HashMap;
 
 use super::parser::*;
+use crate::sparse3d::Facing;
 
 // ─── Compiled / oriented representation ──────────────────────────────────────
+
+/// Compiled form of a labeled pattern character's annotation (e.g. `1=stairs:90`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnotatedMatcher {
+    pub name: String,
+    /// Required facing after this case's rotation has been applied. `None` = any facing.
+    pub orientation: Option<Facing>,
+}
 
 #[derive(Debug, Clone)]
 pub struct OrientedCase {
@@ -10,6 +19,8 @@ pub struct OrientedCase {
     /// Non-wildcard checks relative to @ (the "anchor"). Empty = else/fallback case.
     pub checks: HashMap<AutotileRelSlotOffset, char>,
     pub result: AutotileResult,
+    /// Labeled character → compiled annotation (empty when the pattern has no annotations).
+    pub char_annotations: HashMap<char, AnnotatedMatcher>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +96,38 @@ fn rotate_checks(
         .collect()
 }
 
+/// Convert annotation degrees (0° = PosX) to a `Facing` value.
+fn degrees_to_facing(degrees: i32) -> Facing {
+    // PosX = 2; each 90° CW step adds 1 mod 4
+    Facing::from_number((2 + degrees / 90).rem_euclid(4) as u8)
+}
+
+/// Rotate a `Facing` by `rot` 90°-CW steps.
+fn rotate_facing(f: Facing, rot: u8) -> Facing {
+    Facing::from_number(f as u8 + rot)
+}
+
+fn rotate_annotations(
+    annotations: &HashMap<char, PatternAnnotation>,
+    rot: u8,
+) -> HashMap<char, AnnotatedMatcher> {
+    annotations
+        .iter()
+        .map(|(&ch, ann)| {
+            let orientation = ann
+                .orientation
+                .map(|deg| rotate_facing(degrees_to_facing(deg), rot));
+            (
+                ch,
+                AnnotatedMatcher {
+                    name: ann.name.clone(),
+                    orientation,
+                },
+            )
+        })
+        .collect()
+}
+
 fn rotate_result(result: &AutotileResult, rot: u8) -> AutotileResult {
     match result {
         AutotileResult::None => AutotileResult::None,
@@ -113,6 +156,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                     pattern_type: PatternType::H,
                     checks: HashMap::new(),
                     result: case.result.clone(),
+                    char_annotations: HashMap::new(),
                 };
                 if rule.slot == UnorientedSlot::Wall {
                     cases_plus_90.push(oc.clone());
@@ -121,6 +165,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
             }
             Some(pattern) => {
                 let base_checks = pattern.relative_checks();
+                let base_annotations = &pattern.annotations;
                 let pt = pattern.pattern_type.clone();
 
                 let mut seen: Vec<HashMap<AutotileRelSlotOffset, char>> = Vec::new();
@@ -140,6 +185,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                             pattern_type: pt.clone(),
                             checks: rotated,
                             result: rotate_result(&case.result, rot + 2),
+                            char_annotations: rotate_annotations(base_annotations, rot),
                         });
 
                         if rule.slot == UnorientedSlot::Wall {
@@ -148,6 +194,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                                 pattern_type: pt.clone(),
                                 checks: rotated_plus_90,
                                 result: rotate_result(&case.result, rot),
+                                char_annotations: rotate_annotations(base_annotations, rot + 1),
                             });
                         }
                     }
@@ -308,6 +355,74 @@ H:
                 "{slot:?}: 90°×3 ≠ 270°"
             );
             check!(step4 == slot, "{slot:?}: 90°×4 ≠ identity");
+        }
+    }
+
+    // ── Annotation compilation ────────────────────────────────────────────────
+
+    /// A rule that cares about the orientation of one of its matchers.
+    #[test]
+    fn annotation_compiled_into_oriented_cases() {
+        let input = "\
+== railing: wall ==
+H: 1=stairs:90
+ @1
+--> stair_railing:90
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+
+        let orientations_in_cases: Vec<Option<Facing>> = oriented
+            .cases
+            .iter()
+            .map(|c| c.char_annotations.get(&'1').and_then(|a| a.orientation))
+            .collect();
+
+        // rot=0 → PosZ; rot=2 → NegZ (PosZ rotated 180°).
+        check!(
+            orientations_in_cases.contains(&Some(Facing::PosZ)),
+            "cases missing PosZ annotation; got {orientations_in_cases:?}"
+        );
+        check!(
+            orientations_in_cases.contains(&Some(Facing::NegZ)),
+            "cases missing NegZ annotation; got {orientations_in_cases:?}"
+        );
+
+        let orientations_plus_90: Vec<Option<Facing>> = oriented
+            .cases_plus_90
+            .iter()
+            .map(|c| c.char_annotations.get(&'1').and_then(|a| a.orientation))
+            .collect();
+
+        // rot=0+1=1 → NegX; rot=2+1=3 → PosX.
+        check!(
+            orientations_plus_90.contains(&Some(Facing::NegX)),
+            "cases_plus_90 missing NegX annotation; got {orientations_plus_90:?}"
+        );
+        check!(
+            orientations_plus_90.contains(&Some(Facing::PosX)),
+            "cases_plus_90 missing PosX annotation; got {orientations_plus_90:?}"
+        );
+    }
+
+    /// An annotation with no orientation compiles to `None` in every rotated case.
+    #[test]
+    fn annotation_without_orientation_stays_none_after_rotation() {
+        let input = "\
+== railing: wall ==
+H: 1=stairs
+ @1
+--> stair_railing:90
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+
+        for case in oriented.cases.iter().chain(oriented.cases_plus_90.iter()) {
+            let ann = case.char_annotations.get(&'1').unwrap();
+            check!(
+                ann.orientation.is_none(),
+                "orientation-less annotation should stay None after rotation"
+            );
         }
     }
 }

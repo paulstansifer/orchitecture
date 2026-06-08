@@ -23,9 +23,9 @@ V wide:
 --> column_floating * bottom
 
 ==railing:wall==
-H:
- @S
---> none    # handled by staircase, since staircase knows its orientation
+H: 1=stairs:90
+ @1
+--> stair_railing
 H:
   .
  . .
@@ -46,6 +46,11 @@ V wide:
  .
  @
 --> solid_roof
+V wide:
+ =
+ .
+ =.@
+--> (multi) slant_roof  # Give gables nice flat sides
 H:
    =
    .
@@ -85,7 +90,3 @@ H:
 
 ==stairs:room==
 --> stairs
-==stairs:room==
-H:
- @R
---> stair_railing

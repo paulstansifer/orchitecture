@@ -89,12 +89,23 @@ pub enum AutotileResult {
 
 // ─── Parsed representation ───────────────────────────────────────────────────
 
+/// Annotation attached to a labeled pattern character (e.g. `1=stairs:90`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternAnnotation {
+    pub name: String,
+    /// Required facing in degrees relative to the rule's base orientation (0° = PosX).
+    /// `None` means any facing is accepted.
+    pub orientation: Option<i32>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub pattern_type: PatternType,
     pub rows: Vec<Vec<char>>,
     pub at_col: usize,
     pub at_row: usize,
+    /// Labeled character → annotation (e.g. `'1'` → stairs at 90°).
+    pub annotations: HashMap<char, PatternAnnotation>,
 }
 
 impl Pattern {
@@ -245,12 +256,17 @@ fn parse_cases(
             break; // else case is always last
         }
 
-        let pt = match line {
-            "H:" => PatternType::H,
-            "V wide:" => PatternType::VWide,
-            "V narrow:" => PatternType::VNarrow,
-            _ => bail!("line {lineno}: unexpected line: {line:?}"),
+        let (pt, annot_str) = if let Some(rest) = line.strip_prefix("H:") {
+            (PatternType::H, rest)
+        } else if let Some(rest) = line.strip_prefix("V wide:") {
+            (PatternType::VWide, rest)
+        } else if let Some(rest) = line.strip_prefix("V narrow:") {
+            (PatternType::VNarrow, rest)
+        } else {
+            bail!("line {lineno}: unexpected line: {line:?}");
         };
+        let annotations = parse_annotations(annot_str.trim())
+            .with_context(|| format!("line {lineno}"))?;
         let pt_lineno = lineno;
         i += 1;
 
@@ -262,7 +278,7 @@ fn parse_cases(
             let pline = strip_comment(lines[i]);
             let plineno = i + 1;
             if let Some(rest) = pline.strip_prefix("-->") {
-                let pattern = build_pattern(pt, pattern_rows, slot)
+                let pattern = build_pattern(pt, pattern_rows, slot, annotations)
                     .with_context(|| format!("line {plineno}"))?;
                 let result =
                     parse_result(rest.trim()).with_context(|| format!("line {plineno}"))?;
@@ -293,10 +309,42 @@ fn parse_cases(
     Ok((cases, i))
 }
 
+/// Parse space-separated annotations from a pattern-type header, e.g. `"1=stairs:90 2=railing"`.
+fn parse_annotations(s: &str) -> anyhow::Result<HashMap<char, PatternAnnotation>> {
+    let mut map = HashMap::new();
+    for token in s.split_whitespace() {
+        let eq_idx = token
+            .find('=')
+            .with_context(|| format!("annotation {token:?} missing '='"  ))?;
+        let key_str = &token[..eq_idx];
+        if key_str.len() != 1 {
+            bail!("annotation key must be a single character, got {key_str:?}");
+        }
+        let key = key_str.chars().next().unwrap();
+        let rest = &token[eq_idx + 1..];
+        let annotation = if let Some(colon) = rest.rfind(':') {
+            let name = rest[..colon].to_owned();
+            let deg_str = &rest[colon + 1..];
+            let degrees: i32 = deg_str
+                .parse()
+                .with_context(|| format!("invalid orientation {deg_str:?}"))?;
+            if degrees % 90 != 0 {
+                bail!("orientation must be a multiple of 90, got {degrees}");
+            }
+            PatternAnnotation { name, orientation: Some(degrees.rem_euclid(360)) }
+        } else {
+            PatternAnnotation { name: rest.to_owned(), orientation: None }
+        };
+        map.insert(key, annotation);
+    }
+    Ok(map)
+}
+
 fn build_pattern(
     pt: PatternType,
     rows: Vec<Vec<char>>,
     slot: UnorientedSlot,
+    annotations: HashMap<char, PatternAnnotation>,
 ) -> anyhow::Result<Pattern> {
     let mut at_col = None;
     let mut at_row = None;
@@ -342,6 +390,7 @@ fn build_pattern(
         rows,
         at_col: at_col + if col_offset % 2 != 0 { 1 } else { 0 },
         at_row: at_row + if row_offset % 2 != 0 { 1 } else { 0 },
+        annotations,
     })
 }
 
@@ -694,5 +743,71 @@ H:
         check!(file.rules.len() == 2);
         check!(file.rules[0].structure_name == "wall");
         check!(file.rules[1].structure_name == "railing");
+    }
+
+    // ── Annotation parsing ────────────────────────────────────────────────────
+
+    /// The user's motivating example: `H: 1=stairs:90` annotates `'1'` as stairs
+    /// facing 90° (relative to the rule's base orientation).
+    #[test]
+    fn parse_annotation_with_orientation() {
+        let input = "\
+== railing: wall ==
+H: 1=stairs:90
+ @1
+--> stair_railing:90
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.annotations.len() == 1);
+        let ann = pat.annotations.get(&'1').unwrap();
+        check!(ann.name == "stairs");
+        check!(ann.orientation == Some(90));
+    }
+
+    /// An annotation without a colon-angle means "any facing".
+    #[test]
+    fn parse_annotation_without_orientation() {
+        let input = "\
+== railing: wall ==
+H: 1=railing
+ @1
+--> railing_mesh
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        let ann = pat.annotations.get(&'1').unwrap();
+        check!(ann.name == "railing");
+        check!(ann.orientation == None);
+    }
+
+    /// Multiple annotations on the same header line are all stored.
+    #[test]
+    fn parse_multiple_annotations() {
+        let input = "\
+== railing: wall ==
+H: 1=stairs:90 2=stairs:0
+ @1
+--> stair_railing:90
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.annotations.len() == 2);
+        check!(pat.annotations.get(&'1').unwrap().orientation == Some(90));
+        check!(pat.annotations.get(&'2').unwrap().orientation == Some(0));
+    }
+
+    /// Patterns with no annotation still compile fine (empty map, not an error).
+    #[test]
+    fn parse_pattern_without_annotation_has_empty_map() {
+        let input = "\
+== wall: wall ==
+H:
+ @
+--> mesh
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.annotations.is_empty());
     }
 }
