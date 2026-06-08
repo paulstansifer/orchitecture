@@ -558,6 +558,38 @@ impl HiddenPredicate {
     }
 }
 
+/// Propagates `RenderLayers` from scene-root entities to newly-spawned children.
+///
+/// Bevy instantiates `SceneRoot` hierarchies in `PreUpdate`, so when
+/// `update_cutaway_system` first runs in `Update`, the children may not exist yet.
+/// The optimization in that system (skip if root layers already match) then prevents
+/// a follow-up traversal. This system fires whenever `Children` changes on a
+/// `GridCellMarker` or `ProposalGhostMarker` entity and pushes the root's current
+/// `RenderLayers` down to the new descendants.
+pub fn propagate_render_layers_system(
+    changed_q: Query<
+        (Entity, Option<&RenderLayers>),
+        (
+            Or<(With<GridCellMarker>, With<ProposalGhostMarker>)>,
+            Changed<Children>,
+        ),
+    >,
+    children_q: Query<&Children>,
+    mut commands: Commands,
+) {
+    for (entity, layers) in changed_q.iter() {
+        let effective = layers.cloned().unwrap_or_default();
+        if effective == RenderLayers::default() {
+            continue; // layer 0 is the default; newly-spawned children already have it
+        }
+        if let Ok(entity_children) = children_q.get(entity) {
+            for child in entity_children.iter() {
+                apply_render_layers_to_tree(child, &effective, &children_q, &mut commands);
+            }
+        }
+    }
+}
+
 pub fn update_cutaway_system(
     mut commands: Commands,
     mut wall_grid: ResMut<WallGrid>,
@@ -775,7 +807,9 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::build_helpers::Builder;
+    use crate::sparse3d::Facing;
     use crate::structure::load_structure_info;
+    use crate::wall_grid::Cell;
 
     /// Builds a 3×1×3-cube room (Floor at Y=0 and Y=1, canonical XLoWall/ZLoWall
     /// on all four sides at Y=0) and returns the contents plus the loaded structures.
@@ -867,5 +901,116 @@ mod tests {
         check!(hidden_roof_tiles.len() == 9);
 
         check!(SHADOW_ONLY_LAYER == 1);
+    }
+
+    // ── shadow-layer / RenderLayers system tests ────────────────────────────
+
+    /// Builds a minimal Bevy app containing both cutaway systems and the resources
+    /// `update_cutaway_system` needs.  Uses `SimpleOctant` with the camera at
+    /// (10, 5, 10) so any cell at (x≥0, z≥0, y>0) is inside the hidden region.
+    /// A floor cell at (0, 1, 0) is pre-populated in the WallGrid.
+    fn shadow_layer_test_app() -> (App, SlotCoord) {
+        let loc = SlotCoord {
+            cube: IVec3::new(0, 1, 0),
+            slot: Slot::Floor,
+        };
+
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            (
+                update_cutaway_system,
+                propagate_render_layers_system.after(update_cutaway_system),
+            ),
+        );
+
+        let structures = load_structure_info();
+        let mut wg = WallGrid::new(structures);
+        wg.contents.set(
+            loc,
+            Cell {
+                id: StructureId(0),
+                facing: Facing::NegX,
+                evaluation: None,
+            },
+        );
+        app.insert_resource(wg);
+        app.insert_resource(StructureList::default());
+        app.insert_resource(AutotileHandles {
+            handles: std::collections::HashMap::new(),
+        });
+        app.insert_resource(BuildState::default()); // cur_y = 0
+        app.insert_resource(CutawayMode::SimpleOctant);
+
+        // Camera at (10, 5, 10): x_neg=false, z_neg=false.
+        app.world_mut().spawn((
+            Camera::default(),
+            GlobalTransform::from(Transform::from_xyz(10.0, 5.0, 10.0)),
+            GameCamera,
+        ));
+
+        (app, loc)
+    }
+
+    /// When all scene children already exist at the time `update_cutaway_system`
+    /// runs (fast load), it must apply the shadow-only layer to the root entity
+    /// AND every descendant via `apply_render_layers_to_tree`.
+    #[test]
+    fn test_cutaway_shadow_layer_set_on_root_and_loaded_children() {
+        let (mut app, loc) = shadow_layer_test_app();
+
+        let grandchild = app.world_mut().spawn_empty().id();
+        let child = app.world_mut().spawn(Visibility::default()).id();
+        let root = app
+            .world_mut()
+            .spawn((GridCellMarker { loc }, Visibility::default()))
+            .id();
+        app.world_mut().entity_mut(child).add_child(grandchild);
+        app.world_mut().entity_mut(root).add_child(child);
+
+        app.update();
+
+        let desired = RenderLayers::layer(SHADOW_ONLY_LAYER);
+        check!(app.world().get::<RenderLayers>(root).cloned() == Some(desired.clone()));
+        check!(app.world().get::<RenderLayers>(child).cloned() == Some(desired.clone()));
+        check!(app.world().get::<RenderLayers>(grandchild).cloned() == Some(desired));
+    }
+
+    /// Simulates the async scene-load race: `update_cutaway_system` runs first
+    /// with no children present, then scene children arrive (as Bevy's
+    /// `SceneSpawner` would deliver them in `PreUpdate`).
+    /// `propagate_render_layers_system` must detect `Changed<Children>` and
+    /// push the shadow-only layer down so the hidden cell still casts shadows.
+    #[test]
+    fn test_shadow_layer_propagates_to_late_loaded_children() {
+        let (mut app, loc) = shadow_layer_test_app();
+
+        // Spawn root with NO children yet.
+        let root = app
+            .world_mut()
+            .spawn((GridCellMarker { loc }, Visibility::default()))
+            .id();
+
+        // Update 1: update_cutaway_system sets root to the shadow layer,
+        // but apply_render_layers_to_tree finds no children to traverse.
+        app.update();
+
+        let desired = RenderLayers::layer(SHADOW_ONLY_LAYER);
+        check!(app.world().get::<RenderLayers>(root).cloned() == Some(desired.clone()));
+
+        // Scene finishes loading (would arrive via SceneSpawner in PreUpdate).
+        // The tick advanced at the end of the previous update, so these writes
+        // are stamped with a newer tick than update_cutaway_system's last run.
+        let grandchild = app.world_mut().spawn_empty().id();
+        let child = app.world_mut().spawn_empty().id();
+        app.world_mut().entity_mut(child).add_child(grandchild);
+        app.world_mut().entity_mut(root).add_child(child);
+
+        // Update 2: propagate_render_layers_system detects Changed<Children>
+        // and propagates the shadow-only layer down.
+        app.update();
+
+        check!(app.world().get::<RenderLayers>(child).cloned() == Some(desired.clone()));
+        check!(app.world().get::<RenderLayers>(grandchild).cloned() == Some(desired));
     }
 }

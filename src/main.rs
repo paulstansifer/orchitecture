@@ -7,7 +7,7 @@ use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
     camera::{camera_input_system, spawn_camera, CameraState},
     ceiling_lights::update_ceiling_lights,
-    cutaway::{update_cutaway_system, CutawayMode},
+    cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
     grid_preview::GridPreviewPlugin,
     input::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
@@ -76,6 +76,7 @@ fn main() {
                 recolor_new_mesh_children,
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system,
+                propagate_render_layers_system.after(update_cutaway_system),
                 update_ceiling_lights.run_if(resource_changed::<WallGrid>),
             ),
         )
