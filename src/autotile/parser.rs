@@ -265,8 +265,8 @@ fn parse_cases(
         } else {
             bail!("line {lineno}: unexpected line: {line:?}");
         };
-        let annotations = parse_annotations(annot_str.trim())
-            .with_context(|| format!("line {lineno}"))?;
+        let annotations =
+            parse_annotations(annot_str.trim()).with_context(|| format!("line {lineno}"))?;
         let pt_lineno = lineno;
         i += 1;
 
@@ -315,7 +315,7 @@ fn parse_annotations(s: &str) -> anyhow::Result<HashMap<char, PatternAnnotation>
     for token in s.split_whitespace() {
         let eq_idx = token
             .find('=')
-            .with_context(|| format!("annotation {token:?} missing '='"  ))?;
+            .with_context(|| format!("annotation {token:?} missing '='"))?;
         let key_str = &token[..eq_idx];
         if key_str.len() != 1 {
             bail!("annotation key must be a single character, got {key_str:?}");
@@ -331,9 +331,15 @@ fn parse_annotations(s: &str) -> anyhow::Result<HashMap<char, PatternAnnotation>
             if degrees % 90 != 0 {
                 bail!("orientation must be a multiple of 90, got {degrees}");
             }
-            PatternAnnotation { name, orientation: Some(degrees.rem_euclid(360)) }
+            PatternAnnotation {
+                name,
+                orientation: Some(degrees.rem_euclid(360)),
+            }
         } else {
-            PatternAnnotation { name: rest.to_owned(), orientation: None }
+            PatternAnnotation {
+                name: rest.to_owned(),
+                orientation: None,
+            }
         };
         map.insert(key, annotation);
     }

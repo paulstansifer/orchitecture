@@ -62,8 +62,7 @@ pub fn match_pattern<'a>(
                     if let Some((id, facing)) = cell {
                         if let Some(ann) = case.char_annotations.get(&ch) {
                             let name_ok = name_matches_id(&ann.name, id);
-                            let orient_ok =
-                                ann.orientation.map_or(true, |o| o == facing);
+                            let orient_ok = ann.orientation.map_or(true, |o| o == facing);
                             name_ok && orient_ok
                         } else {
                             char_matches_id(ch, id, facing)
@@ -616,7 +615,11 @@ H: 1=stairs:90
 
         // ID 2 = stairs in this test
         fn stairs_cell(facing: Facing) -> Cell {
-            Cell { id: StructureId(2), facing, evaluation: None }
+            Cell {
+                id: StructureId(2),
+                facing,
+                evaluation: None,
+            }
         }
         fn name_is_stairs(name: &str, id: StructureId) -> bool {
             name == "stairs" && id.0 == 2
