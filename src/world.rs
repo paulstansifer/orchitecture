@@ -18,7 +18,7 @@ pub fn spawn_world(
         DirectionalLight {
             illuminance: 5_000.0,
             shadows_enabled: true,
-            soft_shadow_size: Some(10.0),
+            soft_shadow_size: None,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, FRAC_PI_3, -FRAC_PI_4, 0.0)),
