@@ -27,6 +27,41 @@ pub struct AutotileRelSlotOffset {
     pub dest_slot: AutotileRelSlot,
 }
 
+impl AutotileRelSlotOffset {
+    /// For a wall offset, returns the offset for the Room on the far side of that wall from
+    /// the anchor. The anchor is assumed to be on a canonical (Lo) wall slot.
+    ///
+    /// The canonical wall position relative to the anchor is
+    /// `wall_vec = -origin.abs + cube_offset + dest.abs`.
+    /// The far room is at `wall_vec` when `wall_vec > 0` on the wall axis, or `wall_vec - 1`
+    /// otherwise; then `room_cube_offset = far_room_vec + origin.abs`.
+    ///
+    /// Panics if `dest_slot` is not a wall slot.
+    pub fn far_room_offset(self) -> Self {
+        let (ox, _oy, oz) = self.origin_slot.absolute_offset();
+        let (dx, dy, dz) = self.cube_offset;
+        let (ex, _ey, ez) = self.dest_slot.absolute_offset();
+        let room_cube_offset = match self.dest_slot {
+            AutotileRelSlot::XLoWall | AutotileRelSlot::XHiWall => {
+                let wall_x = -ox + dx + ex;
+                let far_x = if wall_x > 0 { wall_x } else { wall_x - 1 };
+                (far_x + ox, dy, dz)
+            }
+            AutotileRelSlot::ZLoWall | AutotileRelSlot::ZHiWall => {
+                let wall_z = -oz + dz + ez;
+                let far_z = if wall_z > 0 { wall_z } else { wall_z - 1 };
+                (dx, dy, far_z + oz)
+            }
+            other => panic!("far_room_offset: not a wall slot: {other:?}"),
+        };
+        AutotileRelSlotOffset {
+            origin_slot: self.origin_slot,
+            cube_offset: room_cube_offset,
+            dest_slot: AutotileRelSlot::Room,
+        }
+    }
+}
+
 /// This matches a type in sparse3d, but we need this at build time.
 /// Every `RelSlot` other than `Room` is shared with an adjacent cube.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,6 +76,18 @@ pub enum AutotileRelSlot {
     ZHiWall,
     /// Equivalent to the ZLoWall of +(0,0,1)
     ZLoWall,
+}
+
+impl AutotileRelSlot {
+    /// Cube offset needed to canonicalize this slot (mirrors `RelSlot::absolute_offset`).
+    pub fn absolute_offset(self) -> (i32, i32, i32) {
+        match self {
+            AutotileRelSlot::XHiWall => (1, 0, 0),
+            AutotileRelSlot::Ceiling => (0, 1, 0),
+            AutotileRelSlot::ZHiWall => (0, 0, 1),
+            _ => (0, 0, 0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -539,7 +586,7 @@ fn parse_factor(s: &str) -> Option<(MeshSpec, &str)> {
 pub fn char_matches_name(ch: char, name: &str) -> bool {
     matches!(
         (ch, name),
-        ('F', "floor") | ('W', "wall") | ('S', "stairs") | ('R', "railing")
+        ('F', "floor") | ('W', "wall") | ('S', "stairs") | ('R', "railing") | ('O', "roof")
     )
 }
 

@@ -13,11 +13,17 @@ pub struct AnnotatedMatcher {
     pub orientation: Option<Facing>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Condition {
+    Atom(AutotileRelSlotOffset, char),
+    Or(Vec<Condition>),
+}
+
 #[derive(Debug, Clone)]
 pub struct OrientedCase {
     pub pattern_type: PatternType,
     /// Non-wildcard checks relative to @ (the "anchor"). Empty = else/fallback case.
-    pub checks: HashMap<AutotileRelSlotOffset, char>,
+    pub checks: Vec<Condition>,
     pub result: AutotileResult,
     /// Labeled character → compiled annotation (empty when the pattern has no annotations).
     pub char_annotations: HashMap<char, AnnotatedMatcher>,
@@ -96,6 +102,22 @@ fn rotate_checks(
         .collect()
 }
 
+/// Convert a raw `(offset → char)` map into `Vec<Condition>`, expanding special chars.
+/// `'r'` expands to `Or([Atom(wall_offset, 'W'), Atom(far_room_offset, 'O')])`;
+/// see `AutotileRelSlotOffset::far_room_offset` for the geometry.
+fn checks_to_conditions(checks: &HashMap<AutotileRelSlotOffset, char>) -> Vec<Condition> {
+    checks
+        .iter()
+        .map(|(&offset, &ch)| match ch {
+            'r' => Condition::Or(vec![
+                Condition::Atom(offset, 'W'),
+                Condition::Atom(offset.far_room_offset(), 'O'),
+            ]),
+            _ => Condition::Atom(offset, ch),
+        })
+        .collect()
+}
+
 /// Convert annotation degrees (0° = PosX) to a `Facing` value.
 fn degrees_to_facing(degrees: i32) -> Facing {
     // PosX = 2; each 90° CW step adds 1 mod 4
@@ -154,7 +176,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                 // Else case: no constraints, matches always. One copy.
                 let oc = OrientedCase {
                     pattern_type: PatternType::H,
-                    checks: HashMap::new(),
+                    checks: vec![],
                     result: case.result.clone(),
                     char_annotations: HashMap::new(),
                 };
@@ -183,7 +205,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                         seen.push(rotated.clone());
                         cases.push(OrientedCase {
                             pattern_type: pt.clone(),
-                            checks: rotated,
+                            checks: checks_to_conditions(&rotated),
                             result: rotate_result(&case.result, rot + 2),
                             char_annotations: rotate_annotations(base_annotations, rot),
                         });
@@ -192,7 +214,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                             let rotated_plus_90 = rotate_checks(&base_checks, rot + 1);
                             cases_plus_90.push(OrientedCase {
                                 pattern_type: pt.clone(),
-                                checks: rotated_plus_90,
+                                checks: checks_to_conditions(&rotated_plus_90),
                                 result: rotate_result(&case.result, rot),
                                 char_annotations: rotate_annotations(base_annotations, rot + 1),
                             });

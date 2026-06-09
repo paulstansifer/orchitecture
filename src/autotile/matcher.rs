@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::compiler::*;
 use super::parser::*;
 
@@ -23,6 +25,52 @@ impl From<AutotileRelSlot> for crate::sparse3d::RelSlot {
 
 // ─── Matching ─────────────────────────────────────────────────────────────────
 
+fn check_condition<F1, F2, F3>(
+    cond: &Condition,
+    anchor: RelSlotCoord,
+    get_cell: &F1,
+    char_matches_id: &F2,
+    name_matches_id: &F3,
+    char_annotations: &HashMap<char, AnnotatedMatcher>,
+) -> bool
+where
+    F1: Fn(RelSlotCoord) -> Option<(StructureId, Facing)>,
+    F2: Fn(char, StructureId, Facing) -> bool,
+    F3: Fn(&str, StructureId) -> bool,
+{
+    match cond {
+        Condition::Atom(offset, ch) => {
+            let (cx, cy, cz) = offset.cube_offset;
+            let neighbor = anchor.apply_offset(crate::sparse3d::RelSlotCoordOffset {
+                origin_slot: offset.origin_slot.into(),
+                cube_offset: IVec3::new(cx, cy, cz),
+                dest_slot: offset.dest_slot.into(),
+            });
+            let cell = get_cell(neighbor);
+            match ch {
+                ' ' => true,
+                '.' => cell.is_none(),
+                _ => {
+                    if let Some((id, facing)) = cell {
+                        if let Some(ann) = char_annotations.get(ch) {
+                            let name_ok = name_matches_id(&ann.name, id);
+                            let orient_ok = ann.orientation.map_or(true, |o| o == facing);
+                            name_ok && orient_ok
+                        } else {
+                            char_matches_id(*ch, id, facing)
+                        }
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+        Condition::Or(conditions) => conditions.iter().any(|c| {
+            check_condition(c, anchor, get_cell, char_matches_id, name_matches_id, char_annotations)
+        }),
+    }
+}
+
 /// Returns the result for the first matching oriented case.
 ///
 /// `get_cell` maps a slot location to the `(StructureId, Facing)` occupying it (None = empty).
@@ -47,31 +95,15 @@ pub fn match_pattern<'a>(
         &oriented.cases
     };
     for case in cases {
-        let matches = case.checks.iter().all(|(&offset, &ch)| {
-            let (cx, cy, cz) = offset.cube_offset;
-            let neighbor = anchor.apply_offset(crate::sparse3d::RelSlotCoordOffset {
-                origin_slot: offset.origin_slot.into(),
-                cube_offset: IVec3::new(cx, cy, cz),
-                dest_slot: offset.dest_slot.into(),
-            });
-            let cell = get_cell(neighbor);
-            match ch {
-                ' ' => true,
-                '.' => cell.is_none(),
-                _ => {
-                    if let Some((id, facing)) = cell {
-                        if let Some(ann) = case.char_annotations.get(&ch) {
-                            let name_ok = name_matches_id(&ann.name, id);
-                            let orient_ok = ann.orientation.map_or(true, |o| o == facing);
-                            name_ok && orient_ok
-                        } else {
-                            char_matches_id(ch, id, facing)
-                        }
-                    } else {
-                        false
-                    }
-                }
-            }
+        let matches = case.checks.iter().all(|cond| {
+            check_condition(
+                cond,
+                anchor,
+                &get_cell,
+                &char_matches_id,
+                &name_matches_id,
+                &case.char_annotations,
+            )
         });
         if matches {
             return Some(&case.result);
@@ -588,6 +620,66 @@ H:
                 "missing {expected}; got {all:?}"
             );
         }
+    }
+
+    // ── 'r' condition tests ───────────────────────────────────────────────────
+
+    /// `'r'` in a wall position matches when there's a wall there, or when there's a roof
+    /// in the room on the FAR side of that wall from the anchor. A roof in the near room
+    /// (between the anchor and the wall) must NOT match.
+    #[test]
+    fn r_condition_matches_wall_or_roof() {
+        // Pattern `r @`: 'r' is one wall-slot to the LEFT of '@'.
+        // After parse: '@' at XLoWall cube (2,0,0), 'r' at XLoWall cube (1,0,0).
+        // Relative to anchor: wall_offset = XLoWall at cube_offset (-1,0,0).
+        //
+        // XLoWall(-1) sits between Room(-2) and Room(-1).
+        // Anchor XLoWall(0) sits between Room(-1) and Room(0).
+        // → Room(-1) is the NEAR room (shared with anchor), Room(-2) is the FAR room.
+        let input = "\
+== wall: wall ==
+H:
+ r @
+--> hit
+--> none
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+        let anchor   = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
+        let wall_loc = RelSlotCoord::new(-1, 0, 0, RelSlot::XLoWall);
+        let far_room = RelSlotCoord::new(-2, 0, 0, RelSlot::Room);
+        let near_room = RelSlotCoord::new(-1, 0, 0, RelSlot::Room);
+
+        // StructureId 0 = wall, 1 = roof (local convention)
+        fn make_cell(id: u32) -> Cell {
+            Cell { id: StructureId(id), facing: Default::default(), evaluation: None }
+        }
+        fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
+            const NAMES: [&str; 2] = ["wall", "roof"];
+            char_matches_name(ch, NAMES[id.0 as usize])
+        }
+
+        // Case 1: wall present at wall_loc → should match 'hit'
+        let mut grid = Sparse3D::new();
+        grid.set(wall_loc, make_cell(0));
+        let result = match_pattern(&oriented, |l| grid.get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
+        check!(matches!(result, Some(AutotileResult::Mesh { .. })), "wall present should match; got {result:?}");
+
+        // Case 2: roof in far room → should match 'hit'
+        let mut grid2 = Sparse3D::new();
+        grid2.set(far_room, make_cell(1));
+        let result2 = match_pattern(&oriented, |l| grid2.get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
+        check!(matches!(result2, Some(AutotileResult::Mesh { .. })), "roof in far room should match; got {result2:?}");
+
+        // Case 3: roof in NEAR room only → should NOT satisfy 'r', falls through to 'none'
+        let mut grid3 = Sparse3D::new();
+        grid3.set(near_room, make_cell(1));
+        let result3 = match_pattern(&oriented, |l| grid3.get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
+        check!(result3 == Some(&AutotileResult::None), "roof in near room should not match; got {result3:?}");
+
+        // Case 4: neither wall nor roof → should fall through to 'none'
+        let result4 = match_pattern(&oriented, |l| Sparse3D::<Cell>::new().get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
+        check!(result4 == Some(&AutotileResult::None), "neither wall nor roof should fall through; got {result4:?}");
     }
 
     // ── Annotation orientation tests ──────────────────────────────────────────

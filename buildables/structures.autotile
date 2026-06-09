@@ -52,33 +52,25 @@ V wide:
  =.@
 --> (multi) slant_roof  # Give gables nice flat sides
 H:
-   =
-   .
- =.@.=
-   .
-   =
+   r
+  r@r
+   r
 --> solid_roof
 H:
-   =
-   .
- =.@
-   .
-   =
+   r
+  r@
+   r
 --> slant_roof
 H:
- =.@
-   .
-   =
+  r@
+   r
 --> slant_roof * slant_roof:90
 H:
- =.@.=
+ r@r
 --> slant_roof:90 * slant_roof:270
 H:
- =.@
+ r@
 --> slant_roof * slant_roof:90 * slant_roof:270
-H:
- .@W
---> (multi) slant_roof   # TODO: walls somehow?
 H:
    .
    .
@@ -88,5 +80,4 @@ H:
 --> slant_roof * slant_roof:90 * slant_roof:180 * slant_roof:270
 --> solid_roof
 
-==stairs:room==
---> stairs
+# Currently, don't use rules for 'stairs' so that they maintain their original direction.
