@@ -40,6 +40,19 @@ H:
 --> railing_cap
 --> railing     # by default, models meet at integer coordinates now
 
+==wall:wall==
+--> v_connector+wall
+
+
+==window:wall==
+--> v_connector+window
+
+==doorway:wall==
+--> v_connector+doorway
+
+==floor:floor==
+--> h_connector+floor
+
 ==roof:room==
 V wide:
  =

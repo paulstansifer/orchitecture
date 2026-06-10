@@ -254,6 +254,7 @@ pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
             let slot = match inner[colon + 1..].trim() {
                 "wall" => UnorientedSlot::Wall,
                 "room" => UnorientedSlot::Room,
+                "floor" => UnorientedSlot::Floor,
                 other => bail!("line {lineno}: invalid slot: {other:?}"),
             };
             i += 1;
@@ -471,7 +472,9 @@ fn offset(
         (PatternType::VWide, UnorientedSlot::Room) => (0, 1),
         // (0,0) would also work, but we need to pick a canonical version:
         (PatternType::VWide, UnorientedSlot::Wall) => (1, 1),
-        (_, UnorientedSlot::Floor) => bail!("floors as anchors are not yet supported"),
+        // Floor sits at (even, even) in VWide, which is already (0,0).
+        (PatternType::VWide, UnorientedSlot::Floor) => (0, 0),
+        (_, UnorientedSlot::Floor) => bail!("floor anchors are only supported in V wide patterns"),
     };
     Ok(((anchor_col + p_col) % 2, (anchor_row + p_row) % 2))
 }
@@ -586,7 +589,12 @@ fn parse_factor(s: &str) -> Option<(MeshSpec, &str)> {
 pub fn char_matches_name(ch: char, name: &str) -> bool {
     matches!(
         (ch, name),
-        ('F', "floor") | ('W', "wall") | ('S', "stairs") | ('R', "railing") | ('O', "roof")
+        ('F', "floor")
+            | ('W', "wall")
+            | ('S', "stairs")
+            | ('R', "railing")
+            | ('O', "roof")
+            | ('w', "wall" | "window" | "doorway")
     )
 }
 
@@ -796,6 +804,42 @@ H:
         check!(file.rules.len() == 2);
         check!(file.rules[0].structure_name == "wall");
         check!(file.rules[1].structure_name == "railing");
+    }
+
+    #[test]
+    fn parse_floor_anchor_rule() {
+        let input = "\
+== rug: floor ==
+V wide:
+ @
+ R
+--> rug_with_room
+--> rug_bare
+";
+        let file = parse(input).unwrap();
+        check!(file.rules.len() == 1);
+        let rule = &file.rules[0];
+        check!(rule.structure_name == "rug");
+        check!(rule.slot == UnorientedSlot::Floor);
+        check!(rule.cases.len() == 2);
+
+        let case = &rule.cases[0];
+        let pat = case.pattern.as_ref().unwrap();
+        check!(pat.pattern_type == PatternType::VWide);
+        // '@' at grid (0,0) → Floor. With (p_col, p_row)=(0,0) no padding needed.
+        check!(pat.at_col == 0);
+        check!(pat.at_row == 0);
+
+        let checks = pat.relative_checks();
+        // '@' at grid (0,0) → (0,1,0, Floor); 'R' at grid (0,1) → (0,0,0, Room).
+        // cube_offset = (0,0,0) − (0,1,0) = (0,−1,0).
+        let room_below = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Floor,
+            cube_offset: (0, -1, 0),
+            dest_slot: AutotileRelSlot::Room,
+        };
+        check!(checks[&room_below] == 'R');
+        check!(checks.len() == 1);
     }
 
     // ── Annotation parsing ────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 color([0.3, 0.3, 0.5])
 difference() {
-    translate([-0.1,-0.1,-0.1])
-    cube([1.2, .2, 1.2], false);
+    translate([0.1,-0.1,0.5])
+    cube([0.8, .2, 0.4], false);
 
     
     rotate([90, 0, 0])
