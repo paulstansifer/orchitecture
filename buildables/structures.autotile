@@ -50,7 +50,27 @@ V wide:
  =
  .
  =.@
---> (multi) slant_roof  # Give gables nice flat sides
+--> (multi) slant_roof          # Give gables nice flat sides
+H:
+ .. ..
+ . r .
+  r@..
+ . r .
+ .. ..
+--> (multi) slant_roof * slant_roof:90 * slant_roof:270 + slant_roof * slant_roof:180 # highly-specific; kind of a hack?
+H:
+    ..
+   r .
+  r@r
+   r .
+    ..
+--> (multi) slant_roof + slant_roof:90 * slant_roof:270  # double valley
+H:
+    ..
+   r .
+  r@r
+   r
+--> (multi) slant_roof + slant_roof:90  # valley
 H:
    r
   r@r
