@@ -14,7 +14,8 @@ pub enum UnorientedSlot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternType {
     H,
-    VWide,
+    HNarrow,
+    V,
     VNarrow,
 }
 
@@ -192,14 +193,20 @@ fn grid_pos_to_3d(pt: PatternType, col: usize, row: usize) -> (i32, i32, i32, Au
             (1, 1) => (c / 2 + 1, 0, r / 2, AutotileRelSlot::XLoWall),
             _ => panic!("dead slot at ({col}, {row})"),
         },
-        PatternType::VWide => match (row % 2, col % 2) {
+        PatternType::V => match (row % 2, col % 2) {
             (0, 0) => (c / 2, -(r / 2) + 1, 0, AutotileRelSlot::Floor),
             (1, 0) => (c / 2, -(r / 2), 0, AutotileRelSlot::Room),
             (1, 1) => (c / 2 + 1, -(r / 2), 0, AutotileRelSlot::XLoWall),
             _ => panic!("dead slot at ({col}, {row})"),
         },
         PatternType::VNarrow => match (row % 2, col % 2) {
-            (0, 0) => (c / 2, -(r / 2), 0, AutotileRelSlot::XLoWall),
+            // The wall of the same cube as V's room (one line "behind" the R).
+            (1, 0) => (c / 2, -(r / 2), 0, AutotileRelSlot::XLoWall),
+            _ => panic!("dead slot at ({col}, {row})"),
+        },
+        PatternType::HNarrow => match (row % 2, col % 2) {
+            // The floor of the same cube as H's room (the R position in H).
+            (1, 0) => (c / 2, 0, r / 2, AutotileRelSlot::Floor),
             _ => panic!("dead slot at ({col}, {row})"),
         },
     }
@@ -304,12 +311,14 @@ fn parse_cases(
             break; // else case is always last
         }
 
-        let (pt, annot_str) = if let Some(rest) = line.strip_prefix("H:") {
+        let (pt, annot_str) = if let Some(rest) = line.strip_prefix("H narrow:") {
+            (PatternType::HNarrow, rest)
+        } else if let Some(rest) = line.strip_prefix("H:") {
             (PatternType::H, rest)
-        } else if let Some(rest) = line.strip_prefix("V wide:") {
-            (PatternType::VWide, rest)
         } else if let Some(rest) = line.strip_prefix("V narrow:") {
             (PatternType::VNarrow, rest)
+        } else if let Some(rest) = line.strip_prefix("V:") {
+            (PatternType::V, rest)
         } else {
             bail!("line {lineno}: unexpected line: {line:?}");
         };
@@ -452,12 +461,15 @@ fn build_pattern(
 // H:
 //   W.
 //   RW
-// V wide:
+// H narrow:
+//   ..
+//   F.
+// V:
 //   F.
 //   RW
 // V narrow:
-//   W.
 //   ..
+//   W.
 /// Offset to apply to a raw pattern to make the anchor appear in the right spot in the 2x2 slot grid
 fn offset(
     pt: PatternType,
@@ -465,16 +477,22 @@ fn offset(
     anchor_col: usize,
     anchor_row: usize,
 ) -> anyhow::Result<(usize, usize)> {
+    // `p_col`/`p_row` of 0 means the anchor should land on an even col/row, 1 means odd.
     let (p_col, p_row) = match (pt, slot) {
         (PatternType::H, UnorientedSlot::Room) => (0, 1),
         (PatternType::H, UnorientedSlot::Wall) => (1, 1),
-        (PatternType::VNarrow, _) => (0, 0), // Only wall is valid, though!
-        (PatternType::VWide, UnorientedSlot::Room) => (0, 1),
+        (PatternType::H, UnorientedSlot::Floor) => {
+            bail!("H patterns have no floor slot; use H narrow")
+        }
+        (PatternType::HNarrow, UnorientedSlot::Floor) => (0, 1),
+        (PatternType::HNarrow, _) => bail!("H narrow patterns only support floor anchors"),
+        (PatternType::VNarrow, UnorientedSlot::Wall) => (0, 1),
+        (PatternType::VNarrow, _) => bail!("V narrow patterns only support wall anchors"),
+        (PatternType::V, UnorientedSlot::Room) => (0, 1),
         // (0,0) would also work, but we need to pick a canonical version:
-        (PatternType::VWide, UnorientedSlot::Wall) => (1, 1),
-        // Floor sits at (even, even) in VWide, which is already (0,0).
-        (PatternType::VWide, UnorientedSlot::Floor) => (0, 0),
-        (_, UnorientedSlot::Floor) => bail!("floor anchors are only supported in V wide patterns"),
+        (PatternType::V, UnorientedSlot::Wall) => (1, 1),
+        // Floor sits at (even, even) in V, which is already (0,0).
+        (PatternType::V, UnorientedSlot::Floor) => (0, 0),
     };
     Ok(((anchor_col + p_col) % 2, (anchor_row + p_row) % 2))
 }
@@ -483,12 +501,12 @@ fn offset(
 
 /// In H patterns the slot layout (per repeating tile) is:
 ///   (even, even) = W   (even, odd) = R   (odd, odd) = W   (odd, even) = dead
-/// In V wide: same dead/live pattern as H.
-/// In V narrow: only (even, even) are valid; everything else is dead.
+/// In V: same dead/live pattern as H.
+/// In V narrow / H narrow: only (even col, odd row) is valid; everything else is dead.
 fn is_dead_slot(pt: &PatternType, col: usize, row: usize) -> bool {
     match pt {
-        PatternType::H | PatternType::VWide => col % 2 == 1 && row % 2 == 0,
-        PatternType::VNarrow => col % 2 == 1 || row % 2 == 1,
+        PatternType::H | PatternType::V => col % 2 == 1 && row % 2 == 0,
+        PatternType::VNarrow | PatternType::HNarrow => !(col % 2 == 0 && row % 2 == 1),
     }
 }
 
@@ -810,7 +828,7 @@ H:
     fn parse_floor_anchor_rule() {
         let input = "\
 == rug: floor ==
-V wide:
+V:
  @
  R
 --> rug_with_room
@@ -825,7 +843,7 @@ V wide:
 
         let case = &rule.cases[0];
         let pat = case.pattern.as_ref().unwrap();
-        check!(pat.pattern_type == PatternType::VWide);
+        check!(pat.pattern_type == PatternType::V);
         // '@' at grid (0,0) → Floor. With (p_col, p_row)=(0,0) no padding needed.
         check!(pat.at_col == 0);
         check!(pat.at_row == 0);
@@ -840,6 +858,92 @@ V wide:
         };
         check!(checks[&room_below] == 'R');
         check!(checks.len() == 1);
+    }
+
+    /// `V narrow` is wall-anchored: a stack of walls above/below the anchor.
+    #[test]
+    fn parse_v_narrow_wall_stack() {
+        let input = "\
+== wall: wall ==
+V narrow:
+ W
+
+ @
+
+ W
+--> wall_mesh
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.pattern_type == PatternType::VNarrow);
+        // '@' wall at cube (0,-1,0); 'W' above at (0,0,0) → +Y; 'W' below at (0,-2,0) → -Y.
+        let checks = pat.relative_checks();
+        let above = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::XLoWall,
+            cube_offset: (0, 1, 0),
+            dest_slot: AutotileRelSlot::XLoWall,
+        };
+        let below = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::XLoWall,
+            cube_offset: (0, -1, 0),
+            dest_slot: AutotileRelSlot::XLoWall,
+        };
+        check!(checks[&above] == 'W');
+        check!(checks[&below] == 'W');
+        check!(checks.len() == 2);
+    }
+
+    /// `V narrow` only allows wall anchors.
+    #[test]
+    fn v_narrow_rejects_non_wall_anchor() {
+        let input = "\
+== rug: floor ==
+V narrow:
+ @
+--> mesh
+";
+        check!(parse(input).is_err());
+    }
+
+    /// `H narrow` is floor-anchored: floors tiling horizontally (XZ plane).
+    #[test]
+    fn parse_h_narrow_floor_neighbors() {
+        let input = "\
+== floor: floor ==
+H narrow:
+ F @ F
+--> floor_mesh
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.pattern_type == PatternType::HNarrow);
+        // '@' floor at cube (1,0,0); 'F' west at (0,0,0) → -X; 'F' east at (2,0,0) → +X.
+        let checks = pat.relative_checks();
+        let west = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Floor,
+            cube_offset: (-1, 0, 0),
+            dest_slot: AutotileRelSlot::Floor,
+        };
+        let east = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Floor,
+            cube_offset: (1, 0, 0),
+            dest_slot: AutotileRelSlot::Floor,
+        };
+        check!(checks[&west] == 'F');
+        check!(checks[&east] == 'F');
+        check!(checks.len() == 2);
+    }
+
+    /// `H narrow` only allows floor anchors.
+    #[test]
+    fn h_narrow_rejects_non_floor_anchor() {
+        let input = "\
+== wall: wall ==
+H narrow:
+ @
+--> mesh
+";
+        check!(parse(input).is_err());
     }
 
     // ── Annotation parsing ────────────────────────────────────────────────────

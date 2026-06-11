@@ -1,9 +1,9 @@
 ==column:wall==
-V wide:
+V:
  F
   @
 --> column_caps * top
-V wide:
+V:
   =
  . .
   @
@@ -11,11 +11,11 @@ V wide:
 --> column_floating * top
 
 ==column:wall==  # multiple stanzas produces multiple independent rules
-V wide:
+V:
   @
  F
 --> column_caps * bottom
-V wide:
+V:
   @
  . .
   =
@@ -54,12 +54,12 @@ H:
 --> h_connector+floor
 
 ==roof:room==
-V wide:
+V:
  =
  .
  @
 --> solid_roof
-V wide:
+V:
  =
  .
  =.@

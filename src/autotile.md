@@ -5,7 +5,7 @@ An autotile pattern file consists of rules. There should be at least one rule pe
 
 rule           = "==" structure name, ":", slot, "==\n", { pattern }
 structure name = identifier
-slot           = "wall" | "room"
+slot           = "wall" | "room" | "floor"
 pattern        = [ pattern type, { pattern line } ], "-->" result
 
 (Any line may end with spaces and/or a Bash-style comment.)
@@ -13,7 +13,7 @@ pattern        = [ pattern type, { pattern line } ], "-->" result
 
 ## Autotile patterns
 
-pattern type   = "H:\n" | "V wide:\n" | "V narrow:\n" 
+pattern type   = "H:\n" | "H narrow:\n" | "V:\n" | "V narrow:\n" 
 pattern line   = " ", { "|" | "%" | " " | "." | "=" | letter }, "\n"
 
 Pattern lines are interpreted together as a 2D grid, in the XZ plane (unoriented) for "H" pattenrs or the XY or ZY planes (with up at the top, but otherwise unoriented) for "V" patterns. The 2D pattern must have exactly one "@", indicating where the structure in question is. More details later.
@@ -24,17 +24,31 @@ RWRW
 W.W.
 If the @ is a wall slot, the pattern needs disambiguation: the slots on the same line are treated as room slots, and the ones on adjacent lines are dead slots.
 
-Wide vertical patterns (`V wide:`) contain floor, wall, and room slots:
+Vertical patterns (`V:`) contain floor, wall, and room slots:
 F.F.
 RWRW
 F.F.
 RWRW
 
-Narrow vertical patterns (`V narrow:`) contain only wall slots:
-W.W.
+The two "narrow" pattern types are single-slot companions to the full patterns;
+their one live slot sits directly "behind" the `R` (room) position of the
+corresponding full pattern. They mirror each other: walls are the surface that
+tiles in the vertical plane, floors the surface that tiles in the horizontal
+plane.
+
+Narrow vertical patterns (`V narrow:`) are wall-anchored and contain only wall slots
+(the wall of the room's own cube), for vertical wall stacking:
 ....
 W.W.
 ....
+W.W.
+
+Narrow horizontal patterns (`H narrow:`) are floor-anchored and contain only floor slots
+(the floor of the room's own cube), for horizontal floor tiling in the XZ plane:
+....
+F.F.
+....
+F.F.
 
 All patterns are 4-way symmetric in the Y axis. But orientation is respected; all models will be rotated to match the orientation of the @ structure.
 
