@@ -41,17 +41,50 @@ H:
 --> railing     # by default, models meet at integer coordinates now
 
 ==wall:wall==
---> v_connector+wall
+--> wall
+==window:wall==
+--> window
+==doorway:wall==
+--> doorway
 
+==wall:wall==
+H:
+  w
+ . @
+  .
+--> v_corner_fill_full   # We should probably flip rules, and not use the `_full` version
 
 ==window:wall==
---> v_connector+window
+H:
+  w
+ . @
+  .
+--> v_corner_fill_full
 
 ==doorway:wall==
---> v_connector+doorway
+H:
+  w
+ . @
+  .
+--> v_corner_fill_full
 
 ==floor:floor==
---> h_connector+floor
+--> floor
+
+==floor:floor==
+V:
+  
+   w
+  @ .
+   .
+--> h_corner_fill_full
+
+==floor:floor==
+V:
+  .
+ @ .
+  w
+--> (multi) h_corner_fill_full_ceiling
 
 ==roof:room==
 V:
