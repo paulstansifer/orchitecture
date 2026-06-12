@@ -5,6 +5,7 @@ use bevy::math::Vec3;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::autotile::display::autotile_transform;
 use crate::autotile::{slot_to_unoriented, spec_stem, AutotileHandles, AutotileResult};
 use crate::camera::GameCamera;
 use crate::input::{cursor_world_pos, BuildState};
@@ -15,13 +16,17 @@ use crate::wall_grid::{
     ProposedCutMarker, WallGrid,
 };
 
-fn get_cut_handle<'a>(
+/// Resolves the cut mesh for `loc` along with the transform it should be spawned
+/// with. For autotile cells, the transform carries the same rotation the matched
+/// rule gave the visible mesh (via `autotile_transform`), so the cut face lines up
+/// with the geometry it replaces instead of defaulting to `Facing::NegX`.
+fn get_cut(
     loc: SlotCoord,
     id: StructureId,
     wall_grid: &WallGrid,
-    structure_list: &'a StructureList,
-    autotile_handles: &'a AutotileHandles,
-) -> Option<&'a Handle<Scene>> {
+    structure_list: &StructureList,
+    autotile_handles: &AutotileHandles,
+) -> Option<(Handle<Scene>, Transform)> {
     if let Some(results) = wall_grid.autotile_results.get(&loc) {
         // Use the first Mesh result's cut handle; fall through to None if all are None.
         results.iter().find_map(|result| {
@@ -31,12 +36,18 @@ fn get_cut_handle<'a>(
                     .handles
                     .get(&stem)
                     .and_then(|(_, cut)| cut.as_ref())
+                    .map(|cut| (cut.clone(), autotile_transform(loc, spec)))
             } else {
                 None
             }
         })
     } else {
-        structure_list.cut_handle(id)
+        structure_list.cut_handle(id).map(|h| {
+            (
+                h.clone(),
+                cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube),
+            )
+        })
     }
 }
 
@@ -744,12 +755,11 @@ pub fn update_cutaway_system(
     for (loc, id, is_proposed_only) in cut_entries {
         if is_proposed_only {
             desired_proposed.insert(loc, id);
-        } else if let Some(cut_handle) =
-            get_cut_handle(loc, id, &wall_grid, &structure_list, &autotile_handles)
+        } else if let Some((cut_handle, transform)) =
+            get_cut(loc, id, &wall_grid, &structure_list, &autotile_handles)
         {
-            let transform = cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube);
             let entity = commands
-                .spawn((SceneRoot(cut_handle.clone()), transform, CutCellMarker))
+                .spawn((SceneRoot(cut_handle), transform, CutCellMarker))
                 .id();
             wall_grid
                 .bypass_change_detection()
@@ -774,15 +784,13 @@ pub fn update_cutaway_system(
     // Spawn proposed cut entities for locations newly entering the cut zone.
     for (loc, id) in desired_proposed {
         // Resolve the cut handle before entering the Entry API (which borrows wall_grid mutably).
-        let cut_handle =
-            get_cut_handle(loc, id, &wall_grid, &structure_list, &autotile_handles).cloned();
-        if let Some(cut_handle) = cut_handle {
+        let cut = get_cut(loc, id, &wall_grid, &structure_list, &autotile_handles);
+        if let Some((cut_handle, transform)) = cut {
             if let std::collections::hash_map::Entry::Vacant(v) = wall_grid
                 .bypass_change_detection()
                 .proposed_cut_entities
                 .entry(loc)
             {
-                let transform = cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube);
                 let entity = commands
                     .spawn((
                         SceneRoot(cut_handle),

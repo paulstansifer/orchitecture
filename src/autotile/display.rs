@@ -33,7 +33,10 @@ fn char_matches(
     }
 }
 
-fn autotile_transform(loc: SlotCoord, _cell: &Cell, spec: &MeshSpec) -> Transform {
+/// Computes the transform for an autotile mesh at `loc`, applying the rotation
+/// the matched rule (`spec`) assigned. The input cell's facing is deliberately
+/// ignored — only the rule's matched direction matters.
+pub fn autotile_transform(loc: SlotCoord, spec: &MeshSpec) -> Transform {
     let unoriented = slot_to_unoriented(loc.slot);
     // Ignore the direction of the input cell! Only the direction the rule matched in matters.
     let mut transform = cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube);
@@ -56,7 +59,6 @@ fn spawn_entities_from_results(
     commands: &mut Commands,
     autotile_handles: &AutotileHandles,
     loc: SlotCoord,
-    cell: &Cell,
     results: &[AutotileResult],
     mut spawn_one: impl FnMut(&mut Commands, SceneRoot, Transform) -> Entity,
 ) -> Vec<Entity> {
@@ -66,7 +68,7 @@ fn spawn_entities_from_results(
         if let AutotileResult::Mesh { spec, .. } = result {
             let stem = spec_stem(spec, unoriented);
             if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
-                let transform = autotile_transform(loc, cell, spec);
+                let transform = autotile_transform(loc, spec);
                 entities.push(spawn_one(
                     commands,
                     SceneRoot(main_handle.clone()),
@@ -107,7 +109,6 @@ fn apply_autotile_updates(
                 commands,
                 autotile_handles,
                 loc,
-                &cell,
                 &new_results,
                 |cmd, scene, transform| make_entity(cmd, scene, transform, loc),
             )
