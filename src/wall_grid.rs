@@ -141,8 +141,11 @@ pub enum ProposalView {
 }
 
 pub(crate) struct UndoRecord {
-    // (location, what proposal was there before — None = no proposal)
-    pub(crate) changed: Vec<(SlotCoord, Option<Proposal>)>,
+    // (location, the desired cell before this action — None = empty/no cell).
+    // "Desired" resolves any proposal (Place/Remove) and otherwise falls back to
+    // the real cell, so undo records survive `construct()` and can revert
+    // already-committed cells by creating reverse proposals.
+    pub(crate) changed: Vec<(SlotCoord, Option<Cell>)>,
 }
 
 /// Marker component for entities that represent placed grid cells.
@@ -202,6 +205,8 @@ pub struct WallGrid {
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
     pub proposed_cut_entities: HashMap<SlotCoord, Entity>,
     pub(crate) undo_record: Vec<UndoRecord>,
+    /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
+    pub(crate) redo_record: Vec<UndoRecord>,
     pub road_forbidden_zone: bool,
     /// Last-rendered autotile results per proposed-addition location, for change detection.
     #[cfg(autotile_matching)]
@@ -220,6 +225,7 @@ impl WallGrid {
             cut_entities: Vec::new(),
             proposed_cut_entities: HashMap::new(),
             undo_record: Vec::new(),
+            redo_record: Vec::new(),
             road_forbidden_zone: true,
             #[cfg(autotile_matching)]
             proposal_autotile_results: HashMap::new(),
@@ -276,6 +282,17 @@ impl WallGrid {
     pub fn get_proposed_or_real(&self, loc: impl Into<SlotCoord>) -> Option<&Cell> {
         let (real, proposed) = self.get_real_and_proposed(loc);
         proposed.or(real)
+    }
+
+    /// The cell the user currently wants at `loc`: the proposed state if one
+    /// exists (`Place` → that cell, `Remove` → empty), otherwise the real cell.
+    pub fn desired(&self, loc: impl Into<SlotCoord>) -> Option<Cell> {
+        let loc: SlotCoord = loc.into();
+        match self.proposed_changes.get(loc) {
+            Some(Proposal::Place(cell)) => Some(cell.clone()),
+            Some(Proposal::Remove) => None,
+            None => self.contents.get(loc).cloned(),
+        }
     }
 
     pub fn num_proposed_changes(&self) -> usize {

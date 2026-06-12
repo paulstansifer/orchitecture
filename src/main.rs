@@ -17,7 +17,7 @@ use orchitecture_lib::{
     structure::{spawn_structures, StructureList},
     ui::{
         discover_user_files, enable_ui_input_absorption, handle_file_load, handle_file_save,
-        ui_system, LoadDialog, SaveDialog, UiState,
+        ui_system, LoadDialog, SandboxMode, SaveDialog, UiState,
     },
     wall_grid::{spawn_grid, spawn_proposal_overlay_assets, WallGrid},
     world::spawn_world,
@@ -51,6 +51,7 @@ fn main() {
         .insert_resource(UiState::default())
         .insert_resource(StructureList::default())
         .insert_resource(CutawayMode::default())
+        .insert_resource(SandboxMode::default())
         .add_systems(
             Startup,
             (

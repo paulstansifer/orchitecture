@@ -100,6 +100,20 @@ pub struct UiState {
     pub available_files: Vec<String>,
 }
 
+/// When enabled, construction edits commit immediately instead of becoming
+/// proposals, and (eventually) edits are free. Loading structures is only
+/// available in sandbox mode. Enabled on startup.
+#[derive(Resource)]
+pub struct SandboxMode {
+    pub enabled: bool,
+}
+
+impl Default for SandboxMode {
+    fn default() -> Self {
+        SandboxMode { enabled: true }
+    }
+}
+
 pub fn enable_ui_input_absorption(mut egui_settings: ResMut<EguiGlobalSettings>) {
     egui_settings.enable_absorb_bevy_input_system = true;
 }
@@ -182,6 +196,7 @@ pub fn ui_system(
     mut ui_state: ResMut<UiState>,
     overlay_assets: Res<ProposalOverlayAssets>,
     mut cutaway_mode: ResMut<CutawayMode>,
+    mut sandbox: ResMut<SandboxMode>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -193,7 +208,18 @@ pub fn ui_system(
     // Bottom panel must be added before side panels.
     egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Up/Dn=layer  R=rotate  Ctrl-Z=undo  Drag=place  Ctrl+drag=erase  V=evaluate");
+            ui.label("Up/Dn=layer  R=rotate  Z=undo  Y=redo  Drag=place  Ctrl+drag=erase  V=evaluate");
+
+            ui.separator();
+            let was_sandbox = sandbox.enabled;
+            ui.checkbox(&mut sandbox.enabled, "Sandbox");
+            if sandbox.enabled && !was_sandbox {
+                // Switching into sandbox commits any pending proposals immediately.
+                let real_changes = wall_grid.construct();
+                clear_proposal_entities(&mut commands, &mut wall_grid);
+                clear_proposed_cut_entities(&mut commands, &mut wall_grid);
+                apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
+            }
 
             ui.separator();
             if ui.button("Save").clicked() {
@@ -203,7 +229,8 @@ pub fn ui_system(
                     .add_filter("Orchitecture Map", &["txt"])
                     .save_file::<SaveDialog>(bytes);
             }
-            if ui.button("Load").clicked() {
+            // Loading structures is only available in sandbox mode.
+            if sandbox.enabled && ui.button("Load").clicked() {
                 commands
                     .dialog()
                     .add_filter("Orchitecture Map", &["txt"])
@@ -232,7 +259,7 @@ pub fn ui_system(
                     );
                 });
 
-            if !ui_state.available_files.is_empty() {
+            if sandbox.enabled && !ui_state.available_files.is_empty() {
                 ui.separator();
                 egui::ComboBox::from_id_salt("file_select")
                     .selected_text(if ui_state.load_filename.is_empty() {
@@ -255,7 +282,7 @@ pub fn ui_system(
             }
 
             #[cfg(not(target_arch = "wasm32"))]
-            {
+            if sandbox.enabled {
                 ui.separator();
                 ui.add(egui::TextEdit::singleline(&mut ui_state.example_idx).desired_width(40.0));
                 if ui.button("Load example").clicked() && !ui_state.example_idx.is_empty() {

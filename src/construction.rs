@@ -34,7 +34,7 @@ impl WallGrid {
         let start = position1.min(position2);
         let end = position1.max(position2);
         let mut changes: Vec<(SlotCoord, ProposalView)> = Vec::new();
-        let mut undo_changed: Vec<(SlotCoord, Option<Proposal>)> = Vec::new();
+        let mut undo_changed: Vec<(SlotCoord, Option<Cell>)> = Vec::new();
 
         for x in start.x..=end.x {
             for y in start.y..=end.y {
@@ -51,6 +51,9 @@ impl WallGrid {
                     }
                     let real_cell = self.contents.get(loc).cloned();
                     let prior_proposal = self.proposed_changes.get(loc).cloned();
+                    // The desired state before this edit, for undo (absolute, so it
+                    // survives construct()).
+                    let prior_desired = self.desired(loc);
 
                     let new_proposal: Option<Proposal> = if let Some(id) = item {
                         let facing = Facing::from_number(dir as u8);
@@ -84,7 +87,7 @@ impl WallGrid {
                         self.proposed_changes.take(loc);
                     }
 
-                    undo_changed.push((loc, prior_proposal));
+                    undo_changed.push((loc, prior_desired));
 
                     changes.push((loc, proposal_view(&new_proposal, real_cell.is_some())));
                 }
@@ -95,6 +98,8 @@ impl WallGrid {
             self.undo_record.push(UndoRecord {
                 changed: undo_changed,
             });
+            // A fresh edit invalidates the redo stack.
+            self.redo_record.clear();
         }
         changes
     }
@@ -213,26 +218,70 @@ impl WallGrid {
         }
     }
 
-    /// Undo the last proposal action. Returns view deltas so proposal rendering can be updated.
-    pub fn undo(&mut self) -> Vec<(SlotCoord, ProposalView)> {
-        let Some(record) = self.undo_record.pop() else {
-            return vec![];
-        };
+    /// Drive each location's desired state to `targets`, creating whatever
+    /// proposal is needed given the current real cell. Returns the view deltas
+    /// and the *inverse* targets (each location's desired state before this call)
+    /// so undo/redo can be reversed.
+    ///
+    /// Because targets are absolute cell states, this works across `construct()`:
+    /// if a location's real cell no longer matches the target, a reverse proposal
+    /// is created (e.g. reverting a committed desk yields a `Remove` proposal).
+    fn restore_desired(
+        &mut self,
+        targets: Vec<(SlotCoord, Option<Cell>)>,
+    ) -> (Vec<(SlotCoord, ProposalView)>, Vec<(SlotCoord, Option<Cell>)>) {
         let mut changes = vec![];
-        for (loc, prior_proposal) in record.changed {
-            if let Some(ref proposal) = prior_proposal {
+        let mut inverse = vec![];
+        for (loc, target) in targets {
+            let prev_desired = self.desired(loc);
+            let real_cell = self.contents.get(loc).cloned();
+            let new_proposal: Option<Proposal> = if target == real_cell {
+                None // Already matches reality; no proposal needed.
+            } else {
+                match &target {
+                    Some(cell) => Some(Proposal::Place(cell.clone())),
+                    None => Some(Proposal::Remove),
+                }
+            };
+
+            if let Some(ref proposal) = new_proposal {
                 self.proposed_changes.set(loc, proposal.clone());
             } else {
                 self.proposed_changes.take(loc);
             }
-            let has_real = self.contents.get(loc).is_some();
-            changes.push((loc, proposal_view(&prior_proposal, has_real)));
+            changes.push((loc, proposal_view(&new_proposal, real_cell.is_some())));
+            inverse.push((loc, prev_desired));
         }
+        (changes, inverse)
+    }
+
+    /// Undo the last action by restoring the desired state each location had
+    /// before it. Pushes the inverse onto the redo stack. Returns view deltas
+    /// so proposal rendering can be updated.
+    pub fn undo(&mut self) -> Vec<(SlotCoord, ProposalView)> {
+        let Some(record) = self.undo_record.pop() else {
+            return vec![];
+        };
+        let (changes, inverse) = self.restore_desired(record.changed);
+        self.redo_record.push(UndoRecord { changed: inverse });
+        changes
+    }
+
+    /// Redo the last undone action. Pushes the inverse back onto the undo stack.
+    pub fn redo(&mut self) -> Vec<(SlotCoord, ProposalView)> {
+        let Some(record) = self.redo_record.pop() else {
+            return vec![];
+        };
+        let (changes, inverse) = self.restore_desired(record.changed);
+        self.undo_record.push(UndoRecord { changed: inverse });
         changes
     }
 
     /// Commits all proposed changes into real contents. Returns real-cell deltas for `apply_changes`.
-    /// Clears `proposed_changes` and `undo_record`; entity cleanup is the caller's responsibility.
+    /// Clears `proposed_changes`; entity cleanup is the caller's responsibility.
+    ///
+    /// The undo record is *preserved*: because it stores absolute prior cell states,
+    /// undo can still revert committed changes by proposing their inverse.
     pub fn construct(&mut self) -> Vec<(SlotCoord, Option<Cell>)> {
         let proposals: Vec<(SlotCoord, Proposal)> = self
             .proposed_changes
@@ -241,7 +290,6 @@ impl WallGrid {
             .collect();
 
         self.proposed_changes = Sparse3D::new();
-        self.undo_record.clear();
 
         let mut real_changes = vec![];
         for (loc, proposal) in proposals {
@@ -259,11 +307,12 @@ impl WallGrid {
         real_changes
     }
 
-    /// Clears all proposals and the undo record without committing anything.
+    /// Clears all proposals without committing anything. Undo/redo history is
+    /// left intact, so a reset is itself reversible (the stale records degrade to
+    /// no-ops when a location already matches reality).
     /// Entity cleanup is the caller's responsibility.
     pub fn reset_proposals(&mut self) {
         self.proposed_changes = Sparse3D::new();
-        self.undo_record.clear();
     }
 
     pub fn load_from_offline(
@@ -271,7 +320,9 @@ impl WallGrid {
         new_contents: Sparse3D<Cell>,
     ) -> Vec<(SlotCoord, Option<Cell>)> {
         self.proposed_changes = Sparse3D::new();
+        // A fresh building starts with no history.
         self.undo_record.clear();
+        self.redo_record.clear();
         // Proposal entity cleanup is the caller's responsibility.
         // Shift the building into the no-road semiplane (south of the E-W road).
         let z_shift = -new_contents.bounding_box().1.z;
@@ -470,17 +521,40 @@ mod tests {
     }
 
     #[test]
-    fn construct_clears_undo_record() {
+    fn construct_preserves_undo_record() {
         let mut grid = make_wall_grid();
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid));
         grid.construct();
-        check!(grid.undo_record.is_empty());
+        // Undo history survives construct so committed changes remain undoable.
+        check!(grid.undo_record.len() == 1);
+    }
+
+    #[test]
+    fn undo_after_construct_creates_reverse_proposal() {
+        let mut grid = make_wall_grid();
+        let loc = xlowall(1, 0, 0);
+        grid.propose(
+            0,
+            IVec3::new(1, 0, 0),
+            IVec3::new(1, 0, 0),
+            Slot::XLoWall,
+            thing(&grid),
+        );
+        grid.construct();
+        check!(grid.contents.get(loc).is_some());
+
+        // Undoing the committed placement proposes its removal (real cell stays put).
+        let deltas = grid.undo();
+        check!(deltas.len() == 1);
+        check!(matches!(deltas[0].1, ProposalView::Remove));
+        check!(matches!(grid.proposed_changes.get(loc), Some(Proposal::Remove)));
+        check!(grid.contents.get(loc).is_some());
     }
 
     // ── reset ─────────────────────────────────────────────────────────────────
 
     #[test]
-    fn reset_clears_proposals_and_undo_record() {
+    fn reset_clears_proposals_but_keeps_undo_record() {
         let mut grid = make_wall_grid();
         grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid));
         check!(!grid.undo_record.is_empty());
@@ -488,9 +562,55 @@ mod tests {
         grid.reset_proposals();
 
         check!(grid.proposed_changes.iter().count() == 0);
-        check!(grid.undo_record.is_empty());
+        // Undo history survives a reset.
+        check!(!grid.undo_record.is_empty());
         // Real contents untouched
         check!(grid.contents.get(xlowall(0, 0, 0)).is_none());
+    }
+
+    // ── redo ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn redo_reapplies_undone_proposal() {
+        let mut grid = make_wall_grid();
+        let loc = xlowall(0, 0, 0);
+
+        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid));
+        grid.undo();
+        check!(grid.proposed_changes.get(loc).is_none());
+
+        let deltas = grid.redo();
+        check!(deltas.len() == 1);
+        check!(matches!(deltas[0].1, ProposalView::Add(_)));
+        check!(matches!(
+            grid.proposed_changes.get(loc),
+            Some(Proposal::Place(_))
+        ));
+    }
+
+    #[test]
+    fn redo_on_empty_stack_returns_empty() {
+        let mut grid = make_wall_grid();
+        check!(grid.redo().is_empty());
+    }
+
+    #[test]
+    fn new_edit_clears_redo_stack() {
+        let mut grid = make_wall_grid();
+        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid));
+        grid.undo();
+        check!(!grid.redo_record.is_empty());
+
+        // A fresh edit invalidates redo.
+        grid.propose(
+            0,
+            IVec3::new(1, 0, 0),
+            IVec3::new(1, 0, 0),
+            Slot::XLoWall,
+            thing(&grid),
+        );
+        check!(grid.redo_record.is_empty());
+        check!(grid.redo().is_empty());
     }
 
     // ── get_real_or_proposed ──────────────────────────────────────────────────
@@ -582,7 +702,8 @@ mod tests {
         let real_changes = grid.construct();
         check!(real_changes.len() == 2);
         check!(grid.proposed_changes.iter().count() == 0);
-        check!(grid.undo_record.is_empty());
+        // Undo history survives construct (the wall-drag record remains).
+        check!(grid.undo_record.len() == 1);
         // Original loaded wall + 2 newly constructed walls
         check!(grid.contents.iter().count() == 3);
     }

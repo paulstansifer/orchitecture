@@ -7,9 +7,10 @@ use crate::camera::GameCamera;
 use crate::cutaway::CutawayMode;
 use crate::sparse3d::{Facing, Slot};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
+use crate::ui::SandboxMode;
 use crate::wall_grid::{
-    apply_proposal_changes, cell_transform, ProposalGhostMarker, ProposalOverlayAssets,
-    ProposedCutMarker, WallGrid,
+    apply_changes, apply_proposal_changes, cell_transform, ProposalGhostMarker,
+    ProposalOverlayAssets, ProposedCutMarker, WallGrid,
 };
 
 #[derive(Resource)]
@@ -156,6 +157,7 @@ pub fn building_input_system(
     model_state: Res<crate::qnn::ModelState>,
     overlay_assets: Res<ProposalOverlayAssets>,
     mut cutaway_mode: ResMut<CutawayMode>,
+    sandbox: Res<SandboxMode>,
 ) {
     // --- Layer up/down ---
     if keyboard.just_pressed(KeyCode::ArrowUp) {
@@ -209,19 +211,32 @@ pub fn building_input_system(
         }
     }
 
-    // --- Undo ---
-    if keyboard.just_pressed(KeyCode::KeyZ) {
-        // Use bypass_change_detection so proposal edits don't trigger ceiling-light recomputation.
-        let changes = wall_grid.bypass_change_detection().undo();
+    // --- Undo / Redo ---
+    // Use bypass_change_detection so the proposal edits these create don't
+    // trigger ceiling-light recomputation.
+    let undo_redo_changes = if keyboard.just_pressed(KeyCode::KeyZ) {
+        Some(wall_grid.bypass_change_detection().undo())
+    } else if keyboard.just_pressed(KeyCode::KeyY) {
+        Some(wall_grid.bypass_change_detection().redo())
+    } else {
+        None
+    };
+    if let Some(changes) = undo_redo_changes {
         if !changes.is_empty() {
-            let wg = wall_grid.bypass_change_detection();
-            apply_proposal_changes(
-                &mut commands,
-                &mut *wg,
-                &structure_list,
-                &overlay_assets,
-                changes,
-            );
+            if sandbox.enabled {
+                // Sandbox: commit the resulting proposal immediately, like any edit.
+                let real_changes = wall_grid.construct();
+                apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
+            } else {
+                let wg = wall_grid.bypass_change_detection();
+                apply_proposal_changes(
+                    &mut commands,
+                    &mut *wg,
+                    &structure_list,
+                    &overlay_assets,
+                    changes,
+                );
+            }
         }
     }
 
@@ -278,14 +293,22 @@ pub fn building_input_system(
             };
 
             if !changes.is_empty() {
-                let wg = wall_grid.bypass_change_detection();
-                apply_proposal_changes(
-                    &mut commands,
-                    &mut *wg,
-                    &structure_list,
-                    &overlay_assets,
-                    changes,
-                );
+                if sandbox.enabled {
+                    // Sandbox: commit immediately so the edit takes effect without a
+                    // Construct! step. Uses normal change detection so ceiling lights
+                    // recompute.
+                    let real_changes = wall_grid.construct();
+                    apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
+                } else {
+                    let wg = wall_grid.bypass_change_detection();
+                    apply_proposal_changes(
+                        &mut commands,
+                        &mut *wg,
+                        &structure_list,
+                        &overlay_assets,
+                        changes,
+                    );
+                }
             }
         }
     }
