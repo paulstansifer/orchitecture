@@ -29,20 +29,23 @@ pub struct AutotileRelSlotOffset {
 }
 
 impl AutotileRelSlotOffset {
-    /// For a wall offset, returns the offset for the Room on the far side of that wall from
+    /// For a wall offset, returns the offset for the Floor on the far side of that wall from
     /// the anchor. The anchor is assumed to be on a canonical (Lo) wall slot.
+    ///
+    /// (Roofs live in Floor slots, so the "is there a roof beyond this wall?" check looks at
+    /// the far cube's Floor.)
     ///
     /// The canonical wall position relative to the anchor is
     /// `wall_vec = -origin.abs + cube_offset + dest.abs`.
-    /// The far room is at `wall_vec` when `wall_vec > 0` on the wall axis, or `wall_vec - 1`
-    /// otherwise; then `room_cube_offset = far_room_vec + origin.abs`.
+    /// The far cube is at `wall_vec` when `wall_vec > 0` on the wall axis, or `wall_vec - 1`
+    /// otherwise; then `far_cube_offset = far_vec + origin.abs`.
     ///
     /// Panics if `dest_slot` is not a wall slot.
-    pub fn far_room_offset(self) -> Self {
+    pub fn far_floor_offset(self) -> Self {
         let (ox, _oy, oz) = self.origin_slot.absolute_offset();
         let (dx, dy, dz) = self.cube_offset;
         let (ex, _ey, ez) = self.dest_slot.absolute_offset();
-        let room_cube_offset = match self.dest_slot {
+        let far_cube_offset = match self.dest_slot {
             AutotileRelSlot::XLoWall | AutotileRelSlot::XHiWall => {
                 let wall_x = -ox + dx + ex;
                 let far_x = if wall_x > 0 { wall_x } else { wall_x - 1 };
@@ -53,12 +56,12 @@ impl AutotileRelSlotOffset {
                 let far_z = if wall_z > 0 { wall_z } else { wall_z - 1 };
                 (dx, dy, far_z + oz)
             }
-            other => panic!("far_room_offset: not a wall slot: {other:?}"),
+            other => panic!("far_floor_offset: not a wall slot: {other:?}"),
         };
         AutotileRelSlotOffset {
             origin_slot: self.origin_slot,
-            cube_offset: room_cube_offset,
-            dest_slot: AutotileRelSlot::Room,
+            cube_offset: far_cube_offset,
+            dest_slot: AutotileRelSlot::Floor,
         }
     }
 }
@@ -262,8 +265,11 @@ fn grid_pos_to_3d(pt: PatternType, col: usize, row: usize) -> (i32, i32, i32, Au
             _ => panic!("dead slot at ({col}, {row})"),
         },
         PatternType::HNarrow => match (row % 2, col % 2) {
-            // The floor of the same cube as H's room (the R position in H).
+            // Same wall slots as H (the walls of the cube above the floor); where H has its room,
+            // H narrow instead has the floor of that cube.
+            (0, 0) => (c / 2, 0, r / 2, AutotileRelSlot::ZLoWall),
             (1, 0) => (c / 2, 0, r / 2, AutotileRelSlot::Floor),
+            (1, 1) => (c / 2 + 1, 0, r / 2, AutotileRelSlot::XLoWall),
             _ => panic!("dead slot at ({col}, {row})"),
         },
     }
@@ -523,48 +529,34 @@ fn split_pipe_line(line: &str) -> anyhow::Result<Vec<Vec<char>>> {
 }
 
 /// Assign each layer its third-axis coordinate (Y for H family, Z for V family).
-/// Leftmost layer is the highest coordinate; regular layers decrease by 1. A
-/// narrow layer is the boundary belonging to the regular above it (its left
-/// neighbour); a leading narrow belongs to the cube above the first regular.
-/// Errors on two consecutive narrow layers or a multi-layer rule with no regular.
+/// Reading left→right, each layer sits one level lower than the previous, with one
+/// exception: a narrow (boundary) layer immediately following a regular layer shares
+/// that regular's level, because the boundary belongs to the cube above it. So
+/// `|H|H narrow|H|` is `[0, 0, -1]` (the floor separator belongs to the upper room),
+/// while consecutive same-kind layers each step down — `|H|H|` is `[0, -1]` and
+/// `|H narrow|H narrow|` (stacked floor-anchored roofs) is likewise `[0, -1]`.
+///
+/// Only the *relative* spacing matters downstream (everything is computed relative to
+/// the `@` anchor's layer, so a uniform shift cancels), so the leftmost layer is pinned
+/// at 0 regardless of its kind.
 fn assign_layer_ts(types: &[PatternType]) -> anyhow::Result<Vec<i32>> {
     if types.len() == 1 {
         // Single-layer rules (including a lone narrow) live at t = 0.
         return Ok(vec![0]);
     }
-    if let Some(&first) = types.first() {
-        if !types.iter().all(|&pt| same_family(pt, first)) {
-            bail!("all layers in a multi-layer rule must be the same family (all H/H narrow or all V/V narrow)");
-        }
+    let first = types[0];
+    if !types.iter().all(|&pt| same_family(pt, first)) {
+        bail!("all layers in a multi-layer rule must be the same family (all H/H narrow or all V/V narrow)");
     }
     let mut ts = vec![0i32; types.len()];
-    let mut running = 0i32;
-    let mut last_regular: Option<i32> = None;
-    let mut prev_narrow = false;
-    let mut leading_narrow: Option<usize> = None;
-    for (k, &pt) in types.iter().enumerate() {
-        if is_narrow(pt) {
-            if prev_narrow {
-                bail!("two consecutive narrow layers");
-            }
-            match last_regular {
-                Some(rt) => ts[k] = rt,
-                None => leading_narrow = Some(k),
-            }
-            prev_narrow = true;
+    for k in 1..types.len() {
+        // A boundary slice that hangs off the regular above it shares that level;
+        // otherwise we've descended to the next slice.
+        if is_narrow(types[k]) && !is_narrow(types[k - 1]) {
+            ts[k] = ts[k - 1];
         } else {
-            ts[k] = running;
-            last_regular = Some(running);
-            running -= 1;
-            prev_narrow = false;
+            ts[k] = ts[k - 1] - 1;
         }
-    }
-    if last_regular.is_none() {
-        bail!("multi-layer pattern has no regular (non-narrow) layer");
-    }
-    // A leading narrow is the boundary above the first regular (which is at t = 0).
-    if let Some(k) = leading_narrow {
-        ts[k] = 1;
     }
     Ok(ts)
 }
@@ -649,9 +641,9 @@ fn build_pattern(
 // H:
 //   W.
 //   RW
-// H narrow:
-//   ..
-//   F.
+// H narrow: (same wall slots as H; F sits where H has its room — the floor below those walls)
+//   W.
+//   FW
 // V:
 //   F.
 //   RW
@@ -690,11 +682,12 @@ fn offset(
 /// In H patterns the slot layout (per repeating tile) is:
 ///   (even, even) = W   (even, odd) = R   (odd, odd) = W   (odd, even) = dead
 /// In V: same dead/live pattern as H.
-/// In V narrow / H narrow: only (even col, odd row) is valid; everything else is dead.
+/// H narrow shares H's layout (walls in the same spots, floor where H has its room).
+/// In V narrow: only (even col, odd row) is valid; everything else is dead.
 fn is_dead_slot(pt: &PatternType, col: usize, row: usize) -> bool {
     match pt {
-        PatternType::H | PatternType::V => col % 2 == 1 && row % 2 == 0,
-        PatternType::VNarrow | PatternType::HNarrow => !(col % 2 == 0 && row % 2 == 1),
+        PatternType::H | PatternType::V | PatternType::HNarrow => col % 2 == 1 && row % 2 == 0,
+        PatternType::VNarrow => !(col % 2 == 0 && row % 2 == 1),
     }
 }
 
@@ -1122,6 +1115,52 @@ H narrow:
         check!(checks.len() == 2);
     }
 
+    /// `H narrow` exposes the same wall slots as `H` (the walls of the cube whose floor is the
+    /// anchor), in the same grid positions. A `W` at each of the four surrounding wall cells
+    /// resolves to the −X/+X (XLoWall) and −Z/+Z (ZLoWall) walls of the anchor's cube.
+    #[test]
+    fn parse_h_narrow_wall_slots() {
+        let input = "\
+== roof: floor ==
+H narrow:
+  W
+ W@W
+  W
+--> mesh
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.layers[pat.at_layer].pattern_type == PatternType::HNarrow);
+        let checks = pat.relative_checks();
+        // All offsets share the Floor anchor's origin; the cube's own −X and −Z walls sit at
+        // cube_offset (0,0,0), while the +X / +Z walls live one cube over.
+        let x_lo = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Floor,
+            cube_offset: (0, 0, 0),
+            dest_slot: AutotileRelSlot::XLoWall,
+        };
+        let x_hi = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Floor,
+            cube_offset: (1, 0, 0),
+            dest_slot: AutotileRelSlot::XLoWall,
+        };
+        let z_lo = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Floor,
+            cube_offset: (0, 0, 0),
+            dest_slot: AutotileRelSlot::ZLoWall,
+        };
+        let z_hi = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Floor,
+            cube_offset: (0, 0, 1),
+            dest_slot: AutotileRelSlot::ZLoWall,
+        };
+        check!(checks[&x_lo] == 'W');
+        check!(checks[&x_hi] == 'W');
+        check!(checks[&z_lo] == 'W');
+        check!(checks[&z_hi] == 'W');
+        check!(checks.len() == 4);
+    }
+
     /// `H narrow` only allows floor anchors.
     #[test]
     fn h_narrow_rejects_non_floor_anchor() {
@@ -1237,16 +1276,31 @@ H narrow:
         check!(parse(input).is_err());
     }
 
-    /// Two consecutive narrow layers are not allowed.
+    /// Consecutive narrow layers are allowed (e.g. stacked floor-anchored roofs); each
+    /// steps down one level just like consecutive regular layers do.
     #[test]
-    fn multi_layer_consecutive_narrow_rejected() {
+    fn parse_multi_layer_consecutive_h_narrow() {
         let input = "\
-== stack: room ==
-|H|H narrow|H narrow|H|:
-|@| | |=|
---> m
+== roof: floor ==
+|H narrow|H narrow|:
+| @ | F |
+--> stacked
 ";
-        check!(parse(input).is_err());
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.layers.len() == 2);
+        check!(pat.layers[0].t == 0);
+        check!(pat.layers[1].t == -1);
+        check!(pat.at_layer == 0);
+        // '@' floor at Y=0; 'F' floor one level below at Y=-1 → cube_offset (0,-1,0).
+        let checks = pat.relative_checks();
+        let below = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Floor,
+            cube_offset: (0, -1, 0),
+            dest_slot: AutotileRelSlot::Floor,
+        };
+        check!(checks[&below] == 'F');
+        check!(checks.len() == 1);
     }
 
     // ── Annotation parsing ────────────────────────────────────────────────────

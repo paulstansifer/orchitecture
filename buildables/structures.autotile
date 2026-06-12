@@ -86,7 +86,7 @@ V:
   w
 --> (multi) h_corner_fill_full_ceiling
 
-==roof:room==
+==roof:floor==
 V:
  =
  .
@@ -94,40 +94,40 @@ V:
 --> solid_roof
 V:
  =
- .
- =.@
+  
+ = @
 --> (multi) slant_roof          # Give gables nice flat sides
-H:
+H narrow:
  .. ..
  . r .
   r@..
  . r .
  .. ..
 --> (multi) slant_roof * slant_roof:90 * slant_roof:270 + slant_roof * slant_roof:180 # highly-specific; kind of a hack?
-H:
+H narrow:
     ..
    r .
   r@r
    r .
     ..
 --> (multi) slant_roof + slant_roof:90 * slant_roof:270  # double valley
-H:
+H narrow:
     ..
    r .
   r@r
    r
 --> (multi) slant_roof + slant_roof:90  # valley
-H:
+H narrow:
    r
   r@r
    r
 --> solid_roof
-H:
+H narrow:
    r
   r@
    r
 --> slant_roof
-|H|H|:
+|H narrow|H narrow|:
   |   .  |      |
   |   .  |      |
   |r r@..|    ..|
@@ -137,7 +137,7 @@ H:
   |   .  |      |
   
 --> slant_roof:90                    # Don't have a big jerkinhed
-|H|H|:
+|H narrow|H narrow|:
   |   .  |      |
   |   .  |      |
   |    ..|    ..|
@@ -146,20 +146,20 @@ H:
   |   .  |      |
   |   .  |      |
 --> slant_roof:270                   # Don't have a big jerkinhed
-H:
+H narrow:
   r@
    r
 --> slant_roof * slant_roof:90
-H:
+H narrow:
  r@r
 --> slant_roof:90 * slant_roof:270
-|H|H|:
+|H narrow|H narrow|:
   |r@..|  ..|
 --> slant_roof:90 * slant_roof:270   # Don't have a jerkinhed
-H:
+H narrow:
  r@
 --> slant_roof * slant_roof:90 * slant_roof:270
-H:
+H narrow:
    .
    .
  ..@..

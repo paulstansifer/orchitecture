@@ -103,15 +103,15 @@ fn rotate_checks(
 }
 
 /// Convert a raw `(offset → char)` map into `Vec<Condition>`, expanding special chars.
-/// `'r'` expands to `Or([Atom(wall_offset, 'W'), Atom(far_room_offset, 'O')])`;
-/// see `AutotileRelSlotOffset::far_room_offset` for the geometry.
+/// `'r'` expands to `Or([Atom(wall_offset, 'W'), Atom(far_floor_offset, 'O')])`;
+/// see `AutotileRelSlotOffset::far_floor_offset` for the geometry.
 fn checks_to_conditions(checks: &HashMap<AutotileRelSlotOffset, char>) -> Vec<Condition> {
     checks
         .iter()
         .map(|(&offset, &ch)| match ch {
             'r' => Condition::Or(vec![
                 Condition::Atom(offset, 'W'),
-                Condition::Atom(offset.far_room_offset(), 'O'),
+                Condition::Atom(offset.far_floor_offset(), 'O'),
             ]),
             _ => Condition::Atom(offset, ch),
         })
