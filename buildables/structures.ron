@@ -44,7 +44,7 @@
     (
         name: "floor",
         main_mesh: "floor.gltf",
-        y_cut_mesh: None,
+        y_cut_mesh: Some("floor.gltf"),
         placement_style: FloorDrag,
         x_char: Some('#'),
         z_char: Some('#'),

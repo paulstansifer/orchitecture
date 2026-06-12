@@ -291,7 +291,6 @@ impl WallGrid {
 pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
     let rx = Quat::from_rotation_x(-TAU / 4.0);
     let ry_neg90 = Quat::from_rotation_y(-TAU / 4.0);
-    let ry_180 = Quat::from_rotation_y(-TAU / 2.0);
 
     let (rotation, translation) = match slot {
         Slot::Room | Slot::Floor => {

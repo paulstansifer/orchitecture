@@ -462,6 +462,24 @@ pub fn compute_floor_edge(
         }
     }
 
+    // The floors visited by the initial traverse (the ones that seed the edge-wall
+    // search) are *replaced* with the "cut" version of their mesh rather than left
+    // intact: they're hidden so the original stops rendering, and added to `cut` so
+    // the cut mesh takes their place. This is added after the Room-object loop above
+    // so that objects resting on the viewed floor stay visible. Floors without a cut
+    // handle resolve to nothing in `get_cut`, so they simply read as hidden.
+    for &(gx, gz) in &ground_cells {
+        let floor_loc = SlotCoord {
+            cube: IVec3::new(gx, floor_y, gz),
+            slot: Slot::Floor,
+        };
+        let (real, proposed) = wall_grid.get_real_and_proposed(floor_loc);
+        if let Some(cell) = real.or(proposed) {
+            hidden.push(floor_loc);
+            cut.push((floor_loc, cell.id, real.is_none()));
+        }
+    }
+
     (hidden, cut)
 }
 
