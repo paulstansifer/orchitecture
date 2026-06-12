@@ -5,7 +5,7 @@ use enum_derived::Rand;
 
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::{StructureId, StructureInfo};
-use crate::wall_grid::{ConstrainedScoreExt, VantageEvaluation};
+use crate::wall_grid::{ConstrainedScoreExt, Material, VantageEvaluation};
 use crate::{
     sparse3d::{RelSlotCoord, SlotCoord, Sparse3D},
     wall_grid::Cell,
@@ -41,6 +41,7 @@ impl Builder {
             id: StructureId(*self.structures.get("wall").unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
+            material: Material::default(),
         }
     }
     fn flat(&self) -> Cell {
@@ -48,6 +49,7 @@ impl Builder {
             id: StructureId(*self.structures.get("floor").unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
+            material: Material::default(),
         }
     }
 
@@ -183,6 +185,7 @@ impl Builder {
             id: StructureId(*self.structures.get(obj_name).unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
+            material: Material::default(),
         };
 
         for x in min.x..=max.x {
@@ -225,6 +228,7 @@ impl Builder {
                     interest: Some(interest.into()),
                     coherence: Some(coherence.into()),
                 }),
+                material: Material::default(),
             },
         );
     }
@@ -375,6 +379,7 @@ pub fn add_noise(
                         id,
                         facing: crate::sparse3d::Facing::default(),
                         evaluation: None,
+                        material: Material::default(),
                     };
                     new_s.set(dest_loc, new_cell);
                 }
@@ -427,6 +432,7 @@ fn test_add_noise() {
                 coherence: Some(ConstrainedScore::Exact(1.0)),
                 interest: Some(ConstrainedScore::Exact(0.5)),
             }),
+            material: Material::default(),
         },
     );
 
@@ -437,6 +443,7 @@ fn test_add_noise() {
             id: doorway_id,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: None,
+            material: Material::default(),
         },
     );
 

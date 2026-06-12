@@ -19,7 +19,7 @@ use orchitecture_lib::{
         discover_user_files, enable_ui_input_absorption, handle_file_load, handle_file_save,
         ui_system, LoadDialog, SandboxMode, SaveDialog, UiState,
     },
-    wall_grid::{spawn_grid, spawn_proposal_overlay_assets, WallGrid},
+    wall_grid::{spawn_grid, spawn_material_assets, spawn_proposal_overlay_assets, WallGrid},
     world::spawn_world,
 };
 
@@ -64,6 +64,7 @@ fn main() {
                 spawn_world,
                 spawn_cursors,
                 spawn_proposal_overlay_assets,
+                spawn_material_assets,
                 discover_user_files,
             ),
         )

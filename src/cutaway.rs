@@ -67,7 +67,9 @@ pub enum CutawayMode {
 
 /// Marker component for y-cut visibility variant entities.
 #[derive(Component)]
-pub struct CutCellMarker;
+pub struct CutCellMarker {
+    pub loc: SlotCoord,
+}
 
 /// Layer used for geometry that should cast shadows but not be seen by the main camera.
 const SHADOW_ONLY_LAYER: usize = 1;
@@ -637,7 +639,6 @@ pub fn update_cutaway_system(
     mut ghost_q: Query<(Entity, &ProposalGhostMarker, Option<&RenderLayers>)>,
     mut overlay_q: Query<(Entity, &ProposalOverlayMarker, Option<&RenderLayers>)>,
     children_q: Query<&Children>,
-    cut_q: Query<Entity, (With<CutCellMarker>, Without<ProposedCutMarker>)>,
 ) {
     let Ok((_, cam_gt)) = camera_q.single() else {
         return;
@@ -645,13 +646,6 @@ pub fn update_cutaway_system(
     let camera_pos = cam_gt.translation();
     let focus_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32)
         .unwrap_or_else(|| Vec3::new(0.0, build_state.cur_y as f32, 0.0));
-
-    for entity in cut_q.iter() {
-        commands.entity(entity).despawn();
-    }
-    // bypass_change_detection so per-frame cut_entities writes don't mark WallGrid
-    // as changed and don't trigger ceiling light rebuilds every frame.
-    wall_grid.bypass_change_detection().cut_entities.clear();
 
     let (hidden, cut_entries): (HiddenPredicate, Vec<(SlotCoord, StructureId, bool)>) =
         match *cutaway_mode {
@@ -770,19 +764,46 @@ pub fn update_cutaway_system(
 
     // Separate proposed-only cuts from regular cuts.
     let mut desired_proposed: HashMap<SlotCoord, StructureId> = HashMap::new();
+    let mut desired_regular: HashMap<SlotCoord, StructureId> = HashMap::new();
     for (loc, id, is_proposed_only) in cut_entries {
         if is_proposed_only {
             desired_proposed.insert(loc, id);
-        } else if let Some((cut_handle, transform)) =
+        } else {
+            desired_regular.insert(loc, id);
+        }
+    }
+
+    // Diff regular cut entities so unchanged cuts persist across frames (and stay
+    // recolored by material). Despawn entities whose location left the cut zone or
+    // whose underlying structure changed.
+    wall_grid
+        .bypass_change_detection()
+        .cut_entities
+        .retain(|loc, (id, entity)| {
+            if desired_regular.get(loc) == Some(id) {
+                true
+            } else {
+                commands.entity(*entity).despawn();
+                false
+            }
+        });
+
+    // Spawn regular cut entities for locations newly entering the cut zone.
+    for (loc, id) in desired_regular {
+        if wall_grid.cut_entities.get(&loc).map(|(i, _)| *i) == Some(id) {
+            continue;
+        }
+        // Resolve the cut handle before mutably borrowing wall_grid via the map.
+        if let Some((cut_handle, transform)) =
             get_cut(loc, id, &wall_grid, &structure_list, &autotile_handles)
         {
             let entity = commands
-                .spawn((SceneRoot(cut_handle), transform, CutCellMarker))
+                .spawn((SceneRoot(cut_handle), transform, CutCellMarker { loc }))
                 .id();
             wall_grid
                 .bypass_change_detection()
                 .cut_entities
-                .push(entity);
+                .insert(loc, (id, entity));
         }
     }
 
@@ -813,7 +834,7 @@ pub fn update_cutaway_system(
                     .spawn((
                         SceneRoot(cut_handle),
                         transform,
-                        CutCellMarker,
+                        CutCellMarker { loc },
                         ProposedCutMarker,
                     ))
                     .id();
@@ -958,6 +979,7 @@ mod tests {
                 id: StructureId(0),
                 facing: Facing::NegX,
                 evaluation: None,
+                material: crate::wall_grid::Material::default(),
             },
         );
         app.insert_resource(wg);

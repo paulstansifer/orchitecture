@@ -4,13 +4,13 @@ use bevy::window::PrimaryWindow;
 
 use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
 use crate::camera::GameCamera;
-use crate::cutaway::CutawayMode;
-use crate::sparse3d::{Facing, Slot};
+use crate::cutaway::{CutCellMarker, CutawayMode};
+use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::ui::SandboxMode;
 use crate::wall_grid::{
-    apply_changes, apply_proposal_changes, cell_transform, ProposalGhostMarker,
-    ProposalOverlayAssets, ProposedCutMarker, WallGrid,
+    apply_changes, apply_proposal_changes, cell_transform, GridCellMarker, Material, MaterialAssets,
+    ProposalGhostMarker, ProposalOverlayAssets, ProposedCutMarker, WallGrid,
 };
 
 #[derive(Resource)]
@@ -141,6 +141,8 @@ pub struct BuildState {
     pub drag_start: Option<Vec3>,
     /// Latest evaluation results (coherence, interest).
     pub evaluation: Option<(f32, f32)>,
+    /// Material applied to newly placed (non-furniture) structures.
+    pub selected_material: Material,
 }
 
 pub fn building_input_system(
@@ -278,6 +280,7 @@ pub fn building_input_system(
         ) {
             let id = StructureId(build_state.selected_structure as u32);
             let dir = build_state.cur_dir as i32;
+            let material = build_state.selected_material;
 
             let dist_sq = (end - start).length_squared();
 
@@ -285,11 +288,11 @@ pub fn building_input_system(
             let changes = if dist_sq < 0.25 {
                 wall_grid
                     .bypass_change_detection()
-                    .click(start, id, dir, remove)
+                    .click(start, id, dir, remove, material)
             } else {
                 wall_grid
                     .bypass_change_detection()
-                    .drag(start, end, dir, id, remove)
+                    .drag(start, end, dir, id, remove, material)
             };
 
             if !changes.is_empty() {
@@ -358,16 +361,32 @@ pub fn update_room_cursor_mesh(
     }
 }
 
-/// Recolors newly spawned mesh children of the room cursor (cyan), proposal ghosts (translucent),
-/// and proposed-cut entities (translucent, same material as ghosts).
+/// The material a newly spawned mesh child should be recolored with, determined by
+/// walking up its ancestors to the entity that "owns" it.
+enum Recolor {
+    /// Descendant of the room cursor: translucent cyan.
+    Cursor,
+    /// Descendant of a proposal ghost or proposed-only cut: translucent ghost.
+    Ghost,
+    /// Descendant of a real placed cell (or its y-cut variant): the cell's material color.
+    Material(SlotCoord),
+}
+
+/// Recolors newly spawned mesh children of the room cursor (cyan), proposal ghosts
+/// (translucent), proposed-cut entities (translucent, same material as ghosts), and
+/// real placed cells / their y-cut variants (their structure's `Material` color).
 ///
 /// Uses `ParamSet` to avoid a conflict between the `Added<T>` filter and `&mut T` access,
 /// which Bevy treats as incompatible within a single system.
 pub fn recolor_new_mesh_children(
     cursor_entities: Res<CursorEntities>,
     overlay_assets: Res<ProposalOverlayAssets>,
-    ghost_markers_q: Query<Entity, With<ProposalGhostMarker>>,
-    proposed_cut_q: Query<Entity, With<ProposedCutMarker>>,
+    material_assets: Res<MaterialAssets>,
+    wall_grid: Res<WallGrid>,
+    ghost_markers_q: Query<(), With<ProposalGhostMarker>>,
+    proposed_cut_q: Query<(), With<ProposedCutMarker>>,
+    cell_markers_q: Query<&GridCellMarker>,
+    cut_markers_q: Query<&CutCellMarker, Without<ProposedCutMarker>>,
     child_of_q: Query<&ChildOf>,
     mut param_set: ParamSet<(
         Query<Entity, Added<MeshMaterial3d<StandardMaterial>>>,
@@ -376,42 +395,45 @@ pub fn recolor_new_mesh_children(
 ) {
     let new_entities: Vec<Entity> = param_set.p0().iter().collect();
     for entity in new_entities {
-        if is_descendant_of(entity, cursor_entities.room, &child_of_q) {
-            if let Ok(mut m) = param_set.p1().get_mut(entity) {
-                *m = MeshMaterial3d(cursor_entities.cyan_mat.clone());
+        // Walk up the scene tree to find the entity that owns this mesh child.
+        let mut node = entity;
+        let recolor = loop {
+            if node == cursor_entities.room {
+                break Some(Recolor::Cursor);
             }
-        } else {
-            for ghost_entity in ghost_markers_q.iter() {
-                if is_descendant_of(entity, ghost_entity, &child_of_q) {
-                    if let Ok(mut m) = param_set.p1().get_mut(entity) {
-                        *m = MeshMaterial3d(overlay_assets.ghost_mat.clone());
-                    }
-                    break;
-                }
+            if ghost_markers_q.contains(node) || proposed_cut_q.contains(node) {
+                break Some(Recolor::Ghost);
             }
-            for cut_entity in proposed_cut_q.iter() {
-                if is_descendant_of(entity, cut_entity, &child_of_q) {
-                    if let Ok(mut m) = param_set.p1().get_mut(entity) {
-                        *m = MeshMaterial3d(overlay_assets.ghost_mat.clone());
-                    }
-                    break;
-                }
+            if let Ok(marker) = cell_markers_q.get(node) {
+                break Some(Recolor::Material(marker.loc));
             }
+            if let Ok(marker) = cut_markers_q.get(node) {
+                break Some(Recolor::Material(marker.loc));
+            }
+            match child_of_q.get(node) {
+                Ok(child_of) => node = child_of.0,
+                Err(_) => break None,
+            }
+        };
+
+        let handle = match recolor {
+            Some(Recolor::Cursor) => cursor_entities.cyan_mat.clone(),
+            Some(Recolor::Ghost) => overlay_assets.ghost_mat.clone(),
+            Some(Recolor::Material(loc)) => {
+                let material = wall_grid
+                    .get_real_or_proposed(loc)
+                    .map(|c| c.material)
+                    .unwrap_or_default();
+                material_assets.get(material)
+            }
+            None => continue,
+        };
+        if let Ok(mut m) = param_set.p1().get_mut(entity) {
+            *m = MeshMaterial3d(handle);
         }
     }
 }
 
-fn is_descendant_of(mut entity: Entity, ancestor: Entity, child_of_q: &Query<&ChildOf>) -> bool {
-    loop {
-        if entity == ancestor {
-            return true;
-        }
-        match child_of_q.get(entity) {
-            Ok(child_of) => entity = child_of.0,
-            Err(_) => return false,
-        }
-    }
-}
 
 /// Cast a ray from the cursor through the camera to a horizontal plane at height `y`.
 pub(crate) fn cursor_world_pos(

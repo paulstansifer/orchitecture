@@ -103,12 +103,70 @@ pub struct VantageEvaluation {
     pub interest: Option<ConstrainedScore>,
 }
 
+/// What a structure is built from. Determines its color. Not serialized: anything
+/// loaded from disk is assumed to be `MarbleBlocks` (the default).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum Material {
+    Timbers,
+    Fieldstone,
+    Canvas,
+    Planks,
+    Shingles,
+    Stucco,
+    Bricks,
+    #[default]
+    MarbleBlocks,
+}
+
+impl Material {
+    /// All materials, in display order.
+    pub const ALL: [Material; 8] = [
+        Material::Timbers,
+        Material::Fieldstone,
+        Material::Canvas,
+        Material::Planks,
+        Material::Shingles,
+        Material::Stucco,
+        Material::Bricks,
+        Material::MarbleBlocks,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Material::Timbers => "Timbers",
+            Material::Fieldstone => "Fieldstone",
+            Material::Canvas => "Canvas",
+            Material::Planks => "Planks",
+            Material::Shingles => "Shingles",
+            Material::Stucco => "Stucco",
+            Material::Bricks => "Bricks",
+            Material::MarbleBlocks => "Marble blocks",
+        }
+    }
+
+    pub fn color(self) -> Color {
+        match self {
+            Material::Timbers => Color::srgb(0.40, 0.26, 0.13),
+            Material::Fieldstone => Color::srgb(0.44, 0.49, 0.44),
+            Material::Canvas => Color::srgb(0.60, 0.75, 0.95),
+            Material::Planks => Color::srgb(0.72, 0.55, 0.35),
+            Material::Shingles => Color::srgb(0.28, 0.18, 0.10),
+            Material::Stucco => Color::srgb(0.94, 0.90, 0.65),
+            Material::Bricks => Color::srgb(0.62, 0.25, 0.20),
+            Material::MarbleBlocks => Color::srgb(0.85, 0.85, 0.87),
+        }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Cell {
     pub id: StructureId,
     #[serde(default)]
     pub facing: Facing,
     pub evaluation: Option<VantageEvaluation>,
+    /// What the structure is made from. Not serialized (see `Material`).
+    #[serde(skip)]
+    pub material: Material,
 }
 
 impl crate::sparse3d::Rotateable for Cell {
@@ -200,8 +258,10 @@ pub struct WallGrid {
     pub autotile_results: HashMap<SlotCoord, Vec<crate::autotile::AutotileResult>>,
     /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
     pub proposal_entities: HashMap<SlotCoord, Vec<Entity>>,
-    /// Entities spawned for the y-cut cutaway layer (cleared each cutaway update).
-    pub cut_entities: Vec<Entity>,
+    /// Persistent cut entities for the y-cut cutaway layer of real cells; keyed by
+    /// location with the structure they were built for, managed by diff so they live
+    /// long enough to be recolored by material.
+    pub cut_entities: HashMap<SlotCoord, (StructureId, Entity)>,
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
     pub proposed_cut_entities: HashMap<SlotCoord, Entity>,
     pub(crate) undo_record: Vec<UndoRecord>,
@@ -222,7 +282,7 @@ impl WallGrid {
             cell_entities: HashMap::new(),
             autotile_results: HashMap::new(),
             proposal_entities: HashMap::new(),
-            cut_entities: Vec::new(),
+            cut_entities: HashMap::new(),
             proposed_cut_entities: HashMap::new(),
             undo_record: Vec::new(),
             redo_record: Vec::new(),
@@ -585,6 +645,33 @@ pub fn spawn_proposal_overlay_assets(
         yellow_mat,
         ghost_mat,
     });
+}
+
+/// Solid-color material handles, one per `Material`, used to recolor cell meshes.
+#[derive(Resource)]
+pub struct MaterialAssets {
+    handles: [Handle<StandardMaterial>; Material::ALL.len()],
+}
+
+impl MaterialAssets {
+    pub fn get(&self, material: Material) -> Handle<StandardMaterial> {
+        self.handles[material as usize].clone()
+    }
+}
+
+/// Startup system: creates one `StandardMaterial` per `Material` variant.
+pub fn spawn_material_assets(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let handles = Material::ALL.map(|material| {
+        materials.add(StandardMaterial {
+            base_color: material.color(),
+            perceptual_roughness: 0.9,
+            ..Default::default()
+        })
+    });
+    commands.insert_resource(MaterialAssets { handles });
 }
 
 /// Startup system: creates the WallGrid resource from the already-populated StructureList.

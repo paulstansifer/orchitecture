@@ -219,6 +219,7 @@ pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Ce
                 id,
                 facing: Facing::NegX,
                 evaluation: None,
+                material: crate::wall_grid::Material::default(),
             })
         },
         &structures_by_char,

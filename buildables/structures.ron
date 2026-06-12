@@ -12,6 +12,7 @@
             decorative: 0.5,
             striated: 0.0,
         ),
+        furniture: true,
     ),
     (
         name: "doorway",
@@ -138,6 +139,7 @@
             decorative: 0.3,
             striated: 0.3,
         ),
+        furniture: true,
     ),
     (
         name: "rack",
@@ -152,5 +154,6 @@
             decorative: 0.0,
             striated: 0.5,
         ),
+        furniture: true,
     ),
 ]

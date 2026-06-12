@@ -6,7 +6,9 @@ use crate::cutaway::CutawayMode;
 use crate::input::BuildState;
 use crate::serialization;
 use crate::structure::StructureList;
-use crate::wall_grid::{apply_changes, apply_proposal_changes, ProposalOverlayAssets, WallGrid};
+use crate::wall_grid::{
+    apply_changes, apply_proposal_changes, Material, ProposalOverlayAssets, WallGrid,
+};
 
 /// Maps bundled at compile time; always available on all platforms.
 const BUNDLED_MAPS: &[(&str, &str)] = &[
@@ -340,6 +342,12 @@ pub fn ui_system(
                 if ui.selectable_label(selected, &label).clicked() {
                     build_state.selected_structure = i;
                 }
+            }
+
+            ui.separator();
+            ui.label("Material:");
+            for material in Material::ALL {
+                ui.radio_value(&mut build_state.selected_material, material, material.label());
             }
 
             ui.separator();

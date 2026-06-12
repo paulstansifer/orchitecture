@@ -190,6 +190,7 @@ mod tests {
             id: StructureId(0),
             facing: Default::default(),
             evaluation: None,
+            material: Default::default(),
         }
     }
 
@@ -371,6 +372,7 @@ H:
                 id: StructureId(1),
                 facing: Default::default(),
                 evaluation: None,
+                material: Default::default(),
             }
         }
         fn is_desk(ch: char, id: StructureId, _facing: Facing) -> bool {
@@ -497,6 +499,7 @@ H:
             id: StructureId(1),
             facing: Default::default(),
             evaluation: None,
+            material: Default::default(),
         }
     }
 
@@ -652,7 +655,7 @@ H:
 
         // StructureId 0 = wall, 1 = roof (local convention)
         fn make_cell(id: u32) -> Cell {
-            Cell { id: StructureId(id), facing: Default::default(), evaluation: None }
+            Cell { id: StructureId(id), facing: Default::default(), evaluation: None, material: Default::default() }
         }
         fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
             const NAMES: [&str; 2] = ["wall", "roof"];
@@ -705,7 +708,7 @@ H narrow:
 
         // StructureId 0 = wall, 1 = roof (local convention)
         fn make_cell(id: u32) -> Cell {
-            Cell { id: StructureId(id), facing: Default::default(), evaluation: None }
+            Cell { id: StructureId(id), facing: Default::default(), evaluation: None, material: Default::default() }
         }
         fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
             const NAMES: [&str; 2] = ["wall", "roof"];
@@ -758,6 +761,7 @@ H: 1=stairs:90
                 id: StructureId(2),
                 facing,
                 evaluation: None,
+                material: Default::default(),
             }
         }
         fn name_is_stairs(name: &str, id: StructureId) -> bool {

@@ -217,6 +217,7 @@ pub fn load_training_data<B: Backend>(
                         id,
                         facing: crate::sparse3d::Facing::NegX, // TODO!!!
                         evaluation: None,
+                        material: crate::wall_grid::Material::default(),
                     })
                 },
                 &structures_by_char,

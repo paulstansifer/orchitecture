@@ -40,6 +40,9 @@ pub struct StructureInfo {
     pub x_char: Option<char>,
     pub z_char: Option<char>,
     pub embedding: StructureEmbedding,
+    /// Furniture is always made of planks, regardless of the selected material.
+    #[serde(default)]
+    pub furniture: bool,
 }
 
 pub struct Structure {
