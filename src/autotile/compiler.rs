@@ -188,7 +188,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
             Some(pattern) => {
                 let base_checks = pattern.relative_checks();
                 let base_annotations = &pattern.annotations;
-                let pt = pattern.pattern_type.clone();
+                let pt = pattern.anchor_pattern_type();
 
                 let mut seen: Vec<HashMap<AutotileRelSlotOffset, char>> = Vec::new();
                 for rot in 0u8..4 {
@@ -265,6 +265,37 @@ H:
 == desk: room ==
 H:
  @ =
+--> mesh_a
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+        check!(oriented.cases.len() == 4);
+    }
+
+    #[test]
+    fn multi_layer_pure_vertical_is_symmetric() {
+        // A multi-layer rule whose only check is directly above (X=Z=0) is
+        // unchanged by XZ rotation, so all 4 orientations collapse to one. This
+        // confirms the dedup still works once patterns carry a layer (Y) axis.
+        let input = "\
+== stack: room ==
+|H|H|:
+|=|@|
+--> mesh_a
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+        check!(oriented.cases.len() == 1);
+    }
+
+    #[test]
+    fn multi_layer_xz_asymmetric_produces_four_orientations() {
+        // A multi-layer rule with a horizontal (XZ) neighbour is still rotated
+        // into 4 distinct orientations.
+        let input = "\
+== stack: room ==
+|H|H|:
+|   |@ =|
 --> mesh_a
 ";
         let file = parse(input).unwrap();

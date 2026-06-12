@@ -127,6 +127,25 @@ H:
   r@
    r
 --> slant_roof
+|H|H|:
+  |   .  |      |
+  |   .  |      |
+  |r r@..|    ..|
+  |   r  |      |
+  |    ..|    ..|
+  |   .  |      |
+  |   .  |      |
+  
+--> slant_roof:90                    # Don't have a big jerkinhed
+|H|H|:
+  |   .  |      |
+  |   .  |      |
+  |    ..|    ..|
+  |   r  |      |
+  |r r@..|    ..|
+  |   .  |      |
+  |   .  |      |
+--> slant_roof:270                   # Don't have a big jerkinhed
 H:
   r@
    r
@@ -134,6 +153,9 @@ H:
 H:
  r@r
 --> slant_roof:90 * slant_roof:270
+|H|H|:
+  |r@..|  ..|
+--> slant_roof:90 * slant_roof:270   # Don't have a jerkinhed
 H:
  r@
 --> slant_roof * slant_roof:90 * slant_roof:270

@@ -146,36 +146,92 @@ pub struct PatternAnnotation {
     pub orientation: Option<i32>,
 }
 
+/// One 2D grid of a (possibly multi-layer) pattern. Single-layer patterns have
+/// exactly one layer with `t == 0`.
+#[derive(Debug, Clone)]
+pub struct Layer {
+    pub pattern_type: PatternType,
+    /// Third-axis coordinate of this layer: Y for the H family, Z for the V family.
+    /// In a multi-layer rule the leftmost layer is the highest coordinate.
+    pub t: i32,
+    pub rows: Vec<Vec<char>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Pattern {
-    pub pattern_type: PatternType,
-    pub rows: Vec<Vec<char>>,
+    /// Layers stacked along the grid plane's third axis (Y for H, Z for V).
+    pub layers: Vec<Layer>,
     pub at_col: usize,
     pub at_row: usize,
+    /// Index into `layers` of the layer containing the `@` anchor.
+    pub at_layer: usize,
     /// Labeled character → annotation (e.g. `'1'` → stairs at 90°).
     pub annotations: HashMap<char, PatternAnnotation>,
 }
 
+/// The spatial axis a pattern type stacks along when layered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayerAxis {
+    Y,
+    Z,
+}
+
+fn layer_axis(pt: PatternType) -> LayerAxis {
+    match pt {
+        PatternType::H | PatternType::HNarrow => LayerAxis::Y,
+        PatternType::V | PatternType::VNarrow => LayerAxis::Z,
+    }
+}
+
+fn is_narrow(pt: PatternType) -> bool {
+    matches!(pt, PatternType::HNarrow | PatternType::VNarrow)
+}
+
+/// True if both pattern types belong to the same family (H/HNarrow or V/VNarrow).
+fn same_family(a: PatternType, b: PatternType) -> bool {
+    layer_axis(a) == layer_axis(b)
+}
+
+/// Add a layer's third-axis offset `t` to a cube coordinate, on the axis the
+/// pattern type stacks along.
+fn apply_layer_t(pt: PatternType, t: i32, x: i32, y: i32, z: i32) -> (i32, i32, i32) {
+    match layer_axis(pt) {
+        LayerAxis::Y => (x, y + t, z),
+        LayerAxis::Z => (x, y, z + t),
+    }
+}
+
 impl Pattern {
-    /// Returns non-wildcard, non-@ cells as AutotileRelSlotOffset → char.
+    /// The pattern type of the layer containing the `@` anchor.
+    pub fn anchor_pattern_type(&self) -> PatternType {
+        self.layers[self.at_layer].pattern_type
+    }
+
+    /// Returns non-wildcard, non-@ cells as AutotileRelSlotOffset → char, across all layers.
     pub fn relative_checks(&self) -> HashMap<AutotileRelSlotOffset, char> {
-        let (ax, ay, az, origin_slot) = grid_pos_to_3d(self.pattern_type, self.at_col, self.at_row);
+        let anchor = &self.layers[self.at_layer];
+        let (ax0, ay0, az0, origin_slot) =
+            grid_pos_to_3d(anchor.pattern_type, self.at_col, self.at_row);
+        let (ax, ay, az) = apply_layer_t(anchor.pattern_type, anchor.t, ax0, ay0, az0);
 
         let mut map = HashMap::new();
-        for (r, row) in self.rows.iter().enumerate() {
-            for (c, &ch) in row.iter().enumerate() {
-                if ch == ' ' || ch == '@' {
-                    continue;
+        for layer in &self.layers {
+            for (r, row) in layer.rows.iter().enumerate() {
+                for (c, &ch) in row.iter().enumerate() {
+                    if ch == ' ' || ch == '@' {
+                        continue;
+                    }
+                    let (tx0, ty0, tz0, dest_slot) = grid_pos_to_3d(layer.pattern_type, c, r);
+                    let (tx, ty, tz) = apply_layer_t(layer.pattern_type, layer.t, tx0, ty0, tz0);
+                    map.insert(
+                        AutotileRelSlotOffset {
+                            origin_slot,
+                            cube_offset: (tx - ax, ty - ay, tz - az),
+                            dest_slot,
+                        },
+                        ch,
+                    );
                 }
-                let (tx, ty, tz, dest_slot) = grid_pos_to_3d(self.pattern_type, c, r);
-                map.insert(
-                    AutotileRelSlotOffset {
-                        origin_slot,
-                        cube_offset: (tx - ax, ty - ay, tz - az),
-                        dest_slot,
-                    },
-                    ch,
-                );
             }
         }
         map
@@ -200,8 +256,9 @@ fn grid_pos_to_3d(pt: PatternType, col: usize, row: usize) -> (i32, i32, i32, Au
             _ => panic!("dead slot at ({col}, {row})"),
         },
         PatternType::VNarrow => match (row % 2, col % 2) {
-            // The wall of the same cube as V's room (one line "behind" the R).
-            (1, 0) => (c / 2, -(r / 2), 0, AutotileRelSlot::XLoWall),
+            // The depth-facing wall ("behind" the room) of the same cube as V's room.
+            // This is the wall that separates depth-adjacent V layers in multi-layer rules.
+            (1, 0) => (c / 2, -(r / 2), 0, AutotileRelSlot::ZLoWall),
             _ => panic!("dead slot at ({col}, {row})"),
         },
         PatternType::HNarrow => match (row % 2, col % 2) {
@@ -311,23 +368,14 @@ fn parse_cases(
             break; // else case is always last
         }
 
-        let (pt, annot_str) = if let Some(rest) = line.strip_prefix("H narrow:") {
-            (PatternType::HNarrow, rest)
-        } else if let Some(rest) = line.strip_prefix("H:") {
-            (PatternType::H, rest)
-        } else if let Some(rest) = line.strip_prefix("V narrow:") {
-            (PatternType::VNarrow, rest)
-        } else if let Some(rest) = line.strip_prefix("V:") {
-            (PatternType::V, rest)
-        } else {
-            bail!("line {lineno}: unexpected line: {line:?}");
-        };
-        let annotations =
-            parse_annotations(annot_str.trim()).with_context(|| format!("line {lineno}"))?;
+        let (layer_types, annotations, is_pipe) =
+            parse_header(line).with_context(|| format!("line {lineno}"))?;
+        let layer_ts = assign_layer_ts(&layer_types).with_context(|| format!("line {lineno}"))?;
+        let n = layer_types.len();
         let pt_lineno = lineno;
         i += 1;
 
-        let mut pattern_rows: Vec<Vec<char>> = Vec::new();
+        let mut layer_rows: Vec<Vec<Vec<char>>> = vec![Vec::new(); n];
         loop {
             if i >= lines.len() {
                 bail!("line {pt_lineno}: pattern with no --> result");
@@ -335,7 +383,7 @@ fn parse_cases(
             let pline = strip_comment(lines[i]);
             let plineno = i + 1;
             if let Some(rest) = pline.strip_prefix("-->") {
-                let pattern = build_pattern(pt, pattern_rows, slot, annotations)
+                let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations)
                     .with_context(|| format!("line {plineno}"))?;
                 let result =
                     parse_result(rest.trim()).with_context(|| format!("line {plineno}"))?;
@@ -350,15 +398,29 @@ fn parse_cases(
                 bail!("line {plineno}: pattern with no --> result");
             }
             if pline.is_empty() {
-                pattern_rows.push(vec![]);
+                for rows in &mut layer_rows {
+                    rows.push(vec![]);
+                }
                 i += 1;
                 continue;
             }
-            if !pline.starts_with(' ') {
-                bail!("line {plineno}: pattern line must start with a space, got: {pline:?}");
+            if is_pipe {
+                let segs = split_pipe_line(pline).with_context(|| format!("line {plineno}"))?;
+                if segs.len() != n {
+                    bail!(
+                        "line {plineno}: expected {n} layer segments, got {}",
+                        segs.len()
+                    );
+                }
+                for (l, seg) in segs.into_iter().enumerate() {
+                    layer_rows[l].push(seg);
+                }
+            } else {
+                if !pline.starts_with(' ') {
+                    bail!("line {plineno}: pattern line must start with a space, got: {pline:?}");
+                }
+                layer_rows[0].push(pline[1..].chars().collect());
             }
-            let content: Vec<char> = pline[1..].chars().collect();
-            pattern_rows.push(content);
             i += 1;
         }
     }
@@ -403,56 +465,182 @@ fn parse_annotations(s: &str) -> anyhow::Result<HashMap<char, PatternAnnotation>
     Ok(map)
 }
 
+/// Parse a single pattern-type token (no colon), e.g. `"H"`, `"H narrow"`.
+fn parse_pattern_type(s: &str) -> anyhow::Result<PatternType> {
+    Ok(match s {
+        "H" => PatternType::H,
+        "H narrow" => PatternType::HNarrow,
+        "V" => PatternType::V,
+        "V narrow" => PatternType::VNarrow,
+        other => bail!("unknown pattern type: {other:?}"),
+    })
+}
+
+/// Parse a pattern header line into its layer types + annotations. Returns
+/// whether the header used pipe (multi-layer) syntax. A bare header like `H:`
+/// is a single layer; a pipe header like `|H|H narrow|H|:` lists several.
+fn parse_header(
+    line: &str,
+) -> anyhow::Result<(Vec<PatternType>, HashMap<char, PatternAnnotation>, bool)> {
+    let line = line.trim_start();
+    let colon = line
+        .find(':')
+        .with_context(|| format!("unexpected line: {line:?}"))?;
+    let spec = line[..colon].trim();
+    let annot_str = line[colon + 1..].trim();
+    let is_pipe = spec.starts_with('|');
+    let types = if is_pipe {
+        let inner = spec
+            .strip_prefix('|')
+            .unwrap()
+            .strip_suffix('|')
+            .with_context(|| format!("multi-layer header must end with '|': {line:?}"))?;
+        let types = inner
+            .split('|')
+            .map(|s| parse_pattern_type(s.trim()))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        if types.is_empty() {
+            bail!("empty multi-layer header");
+        }
+        types
+    } else {
+        vec![parse_pattern_type(spec)?]
+    };
+    let annotations = parse_annotations(annot_str)?;
+    Ok((types, annotations, is_pipe))
+}
+
+/// Split a multi-layer pattern line `|a|b|c|` into per-layer character segments.
+/// A leading space (alignment padding) before the first `|` is allowed.
+fn split_pipe_line(line: &str) -> anyhow::Result<Vec<Vec<char>>> {
+    let line = line.trim_start();
+    let inner = line
+        .strip_prefix('|')
+        .with_context(|| format!("multi-layer pattern line must start with '|': {line:?}"))?
+        .strip_suffix('|')
+        .with_context(|| format!("multi-layer pattern line must end with '|': {line:?}"))?;
+    Ok(inner.split('|').map(|s| s.chars().collect()).collect())
+}
+
+/// Assign each layer its third-axis coordinate (Y for H family, Z for V family).
+/// Leftmost layer is the highest coordinate; regular layers decrease by 1. A
+/// narrow layer is the boundary belonging to the regular above it (its left
+/// neighbour); a leading narrow belongs to the cube above the first regular.
+/// Errors on two consecutive narrow layers or a multi-layer rule with no regular.
+fn assign_layer_ts(types: &[PatternType]) -> anyhow::Result<Vec<i32>> {
+    if types.len() == 1 {
+        // Single-layer rules (including a lone narrow) live at t = 0.
+        return Ok(vec![0]);
+    }
+    if let Some(&first) = types.first() {
+        if !types.iter().all(|&pt| same_family(pt, first)) {
+            bail!("all layers in a multi-layer rule must be the same family (all H/H narrow or all V/V narrow)");
+        }
+    }
+    let mut ts = vec![0i32; types.len()];
+    let mut running = 0i32;
+    let mut last_regular: Option<i32> = None;
+    let mut prev_narrow = false;
+    let mut leading_narrow: Option<usize> = None;
+    for (k, &pt) in types.iter().enumerate() {
+        if is_narrow(pt) {
+            if prev_narrow {
+                bail!("two consecutive narrow layers");
+            }
+            match last_regular {
+                Some(rt) => ts[k] = rt,
+                None => leading_narrow = Some(k),
+            }
+            prev_narrow = true;
+        } else {
+            ts[k] = running;
+            last_regular = Some(running);
+            running -= 1;
+            prev_narrow = false;
+        }
+    }
+    if last_regular.is_none() {
+        bail!("multi-layer pattern has no regular (non-narrow) layer");
+    }
+    // A leading narrow is the boundary above the first regular (which is at t = 0).
+    if let Some(k) = leading_narrow {
+        ts[k] = 1;
+    }
+    Ok(ts)
+}
+
 fn build_pattern(
-    pt: PatternType,
-    rows: Vec<Vec<char>>,
+    layer_types: Vec<PatternType>,
+    layer_ts: Vec<i32>,
+    layer_rows: Vec<Vec<Vec<char>>>,
     slot: UnorientedSlot,
     annotations: HashMap<char, PatternAnnotation>,
 ) -> anyhow::Result<Pattern> {
-    let mut at_col = None;
-    let mut at_row = None;
-
-    for (r, row) in rows.iter().enumerate() {
-        for (c, &ch) in row.iter().enumerate() {
-            if ch == '@' {
-                if at_col.is_some() {
-                    bail!("pattern has multiple @ characters");
+    // Find the single '@' across all layers.
+    let mut anchor: Option<(usize, usize, usize)> = None; // (layer, col, row)
+    for (l, rows) in layer_rows.iter().enumerate() {
+        for (r, row) in rows.iter().enumerate() {
+            for (c, &ch) in row.iter().enumerate() {
+                if ch == '@' {
+                    if anchor.is_some() {
+                        bail!("pattern has multiple @ characters");
+                    }
+                    anchor = Some((l, c, r));
                 }
-                at_col = Some(c);
-                at_row = Some(r);
             }
         }
     }
+    let (at_layer, at_col, at_row) = anchor.context("pattern has no @ character")?;
 
-    let at_col = at_col.context("pattern has no @ character")?;
-    let at_row = at_row.unwrap();
+    let mut layer_rows = layer_rows;
 
-    let mut rows = rows;
-
-    let (col_offset, row_offset) = offset(pt, slot, at_col, at_row)?;
+    // Parity padding is driven by the anchor layer, and applied uniformly to all
+    // layers (every family member's live cells share the same parity grid).
+    let (col_offset, row_offset) = offset(layer_types[at_layer], slot, at_col, at_row)?;
 
     if col_offset % 2 != 0 {
-        for row in &mut rows {
-            row.insert(0, ' ');
+        for rows in &mut layer_rows {
+            for row in rows.iter_mut() {
+                row.insert(0, ' ');
+            }
         }
     }
     if row_offset % 2 != 0 {
-        rows.insert(0, vec![]);
+        for rows in &mut layer_rows {
+            rows.insert(0, vec![]);
+        }
     }
 
-    for (r, row) in rows.iter().enumerate() {
-        for (c, &ch) in row.iter().enumerate() {
-            if ch != ' ' && is_dead_slot(&pt, c, r) {
-                bail!("character {ch:?} in dead slot at ({c},{r})");
+    for (l, rows) in layer_rows.iter().enumerate() {
+        let pt = layer_types[l];
+        for (r, row) in rows.iter().enumerate() {
+            for (c, &ch) in row.iter().enumerate() {
+                if ch != ' ' && is_dead_slot(&pt, c, r) {
+                    bail!("character {ch:?} in dead slot at layer {l} ({c},{r})");
+                }
             }
         }
     }
 
+    let col_shift = if col_offset % 2 != 0 { 1 } else { 0 };
+    let row_shift = if row_offset % 2 != 0 { 1 } else { 0 };
+
+    let layers = layer_types
+        .into_iter()
+        .zip(layer_ts)
+        .zip(layer_rows)
+        .map(|((pattern_type, t), rows)| Layer {
+            pattern_type,
+            t,
+            rows,
+        })
+        .collect();
+
     Ok(Pattern {
-        pattern_type: pt,
-        rows,
-        at_col: at_col + if col_offset % 2 != 0 { 1 } else { 0 },
-        at_row: at_row + if row_offset % 2 != 0 { 1 } else { 0 },
+        layers,
+        at_col: at_col + col_shift,
+        at_row: at_row + row_shift,
+        at_layer,
         annotations,
     })
 }
@@ -695,7 +883,7 @@ H:
         check!(rule.cases.len() == 1);
         let case = &rule.cases[0];
         let pat = case.pattern.as_ref().unwrap();
-        check!(pat.pattern_type == PatternType::H);
+        check!(pat.layers[pat.at_layer].pattern_type == PatternType::H);
         // After parity adjustment, '@' is at (col=3, row=1) = XLoWall at cube (2,0,0).
         check!(pat.at_col == 3);
         check!(pat.at_row == 1);
@@ -843,7 +1031,7 @@ V:
 
         let case = &rule.cases[0];
         let pat = case.pattern.as_ref().unwrap();
-        check!(pat.pattern_type == PatternType::V);
+        check!(pat.layers[pat.at_layer].pattern_type == PatternType::V);
         // '@' at grid (0,0) → Floor. With (p_col, p_row)=(0,0) no padding needed.
         check!(pat.at_col == 0);
         check!(pat.at_row == 0);
@@ -875,18 +1063,18 @@ V narrow:
 ";
         let file = parse(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
-        check!(pat.pattern_type == PatternType::VNarrow);
+        check!(pat.layers[pat.at_layer].pattern_type == PatternType::VNarrow);
         // '@' wall at cube (0,-1,0); 'W' above at (0,0,0) → +Y; 'W' below at (0,-2,0) → -Y.
         let checks = pat.relative_checks();
         let above = AutotileRelSlotOffset {
-            origin_slot: AutotileRelSlot::XLoWall,
+            origin_slot: AutotileRelSlot::ZLoWall,
             cube_offset: (0, 1, 0),
-            dest_slot: AutotileRelSlot::XLoWall,
+            dest_slot: AutotileRelSlot::ZLoWall,
         };
         let below = AutotileRelSlotOffset {
-            origin_slot: AutotileRelSlot::XLoWall,
+            origin_slot: AutotileRelSlot::ZLoWall,
             cube_offset: (0, -1, 0),
-            dest_slot: AutotileRelSlot::XLoWall,
+            dest_slot: AutotileRelSlot::ZLoWall,
         };
         check!(checks[&above] == 'W');
         check!(checks[&below] == 'W');
@@ -916,7 +1104,7 @@ H narrow:
 ";
         let file = parse(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
-        check!(pat.pattern_type == PatternType::HNarrow);
+        check!(pat.layers[pat.at_layer].pattern_type == PatternType::HNarrow);
         // '@' floor at cube (1,0,0); 'F' west at (0,0,0) → -X; 'F' east at (2,0,0) → +X.
         let checks = pat.relative_checks();
         let west = AutotileRelSlotOffset {
@@ -942,6 +1130,121 @@ H narrow:
 H narrow:
  @
 --> mesh
+";
+        check!(parse(input).is_err());
+    }
+
+    // ── Multi-layer rules ─────────────────────────────────────────────────────
+
+    /// Two regular H layers stack in Y; leftmost is the higher level.
+    #[test]
+    fn parse_multi_layer_h_two_regular() {
+        let input = "\
+== stack: room ==
+|H|H|:
+|=|@|
+--> stacked
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.layers.len() == 2);
+        check!(pat.layers[0].t == 0);
+        check!(pat.layers[1].t == -1);
+        check!(pat.at_layer == 1);
+        // '@' Room at Y=-1; '=' Room directly above at Y=0 → cube_offset (0,+1,0).
+        let checks = pat.relative_checks();
+        let above = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Room,
+            cube_offset: (0, 1, 0),
+            dest_slot: AutotileRelSlot::Room,
+        };
+        check!(checks[&above] == '=');
+        check!(checks.len() == 1);
+    }
+
+    /// `|H|H narrow|H|` — a floor separator between two Y-levels.
+    #[test]
+    fn parse_multi_layer_h_narrow_separator() {
+        let input = "\
+== stack: room ==
+|H|H narrow|H|:
+|=|F|@|
+--> stacked
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.layers.len() == 3);
+        check!(pat.layers[1].t == 0); // narrow shares the upper regular's coord
+        check!(pat.layers[2].t == -1);
+        let checks = pat.relative_checks();
+        // Floor separator (boundary of the cube at Y=0) sits at +1 above the Y=-1 anchor.
+        let floor = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Room,
+            cube_offset: (0, 1, 0),
+            dest_slot: AutotileRelSlot::Floor,
+        };
+        let room_above = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Room,
+            cube_offset: (0, 1, 0),
+            dest_slot: AutotileRelSlot::Room,
+        };
+        check!(checks[&floor] == 'F');
+        check!(checks[&room_above] == '=');
+        check!(checks.len() == 2);
+    }
+
+    /// `|V|V narrow|V|` — V layers stack in Z, separated by the depth-facing wall.
+    #[test]
+    fn parse_multi_layer_v_narrow_separator() {
+        let input = "\
+== stack: room ==
+|V|V narrow|V|:
+|=|W|@|
+--> stacked
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.layers.len() == 3);
+        check!(pat.layers[0].t == 0);
+        check!(pat.layers[1].t == 0);
+        check!(pat.layers[2].t == -1);
+        let checks = pat.relative_checks();
+        // Anchor Room at Z=-1; separator ZLoWall and the room copy sit at +1 in Z.
+        let wall = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Room,
+            cube_offset: (0, 0, 1),
+            dest_slot: AutotileRelSlot::ZLoWall,
+        };
+        let room_over = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Room,
+            cube_offset: (0, 0, 1),
+            dest_slot: AutotileRelSlot::Room,
+        };
+        check!(checks[&wall] == 'W');
+        check!(checks[&room_over] == '=');
+        check!(checks.len() == 2);
+    }
+
+    /// Layers must be a single family.
+    #[test]
+    fn multi_layer_mixed_family_rejected() {
+        let input = "\
+== stack: room ==
+|H|V|:
+|@|=|
+--> m
+";
+        check!(parse(input).is_err());
+    }
+
+    /// Two consecutive narrow layers are not allowed.
+    #[test]
+    fn multi_layer_consecutive_narrow_rejected() {
+        let input = "\
+== stack: room ==
+|H|H narrow|H narrow|H|:
+|@| | |=|
+--> m
 ";
         check!(parse(input).is_err());
     }

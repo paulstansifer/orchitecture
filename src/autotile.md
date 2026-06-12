@@ -13,8 +13,10 @@ pattern        = [ pattern type, { pattern line } ], "-->" result
 
 ## Autotile patterns
 
-pattern type   = "H:\n" | "H narrow:\n" | "V:\n" | "V narrow:\n" 
-pattern line   = " ", { "|" | "%" | " " | "." | "=" | letter }, "\n"
+pattern type   = single type | "|", single type, { "|", single type }, "|"
+single type    = "H" | "H narrow" | "V" | "V narrow"
+pattern line   = " ", { "%" | " " | "." | "=" | letter }, "\n"
+               | [ " " ], "|", { layer segment, "|" }       (* multi-layer *)
 
 Pattern lines are interpreted together as a 2D grid, in the XZ plane (unoriented) for "H" pattenrs or the XY or ZY planes (with up at the top, but otherwise unoriented) for "V" patterns. The 2D pattern must have exactly one "@", indicating where the structure in question is. More details later.
 
@@ -36,8 +38,9 @@ corresponding full pattern. They mirror each other: walls are the surface that
 tiles in the vertical plane, floors the surface that tiles in the horizontal
 plane.
 
-Narrow vertical patterns (`V narrow:`) are wall-anchored and contain only wall slots
-(the wall of the room's own cube), for vertical wall stacking:
+Narrow vertical patterns (`V narrow:`) are wall-anchored and contain only the
+depth-facing wall slot (the wall "behind" the room, perpendicular to the V
+plane), for vertical wall stacking:
 ....
 W.W.
 ....
@@ -51,6 +54,29 @@ F.F.
 F.F.
 
 All patterns are 4-way symmetric in the Y axis. But orientation is respected; all models will be rotated to match the orientation of the @ structure.
+
+### Multi-layer patterns
+
+A rule may stack several same-shaped grids along the plane's third axis (Y for
+the H family, Z for the V family) by writing the pattern types as a
+pipe-delimited list, e.g. `|H|H narrow|H|:` or `|H|H|H narrow|H|:`. Each pattern
+line then carries one `|`-delimited segment per layer; segment `k` is layer
+`k`'s row. For example, one line of a trivial 3-layer rule is `|   | @ |   |`
+(an optional leading space before the first `|` is allowed for alignment).
+
+Rules:
+  * All layers must be the same family (all `H`/`H narrow`, or all `V`/`V narrow`).
+  * The **leftmost** layer is the highest world coordinate; each regular layer is
+    one cube lower than the previous.
+  * `narrow` layers are the **boundary** between regular layers — a floor for the
+    H family, the depth-facing wall for the V family — and are **optional**: the
+    regular layers stay one cube apart whether or not a narrow sits between them.
+    A rule may start with a narrow layer, but two narrow layers may not be
+    adjacent, and a multi-layer rule must contain at least one regular layer.
+  * Exactly one `@` total, in any layer.
+
+Single-layer rules keep the original bare syntax (no pipes; pattern lines start
+with a space).
 
 A particular position can only match (as the `@`) once per rule (the highest match takes priority). If there are multiple rules for one structure, they can all match; and their patterns will be overlaid.
 
