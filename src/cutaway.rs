@@ -82,7 +82,8 @@ fn apply_render_layers_to_tree(
     children_q: &Query<&Children>,
     commands: &mut Commands,
 ) {
-    commands.entity(entity).insert(layers.clone());
+    // `try_insert` because edits can despawn the entity.
+    commands.entity(entity).try_insert(layers.clone());
     if let Ok(children) = children_q.get(entity) {
         for child in children.iter() {
             apply_render_layers_to_tree(child, layers, children_q, commands);
