@@ -27,6 +27,12 @@ pub struct OrientedCase {
     pub result: AutotileResult,
     /// Labeled character → compiled annotation (empty when the pattern has no annotations).
     pub char_annotations: HashMap<char, AnnotatedMatcher>,
+    /// Index of the source (parser) case this orientation was expanded from. All orientations
+    /// of one source case share a group, and a group's orientations are contiguous.
+    pub group: usize,
+    /// `(multi)`: when one orientation in this group matches, every matching orientation emits
+    /// its mesh. See [`super::parser::PatternCase::multi`].
+    pub multi: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -153,8 +159,7 @@ fn rotate_annotations(
 fn rotate_result(result: &AutotileResult, rot: u8) -> AutotileResult {
     match result {
         AutotileResult::None => AutotileResult::None,
-        AutotileResult::Mesh { multi, spec } => AutotileResult::Mesh {
-            multi: *multi,
+        AutotileResult::Mesh { spec } => AutotileResult::Mesh {
             spec: spec.clone().rotate(rot as i32 * 90),
         },
     }
@@ -170,7 +175,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
     let mut cases = Vec::new();
     let mut cases_plus_90 = Vec::new();
 
-    for case in &rule.cases {
+    for (group, case) in rule.cases.iter().enumerate() {
         match &case.pattern {
             None => {
                 // Else case: no constraints, matches always. One copy.
@@ -179,6 +184,8 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                     checks: vec![],
                     result: case.result.clone(),
                     char_annotations: HashMap::new(),
+                    group,
+                    multi: case.multi,
                 };
                 if rule.slot == UnorientedSlot::Wall {
                     cases_plus_90.push(oc.clone());
@@ -208,6 +215,8 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                             checks: checks_to_conditions(&rotated),
                             result: rotate_result(&case.result, rot + 2),
                             char_annotations: rotate_annotations(base_annotations, rot),
+                            group,
+                            multi: case.multi,
                         });
 
                         if rule.slot == UnorientedSlot::Wall {
@@ -217,6 +226,8 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                                 checks: checks_to_conditions(&rotated_plus_90),
                                 result: rotate_result(&case.result, rot),
                                 char_annotations: rotate_annotations(base_annotations, rot + 1),
+                                group,
+                                multi: case.multi,
                             });
                         }
                     }

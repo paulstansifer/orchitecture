@@ -66,12 +66,25 @@ where
             }
         }
         Condition::Or(conditions) => conditions.iter().any(|c| {
-            check_condition(c, anchor, get_cell, char_matches_id, name_matches_id, char_annotations)
+            check_condition(
+                c,
+                anchor,
+                get_cell,
+                char_matches_id,
+                name_matches_id,
+                char_annotations,
+            )
         }),
     }
 }
 
-/// Returns the result for the first matching oriented case.
+/// Returns the result(s) for the first matching oriented case group.
+///
+/// Orientations are grouped by their source case (see [`OrientedCase::group`]). Groups are
+/// tried in priority order; the first group with any matching orientation wins and all later
+/// groups are skipped. For an ordinary group only the first matching orientation is returned;
+/// for a `(multi)` group every matching orientation is returned (so the same structure can emit
+/// a mesh at several orientations at once). Returns an empty vec if no group matches.
 ///
 /// `get_cell` maps a slot location to the `(StructureId, Facing)` occupying it (None = empty).
 /// `char_matches_id` answers "does this neighbor satisfy this pattern character?"
@@ -87,15 +100,16 @@ pub fn match_pattern<'a>(
     anchor: RelSlotCoord,
     char_matches_id: impl Fn(char, StructureId, Facing) -> bool,
     name_matches_id: impl Fn(&str, StructureId) -> bool,
-) -> Option<&'a AutotileResult> {
+) -> Vec<&'a AutotileResult> {
     let turn_90 = matches!(anchor.rel_slot, RelSlot::ZLoWall | RelSlot::ZHiWall);
     let cases = if turn_90 {
         &oriented.cases_plus_90
     } else {
         &oriented.cases
     };
-    for case in cases {
-        let matches = case.checks.iter().all(|cond| {
+
+    let case_matches = |case: &OrientedCase| {
+        case.checks.iter().all(|cond| {
             check_condition(
                 cond,
                 anchor,
@@ -104,12 +118,28 @@ pub fn match_pattern<'a>(
                 &name_matches_id,
                 &case.char_annotations,
             )
-        });
-        if matches {
-            return Some(&case.result);
+        })
+    };
+
+    let mut i = 0;
+    while i < cases.len() {
+        let group = cases[i].group;
+        let multi = cases[i].multi;
+        let mut matched: Vec<&'a AutotileResult> = Vec::new();
+        while i < cases.len() && cases[i].group == group {
+            if case_matches(&cases[i]) {
+                matched.push(&cases[i].result);
+            }
+            i += 1;
+        }
+        if !matched.is_empty() {
+            if !multi {
+                matched.truncate(1);
+            }
+            return matched;
         }
     }
-    None
+    Vec::new()
 }
 
 /// Map a `RelSlot` to the `UnorientedSlot` category used in autotile rule headers.
@@ -158,10 +188,15 @@ pub fn evaluate_autotile_rules(
     Some(
         matching
             .iter()
-            .map(|rule| {
-                match_pattern(rule, &get_cell, loc, &char_matches, &name_matches)
-                    .cloned()
-                    .unwrap_or(AutotileResult::None)
+            .flat_map(|rule| {
+                let results = match_pattern(rule, &get_cell, loc, &char_matches, &name_matches);
+                if results.is_empty() {
+                    // A rule with no matching case (and no else) still occupies a "slot";
+                    // emit a single `None` so callers see the rule applied (no fallback mesh).
+                    vec![AutotileResult::None]
+                } else {
+                    results.into_iter().cloned().collect()
+                }
             })
             .collect(),
     )
@@ -220,7 +255,7 @@ mod tests {
             test_char_matches,
             no_name_match,
         );
-        check!(result == Some(&AutotileResult::None));
+        check!(result == vec![&AutotileResult::None]);
     }
 
     #[test]
@@ -250,10 +285,9 @@ H:
 
         check!(
             result
-                == Some(&AutotileResult::Mesh {
-                    multi: false,
+                == vec![&AutotileResult::Mesh {
                     spec: atom("wall_across").rotate(180)
-                })
+                }]
         );
 
         // Empty grid: should fall through to else
@@ -265,7 +299,7 @@ H:
             test_char_matches,
             no_name_match,
         );
-        check!(result2 == Some(&AutotileResult::None));
+        check!(result2 == vec![&AutotileResult::None]);
     }
 
     /// Verify that `rotate_autotile_rel_slot` agrees with sparse3d's slot rotation:
@@ -296,11 +330,9 @@ H:
             anchor_x,
             test_char_matches,
             no_name_match,
-        )
-        .unwrap();
+        )[0];
         check!(
             r_x == &AutotileResult::Mesh {
-                multi: false,
                 spec: atom("wall_across").rotate(180)
             }
         );
@@ -316,11 +348,9 @@ H:
             anchor_z,
             test_char_matches,
             no_name_match,
-        )
-        .unwrap();
+        )[0];
         check!(
             r_z == &AutotileResult::Mesh {
-                multi: false,
                 spec: atom("wall_across")
             },
             "ZLoWall anchor with ZLoWall neighbor at (0,0,1): expected wall_across, got {r_z:?}"
@@ -337,8 +367,7 @@ H:
             anchor_z,
             test_char_matches,
             no_name_match,
-        )
-        .unwrap();
+        )[0];
         if let AutotileResult::Mesh { spec, .. } = r_z_back {
             check!(
                 spec.outer_rotation() == 180 && spec_stem(spec, UnorientedSlot::Wall) == "wall_across",
@@ -396,7 +425,7 @@ H:
             is_desk,
             no_name_match,
         )
-        .is_none());
+        .is_empty());
 
         // rot=0: neighbor in +X direction → Room(1,0,0).
         // Due to the +2 rotation offset in compile_rule (needed to align with
@@ -409,8 +438,7 @@ H:
             anchor,
             is_desk,
             no_name_match,
-        )
-        .unwrap();
+        )[0];
         check!(
             mesh_rotation(r0) == 180,
             "rot=0: expected mesh rotation 180, got {}",
@@ -428,8 +456,7 @@ H:
             anchor,
             is_desk,
             no_name_match,
-        )
-        .unwrap();
+        )[0];
         check!(
             mesh_rotation(r1) == 270,
             "rot=1 (CW): expected mesh rotation 270, got {}",
@@ -446,8 +473,7 @@ H:
             anchor,
             is_desk,
             no_name_match,
-        )
-        .unwrap();
+        )[0];
         check!(
             mesh_rotation(r2) == 0,
             "rot=2 (180°): expected mesh rotation 0, got {}",
@@ -464,12 +490,135 @@ H:
             anchor,
             is_desk,
             no_name_match,
-        )
-        .unwrap();
+        )[0];
         check!(
             mesh_rotation(r3) == 90,
             "rot=3 (CCW): expected mesh rotation 90, got {}",
             mesh_rotation(r3)
+        );
+    }
+
+    // ── (multi) tests ─────────────────────────────────────────────────────────
+
+    fn desk_cell() -> Cell {
+        Cell {
+            id: StructureId(1),
+            facing: Default::default(),
+            evaluation: None,
+            material: Default::default(),
+        }
+    }
+    fn is_desk(ch: char, id: StructureId, _facing: Facing) -> bool {
+        ch == '=' && id.0 == 1
+    }
+    fn mesh_rotations(results: &[&AutotileResult]) -> Vec<i32> {
+        let mut rs: Vec<i32> = results
+            .iter()
+            .map(|r| match r {
+                AutotileResult::Mesh { spec } => spec.outer_rotation(),
+                other => panic!("expected mesh, got {other:?}"),
+            })
+            .collect();
+        rs.sort();
+        rs
+    }
+
+    /// A `(multi)` case with neighbours on two sides (+X and −X) matches in two orientations,
+    /// and both meshes are emitted (mesh rotations 0 and 180 — see `rotation_consistent`).
+    #[test]
+    fn multi_emits_all_matching_orientations() {
+        let input = "\
+== desk: room ==
+H:
+ @ =
+--> (multi) my_mesh
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
+
+        let mut grid: Sparse3D<Cell> = Sparse3D::new();
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), desk_cell());
+        grid.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), desk_cell());
+
+        let results = match_pattern(
+            &oriented,
+            |loc| grid.get(loc).map(|c| (c.id, c.facing)),
+            anchor,
+            is_desk,
+            no_name_match,
+        );
+        check!(
+            mesh_rotations(&results) == vec![0, 180],
+            "expected both orientations; got {results:?}"
+        );
+    }
+
+    /// Without `(multi)`, the same two-sided configuration yields just the first matching
+    /// orientation (one mesh).
+    #[test]
+    fn non_multi_emits_single_orientation() {
+        let input = "\
+== desk: room ==
+H:
+ @ =
+--> my_mesh
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
+
+        let mut grid: Sparse3D<Cell> = Sparse3D::new();
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), desk_cell());
+        grid.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), desk_cell());
+
+        let results = match_pattern(
+            &oriented,
+            |loc| grid.get(loc).map(|c| (c.id, c.facing)),
+            anchor,
+            is_desk,
+            no_name_match,
+        );
+        check!(
+            results.len() == 1,
+            "expected one orientation; got {results:?}"
+        );
+    }
+
+    /// A `(multi)` match stops later cases from contributing: the else case is skipped once the
+    /// multi group matches.
+    #[test]
+    fn multi_skips_later_cases() {
+        let input = "\
+== desk: room ==
+H:
+ @ =
+--> (multi) my_mesh
+--> fallback
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
+
+        let mut grid: Sparse3D<Cell> = Sparse3D::new();
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), desk_cell());
+
+        let results = match_pattern(
+            &oriented,
+            |loc| grid.get(loc).map(|c| (c.id, c.facing)),
+            anchor,
+            is_desk,
+            no_name_match,
+        );
+        // One matching orientation, and the `fallback` else case is not appended.
+        check!(
+            results.len() == 1,
+            "expected only the multi result; got {results:?}"
+        );
+        check!(
+            matches!(results[0], AutotileResult::Mesh { spec } if spec_stem(spec, UnorientedSlot::Room) == "my_mesh"),
+            "expected my_mesh, got {:?}",
+            results[0]
         );
     }
 
@@ -648,14 +797,19 @@ H:
 ";
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
-        let anchor    = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
-        let wall_loc  = RelSlotCoord::new(-1, 0, 0, RelSlot::XLoWall);
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
+        let wall_loc = RelSlotCoord::new(-1, 0, 0, RelSlot::XLoWall);
         let far_floor = RelSlotCoord::new(-2, 0, 0, RelSlot::Floor);
         let near_floor = RelSlotCoord::new(-1, 0, 0, RelSlot::Floor);
 
         // StructureId 0 = wall, 1 = roof (local convention)
         fn make_cell(id: u32) -> Cell {
-            Cell { id: StructureId(id), facing: Default::default(), evaluation: None, material: Default::default() }
+            Cell {
+                id: StructureId(id),
+                facing: Default::default(),
+                evaluation: None,
+                material: Default::default(),
+            }
         }
         fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
             const NAMES: [&str; 2] = ["wall", "roof"];
@@ -665,24 +819,60 @@ H:
         // Case 1: wall present at wall_loc → should match 'hit'
         let mut grid = Sparse3D::new();
         grid.set(wall_loc, make_cell(0));
-        let result = match_pattern(&oriented, |l| grid.get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
-        check!(matches!(result, Some(AutotileResult::Mesh { .. })), "wall present should match; got {result:?}");
+        let result = match_pattern(
+            &oriented,
+            |l| grid.get(l).map(|c| (c.id, c.facing)),
+            anchor,
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            matches!(result[0], AutotileResult::Mesh { .. }),
+            "wall present should match; got {result:?}"
+        );
 
         // Case 2: roof in far cube's floor → should match 'hit'
         let mut grid2 = Sparse3D::new();
         grid2.set(far_floor, make_cell(1));
-        let result2 = match_pattern(&oriented, |l| grid2.get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
-        check!(matches!(result2, Some(AutotileResult::Mesh { .. })), "roof in far floor should match; got {result2:?}");
+        let result2 = match_pattern(
+            &oriented,
+            |l| grid2.get(l).map(|c| (c.id, c.facing)),
+            anchor,
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            matches!(result2[0], AutotileResult::Mesh { .. }),
+            "roof in far floor should match; got {result2:?}"
+        );
 
         // Case 3: roof in NEAR floor only → should NOT satisfy 'r', falls through to 'none'
         let mut grid3 = Sparse3D::new();
         grid3.set(near_floor, make_cell(1));
-        let result3 = match_pattern(&oriented, |l| grid3.get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
-        check!(result3 == Some(&AutotileResult::None), "roof in near floor should not match; got {result3:?}");
+        let result3 = match_pattern(
+            &oriented,
+            |l| grid3.get(l).map(|c| (c.id, c.facing)),
+            anchor,
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            result3 == vec![&AutotileResult::None],
+            "roof in near floor should not match; got {result3:?}"
+        );
 
         // Case 4: neither wall nor roof → should fall through to 'none'
-        let result4 = match_pattern(&oriented, |l| Sparse3D::<Cell>::new().get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
-        check!(result4 == Some(&AutotileResult::None), "neither wall nor roof should fall through; got {result4:?}");
+        let result4 = match_pattern(
+            &oriented,
+            |l| Sparse3D::<Cell>::new().get(l).map(|c| (c.id, c.facing)),
+            anchor,
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            result4 == vec![&AutotileResult::None],
+            "neither wall nor roof should fall through; got {result4:?}"
+        );
     }
 
     /// The roof-rule form of `'r'`: an `H narrow` floor anchor with `'r'` in one of its (new)
@@ -702,13 +892,18 @@ H narrow:
 ";
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
-        let anchor    = RelSlotCoord::new(0, 0, 0, RelSlot::Floor);
-        let wall_loc  = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Floor);
+        let wall_loc = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
         let far_floor = RelSlotCoord::new(-1, 0, 0, RelSlot::Floor);
 
         // StructureId 0 = wall, 1 = roof (local convention)
         fn make_cell(id: u32) -> Cell {
-            Cell { id: StructureId(id), facing: Default::default(), evaluation: None, material: Default::default() }
+            Cell {
+                id: StructureId(id),
+                facing: Default::default(),
+                evaluation: None,
+                material: Default::default(),
+            }
         }
         fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
             const NAMES: [&str; 2] = ["wall", "roof"];
@@ -718,18 +913,45 @@ H narrow:
         // Wall present beyond the anchor → match.
         let mut grid = Sparse3D::new();
         grid.set(wall_loc, make_cell(0));
-        let result = match_pattern(&oriented, |l| grid.get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
-        check!(matches!(result, Some(AutotileResult::Mesh { .. })), "wall present should match; got {result:?}");
+        let result = match_pattern(
+            &oriented,
+            |l| grid.get(l).map(|c| (c.id, c.facing)),
+            anchor,
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            matches!(result[0], AutotileResult::Mesh { .. }),
+            "wall present should match; got {result:?}"
+        );
 
         // Roof on the floor beyond the wall (same level) → match.
         let mut grid2 = Sparse3D::new();
         grid2.set(far_floor, make_cell(1));
-        let result2 = match_pattern(&oriented, |l| grid2.get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
-        check!(matches!(result2, Some(AutotileResult::Mesh { .. })), "roof on far floor should match; got {result2:?}");
+        let result2 = match_pattern(
+            &oriented,
+            |l| grid2.get(l).map(|c| (c.id, c.facing)),
+            anchor,
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            matches!(result2[0], AutotileResult::Mesh { .. }),
+            "roof on far floor should match; got {result2:?}"
+        );
 
         // Neither → fall through to 'none'.
-        let result3 = match_pattern(&oriented, |l| Sparse3D::<Cell>::new().get(l).map(|c| (c.id, c.facing)), anchor, char_matches, no_name_match);
-        check!(result3 == Some(&AutotileResult::None), "neither wall nor roof should fall through; got {result3:?}");
+        let result3 = match_pattern(
+            &oriented,
+            |l| Sparse3D::<Cell>::new().get(l).map(|c| (c.id, c.facing)),
+            anchor,
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            result3 == vec![&AutotileResult::None],
+            "neither wall nor roof should fall through; got {result3:?}"
+        );
     }
 
     // ── Annotation orientation tests ──────────────────────────────────────────
@@ -779,7 +1001,7 @@ H: 1=stairs:90
             name_is_stairs,
         );
         check!(
-            matches!(result, Some(AutotileResult::Mesh { .. })),
+            matches!(result[0], AutotileResult::Mesh { .. }),
             "stairs facing PosZ should match; got {result:?}"
         );
 
@@ -794,7 +1016,7 @@ H: 1=stairs:90
             name_is_stairs,
         );
         check!(
-            result2 == Some(&AutotileResult::None),
+            result2 == vec![&AutotileResult::None],
             "stairs facing NegX should not match annotation; got {result2:?}"
         );
 
@@ -808,7 +1030,7 @@ H: 1=stairs:90
             name_is_stairs,
         );
         check!(
-            result3 == Some(&AutotileResult::None),
+            result3 == vec![&AutotileResult::None],
             "empty room should not match annotation; got {result3:?}"
         );
     }

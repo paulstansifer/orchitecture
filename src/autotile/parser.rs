@@ -135,7 +135,7 @@ impl MeshSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutotileResult {
     None,
-    Mesh { multi: bool, spec: MeshSpec },
+    Mesh { spec: MeshSpec },
 }
 
 // ─── Parsed representation ───────────────────────────────────────────────────
@@ -279,6 +279,10 @@ fn grid_pos_to_3d(pt: PatternType, col: usize, row: usize) -> (i32, i32, i32, Au
 pub struct PatternCase {
     pub pattern: Option<Pattern>,
     pub result: AutotileResult,
+    /// `(multi)`: when one orientation of this case matches, emit the mesh for *every*
+    /// matching orientation (rather than just the first). Cases further down are still
+    /// skipped once this case matches.
+    pub multi: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -365,10 +369,12 @@ fn parse_cases(
         }
 
         if let Some(rest) = line.strip_prefix("-->") {
-            let result = parse_result(rest.trim()).with_context(|| format!("line {lineno}"))?;
+            let (multi, result) =
+                parse_result(rest.trim()).with_context(|| format!("line {lineno}"))?;
             cases.push(PatternCase {
                 pattern: None,
                 result,
+                multi,
             });
             i += 1;
             break; // else case is always last
@@ -391,11 +397,12 @@ fn parse_cases(
             if let Some(rest) = pline.strip_prefix("-->") {
                 let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations)
                     .with_context(|| format!("line {plineno}"))?;
-                let result =
+                let (multi, result) =
                     parse_result(rest.trim()).with_context(|| format!("line {plineno}"))?;
                 cases.push(PatternCase {
                     pattern: Some(pattern),
                     result,
+                    multi,
                 });
                 i += 1;
                 break;
@@ -693,9 +700,11 @@ fn is_dead_slot(pt: &PatternType, col: usize, row: usize) -> bool {
 
 // ─── Mesh spec parser ─────────────────────────────────────────────────────────
 
-fn parse_result(s: &str) -> anyhow::Result<AutotileResult> {
+/// Parse a result line, returning `(multi, result)` where `multi` is set by a leading
+/// `(multi)` marker (see [`PatternCase::multi`]).
+fn parse_result(s: &str) -> anyhow::Result<(bool, AutotileResult)> {
     if s == "none" {
-        return Ok(AutotileResult::None);
+        return Ok((false, AutotileResult::None));
     }
     let (multi, rest) = if let Some(r) = s.strip_prefix("(multi)").map(str::trim_start) {
         (true, r)
@@ -703,7 +712,7 @@ fn parse_result(s: &str) -> anyhow::Result<AutotileResult> {
         (false, s)
     };
     let spec = parse_mesh_spec(rest).with_context(|| format!("invalid result: {s:?}"))?;
-    Ok(AutotileResult::Mesh { multi, spec })
+    Ok((multi, AutotileResult::Mesh { spec }))
 }
 
 /// Recursive-descent parser for mesh specs.
@@ -942,20 +951,10 @@ H:
         let file = parse(input).unwrap();
         let rule = &file.rules[0];
         check!(rule.cases.len() == 2);
-        check!(
-            rule.cases[0].result
-                == AutotileResult::Mesh {
-                    multi: true,
-                    spec: atom("mesh_a")
-                }
-        );
-        check!(
-            rule.cases[1].result
-                == AutotileResult::Mesh {
-                    multi: false,
-                    spec: atom("mesh_b")
-                }
-        );
+        check!(rule.cases[0].multi == true);
+        check!(rule.cases[0].result == AutotileResult::Mesh { spec: atom("mesh_a") });
+        check!(rule.cases[1].multi == false);
+        check!(rule.cases[1].result == AutotileResult::Mesh { spec: atom("mesh_b") });
     }
 
     #[test]
