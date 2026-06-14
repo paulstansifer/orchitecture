@@ -156,4 +156,19 @@
         ),
         furniture: true,
     ),
+    (
+        name: "bin",
+        main_mesh: "desk.gltf",
+        y_cut_mesh: None,
+        placement_style: RoomPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.3,
+            passable: 0.5,
+            decorative: 0.0,
+            striated: 0.0,
+        ),
+        furniture: true,
+    ),
 ]

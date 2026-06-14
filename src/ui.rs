@@ -5,6 +5,7 @@ use bevy_file_dialog::prelude::*;
 use crate::cutaway::CutawayMode;
 use crate::input::BuildState;
 use crate::serialization;
+use crate::sparse3d::{Slot, SlotCoord};
 use crate::structure::StructureList;
 use crate::wall_grid::{
     apply_changes, apply_proposal_changes, Material, ProposalOverlayAssets, WallGrid,
@@ -95,12 +96,30 @@ fn find_bundled(name: &str) -> Option<&'static str> {
 pub struct SaveDialog;
 pub struct LoadDialog;
 
+/// Which content the left-hand panel shows.
+#[derive(Default, Clone)]
+pub enum LeftPanel {
+    /// Normal palette / material / construct controls.
+    #[default]
+    Build,
+    /// Station view for the furniture cube that was right-clicked.
+    Station {
+        cube: IVec3,
+    },
+}
+
 #[derive(Resource, Default)]
 pub struct UiState {
     pub load_filename: String,
     pub example_idx: String,
     pub available_files: Vec<String>,
+    pub left_panel: LeftPanel,
 }
+
+/// A right-click pick on a real furniture cell, produced by `building_input_system`
+/// and consumed by `ui_system` to open the station panel.
+#[derive(Resource, Default)]
+pub struct FurnitureRightClick(pub Option<IVec3>);
 
 /// When enabled, construction edits commit immediately instead of becoming
 /// proposals, and (eventually) edits are free. Loading structures is only
@@ -199,10 +218,17 @@ pub fn ui_system(
     overlay_assets: Res<ProposalOverlayAssets>,
     mut cutaway_mode: ResMut<CutawayMode>,
     mut sandbox: ResMut<SandboxMode>,
+    mut furniture_right_click: ResMut<FurnitureRightClick>,
+    mut station_highlight: ResMut<crate::wall_grid::StationHighlight>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
+
+    // A right-click pick (from building_input_system) opens the station panel.
+    if let Some(cube) = furniture_right_click.0.take() {
+        ui_state.left_panel = LeftPanel::Station { cube };
+    }
 
     // Captures a map name selected via the dropdown; handled after the egui block.
     let mut dropdown_load: Option<String> = None;
@@ -323,10 +349,101 @@ pub fn ui_system(
         }
     }
 
+    // Deferred mutations so the panel closure only borrows `wall_grid` immutably
+    // in the station arms (the build arm still mutates it directly).
+    let mut next_panel: Option<LeftPanel> = None;
+    let mut assign: Option<(IVec3, usize)> = None;
+    let mut unassign: Option<usize> = None;
+    let mut highlight: Vec<IVec3> = Vec::new();
+    let panel = ui_state.left_panel.clone();
+
     egui::SidePanel::left("controls")
         .min_width(100.0)
-        .max_width(120.0)
+        .max_width(140.0)
         .show(ctx, |ui| {
+          match panel {
+           LeftPanel::Station { cube } => {
+            ui.heading("Station");
+            ui.separator();
+            if ui.button("← Back").clicked() {
+                next_panel = Some(LeftPanel::Build);
+            }
+            ui.separator();
+            match crate::station::station_index_at(&wall_grid, cube) {
+                Some(idx) => {
+                    let ps = &wall_grid.placed_stations[idx];
+                    let def = &wall_grid.stations[ps.station];
+                    ui.label(format!("Name: {}", def.name));
+
+                    let mut counts: std::collections::BTreeMap<String, usize> =
+                        std::collections::BTreeMap::new();
+                    for loc in &ps.structure_locations {
+                        if let Some(cell) = wall_grid.contents.get(SlotCoord {
+                            cube: *loc,
+                            slot: Slot::Room,
+                        }) {
+                            *counts
+                                .entry(wall_grid.structures[cell.id.as_usize()].name.clone())
+                                .or_default() += 1;
+                        }
+                    }
+                    ui.separator();
+                    ui.label("Structures:");
+                    for (name, c) in &counts {
+                        ui.label(format!("  {}: {}", name, c));
+                    }
+
+                    ui.separator();
+                    ui.label("Contents:");
+                    let totals = ps.contents.uniform_totals();
+                    if totals.is_empty() {
+                        ui.label("  (empty)");
+                    }
+                    for (res, qty) in totals {
+                        ui.label(format!("  {}: {}", res.label(), qty));
+                    }
+
+                    // Highlight this station's furniture in 3D.
+                    highlight = ps.structure_locations.clone();
+
+                    ui.separator();
+                    if ui.button("Unassign station").clicked() {
+                        unassign = Some(idx);
+                        next_panel = Some(LeftPanel::Build);
+                    }
+                }
+                None => {
+                    // A `Some` plan is exactly the validity test, so one pass over
+                    // the stations both filters and yields the "Pulls N" count.
+                    let plans: Vec<(usize, usize)> = (0..wall_grid.stations.len())
+                        .filter_map(|s_idx| {
+                            crate::station::plan_assignment(&wall_grid, cube, s_idx)
+                                .map(|plan| (s_idx, plan.pulled))
+                        })
+                        .collect();
+                    if plans.is_empty() {
+                        ui.label("No valid stations here.");
+                    } else {
+                        ui.label("Create station:");
+                    }
+                    for (s_idx, pulled) in plans {
+                        if ui.button(&wall_grid.stations[s_idx].name).clicked() {
+                            assign = Some((cube, s_idx));
+                        }
+                        if pulled > 0 {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Pulls {} already-assigned structures",
+                                    pulled
+                                ))
+                                .italics(),
+                            );
+                        }
+                    }
+                }
+            }
+           }
+           LeftPanel::Build => {
             ui.heading("Orchitecture");
             ui.separator();
 
@@ -400,6 +517,71 @@ pub fn ui_system(
                     );
                     clear_proposed_cut_entities(&mut commands, &mut wall_grid);
                 }
+            }
+           }
+          }
+        });
+
+    // Apply deferred station mutations now that the panel closure has ended.
+    if let Some((cube, s_idx)) = assign {
+        crate::station::commit_assignment(&mut wall_grid, cube, s_idx);
+    }
+    if let Some(idx) = unassign {
+        crate::station::unassign_station(&mut wall_grid, idx);
+    }
+    if let Some(p) = next_panel {
+        ui_state.left_panel = p;
+    }
+    // Write only on change (set_if_neq), so the highlight system doesn't respawn
+    // the overlay meshes every frame.
+    station_highlight.set_if_neq(crate::wall_grid::StationHighlight(highlight));
+
+    resource_sidebar(ctx, &wall_grid);
+}
+
+/// Right-hand sidebar summarizing total resources across every storage station.
+///
+/// Each station's count is run through its own accounting approximation and then
+/// the rounded results are summed (round-each-then-sum). A `>` prefix is shown for
+/// a resource when any contributing station rounded its count down.
+fn resource_sidebar(ctx: &egui::Context, wall_grid: &WallGrid) {
+    use crate::resource::{round, UniformResource};
+
+    // Preserve a stable display order of resource kinds as first encountered.
+    let mut order: Vec<UniformResource> = Vec::new();
+    let mut totals: std::collections::HashMap<UniformResource, (u32, bool)> =
+        std::collections::HashMap::new();
+
+    for station in &wall_grid.placed_stations {
+        let Some(info) = wall_grid.stations.get(station.station) else {
+            continue;
+        };
+        let Some(spec) = &info.storage else {
+            continue;
+        };
+        for (res, qty) in station.contents.uniform_totals() {
+            let (rounded, dropped) = round(qty, spec.accounting);
+            let entry = totals.entry(res).or_insert_with(|| {
+                order.push(res);
+                (0, false)
+            });
+            entry.0 += rounded as u32;
+            entry.1 |= dropped;
+        }
+    }
+
+    egui::SidePanel::right("resources")
+        .min_width(120.0)
+        .show(ctx, |ui| {
+            ui.heading("Resources");
+            ui.separator();
+            if order.is_empty() {
+                ui.label("(none)");
+            }
+            for res in order {
+                let (total, rounded_down) = totals[&res];
+                let prefix = if rounded_down { "> " } else { "" };
+                ui.label(format!("{}{}: {}", prefix, res.label(), total));
             }
         });
 }

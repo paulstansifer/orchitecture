@@ -5,8 +5,8 @@ use std::f32::consts::TAU;
 use crate::autotile::AutotileResult;
 use bevy::math::{IVec3, Quat, Vec3};
 use bevy::prelude::{
-    AlphaMode, Assets, Color, Commands, Component, Entity, Mesh, Mesh3d, MeshMaterial3d, ResMut,
-    Resource, SceneRoot, StandardMaterial, Transform,
+    AlphaMode, Assets, Color, Commands, Component, DetectChanges, Entity, Mesh, Mesh3d,
+    MeshMaterial3d, Query, Res, ResMut, Resource, SceneRoot, StandardMaterial, Transform, With,
 };
 use serde::{Deserialize, Serialize};
 
@@ -248,6 +248,7 @@ use bevy::asset::Handle;
 
 #[derive(Resource)]
 pub struct WallGrid {
+    // TODO: make this (and `stations`) a Res<>?
     pub structures: Vec<StructureInfo>,
     pub contents: Sparse3D<Cell>,
     /// Proposed changes not yet committed; does not affect shadows or ceiling lights.
@@ -267,6 +268,10 @@ pub struct WallGrid {
     pub(crate) undo_record: Vec<UndoRecord>,
     /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
     pub(crate) redo_record: Vec<UndoRecord>,
+    /// Loaded station definitions (from `buildables/stations.ron`).
+    pub stations: Vec<crate::station::StationInfo>,
+    /// Stations placed in the world.
+    pub placed_stations: Vec<crate::station::ParticularStation>,
     pub road_forbidden_zone: bool,
     /// Last-rendered autotile results per proposed-addition location, for change detection.
     #[cfg(autotile_matching)]
@@ -286,6 +291,8 @@ impl WallGrid {
             proposed_cut_entities: HashMap::new(),
             undo_record: Vec::new(),
             redo_record: Vec::new(),
+            stations: Vec::new(),
+            placed_stations: Vec::new(),
             road_forbidden_zone: true,
             #[cfg(autotile_matching)]
             proposal_autotile_results: HashMap::new(),
@@ -293,16 +300,7 @@ impl WallGrid {
     }
 
     pub fn get_structure_names(&self) -> Vec<String> {
-        self.structures
-            .iter()
-            .map(|s| {
-                std::path::Path::new(&s.main_mesh)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(&s.main_mesh)
-                    .to_string()
-            })
-            .collect()
+        self.structures.iter().map(|s| s.name.clone()).collect()
     }
 
     pub fn structure_is_room_plop(&self, id: StructureId) -> bool {
@@ -419,7 +417,7 @@ pub fn apply_changes(
 }
 
 /// World-space center of a slot, used for positioning overlays.
-fn slot_center(loc: SlotCoord) -> Vec3 {
+pub fn slot_center(loc: SlotCoord) -> Vec3 {
     let base = loc.cube.as_vec3() + Vec3::splat(0.5);
     match loc.slot {
         Slot::Room => base,
@@ -674,6 +672,72 @@ pub fn spawn_material_assets(
     commands.insert_resource(MaterialAssets { handles });
 }
 
+/// Furniture cubes (always `Slot::Room`) to highlight in the 3D view for the
+/// currently-inspected station. Written by `ui_system`, rendered by
+/// `update_station_highlight`.
+#[derive(Resource, Default, PartialEq)]
+pub struct StationHighlight(pub Vec<IVec3>);
+
+/// Mesh + translucent material for station-highlight overlay cuboids.
+#[derive(Resource)]
+pub struct HighlightAssets {
+    mesh: Handle<Mesh>,
+    mat: Handle<StandardMaterial>,
+}
+
+/// Marks a spawned station-highlight overlay entity for despawn on the next change.
+#[derive(Component)]
+pub struct StationHighlightMarker;
+
+/// Startup system: creates the highlight cuboid mesh and material.
+pub fn spawn_highlight_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let mesh = meshes.add(bevy::prelude::Cuboid::new(0.95, 0.95, 0.95));
+    let mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.3, 0.9, 1.0, 0.35),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        double_sided: true,
+        cull_mode: None,
+        ..Default::default()
+    });
+    commands.insert_resource(HighlightAssets { mesh, mat });
+}
+
+/// Despawns prior highlight overlays and spawns one translucent cuboid per
+/// highlighted furniture cube whenever the highlight set changes.
+pub fn update_station_highlight(
+    mut commands: Commands,
+    highlight: Res<StationHighlight>,
+    assets: Option<Res<HighlightAssets>>,
+    existing: Query<Entity, With<StationHighlightMarker>>,
+) {
+    if !highlight.is_changed() {
+        return;
+    }
+    let Some(assets) = assets else {
+        return;
+    };
+    for entity in &existing {
+        commands.entity(entity).despawn();
+    }
+    for cube in &highlight.0 {
+        let center = slot_center(SlotCoord {
+            cube: *cube,
+            slot: Slot::Room,
+        });
+        commands.spawn((
+            Mesh3d(assets.mesh.clone()),
+            MeshMaterial3d(assets.mat.clone()),
+            Transform::from_translation(center),
+            StationHighlightMarker,
+        ));
+    }
+}
+
 /// Startup system: creates the WallGrid resource from the already-populated StructureList.
 pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<StructureList>) {
     let infos = structure_list
@@ -681,5 +745,7 @@ pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<Str
         .iter()
         .map(|s| s.info.clone())
         .collect();
-    commands.insert_resource(WallGrid::new(infos));
+    let mut wall_grid = WallGrid::new(infos);
+    wall_grid.stations = crate::station::load_station_info();
+    commands.insert_resource(wall_grid);
 }

@@ -12,6 +12,7 @@ pub mod input;
 pub mod llm_rooms;
 pub mod paths;
 pub mod qnn;
+pub mod resource;
 pub mod road;
 pub mod serialization;
 pub mod sparse3d;

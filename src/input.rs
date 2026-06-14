@@ -160,6 +160,8 @@ pub fn building_input_system(
     overlay_assets: Res<ProposalOverlayAssets>,
     mut cutaway_mode: ResMut<CutawayMode>,
     sandbox: Res<SandboxMode>,
+    mut furniture_right_click: ResMut<crate::ui::FurnitureRightClick>,
+    mut right_press_pos: Local<Option<Vec2>>,
 ) {
     // --- Layer up/down ---
     if keyboard.just_pressed(KeyCode::ArrowUp) {
@@ -311,6 +313,33 @@ pub fn building_input_system(
                         &overlay_assets,
                         changes,
                     );
+                }
+            }
+        }
+    }
+
+    // --- Right-click: pick a real furniture cell (vs. right-drag = camera rotate) ---
+    if mouse_button.just_pressed(MouseButton::Right) {
+        *right_press_pos = window.cursor_position();
+    }
+    if mouse_button.just_released(MouseButton::Right) {
+        let pressed = right_press_pos.take();
+        let moved = pressed
+            .zip(window.cursor_position())
+            .map(|(a, b)| a.distance(b))
+            .unwrap_or(f32::INFINITY);
+        // A click barely moves the cursor; a rotate-drag moves it a lot.
+        if moved < 4.0 && !egui_wants_input.wants_any_pointer_input() {
+            if let Some(pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
+                let cube = pos.round().as_ivec3();
+                let loc = SlotCoord {
+                    cube,
+                    slot: Slot::Room,
+                };
+                if let Some(cell) = wall_grid.contents.get(loc) {
+                    if wall_grid.structures[cell.id.as_usize()].furniture {
+                        furniture_right_click.0 = Some(cube);
+                    }
                 }
             }
         }

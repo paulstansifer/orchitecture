@@ -1,0 +1,18 @@
+[
+    (
+        name: "storage room",
+        requirements: [
+            (
+                structure: "bin",
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+        ],
+        storage: Some((
+            just_one_kind: false,
+            accounting: (digits: 1, max: 100),
+        )),
+    ),
+]

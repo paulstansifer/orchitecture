@@ -14,12 +14,16 @@ use orchitecture_lib::{
         update_room_cursor_mesh, BuildState,
     },
     qnn::ModelPlugin,
+    station::spawn_initial_station,
     structure::{spawn_structures, StructureList},
     ui::{
         discover_user_files, enable_ui_input_absorption, handle_file_load, handle_file_save,
-        ui_system, LoadDialog, SandboxMode, SaveDialog, UiState,
+        ui_system, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
     },
-    wall_grid::{spawn_grid, spawn_material_assets, spawn_proposal_overlay_assets, WallGrid},
+    wall_grid::{
+        spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
+        update_station_highlight, StationHighlight, WallGrid,
+    },
     world::spawn_world,
 };
 
@@ -52,12 +56,15 @@ fn main() {
         .insert_resource(StructureList::default())
         .insert_resource(CutawayMode::default())
         .insert_resource(SandboxMode::default())
+        .insert_resource(FurnitureRightClick::default())
+        .insert_resource(StationHighlight::default())
         .add_systems(
             Startup,
             (
                 enable_ui_input_absorption,
-                // spawn_structures must run before spawn_grid (grid reads StructureList).
-                (spawn_structures, spawn_grid).chain(),
+                // spawn_structures must run before spawn_grid (grid reads StructureList),
+                // and spawn_initial_station after spawn_grid (it needs the WallGrid resource).
+                (spawn_structures, spawn_grid, spawn_initial_station).chain(),
                 spawn_autotile_rules,
                 load_autotile_handles,
                 spawn_camera,
@@ -65,6 +72,7 @@ fn main() {
                 spawn_cursors,
                 spawn_proposal_overlay_assets,
                 spawn_material_assets,
+                spawn_highlight_assets,
                 discover_user_files,
             ),
         )
@@ -80,6 +88,7 @@ fn main() {
                 update_cutaway_system,
                 propagate_render_layers_system.after(update_cutaway_system),
                 update_ceiling_lights.run_if(resource_changed::<WallGrid>),
+                update_station_highlight,
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))
