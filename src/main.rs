@@ -5,7 +5,7 @@ use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
-    camera::{camera_input_system, spawn_camera, CameraState},
+    camera::{camera_input_system, spawn_camera, CameraState, IsometricCamera},
     ceiling_lights::update_ceiling_lights,
     cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
     grid_preview::GridPreviewPlugin,
@@ -51,6 +51,7 @@ fn main() {
         .add_plugins(GridPreviewPlugin)
         .add_plugins(ModelPlugin)
         .insert_resource(CameraState::default())
+        .insert_resource(IsometricCamera::default())
         .insert_resource(BuildState::default())
         .insert_resource(UiState::default())
         .insert_resource(StructureList::default())

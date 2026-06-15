@@ -1,5 +1,6 @@
 use std::f32::consts::TAU;
 
+use bevy::camera::ScalingMode;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseButton, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -24,6 +25,13 @@ impl Default for CameraState {
     }
 }
 
+/// When enabled, the camera uses an orthographic (isometric) projection instead
+/// of the default perspective one. Toggled from the bottom UI bar.
+#[derive(Resource, Default)]
+pub struct IsometricCamera {
+    pub enabled: bool,
+}
+
 #[derive(Component)]
 pub struct GameCamera;
 
@@ -43,9 +51,10 @@ pub fn camera_input_system(
     windows: Query<&Window, With<PrimaryWindow>>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     egui_wants_input: Res<EguiWantsInput>,
+    isometric: Res<IsometricCamera>,
     mut last_cursor: Local<Option<Vec2>>,
     mut state: ResMut<CameraState>,
-    mut camera_q: Query<&mut Transform, With<GameCamera>>,
+    mut camera_q: Query<(&mut Transform, &mut Projection), With<GameCamera>>,
 ) {
     let dt = time.delta_secs();
 
@@ -95,9 +104,29 @@ pub fn camera_input_system(
         state.target_position = Vec3::ZERO;
     }
 
-    let Ok(mut transform) = camera_q.single_mut() else {
+    let Ok((mut transform, mut projection)) = camera_q.single_mut() else {
         return;
     };
+
+    // Swap the projection to match the isometric toggle. In orthographic mode the
+    // zoom distance instead drives the visible vertical extent, so scrolling still
+    // zooms; the camera transform below is shared by both modes.
+    if isometric.enabled {
+        let viewport_height = state.target_dist;
+        match &mut *projection {
+            Projection::Orthographic(ortho) => {
+                ortho.scaling_mode = ScalingMode::FixedVertical { viewport_height };
+            }
+            _ => {
+                *projection = Projection::Orthographic(OrthographicProjection {
+                    scaling_mode: ScalingMode::FixedVertical { viewport_height },
+                    ..OrthographicProjection::default_3d()
+                });
+            }
+        }
+    } else if !matches!(*projection, Projection::Perspective(_)) {
+        *projection = Projection::Perspective(PerspectiveProjection::default());
+    }
 
     let pitch = state.target_pitch;
     let yaw = state.target_yaw;

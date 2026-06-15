@@ -218,6 +218,7 @@ pub fn ui_system(
     mut sandbox: ResMut<SandboxMode>,
     mut furniture_right_click: ResMut<FurnitureRightClick>,
     mut station_highlight: ResMut<crate::wall_grid::StationHighlight>,
+    mut isometric: ResMut<crate::camera::IsometricCamera>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -237,6 +238,9 @@ pub fn ui_system(
             ui.label(
                 "Up/Dn=layer  R=rotate  Z=undo  Y=redo  Drag=place  Ctrl+drag=erase  V=evaluate",
             );
+
+            ui.separator();
+            ui.checkbox(&mut isometric.enabled, "Isometric");
 
             ui.separator();
             let was_sandbox = sandbox.enabled;
