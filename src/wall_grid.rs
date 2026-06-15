@@ -248,8 +248,6 @@ use bevy::asset::Handle;
 
 #[derive(Resource)]
 pub struct WallGrid {
-    // TODO: make this (and `stations`) a Res<>?
-    pub structures: Vec<StructureInfo>,
     pub contents: Sparse3D<Cell>,
     /// Proposed changes not yet committed; does not affect shadows or ceiling lights.
     pub proposed_changes: Sparse3D<Proposal>,
@@ -268,14 +266,16 @@ pub struct WallGrid {
     pub(crate) undo_record: Vec<UndoRecord>,
     /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
     pub(crate) redo_record: Vec<UndoRecord>,
-    /// Loaded station definitions (from `buildables/stations.ron`).
-    pub stations: Vec<crate::station::StationInfo>,
     /// Stations placed in the world.
     pub placed_stations: Vec<crate::station::ParticularStation>,
     pub road_forbidden_zone: bool,
     /// Last-rendered autotile results per proposed-addition location, for change detection.
     #[cfg(autotile_matching)]
     pub proposal_autotile_results: HashMap<SlotCoord, Vec<AutotileResult>>,
+    /// Duplicated from the `Res<>` for simplicity:
+    pub structures: Vec<StructureInfo>,
+    /// Duplicated from the `Res<>` for simplicity:
+    pub stations: Vec<crate::station::StationInfo>,
 }
 
 impl WallGrid {
