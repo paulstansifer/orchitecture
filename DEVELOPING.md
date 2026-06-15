@@ -42,6 +42,19 @@ Not very important, for non-user-constructed buildings:
 
 # Assets
 
+`build.rs` generates the meshes used at runtime into `buildables/autotile/`:
+  * For every mesh spec referenced by a `structures.autotile` rule.
+  * For every structure in `structures.ron`: its fallback mesh is
+    `buildables/autotile/{name}.gltf`, compiled from `buildables/{name}.scad`
+    (where `{name}` is the structure name with spaces turned into underscores, so
+    `"market stand"` → `market_stand`). Furniture has no cutaway mesh (it vanishes
+    when cut away); every other structure also gets a `-cut-y-pos` variant.
+    Structures drawn entirely by autotile rules (e.g. roof, column) have no
+    `{name}.scad` and need no standalone mesh.
+
+`build.rs` also warns about any `buildables/*.scad` that no autotile rule or
+structure references.
+
 The checked-in .gtlf files are programmatically-generated from the OpenSCAD files (eventually, this should be part of the build process). To regenerate them:
 ```
 for f in buildables/*.scad; do dest="$(echo "$f" | sed 's/.scad/.gltf/')"; openscad "$f" -o /tmp/tmp.stl && assimp export /tmp/tmp.stl "$dest"; done;

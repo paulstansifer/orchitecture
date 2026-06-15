@@ -20,14 +20,12 @@ pub struct Builder {
 
 impl Builder {
     pub fn new(structures: &Vec<StructureInfo>) -> Self {
-        let base_name = |s: &str| s.splitn(2, ".").next().unwrap().to_string();
-
         Self {
             map: Sparse3D::new(),
             structures: structures
                 .iter()
                 .enumerate()
-                .map(|(i, s)| (base_name(&s.main_mesh), i))
+                .map(|(i, s)| (s.name.clone(), i))
                 .collect(),
         }
     }

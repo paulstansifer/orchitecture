@@ -12,5 +12,18 @@
       "Bash(head *)",
       "Bash(tail *)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rust +nightly fmt"
+          }
+        ]
+      }
+    ]
   }
 }

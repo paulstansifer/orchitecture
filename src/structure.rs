@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use bevy::asset::{AssetServer, Handle};
 use bevy::prelude::{Res, ResMut, Resource};
 use bevy::scene::Scene;
@@ -34,8 +32,6 @@ pub struct StructureEmbedding {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct StructureInfo {
     pub name: String,
-    pub main_mesh: String,
-    pub y_cut_mesh: Option<String>,
     pub placement_style: PlacementStyle,
     pub x_char: Option<char>,
     pub z_char: Option<char>,
@@ -85,40 +81,42 @@ pub fn find_structure_by_name(structures: &[StructureInfo], name: &str) -> Optio
         .map(|idx| StructureId(idx as u32))
 }
 
-/// Register handles for every .gltf referenced in the given StructureInfo list.
-pub fn load_mesh_handles(
-    asset_server: &AssetServer,
-    infos: &[StructureInfo],
-) -> HashMap<String, Handle<Scene>> {
-    let mut handles = HashMap::new();
-    for info in infos {
-        for filename in [Some(&info.main_mesh), info.y_cut_mesh.as_ref()]
-            .into_iter()
-            .flatten()
-        {
-            if !handles.contains_key(filename.as_str()) {
-                let asset_path = format!("buildables/{filename}#Scene0");
-                handles.insert(filename.clone(), asset_server.load(&asset_path));
-            }
-        }
-    }
-    handles
+/// The mesh-file stem for a structure: its name with spaces converted to
+/// underscores (e.g. `"market stand"` → `"market_stand"`). The fallback meshes
+/// for a structure live at `buildables/autotile/{stem}.gltf` (and, when the
+/// structure has a cutaway variant, `buildables/autotile/{stem}-cut-y-pos.gltf`);
+/// build.rs generates both from `buildables/{stem}.scad`.
+pub fn structure_mesh_stem(name: &str) -> String {
+    name.replace(' ', "_")
 }
 
-/// Startup system: loads structure infos and mesh handles, populates StructureList.
+/// True if the autotile .gltf for `stem` (with `suffix`, e.g. `-cut-y-pos`) exists
+/// and is non-empty. Furniture has no cut mesh, and build.rs writes an empty
+/// (sentinel) file for intentionally-invisible cut variants, so both are treated
+/// as "no mesh".
+fn autotile_gltf_present(stem: &str, suffix: &str) -> bool {
+    let path = std::path::Path::new(crate::paths::MANIFEST_DIR)
+        .join(format!("buildables/autotile/{stem}{suffix}.gltf"));
+    std::fs::metadata(&path)
+        .map(|m| m.len() > 0)
+        .unwrap_or(false)
+}
+
+/// Startup system: loads structure infos and their fallback mesh handles from
+/// `buildables/autotile/`, populating StructureList. (Most structures are drawn
+/// by the autotile system; these handles are the fallback used when no autotile
+/// rule matches — and the primary mesh for structures with no autotile rules.)
 pub fn spawn_structures(asset_server: Res<AssetServer>, mut structure_list: ResMut<StructureList>) {
     let infos = load_structure_info();
-    let mesh_handles = load_mesh_handles(&asset_server, &infos);
 
     for info in &infos {
-        let mesh_handle = mesh_handles
-            .get(&info.main_mesh)
-            .unwrap_or_else(|| panic!("Missing mesh: {}", info.main_mesh))
-            .clone();
-        let cut_handle = info
-            .y_cut_mesh
-            .as_ref()
-            .and_then(|n| mesh_handles.get(n).cloned());
+        let stem = structure_mesh_stem(&info.name);
+        let mesh_handle = asset_server.load(format!("buildables/autotile/{stem}.gltf#Scene0"));
+        let cut_handle = if autotile_gltf_present(&stem, "-cut-y-pos") {
+            Some(asset_server.load(format!("buildables/autotile/{stem}-cut-y-pos.gltf#Scene0")))
+        } else {
+            None
+        };
         structure_list.structures.push(Structure {
             info: info.clone(),
             mesh_handle,

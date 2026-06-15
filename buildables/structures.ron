@@ -1,8 +1,6 @@
 [
     (
         name: "desk",
-        main_mesh: "desk.gltf",
-        y_cut_mesh: None,
         placement_style: RoomPlop,
         x_char: Some('V'),
         z_char: Some('V'),
@@ -16,8 +14,6 @@
     ),
     (
         name: "doorway",
-        main_mesh: "doorway.gltf",
-        y_cut_mesh: Some("doorway-cut-y-pos.gltf"),
         placement_style: WallDrag,
         x_char: Some('D'),
         z_char: Some('D'),
@@ -30,8 +26,6 @@
     ),
     (
         name: "window",
-        main_mesh: "window.gltf",
-        y_cut_mesh: Some("window-cut-y-pos.gltf"),
         placement_style: WallDrag,
         x_char: Some('W'),
         z_char: Some('W'),
@@ -44,8 +38,6 @@
     ),
     (
         name: "floor",
-        main_mesh: "floor.gltf",
-        y_cut_mesh: Some("floor.gltf"),
         placement_style: FloorDrag,
         x_char: Some('#'),
         z_char: Some('#'),
@@ -58,8 +50,6 @@
     ),
     (
         name: "stairs",
-        main_mesh: "stairs.gltf",
-        y_cut_mesh: Some("stairs-cut-y-pos.gltf"),
         placement_style: RoomPlop,
         x_char: Some('S'),
         z_char: Some('S'),
@@ -72,8 +62,6 @@
     ),
     (
         name: "roof",
-        main_mesh: "solid_roof.gltf",
-        y_cut_mesh: None,
         placement_style: FloorDrag,
         x_char: Some('O'),
         z_char: Some('O'),
@@ -86,8 +74,6 @@
     ),
     (
         name: "wall",
-        main_mesh: "wall.gltf",
-        y_cut_mesh: Some("wall-cut-y-pos.gltf"),
         placement_style: WallDrag,
         x_char: Some('|'),
         z_char: Some('-'),
@@ -100,8 +86,6 @@
     ),
     (
         name: "railing",
-        main_mesh: "railing.gltf",
-        y_cut_mesh: Some("railing.gltf"),
         placement_style: WallDrag,
         x_char: Some('R'),
         z_char: Some('R'),
@@ -114,8 +98,6 @@
     ),
     (
         name: "column",
-        main_mesh: "column.gltf",
-        y_cut_mesh: None,
         placement_style: WallDrag,
         x_char: Some('P'),
         z_char: Some('P'),
@@ -128,8 +110,6 @@
     ),
     (
         name: "market stand",
-        main_mesh: "market_stand.gltf",
-        y_cut_mesh: None,
         placement_style: RoomPlop,
         x_char: Some('M'),
         z_char: Some('M'),
@@ -143,8 +123,6 @@
     ),
     (
         name: "rack",
-        main_mesh: "rack.gltf",
-        y_cut_mesh: None,
         placement_style: RoomPlop,
         x_char: None,
         z_char: None,
@@ -158,8 +136,6 @@
     ),
     (
         name: "bin",
-        main_mesh: "desk.gltf",
-        y_cut_mesh: None,
         placement_style: RoomPlop,
         x_char: None,
         z_char: None,

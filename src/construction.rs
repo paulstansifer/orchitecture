@@ -379,8 +379,6 @@ mod tests {
         use crate::structure::StructureEmbedding;
         let structs = vec![StructureInfo {
             name: "test_wall".to_string(),
-            main_mesh: "test_wall.gltf".to_string(),
-            y_cut_mesh: None,
             placement_style: PlacementStyle::WallDrag,
             x_char: None,
             z_char: None,

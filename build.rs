@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,10 +25,6 @@ fn main() {
     println!("cargo:rerun-if-changed=buildables");
 
     let autotile_files = collect_autotile_files(&buildables);
-    if autotile_files.is_empty() {
-        return;
-    }
-
     for path in &autotile_files {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -36,6 +32,10 @@ fn main() {
     let out_dir = buildables.join("autotile");
     fs::create_dir_all(&out_dir)
         .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_dir.display()));
+
+    // Every top-level .scad source that something actually uses; anything left over
+    // is reported as an orphan at the end.
+    let mut referenced_scad: HashSet<PathBuf> = HashSet::new();
 
     // Parse all autotile files and collect specs that need to be generated.
     let mut spec_map: HashMap<String, (MeshSpec, UnorientedSlot)> = HashMap::new();
@@ -53,6 +53,7 @@ fn main() {
         let scad_deps = collect_scad_deps(spec, &buildables);
         for dep in &scad_deps {
             println!("cargo:rerun-if-changed={}", dep.display());
+            referenced_scad.insert(dep.clone());
         }
 
         let all_inputs: Vec<&Path> = autotile_files
@@ -61,7 +62,165 @@ fn main() {
             .chain(scad_deps.iter().map(PathBuf::as_path))
             .collect();
 
-        generate_if_needed(name, spec, *slot, &buildables, &out_dir, &all_inputs);
+        generate_if_needed(name, spec, *slot, &buildables, &out_dir, &all_inputs, true);
+    }
+
+    // Generate the fallback meshes for the structures in structures.ron.
+    generate_structure_meshes(&buildables, &out_dir, &spec_map, &mut referenced_scad);
+
+    // Now that we know every referenced .scad, warn about the ones nothing uses.
+    warn_unreferenced_scad(&buildables, &referenced_scad);
+}
+
+// ─── Structure fallback meshes ──────────────────────────────────────────────────
+
+/// A structure's mesh-relevant fields, hand-parsed from structures.ron (we only
+/// need two of them, and the RON enum/Option fields don't survive `IgnoredAny`).
+struct StructureMeshInfo {
+    name: String,
+    furniture: bool,
+}
+
+/// Minimal extractor for the `name` and `furniture` fields of each entry in
+/// structures.ron. The file is a list of `( name: "...", ..., furniture: true )`
+/// records; `furniture` is absent (false) for most entries.
+fn parse_structure_infos(src: &str) -> Vec<StructureMeshInfo> {
+    let mut out = Vec::new();
+    let mut current: Option<StructureMeshInfo> = None;
+    for line in src.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name:") {
+            if let Some(prev) = current.take() {
+                out.push(prev);
+            }
+            // rest looks like `"desk",` — take the contents of the first "..." .
+            let after_quote = rest.trim().trim_start_matches('"');
+            let name = after_quote[..after_quote.find('"').unwrap_or(after_quote.len())].to_owned();
+            current = Some(StructureMeshInfo {
+                name,
+                furniture: false,
+            });
+        } else if line.starts_with("furniture:") && line.contains("true") {
+            if let Some(cur) = current.as_mut() {
+                cur.furniture = true;
+            }
+        }
+    }
+    if let Some(prev) = current.take() {
+        out.push(prev);
+    }
+    out
+}
+
+/// Generate `buildables/autotile/{stem}.gltf` (and a `-cut-y-pos` variant for
+/// non-furniture) for every structure in structures.ron, where `stem` is the
+/// structure name with spaces turned into underscores. Furniture vanishes in
+/// cutaway, so it gets no cut mesh; everything else is cut. Structures with no
+/// `{stem}.scad` (roof, column) are drawn entirely by the autotile rules and need
+/// no standalone mesh.
+fn generate_structure_meshes(
+    buildables: &Path,
+    out_dir: &Path,
+    spec_map: &HashMap<String, (MeshSpec, UnorientedSlot)>,
+    referenced_scad: &mut HashSet<PathBuf>,
+) {
+    let ron_path = buildables.join("structures.ron");
+    println!("cargo:rerun-if-changed={}", ron_path.display());
+    let src = match fs::read_to_string(&ron_path) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("cargo:warning=Failed to read {}: {e}", ron_path.display());
+            return;
+        }
+    };
+
+    for info in parse_structure_infos(&src) {
+        let stem = info.name.replace(' ', "_");
+        let scad = buildables.join(format!("{stem}.scad"));
+        if !scad.exists() {
+            continue;
+        }
+        println!("cargo:rerun-if-changed={}", scad.display());
+        referenced_scad.insert(scad.clone());
+
+        // If the autotile rules already emit this stem, they produce the same atom
+        // mesh (and cut); don't regenerate it.
+        if spec_map.contains_key(&stem) {
+            continue;
+        }
+
+        // A trivial (unrotated) atom; slot only matters for rotated atoms.
+        let spec = MeshSpec::Atom {
+            name: stem.clone(),
+            rotation: 0,
+        };
+        let inputs: Vec<&Path> = vec![ron_path.as_path(), scad.as_path()];
+        generate_if_needed(
+            &stem,
+            &spec,
+            UnorientedSlot::Room,
+            buildables,
+            out_dir,
+            &inputs,
+            !info.furniture,
+        );
+    }
+}
+
+// ─── Orphan .scad detection ─────────────────────────────────────────────────────
+
+/// Targets of `include <...>` / `use <...>` directives in a .scad file.
+fn scad_includes(path: &Path) -> Vec<String> {
+    let Ok(src) = fs::read_to_string(path) else {
+        return vec![];
+    };
+    let mut out = Vec::new();
+    for line in src.lines() {
+        let line = line.trim_start();
+        let rest = line
+            .strip_prefix("include")
+            .or_else(|| line.strip_prefix("use"));
+        let Some(rest) = rest.map(str::trim_start).and_then(|r| r.strip_prefix('<')) else {
+            continue;
+        };
+        if let Some(end) = rest.find('>') {
+            out.push(rest[..end].trim().to_owned());
+        }
+    }
+    out
+}
+
+/// Warn about top-level `buildables/*.scad` files that no autotile rule or
+/// structure references (directly or via `include`/`use`).
+fn warn_unreferenced_scad(buildables: &Path, referenced: &HashSet<PathBuf>) {
+    // Pull in transitive includes so a helper .scad reached only via `include`
+    // from a referenced file isn't flagged.
+    let mut referenced = referenced.clone();
+    let mut queue: Vec<PathBuf> = referenced.iter().cloned().collect();
+    while let Some(path) = queue.pop() {
+        for inc in scad_includes(&path) {
+            let inc_path = buildables.join(inc);
+            if referenced.insert(inc_path.clone()) {
+                queue.push(inc_path);
+            }
+        }
+    }
+
+    let Ok(entries) = fs::read_dir(buildables) else {
+        return;
+    };
+    let mut orphans: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("scad"))
+        .filter(|p| !referenced.contains(p))
+        .collect();
+    orphans.sort();
+    for path in orphans {
+        println!(
+            "cargo:warning={} is not referenced by structures.autotile or structures.ron",
+            path.display()
+        );
     }
 }
 
@@ -233,12 +392,18 @@ fn generate_if_needed(
     buildables: &Path,
     out_dir: &Path,
     inputs: &[&Path],
+    want_cut: bool,
 ) {
     let main_gltf = out_dir.join(format!("{stem}.gltf"));
     let cut_gltf = out_dir.join(format!("{stem}-cut-y-pos.gltf"));
 
+    if !want_cut {
+        // Furniture and other cut-less meshes: make sure no stale cut mesh lingers.
+        let _ = fs::remove_file(&cut_gltf);
+    }
+
     let need_main = needs_rebuild(&main_gltf, inputs);
-    let need_cut = needs_rebuild(&cut_gltf, inputs);
+    let need_cut = want_cut && needs_rebuild(&cut_gltf, inputs);
 
     if !need_main && !need_cut {
         return;

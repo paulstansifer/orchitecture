@@ -319,8 +319,6 @@ mod tests {
     fn bin_structures() -> Vec<StructureInfo> {
         vec![StructureInfo {
             name: "bin".to_string(),
-            main_mesh: "desk.gltf".to_string(),
-            y_cut_mesh: None,
             placement_style: PlacementStyle::RoomPlop,
             x_char: None,
             z_char: None,
