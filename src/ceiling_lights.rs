@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use crate::sparse3d::{Slot, Sparse3D};
 use crate::wall_grid::{Cell, WallGrid};
 
-const GRID_PERIOD: i32 = 6;
+const GRID_PERIOD: i32 = 5;
 const COVERAGE_RADIUS: i32 = 3;
 const LIGHT_INTENSITY: f32 = 150_000.0;
 const LIGHT_RANGE: f32 = 8.0;
@@ -211,8 +211,9 @@ pub fn update_ceiling_lights(
                 color: Color::srgb(1.0, 0.95, 0.8),
                 intensity: LIGHT_INTENSITY,
                 range: LIGHT_RANGE,
-                inner_angle: FRAC_PI_4,        // full intensity within 45°
-                outer_angle: FRAC_PI_2 - 0.05, // fade to 0 just before the horizontal plane
+                // Span almost all the way out to 180°, almost full brightness the whole time.
+                inner_angle: FRAC_PI_2 - 0.1,        
+                outer_angle: FRAC_PI_2 - 0.05,
                 shadows_enabled: false,
                 ..default()
             },
