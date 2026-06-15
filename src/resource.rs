@@ -137,7 +137,10 @@ pub fn round(orig: u16, approx: Approximation) -> (u16, bool) {
 mod tests {
     use super::*;
 
-    const ACCT: Approximation = Approximation { digits: 1, max: 100 };
+    const ACCT: Approximation = Approximation {
+        digits: 1,
+        max: 100,
+    };
 
     #[test]
     fn round_small_values_unchanged() {

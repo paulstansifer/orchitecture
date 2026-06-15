@@ -406,10 +406,18 @@ mod tests {
         // Right-click the free bin and form a new station from it.
         let plan = plan_assignment(&grid, b(0, 0), 0).unwrap();
         assert_eq!(plan.pulled, 1, "should pull exactly one bin to reach min 2");
-        assert_eq!(plan.destroy, vec![0], "donor falls below min and is destroyed");
+        assert_eq!(
+            plan.destroy,
+            vec![0],
+            "donor falls below min and is destroyed"
+        );
 
         commit_assignment(&mut grid, b(0, 0), 0);
-        assert_eq!(grid.placed_stations.len(), 1, "donor destroyed, new one added");
+        assert_eq!(
+            grid.placed_stations.len(),
+            1,
+            "donor destroyed, new one added"
+        );
         let new = &grid.placed_stations[0];
         assert!(new.structure_locations.contains(&b(0, 0)));
         assert_eq!(new.structure_locations.len(), 2);

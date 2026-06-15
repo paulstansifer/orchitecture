@@ -227,9 +227,12 @@ impl WallGrid {
         material: Material,
     ) -> Vec<(SlotCoord, ProposalView)> {
         match self.structures[selected_mesh_id.as_usize()].placement_style {
-            PlacementStyle::RoomPlop => {
-                self.room_plop(position, dir, (!remove).then_some(selected_mesh_id), material)
-            }
+            PlacementStyle::RoomPlop => self.room_plop(
+                position,
+                dir,
+                (!remove).then_some(selected_mesh_id),
+                material,
+            ),
             _ => vec![],
         }
     }
@@ -245,7 +248,10 @@ impl WallGrid {
     fn restore_desired(
         &mut self,
         targets: Vec<(SlotCoord, Option<Cell>)>,
-    ) -> (Vec<(SlotCoord, ProposalView)>, Vec<(SlotCoord, Option<Cell>)>) {
+    ) -> (
+        Vec<(SlotCoord, ProposalView)>,
+        Vec<(SlotCoord, Option<Cell>)>,
+    ) {
         let mut changes = vec![];
         let mut inverse = vec![];
         for (loc, target) in targets {
@@ -415,7 +421,14 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
 
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
 
         check!(grid.contents.get(loc).is_none());
         check!(matches!(
@@ -427,7 +440,14 @@ mod tests {
     #[test]
     fn propose_returns_add_view_for_empty_slot() {
         let mut grid = make_wall_grid();
-        let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        let deltas = grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
         check!(deltas.len() == 1);
         check!(matches!(deltas[0].1, ProposalView::Add(_)));
     }
@@ -441,7 +461,14 @@ mod tests {
 
         // Now propose a different cell (id=0 same, so let's make a distinct check)
         // propose removal to get a Remove view
-        let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, None, Material::default());
+        let deltas = grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            None,
+            Material::default(),
+        );
         check!(deltas.len() == 1);
         check!(matches!(deltas[0].1, ProposalView::Remove));
     }
@@ -454,7 +481,14 @@ mod tests {
         grid.contents.set(loc, wall_cell(thing(&grid).unwrap()));
 
         // Propose placing the exact same cell
-        let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        let deltas = grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
 
         check!(deltas.is_empty(), "identical proposal should be a no-op");
         check!(grid.proposed_changes.get(loc).is_none());
@@ -463,7 +497,14 @@ mod tests {
     #[test]
     fn propose_remove_on_empty_slot_is_no_op() {
         let mut grid = make_wall_grid();
-        let deltas = grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, None, Material::default());
+        let deltas = grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            None,
+            Material::default(),
+        );
         check!(deltas.is_empty());
         check!(grid.proposed_changes.iter().count() == 0);
     }
@@ -475,7 +516,14 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
 
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
         check!(grid.proposed_changes.get(loc).is_some());
 
         let deltas = grid.undo();
@@ -494,7 +542,14 @@ mod tests {
     #[test]
     fn undo_clears_undo_record_entry() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
         check!(grid.undo_record.len() == 1);
         grid.undo();
         check!(grid.undo_record.len() == 0);
@@ -531,7 +586,14 @@ mod tests {
         let loc = xlowall(0, 0, 0);
         grid.contents.set(loc, wall_cell(thing(&grid).unwrap()));
 
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, None, Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            None,
+            Material::default(),
+        );
         let real_changes = grid.construct();
 
         check!(grid.contents.get(loc).is_none());
@@ -542,7 +604,14 @@ mod tests {
     #[test]
     fn construct_preserves_undo_record() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
         grid.construct();
         // Undo history survives construct so committed changes remain undoable.
         check!(grid.undo_record.len() == 1);
@@ -567,7 +636,10 @@ mod tests {
         let deltas = grid.undo();
         check!(deltas.len() == 1);
         check!(matches!(deltas[0].1, ProposalView::Remove));
-        check!(matches!(grid.proposed_changes.get(loc), Some(Proposal::Remove)));
+        check!(matches!(
+            grid.proposed_changes.get(loc),
+            Some(Proposal::Remove)
+        ));
         check!(grid.contents.get(loc).is_some());
     }
 
@@ -576,7 +648,14 @@ mod tests {
     #[test]
     fn reset_clears_proposals_but_keeps_undo_record() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
         check!(!grid.undo_record.is_empty());
 
         grid.reset_proposals();
@@ -595,7 +674,14 @@ mod tests {
         let mut grid = make_wall_grid();
         let loc = xlowall(0, 0, 0);
 
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
         grid.undo();
         check!(grid.proposed_changes.get(loc).is_none());
 
@@ -617,7 +703,14 @@ mod tests {
     #[test]
     fn new_edit_clears_redo_stack() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
         grid.undo();
         check!(!grid.redo_record.is_empty());
 
@@ -662,7 +755,14 @@ mod tests {
     #[test]
     fn load_clears_proposals_and_undo() {
         let mut grid = make_wall_grid();
-        grid.propose(0, IVec3::ZERO, IVec3::ZERO, Slot::XLoWall, thing(&grid), Material::default());
+        grid.propose(
+            0,
+            IVec3::ZERO,
+            IVec3::ZERO,
+            Slot::XLoWall,
+            thing(&grid),
+            Material::default(),
+        );
 
         use crate::sparse3d::Sparse3D;
         grid.load_from_offline(Sparse3D::new());
@@ -709,7 +809,13 @@ mod tests {
         check!(grid.proposed_changes.iter().count() == 2);
 
         // 3. Propose a desk at (2, 0, 2) via click.
-        let click_deltas = grid.click(Vec3::new(2.0, 0.0, 2.0), desk_id, 0, false, Material::default());
+        let click_deltas = grid.click(
+            Vec3::new(2.0, 0.0, 2.0),
+            desk_id,
+            0,
+            false,
+            Material::default(),
+        );
         check!(click_deltas.len() == 1);
         check!(matches!(click_deltas[0].1, ProposalView::Add(_)));
         check!(grid.proposed_changes.iter().count() == 3);

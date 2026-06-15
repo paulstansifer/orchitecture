@@ -103,9 +103,7 @@ pub enum LeftPanel {
     #[default]
     Build,
     /// Station view for the furniture cube that was right-clicked.
-    Station {
-        cube: IVec3,
-    },
+    Station { cube: IVec3 },
 }
 
 #[derive(Resource, Default)]
@@ -236,7 +234,9 @@ pub fn ui_system(
     // Bottom panel must be added before side panels.
     egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Up/Dn=layer  R=rotate  Z=undo  Y=redo  Drag=place  Ctrl+drag=erase  V=evaluate");
+            ui.label(
+                "Up/Dn=layer  R=rotate  Z=undo  Y=redo  Drag=place  Ctrl+drag=erase  V=evaluate",
+            );
 
             ui.separator();
             let was_sandbox = sandbox.enabled;
@@ -361,165 +361,177 @@ pub fn ui_system(
         .min_width(100.0)
         .max_width(140.0)
         .show(ctx, |ui| {
-          match panel {
-           LeftPanel::Station { cube } => {
-            ui.heading("Station");
-            ui.separator();
-            if ui.button("← Back").clicked() {
-                next_panel = Some(LeftPanel::Build);
-            }
-            ui.separator();
-            match crate::station::station_index_at(&wall_grid, cube) {
-                Some(idx) => {
-                    let ps = &wall_grid.placed_stations[idx];
-                    let def = &wall_grid.stations[ps.station];
-                    ui.label(format!("Name: {}", def.name));
-
-                    let mut counts: std::collections::BTreeMap<String, usize> =
-                        std::collections::BTreeMap::new();
-                    for loc in &ps.structure_locations {
-                        if let Some(cell) = wall_grid.contents.get(SlotCoord {
-                            cube: *loc,
-                            slot: Slot::Room,
-                        }) {
-                            *counts
-                                .entry(wall_grid.structures[cell.id.as_usize()].name.clone())
-                                .or_default() += 1;
-                        }
-                    }
+            match panel {
+                LeftPanel::Station { cube } => {
+                    ui.heading("Station");
                     ui.separator();
-                    ui.label("Structures:");
-                    for (name, c) in &counts {
-                        ui.label(format!("  {}: {}", name, c));
-                    }
-
-                    ui.separator();
-                    ui.label("Contents:");
-                    let totals = ps.contents.uniform_totals();
-                    if totals.is_empty() {
-                        ui.label("  (empty)");
-                    }
-                    for (res, qty) in totals {
-                        ui.label(format!("  {}: {}", res.label(), qty));
-                    }
-
-                    // Highlight this station's furniture in 3D.
-                    highlight = ps.structure_locations.clone();
-
-                    ui.separator();
-                    if ui.button("Unassign station").clicked() {
-                        unassign = Some(idx);
+                    if ui.button("← Back").clicked() {
                         next_panel = Some(LeftPanel::Build);
                     }
-                }
-                None => {
-                    // A `Some` plan is exactly the validity test, so one pass over
-                    // the stations both filters and yields the "Pulls N" count.
-                    let plans: Vec<(usize, usize)> = (0..wall_grid.stations.len())
-                        .filter_map(|s_idx| {
-                            crate::station::plan_assignment(&wall_grid, cube, s_idx)
-                                .map(|plan| (s_idx, plan.pulled))
-                        })
-                        .collect();
-                    if plans.is_empty() {
-                        ui.label("No valid stations here.");
-                    } else {
-                        ui.label("Create station:");
-                    }
-                    for (s_idx, pulled) in plans {
-                        if ui.button(&wall_grid.stations[s_idx].name).clicked() {
-                            assign = Some((cube, s_idx));
+                    ui.separator();
+                    match crate::station::station_index_at(&wall_grid, cube) {
+                        Some(idx) => {
+                            let ps = &wall_grid.placed_stations[idx];
+                            let def = &wall_grid.stations[ps.station];
+                            ui.label(format!("Name: {}", def.name));
+
+                            let mut counts: std::collections::BTreeMap<String, usize> =
+                                std::collections::BTreeMap::new();
+                            for loc in &ps.structure_locations {
+                                if let Some(cell) = wall_grid.contents.get(SlotCoord {
+                                    cube: *loc,
+                                    slot: Slot::Room,
+                                }) {
+                                    *counts
+                                        .entry(
+                                            wall_grid.structures[cell.id.as_usize()].name.clone(),
+                                        )
+                                        .or_default() += 1;
+                                }
+                            }
+                            ui.separator();
+                            ui.label("Structures:");
+                            for (name, c) in &counts {
+                                ui.label(format!("  {}: {}", name, c));
+                            }
+
+                            ui.separator();
+                            ui.label("Contents:");
+                            let totals = ps.contents.uniform_totals();
+                            if totals.is_empty() {
+                                ui.label("  (empty)");
+                            }
+                            for (res, qty) in totals {
+                                ui.label(format!("  {}: {}", res.label(), qty));
+                            }
+
+                            // Highlight this station's furniture in 3D.
+                            highlight = ps.structure_locations.clone();
+
+                            ui.separator();
+                            if ui.button("Unassign station").clicked() {
+                                unassign = Some(idx);
+                                next_panel = Some(LeftPanel::Build);
+                            }
                         }
-                        if pulled > 0 {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Pulls {} already-assigned structures",
-                                    pulled
-                                ))
-                                .italics(),
+                        None => {
+                            // A `Some` plan is exactly the validity test, so one pass over
+                            // the stations both filters and yields the "Pulls N" count.
+                            let plans: Vec<(usize, usize)> = (0..wall_grid.stations.len())
+                                .filter_map(|s_idx| {
+                                    crate::station::plan_assignment(&wall_grid, cube, s_idx)
+                                        .map(|plan| (s_idx, plan.pulled))
+                                })
+                                .collect();
+                            if plans.is_empty() {
+                                ui.label("No valid stations here.");
+                            } else {
+                                ui.label("Create station:");
+                            }
+                            for (s_idx, pulled) in plans {
+                                if ui.button(&wall_grid.stations[s_idx].name).clicked() {
+                                    assign = Some((cube, s_idx));
+                                }
+                                if pulled > 0 {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Pulls {} already-assigned structures",
+                                            pulled
+                                        ))
+                                        .italics(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                LeftPanel::Build => {
+                    ui.heading("Orchitecture");
+                    ui.separator();
+
+                    ui.label("Structure:");
+                    let names = wall_grid.get_structure_names();
+                    for (i, name) in names.iter().enumerate() {
+                        let selected = build_state.selected_structure == i;
+                        let label = if i < 9 {
+                            format!("{}. {}", i + 1, name)
+                        } else {
+                            name.clone()
+                        };
+                        if ui.selectable_label(selected, &label).clicked() {
+                            build_state.selected_structure = i;
+                        }
+                    }
+
+                    ui.separator();
+                    ui.label("Material:");
+                    for material in Material::ALL {
+                        ui.radio_value(
+                            &mut build_state.selected_material,
+                            material,
+                            material.label(),
+                        );
+                    }
+
+                    ui.separator();
+                    ui.label(format!("Layer (Y): {}", build_state.cur_y));
+                    ui.label(format!("Direction: {}", build_state.cur_dir));
+
+                    if let Some((coherence, interest)) = build_state.evaluation {
+                        ui.separator();
+                        ui.label(format!("Coherence: {:.3}", coherence));
+                        ui.label(format!("Interest:  {:.3}", interest));
+                    }
+
+                    let n = wall_grid.num_proposed_changes();
+                    if n > 0 {
+                        ui.separator();
+                        let months = wall_grid.months_for_construction();
+                        let months_label = if months == 1 {
+                            "month".to_string()
+                        } else {
+                            "months".to_string()
+                        };
+                        if ui
+                            .button(format!("Construct! ({months} {months_label})"))
+                            .clicked()
+                        {
+                            // commit() writes to contents (triggers ceiling-light recompute)
+                            let real_changes = wall_grid.construct();
+                            clear_proposal_entities(&mut commands, &mut wall_grid);
+                            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
+                            apply_changes(
+                                &mut commands,
+                                &mut wall_grid,
+                                &structure_list,
+                                real_changes,
                             );
                         }
+                        if ui.button("Reset").clicked() {
+                            // Reset clears proposals without committing; bypass detection so
+                            // ceiling lights don't recompute.
+                            let deltas = {
+                                let wg = wall_grid.bypass_change_detection();
+                                let locs: Vec<_> =
+                                    wg.proposed_changes.iter().map(|(l, _)| l).collect();
+                                wg.reset_proposals();
+                                locs.into_iter()
+                                    .map(|loc| (loc, crate::wall_grid::ProposalView::None))
+                                    .collect::<Vec<_>>()
+                            };
+                            // Despawn all proposal entities (bypassing is fine since we already have mut wg above)
+                            apply_proposal_changes(
+                                &mut commands,
+                                &mut wall_grid,
+                                &structure_list,
+                                &overlay_assets,
+                                deltas,
+                            );
+                            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
+                        }
                     }
                 }
             }
-           }
-           LeftPanel::Build => {
-            ui.heading("Orchitecture");
-            ui.separator();
-
-            ui.label("Structure:");
-            let names = wall_grid.get_structure_names();
-            for (i, name) in names.iter().enumerate() {
-                let selected = build_state.selected_structure == i;
-                let label = if i < 9 {
-                    format!("{}. {}", i + 1, name)
-                } else {
-                    name.clone()
-                };
-                if ui.selectable_label(selected, &label).clicked() {
-                    build_state.selected_structure = i;
-                }
-            }
-
-            ui.separator();
-            ui.label("Material:");
-            for material in Material::ALL {
-                ui.radio_value(&mut build_state.selected_material, material, material.label());
-            }
-
-            ui.separator();
-            ui.label(format!("Layer (Y): {}", build_state.cur_y));
-            ui.label(format!("Direction: {}", build_state.cur_dir));
-
-            if let Some((coherence, interest)) = build_state.evaluation {
-                ui.separator();
-                ui.label(format!("Coherence: {:.3}", coherence));
-                ui.label(format!("Interest:  {:.3}", interest));
-            }
-
-            let n = wall_grid.num_proposed_changes();
-            if n > 0 {
-                ui.separator();
-                let months = wall_grid.months_for_construction();
-                let months_label = if months == 1 {
-                    "month".to_string()
-                } else {
-                    "months".to_string()
-                };
-                if ui
-                    .button(format!("Construct! ({months} {months_label})"))
-                    .clicked()
-                {
-                    // commit() writes to contents (triggers ceiling-light recompute)
-                    let real_changes = wall_grid.construct();
-                    clear_proposal_entities(&mut commands, &mut wall_grid);
-                    clear_proposed_cut_entities(&mut commands, &mut wall_grid);
-                    apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
-                }
-                if ui.button("Reset").clicked() {
-                    // Reset clears proposals without committing; bypass detection so
-                    // ceiling lights don't recompute.
-                    let deltas = {
-                        let wg = wall_grid.bypass_change_detection();
-                        let locs: Vec<_> = wg.proposed_changes.iter().map(|(l, _)| l).collect();
-                        wg.reset_proposals();
-                        locs.into_iter()
-                            .map(|loc| (loc, crate::wall_grid::ProposalView::None))
-                            .collect::<Vec<_>>()
-                    };
-                    // Despawn all proposal entities (bypassing is fine since we already have mut wg above)
-                    apply_proposal_changes(
-                        &mut commands,
-                        &mut wall_grid,
-                        &structure_list,
-                        &overlay_assets,
-                        deltas,
-                    );
-                    clear_proposed_cut_entities(&mut commands, &mut wall_grid);
-                }
-            }
-           }
-          }
         });
 
     // Apply deferred station mutations now that the panel closure has ended.

@@ -952,9 +952,19 @@ H:
         let rule = &file.rules[0];
         check!(rule.cases.len() == 2);
         check!(rule.cases[0].multi == true);
-        check!(rule.cases[0].result == AutotileResult::Mesh { spec: atom("mesh_a") });
+        check!(
+            rule.cases[0].result
+                == AutotileResult::Mesh {
+                    spec: atom("mesh_a")
+                }
+        );
         check!(rule.cases[1].multi == false);
-        check!(rule.cases[1].result == AutotileResult::Mesh { spec: atom("mesh_b") });
+        check!(
+            rule.cases[1].result
+                == AutotileResult::Mesh {
+                    spec: atom("mesh_b")
+                }
+        );
     }
 
     #[test]

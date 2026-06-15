@@ -9,8 +9,8 @@ use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::ui::SandboxMode;
 use crate::wall_grid::{
-    apply_changes, apply_proposal_changes, cell_transform, GridCellMarker, Material, MaterialAssets,
-    ProposalGhostMarker, ProposalOverlayAssets, ProposedCutMarker, WallGrid,
+    apply_changes, apply_proposal_changes, cell_transform, GridCellMarker, Material,
+    MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets, ProposedCutMarker, WallGrid,
 };
 
 #[derive(Resource)]
@@ -462,7 +462,6 @@ pub fn recolor_new_mesh_children(
         }
     }
 }
-
 
 /// Cast a ray from the cursor through the camera to a horizontal plane at height `y`.
 pub(crate) fn cursor_world_pos(
