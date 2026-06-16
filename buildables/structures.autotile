@@ -52,6 +52,11 @@ V:
 --> doorway
 
 ==wall:wall==
+|H narrow|H|:
+ | .   |  .  |
+ |     | w . |
+ | O . |  @  |
+--> (multi) short_v_corner_fill_full 
 H:
    .
   w .
@@ -95,6 +100,13 @@ V:
  = @ .
     w
 --> (multi) eave
+
+==roof:floor==
+|H narrow|H|:
+ | .   |  .  |
+ |     | w . |
+ | @ . |  w  |
+--> (multi) eave_corner:90
 
 ==roof:floor==
 V:
