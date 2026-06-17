@@ -1,9 +1,8 @@
 //! Sprite-sheet generator — headless mode.
 //!
-//! Generates `orcs/sprite_sheet.png` with two rows:
-//!   Row 0 — the human character at four Y-axis rotations (0°, 90°, 180°, 270°).
-//!   Row 1 — up to 16 structure GLTFs from `buildables/autotile/` whose stem
-//!            matches a `.scad` file in `buildables/` (alphabetical order).
+//! Generates two PNG files:
+//!   `orcs/characters_sheet.png` — columns = characters, rows = Y-rotations (0°, 90°, 180°, 270°).
+//!   `orcs/structures_sheet.png` — columns = structures, rows = Y-rotations.
 //!
 //! Each sprite is rendered inside a wireframe unit cube. Cell size is
 //! 128×128 px of content plus 10 px of padding on every side (148×148 px total).
@@ -15,7 +14,6 @@ use bevy::camera::{RenderTarget, ScalingMode};
 use bevy::image::{Image, TextureFormatPixelInfo};
 use bevy::prelude::*;
 use bevy::render::{
-    Extract, Render, RenderApp, RenderSystems,
     render_asset::RenderAssets,
     render_graph::{self, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel},
     render_resource::{
@@ -24,24 +22,27 @@ use bevy::render::{
     },
     renderer::{RenderContext, RenderDevice, RenderQueue},
     texture::GpuImage,
+    Extract, Render, RenderApp, RenderSystems,
 };
 use bevy::scene::SceneInstanceReady;
 use bevy::winit::WinitPlugin;
 use orchitecture_lib::paths::MANIFEST_DIR;
-use std::sync::{Mutex, mpsc};
+use std::sync::{mpsc, Mutex};
 
 // --- Configuration knobs -------------------------------------------------
 
 /// World units per pixel in the orthographic projection.
 const PIXELS_PER_UNIT: u32 = 60;
 /// TODO: this is ad-hoc.
-const CELL_TOTAL_PX: u32 = 2 * PIXELS_PER_UNIT + 2;
+const CELL_TOTAL_PX: u32 = 2 * PIXELS_PER_UNIT - 16;
 /// World-space size of one cell.
 const CELL_WORLD: f32 = CELL_TOTAL_PX as f32 / PIXELS_PER_UNIT as f32;
 
-/// Number of sprite rows in the output.
-const N_ROWS: u32 = 2;
-/// Maximum number of building sprites to include (row 1).
+/// Number of Y-rotation rows in each sprite sheet (0°, 90°, 180°, 270°).
+const N_ROTATIONS: u32 = 4;
+/// Number of walk-cycle phase columns in the characters sheet.
+const N_WALK_PHASES: u32 = 6;
+/// Maximum number of building sprites to include in the structures sheet.
 const MAX_BUILDINGS: usize = 16;
 
 /// The GLB to load for the human character, relative to the asset root.
@@ -52,8 +53,8 @@ const WALK_ANIMATION_INDEX: usize = 5;
 /// Named entity to despawn from the human GLB (we keep HumanMale only).
 const DROP_MESH_NAME: &str = "HumanFemale";
 
-/// Human Y-axis rotation angles for the four cells in row 0 (radians).
-const HUMAN_Y_ROTATIONS: [f32; 4] = [
+/// Y-axis rotation angles for the four rows (radians).
+const Y_ROTATIONS: [f32; 4] = [
     0.0,
     std::f32::consts::FRAC_PI_2,
     std::f32::consts::PI,
@@ -76,8 +77,12 @@ const MAX_LOAD_FRAMES: u32 = 600;
 /// Minimum opaque pixels in the final image (sanity check).
 const MIN_CONTENT_PIXELS: usize = 100;
 
-fn output_path() -> std::path::PathBuf {
-    std::path::Path::new(MANIFEST_DIR).join("orcs/sprite_sheet.png")
+fn characters_output_path() -> std::path::PathBuf {
+    std::path::Path::new(MANIFEST_DIR).join("orcs/characters_sheet.png")
+}
+
+fn structures_output_path() -> std::path::PathBuf {
+    std::path::Path::new(MANIFEST_DIR).join("orcs/structures_sheet.png")
 }
 
 // --- GPU readback snap infrastructure ------------------------------------
@@ -130,9 +135,7 @@ impl render_graph::Node for SnapCopyDriver {
                     buffer: &copier.buffer,
                     layout: TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(
-                            std::num::NonZero::new(padded as u32).unwrap().into(),
-                        ),
+                        bytes_per_row: Some(std::num::NonZero::new(padded as u32).unwrap().into()),
                         rows_per_image: None,
                     },
                 },
@@ -166,8 +169,12 @@ fn readback_to_channel(
     for copier in copiers.iter() {
         let slice = copier.buffer.slice(..);
         let (s, r) = mpsc::channel();
-        slice.map_async(MapMode::Read, move |res| { s.send(res).ok(); });
-        render_device.poll(PollType::wait_indefinitely()).expect("poll failed");
+        slice.map_async(MapMode::Read, move |res| {
+            s.send(res).ok();
+        });
+        render_device
+            .poll(PollType::wait_indefinitely())
+            .expect("poll failed");
         r.recv().ok();
         let _ = tx.0.send(slice.get_mapped_range().to_vec());
         copier.buffer.unmap();
@@ -198,15 +205,27 @@ impl Plugin for SnapPlugin {
 
 // --- Resources & components ----------------------------------------------
 
-/// Pre-computed list of building names to include in row 1.
-#[derive(Resource)]
-struct BuildingList(Vec<String>);
+#[derive(Clone)]
+enum SheetKind {
+    Characters,
+    Structures,
+}
+
+#[derive(Resource, Clone)]
+struct SheetConfig {
+    kind: SheetKind,
+    /// Building names for Structures sheets; empty for Characters.
+    buildings: Vec<String>,
+}
 
 #[derive(Resource)]
 struct Capture {
-    graph: Handle<AnimationGraph>,
-    node: AnimationNodeIndex,
-    clip: Handle<AnimationClip>,
+    /// Animation graph/node/clip; only present for Characters sheets.
+    anim: Option<(
+        Handle<AnimationGraph>,
+        AnimationNodeIndex,
+        Handle<AnimationClip>,
+    )>,
     image: Handle<Image>,
     img_width: u32,
     img_height: u32,
@@ -219,8 +238,9 @@ struct Capture {
 /// Identifies one sprite in the output grid.
 #[derive(Component, Clone, Copy)]
 struct SpriteCell {
-    row: u32,
+    _row: u32,
     col: u32,
+    is_character: bool,
 }
 
 // --- Layout helpers ------------------------------------------------------
@@ -236,13 +256,12 @@ fn trimetric_camera_basis() -> (Vec3, Vec3, Vec3) {
 
 /// World-space origin for a sprite cell.
 ///
-/// Placed so that a model's Y=0.5 point appears at the cell's screen centre,
-/// given `look_at = Vec3::Y * LOOK_HEIGHT`.  (cam_r/cam_u are orthonormal so the
-/// projection cancels the LOOK_HEIGHT offset exactly.)
+/// Layout: columns = items, rows = rotations (row 0 at top = 0°).
 fn cell_origin(cam_r: Vec3, cam_u: Vec3, col: u32, row: u32, n_cols: u32) -> Vec3 {
     let sx = (col as f32 + 0.5 - n_cols as f32 / 2.0) * CELL_WORLD;
-    let sy = (N_ROWS as f32 / 2.0 - row as f32 - 0.5) * CELL_WORLD;
-    cam_r * sx + cam_u * sy
+    let sy = (N_ROTATIONS as f32 / 2.0 - row as f32 - 0.5) * CELL_WORLD;
+    // Add an ad-hoc adjustment in y to keep on-screen:
+    cam_r * sx + cam_u * sy + Vec3::new(0.0, -0.75, 0.0)
 }
 
 // --- Setup ---------------------------------------------------------------
@@ -250,71 +269,142 @@ fn cell_origin(cam_r: Vec3, cam_u: Vec3, col: u32, row: u32, n_cols: u32) -> Vec
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    building_list: Res<BuildingList>,
+    config: Res<SheetConfig>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let n_buildings = building_list.0.len(); // already capped at MAX_BUILDINGS
-    let n_cols = (n_buildings as u32).max(HUMAN_Y_ROTATIONS.len() as u32);
-    let img_width = n_cols * CELL_TOTAL_PX;
-    let img_height = N_ROWS * CELL_TOTAL_PX;
-    let n_total_scenes = HUMAN_Y_ROTATIONS.len() as u32 + n_buildings as u32;
-
-    // Animation graph for the Walk clip (human row only).
-    let clip: Handle<AnimationClip> =
-        asset_server.load(GltfAssetLabel::Animation(WALK_ANIMATION_INDEX).from_asset(MODEL_ASSET));
-    let (graph, node) = AnimationGraph::from_clip(clip.clone());
-    let graph = graphs.add(graph);
-
-    // Off-screen render target.
-    let mut image = Image::new_target_texture(
-        img_width,
-        img_height,
-        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-        None,
-    );
-    image.texture_descriptor.usage |= bevy::render::render_resource::TextureUsages::COPY_SRC;
-    let image = images.add(image);
-
     let (cam_r, cam_u, cam_forward) = trimetric_camera_basis();
 
-    let human_scene: Handle<Scene> =
-        asset_server.load(GltfAssetLabel::Scene(0).from_asset(MODEL_ASSET));
+    match config.kind {
+        SheetKind::Characters => {
+            let n_cols = N_WALK_PHASES;
+            let img_width = n_cols * CELL_TOTAL_PX;
+            let img_height = N_ROTATIONS * CELL_TOTAL_PX;
+            let n_total_scenes = n_cols * N_ROTATIONS;
 
-    // Row 0: four Y-rotations of the human character.
-    for (col, &angle) in HUMAN_Y_ROTATIONS.iter().enumerate() {
-        let origin = cell_origin(cam_r, cam_u, col as u32, 0, n_cols);
-        commands.spawn((
-            SceneRoot(human_scene.clone()),
-            Transform::from_translation(origin + Vec3::new(0.5, 0.0, 0.5))
-                .with_rotation(Quat::from_rotation_y(angle))
-                .with_scale(Vec3::splat(0.5)),
-            SpriteCell { row: 0, col: col as u32 },
-        ));
-        spawn_wireframe_cube(&mut commands, &mut meshes, &mut materials, origin);
+            let clip: Handle<AnimationClip> = asset_server
+                .load(GltfAssetLabel::Animation(WALK_ANIMATION_INDEX).from_asset(MODEL_ASSET));
+            let (graph, node) = AnimationGraph::from_clip(clip.clone());
+            let graph = graphs.add(graph);
+
+            let mut image = Image::new_target_texture(
+                img_width,
+                img_height,
+                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                None,
+            );
+            image.texture_descriptor.usage |=
+                bevy::render::render_resource::TextureUsages::COPY_SRC;
+            let image = images.add(image);
+
+            let human_scene: Handle<Scene> =
+                asset_server.load(GltfAssetLabel::Scene(0).from_asset(MODEL_ASSET));
+
+            for (row, &angle) in Y_ROTATIONS.iter().enumerate() {
+                for col in 0..N_WALK_PHASES {
+                    let origin = cell_origin(cam_r, cam_u, col, row as u32, n_cols);
+                    commands.spawn((
+                        SceneRoot(human_scene.clone()),
+                        Transform::from_translation(origin + Vec3::new(0.5, 0.0, 0.5))
+                            .with_rotation(Quat::from_rotation_y(angle))
+                            .with_scale(Vec3::splat(0.5)),
+                        SpriteCell {
+                            _row: row as u32,
+                            col,
+                            is_character: true,
+                        },
+                    ));
+                    spawn_wireframe_cube(&mut commands, &mut meshes, &mut materials, origin);
+                }
+            }
+
+            spawn_camera_and_lights(&mut commands, cam_r, cam_u, cam_forward, image.clone());
+
+            commands.insert_resource(Capture {
+                anim: Some((graph, node, clip)),
+                image,
+                img_width,
+                img_height,
+                n_total_scenes,
+                ready: 0,
+                configured: false,
+            });
+        }
+
+        SheetKind::Structures => {
+            let n_cols = config.buildings.len() as u32;
+            let img_width = n_cols * CELL_TOTAL_PX;
+            let img_height = N_ROTATIONS * CELL_TOTAL_PX;
+            let n_total_scenes = n_cols * N_ROTATIONS;
+
+            let mut image = Image::new_target_texture(
+                img_width,
+                img_height,
+                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                None,
+            );
+            image.texture_descriptor.usage |=
+                bevy::render::render_resource::TextureUsages::COPY_SRC;
+            let image = images.add(image);
+
+            for (col, name) in config.buildings.iter().enumerate() {
+                let path = format!("buildables/autotile/{name}.gltf");
+                let scene: Handle<Scene> =
+                    asset_server.load(GltfAssetLabel::Scene(0).from_asset(path));
+                for (row, &angle) in Y_ROTATIONS.iter().enumerate() {
+                    let origin = cell_origin(cam_r, cam_u, col as u32, row as u32, n_cols);
+                    let mut tform = Transform::from_translation(origin + Vec3::new(0.0,0.0,1.0))
+                        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2));
+                    tform.rotate_around(
+                        origin + Vec3::new(0.5, 0.0, 0.5),
+                        Quat::from_rotation_y(angle),
+                    );
+
+                    commands.spawn((
+                        SceneRoot(scene.clone()),
+                        tform,
+                        SpriteCell {
+                            _row: row as u32,
+                            col: col as u32,
+                            is_character: false,
+                        },
+                    ));
+                    spawn_wireframe_cube(&mut commands, &mut meshes, &mut materials, origin);
+                }
+            }
+
+            spawn_camera_and_lights(&mut commands, cam_r, cam_u, cam_forward, image.clone());
+
+            commands.insert_resource(Capture {
+                anim: None,
+                image,
+                img_width,
+                img_height,
+                n_total_scenes,
+                ready: 0,
+                configured: false,
+            });
+        }
     }
 
-    // Row 1: building scenes.
-    for (col, name) in building_list.0.iter().enumerate() {
-        let origin = cell_origin(cam_r, cam_u, col as u32, 1, n_cols);
-        let path = format!("buildables/autotile/{name}.gltf");
-        let scene: Handle<Scene> =
-            asset_server.load(GltfAssetLabel::Scene(0).from_asset(path));
-        commands.spawn((
-            SceneRoot(scene),
-            Transform::from_translation(origin + Vec3::new(0.0,0.0,1.0)).
-            with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-            SpriteCell { row: 1, col: col as u32 },
-        ));
-        spawn_wireframe_cube(&mut commands, &mut meshes, &mut materials, origin);
-    }
+    commands.add_observer(|_: On<SceneInstanceReady>, mut capture: ResMut<Capture>| {
+        capture.ready += 1;
+    });
+}
 
-    // Camera: orthographic, transparent background, no MSAA.
+fn spawn_camera_and_lights(
+    commands: &mut Commands,
+    cam_r: Vec3,
+    cam_u: Vec3,
+    cam_forward: Vec3,
+    image: Handle<Image>,
+) {
     let look_at = Vec3::Y * LOOK_HEIGHT;
     // ad-hoc: bumping by 0.5 pixels X lines up the bars better.
-    let cam_pos = look_at - cam_forward * CAMERA_DISTANCE + Vec3::new(0.5 / PIXELS_PER_UNIT as f32, 0.0, 0.0);
+    let cam_pos =
+        look_at - cam_forward * CAMERA_DISTANCE + Vec3::new(0.5 / PIXELS_PER_UNIT as f32, 0.0, 0.0);
     let rotation = Quat::from_mat3(&Mat3::from_cols(cam_r, cam_u, cam_r.cross(cam_u)));
     commands.spawn((
         Camera3d::default(),
@@ -322,44 +412,39 @@ fn setup(
             clear_color: ClearColorConfig::Custom(Color::NONE),
             ..default()
         },
-        RenderTarget::Image(image.clone().into()),
+        RenderTarget::Image(image.into()),
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::FixedVertical {
-                viewport_height: N_ROWS as f32 * CELL_WORLD,
+                viewport_height: N_ROTATIONS as f32 * CELL_WORLD,
             },
             ..OrthographicProjection::default_3d()
         }),
-        Transform { translation: cam_pos, rotation, scale: Vec3::ONE },
+        Transform {
+            translation: cam_pos,
+            rotation,
+            scale: Vec3::ONE,
+        },
         Msaa::Off,
-        AmbientLight { brightness: 400.0, ..default() },
+        AmbientLight {
+            brightness: 400.0,
+            ..default()
+        },
     ));
-
     commands.spawn((
-        DirectionalLight { illuminance: 1_000.0, ..default() },
+        DirectionalLight {
+            illuminance: 1_000.0,
+            ..default()
+        },
         Transform::from_xyz(8.0, 12.0, -6.0).looking_at(look_at, Vec3::Y),
     ));
 
     commands.spawn((
-        DirectionalLight { illuminance: 2_000.0, ..default() },
+        DirectionalLight {
+            illuminance: 2_000.0,
+            ..default()
+        },
         Transform::from_xyz(-8.0, 12.0, 6.0).looking_at(look_at, Vec3::Y),
     ));
-
-
-    commands.insert_resource(Capture {
-        graph,
-        node,
-        clip,
-        image,
-        img_width,
-        img_height,
-        n_total_scenes,
-        ready: 0,
-        configured: false,
-    });
-
-    commands.add_observer(|_: On<SceneInstanceReady>, mut capture: ResMut<Capture>| {
-        capture.ready += 1;
-    });
 }
 
 /// Creates the GPU readback buffer and CPU image asset. Must run after `setup`.
@@ -377,7 +462,10 @@ fn setup_image_copier(
         usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    commands.spawn(ImageCopier { buffer, src_image: capture.image.clone() });
+    commands.spawn(ImageCopier {
+        buffer,
+        src_image: capture.image.clone(),
+    });
 
     let cpu_image = Image::new_target_texture(
         capture.img_width,
@@ -390,8 +478,7 @@ fn setup_image_copier(
 
 // --- Systems -------------------------------------------------------------
 
-/// Once all scenes and the Walk clip are loaded, pose the human animation
-/// players (row 0) and inflate their meshes. No-op for building rows.
+/// Once all scenes (and the Walk clip for characters) are loaded, finish setup.
 fn configure_when_ready(
     mut commands: Commands,
     mut capture: ResMut<Capture>,
@@ -406,23 +493,32 @@ fn configure_when_ready(
     if capture.configured || capture.ready < capture.n_total_scenes {
         return;
     }
-    let Some(_clip) = clips.get(&capture.clip) else {
+
+    // For structure sheets there is no animation to configure.
+    let Some((ref graph, node, ref clip)) = capture.anim.clone() else {
+        capture.configured = true;
         return;
     };
+
+    let Some(clip_asset) = clips.get(clip) else {
+        return;
+    };
+    let clip_duration = clip_asset.duration();
 
     for (entity, mut player) in &mut players {
         let Some(cell) = find_cell(entity, &parents, &cells) else {
             continue;
         };
-        if cell.row != 0 {
+        if !cell.is_character {
             continue;
         }
-        let active = player.play(capture.node);
-        active.seek_to(0.0);
+        let t = cell.col as f32 / N_WALK_PHASES as f32 * clip_duration;
+        let active = player.play(node);
+        active.seek_to(t);
         active.pause();
         commands
             .entity(entity)
-            .insert(AnimationGraphHandle(capture.graph.clone()));
+            .insert(AnimationGraphHandle(graph.clone()));
     }
 
     // Remove the unused female model from every human scene.
@@ -432,7 +528,7 @@ fn configure_when_ready(
         }
     }
 
-    // Inflate only meshes belonging to row-0 (human) cells.
+    // Inflate only character meshes.
     if BULK_WORLD_UNITS != 0.0 {
         let amount = BULK_WORLD_UNITS * MESH_UNITS_PER_WORLD_UNIT;
         let mut done = std::collections::HashSet::new();
@@ -440,8 +536,10 @@ fn configure_when_ready(
             if name.as_str() == DROP_MESH_NAME || !done.insert(mesh3d.0.id()) {
                 continue;
             }
-            let Some(cell) = find_cell(mesh_entity, &parents, &cells) else { continue; };
-            if cell.row != 0 {
+            let Some(cell) = find_cell(mesh_entity, &parents, &cells) else {
+                continue;
+            };
+            if !cell.is_character {
                 continue;
             }
             if let Some(mesh) = mesh_assets.get_mut(&mesh3d.0) {
@@ -465,6 +563,7 @@ fn spawn_wireframe_cube(
     let radius = 0.5 / PIXELS_PER_UNIT as f32;
     let material = materials.add(StandardMaterial {
         base_color: Color::BLACK,
+        emissive: Color::srgb(0.0, 0.0, 1.0).into(),
         ..default()
     });
     let edges: &[(Vec3, Vec3)] = &[
@@ -487,7 +586,10 @@ fn spawn_wireframe_cube(
         let mid = (a + b) * 0.5;
         let len = (b - a).length();
         let dir = (b - a) / len;
-        let mesh = meshes.add(Cylinder { radius, half_height: len * 0.5 });
+        let mesh = meshes.add(Cylinder {
+            radius,
+            half_height: len * 0.5,
+        });
         commands.spawn((
             Mesh3d(mesh),
             MeshMaterial3d(material.clone()),
@@ -517,11 +619,19 @@ fn find_cell(
 /// Inflates a skinned mesh outward along welded normals.
 fn inflate_mesh(mesh: &mut Mesh, amount: f32) {
     use bevy::mesh::VertexAttributeValues::Float32x3;
-    let Some(Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else { return; };
+    let Some(Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+        return;
+    };
     let positions = positions.clone();
-    let Some(Float32x3(normals)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else { return; };
+    let Some(Float32x3(normals)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else {
+        return;
+    };
     let key = |p: &[f32; 3]| {
-        [(p[0] * 1e4).round() as i64, (p[1] * 1e4).round() as i64, (p[2] * 1e4).round() as i64]
+        [
+            (p[0] * 1e4).round() as i64,
+            (p[1] * 1e4).round() as i64,
+            (p[2] * 1e4).round() as i64,
+        ]
     };
     let mut welded: std::collections::HashMap<[i64; 3], Vec3> = std::collections::HashMap::new();
     for (p, n) in positions.iter().zip(normals.iter()) {
@@ -537,7 +647,7 @@ fn inflate_mesh(mesh: &mut Mesh, amount: f32) {
 
 // --- Capture -------------------------------------------------------------
 
-fn save_snap(app: &mut App) {
+fn save_snap(app: &mut App, path: &std::path::Path) {
     while app.world().resource::<SnapBytesRx>().try_recv().is_some() {}
     app.update();
     let mut data = None;
@@ -564,8 +674,7 @@ fn save_snap(app: &mut App) {
 
     let mut images = app.world_mut().resource_mut::<Assets<Image>>();
     let img = images.get_mut(&cpu_handle).unwrap();
-    let row_bytes =
-        img.width() as usize * img.texture_descriptor.format.pixel_size().unwrap();
+    let row_bytes = img.width() as usize * img.texture_descriptor.format.pixel_size().unwrap();
     let aligned = RenderDevice::align_copy_bytes_per_row(row_bytes);
     img.data = Some(if row_bytes == aligned {
         data
@@ -590,12 +699,13 @@ fn save_snap(app: &mut App) {
          sprites did not render — increase SETTLE_FRAMES or check scene setup"
     );
 
-    let path = output_path();
-    rgba.save(&path)
+    rgba.save(path)
         .unwrap_or_else(|e| panic!("failed to write sprite sheet: {e}"));
     println!(
         "Wrote {} ({}×{}, {opaque_pixels} opaque px)",
-        path.display(), img_width, img_height
+        path.display(),
+        img_width,
+        img_height
     );
 }
 
@@ -603,47 +713,43 @@ fn save_snap(app: &mut App) {
 
 fn find_matching_buildings() -> Vec<String> {
     let base = std::path::Path::new(MANIFEST_DIR);
-    let scad_names: std::collections::HashSet<String> =
-        std::fs::read_dir(base.join("buildables"))
-            .expect("buildables/ not found")
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let p = e.path();
-                if p.extension()?.to_str()? == "scad" {
-                    Some(p.file_stem()?.to_str()?.to_string())
-                } else {
-                    None
-                }
-            })
-            .collect();
+    let scad_names: std::collections::HashSet<String> = std::fs::read_dir(base.join("buildables"))
+        .expect("buildables/ not found")
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension()?.to_str()? == "scad" {
+                Some(p.file_stem()?.to_str()?.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    let mut matches: Vec<String> =
-        std::fs::read_dir(base.join("buildables/autotile"))
-            .expect("buildables/autotile/ not found")
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let p = e.path();
-                if p.extension()?.to_str()? == "gltf" {
-                    let name = p.file_stem()?.to_str()?.to_string();
-                    scad_names.contains(&name).then_some(name)
-                } else {
-                    None
-                }
-            })
-            .collect();
+    let mut matches: Vec<String> = std::fs::read_dir(base.join("buildables/autotile"))
+        .expect("buildables/autotile/ not found")
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension()?.to_str()? == "gltf" {
+                let name = p.file_stem()?.to_str()?.to_string();
+                scad_names.contains(&name).then_some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     matches.sort();
     matches.truncate(MAX_BUILDINGS);
     matches
 }
 
-fn main() {
-    let buildings = find_matching_buildings();
-    println!(
-        "Building sprites: {} ({})",
-        buildings.len(),
-        buildings.join(", ")
-    );
+fn run_sheet(config: SheetConfig) {
+    let output_path = match config.kind {
+        SheetKind::Characters => characters_output_path(),
+        SheetKind::Structures => structures_output_path(),
+    };
 
     let mut app = App::new();
     app.add_plugins(
@@ -661,7 +767,7 @@ fn main() {
             .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
     )
     .add_plugins(SnapPlugin)
-    .insert_resource(BuildingList(buildings))
+    .insert_resource(config)
     .add_systems(Startup, (setup, setup_image_copier).chain())
     .add_systems(Update, configure_when_ready);
 
@@ -684,6 +790,25 @@ fn main() {
         app.update();
     }
 
-    save_snap(&mut app);
+    save_snap(&mut app, &output_path);
+}
+
+fn main() {
+    let buildings = find_matching_buildings();
+    println!(
+        "Building sprites: {} ({})",
+        buildings.len(),
+        buildings.join(", ")
+    );
+
+    run_sheet(SheetConfig {
+        kind: SheetKind::Characters,
+        buildings: vec![],
+    });
+    run_sheet(SheetConfig {
+        kind: SheetKind::Structures,
+        buildings,
+    });
+
     std::process::exit(0);
 }

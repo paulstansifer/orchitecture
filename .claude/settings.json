@@ -20,7 +20,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rust +nightly fmt"
+            "command": "cargo +nightly fmt"
           }
         ]
       }
