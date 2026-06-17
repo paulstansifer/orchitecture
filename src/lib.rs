@@ -19,6 +19,6 @@ pub mod sparse3d;
 pub mod station;
 pub mod structure;
 pub mod ui;
+pub mod util;
 pub mod wall_grid;
 pub mod world;
-pub mod util;

@@ -277,6 +277,7 @@ fn collect_scad_deps_rec(spec: &MeshSpec, buildables: &Path, deps: &mut Vec<Path
             collect_scad_deps_rec(b, buildables, deps);
         }
         MeshSpec::Rotation(_, _) => unreachable!("Rotation is a runtime-only variant"),
+        MeshSpec::Translation(_, inner) => collect_scad_deps_rec(inner, buildables, deps),
     }
 }
 
@@ -316,7 +317,9 @@ fn spec_to_scad(spec: &MeshSpec, slot: UnorientedSlot) -> String {
             spec_to_scad(a, slot),
             spec_to_scad(b, slot)
         ),
-        MeshSpec::Rotation(_, _) => unreachable!("Rotation is a runtime-only variant"),
+        MeshSpec::Rotation(_, _) | MeshSpec::Translation(_, _) => {
+            unreachable!("Rotation and Translation are runtime-only variants")
+        }
     }
 }
 

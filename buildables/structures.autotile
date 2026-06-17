@@ -125,20 +125,20 @@ H narrow:
   r@..
  . r .
  .. ..
---> slant_roof * slant_roof:90 * slant_roof:270 + slant_roof * slant_roof:180 # highly-specific; kind of a hack?
+--> slant_roof * slant_roof:90 * slant_roof:270 , slant_roof * slant_roof:180 # highly-specific; kind of a hack?
 H narrow:
     ..
    r .
   r@r
    r .
     ..
---> slant_roof + slant_roof:90 * slant_roof:270  # double valley
+--> slant_roof , slant_roof:90 * slant_roof:270  # double valley
 H narrow:
     ..
    r .
   r@r
    r
---> slant_roof + slant_roof:90  # valley
+--> slant_roof , slant_roof:90  # valley
 H narrow:
    r
   r@r

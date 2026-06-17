@@ -6,10 +6,10 @@ use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 
 use crate::sparse3d::{Facing, SlotCoord};
 use crate::structure::{StructureId, StructureList};
+use crate::util::zup_scene_transform;
 use crate::wall_grid::{
     cell_transform, Cell, GridCellMarker, Proposal, ProposalGhostMarker, WallGrid,
 };
-use crate::zup::zup_scene_transform;
 
 use super::parser::char_matches_name;
 use super::resources::{AutotileHandles, AutotileRules};
@@ -52,6 +52,12 @@ pub fn autotile_transform(loc: SlotCoord, spec: &MeshSpec) -> Transform {
         };
         transform.translation += transform.rotation * (pivot - q * pivot);
         transform.rotation = transform.rotation * q;
+    }
+    let (tdx, tdy, tdz) = spec.translation_dir();
+    if tdx != 0 || tdy != 0 || tdz != 0 {
+        // Direction is in rule-local frame; transform.rotation (which now includes both
+        // the cell base rotation and the rule orientation) converts it to world space.
+        transform.translation += transform.rotation * Vec3::new(tdx as f32, tdy as f32, tdz as f32);
     }
     transform
 }

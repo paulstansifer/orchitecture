@@ -11,11 +11,11 @@ use crate::camera::GameCamera;
 use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
 use crate::structure::{StructureId, StructureList};
+use crate::util::zup_scene_transform;
 use crate::wall_grid::{
     cell_transform, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
     ProposedCutMarker, WallGrid,
 };
-use crate::util::zup_scene_transform;
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
 /// with. For autotile cells, the transform carries the same rotation the matched

@@ -8,11 +8,11 @@ use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::ui::SandboxMode;
+use crate::util::zup_scene_transform;
 use crate::wall_grid::{
     apply_changes, apply_proposal_changes, cell_transform, GridCellMarker, Material,
     MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets, ProposedCutMarker, WallGrid,
 };
-use crate::util::zup_scene_transform;
 
 #[derive(Resource)]
 pub struct CursorEntities {

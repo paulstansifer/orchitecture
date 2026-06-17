@@ -105,6 +105,9 @@ pub enum MeshSpec {
     /// Runtime rotation applied by the autotile matching system (degrees, CW in XZ plane).
     /// Distinct from Atom's rotation, which is author-specified and baked into the mesh file.
     Rotation(i32, Box<MeshSpec>),
+    /// Runtime translation in the rule-local frame (one grid unit along a cardinal axis).
+    /// Applied before the rule's overall rotation; direction rotates with the rule.
+    Translation((i32, i32, i32), Box<MeshSpec>),
     Union(Box<MeshSpec>, Box<MeshSpec>),
     Intersection(Box<MeshSpec>, Box<MeshSpec>),
 }
@@ -128,6 +131,21 @@ impl MeshSpec {
         match self {
             MeshSpec::Rotation(r, _) => *r,
             _ => 0,
+        }
+    }
+
+    /// Returns the translation direction stored immediately inside the outermost `Rotation`
+    /// (or at the top level if there is no `Rotation`). Direction is in rule-local frame;
+    /// `autotile_transform` converts it to world space via `transform.rotation * dir`.
+    /// Returns `(0, 0, 0)` if no translation is present.
+    pub fn translation_dir(&self) -> (i32, i32, i32) {
+        let inner = match self {
+            MeshSpec::Rotation(_, inner) => inner.as_ref(),
+            other => other,
+        };
+        match inner {
+            MeshSpec::Translation(dir, _) => *dir,
+            _ => (0, 0, 0),
         }
     }
 }
@@ -716,10 +734,10 @@ fn parse_result(s: &str) -> anyhow::Result<(bool, AutotileResult)> {
 }
 
 /// Recursive-descent parser for mesh specs.
-/// Grammar (standard precedence: * binds tighter than +):
-///   expr  = term ('+' term)*
+/// Grammar (standard precedence: * binds tighter than ,):
+///   expr  = term (',' term)*
 ///   term  = factor ('*' factor)*
-///   factor = '(' expr ')' | ident [':' number]
+///   factor = '(' expr ')' | ident [':' number] [':' ('+' | '-') axis]
 fn parse_mesh_spec(s: &str) -> Option<MeshSpec> {
     let s = s.trim();
     let (spec, rest) = parse_expr(s)?;
@@ -734,7 +752,7 @@ fn parse_expr(s: &str) -> Option<(MeshSpec, &str)> {
     let (mut lhs, mut rest) = parse_term(s)?;
     loop {
         let t = rest.trim_start();
-        if let Some(after) = t.strip_prefix('+') {
+        if let Some(after) = t.strip_prefix(',') {
             let (rhs, r2) = parse_term(after.trim_start())?;
             lhs = MeshSpec::Union(Box::new(lhs), Box::new(rhs));
             rest = r2;
@@ -760,6 +778,23 @@ fn parse_term(s: &str) -> Option<(MeshSpec, &str)> {
     Some((lhs, rest))
 }
 
+/// Parse an optional `:(+|-)axis` translation suffix, returning `(offset, remaining)`.
+fn parse_translation_dir(s: &str) -> Option<((i32, i32, i32), &str)> {
+    let (sign, rest) = if let Some(r) = s.strip_prefix('+') {
+        (1i32, r)
+    } else if let Some(r) = s.strip_prefix('-') {
+        (-1i32, r)
+    } else {
+        return None;
+    };
+    match rest.chars().next()? {
+        'x' => Some(((sign, 0, 0), &rest[1..])),
+        'y' => Some(((0, sign, 0), &rest[1..])),
+        'z' => Some(((0, 0, sign), &rest[1..])),
+        _ => None,
+    }
+}
+
 fn parse_factor(s: &str) -> Option<(MeshSpec, &str)> {
     let s = s.trim_start();
     if let Some(inner) = s.strip_prefix('(') {
@@ -776,18 +811,33 @@ fn parse_factor(s: &str) -> Option<(MeshSpec, &str)> {
     }
     let name = s[..end].to_owned();
     let rest = &s[end..];
-    // optional `:number`
-    if let Some(after_colon) = rest.trim_start().strip_prefix(':') {
+
+    // optional `:number` (baked rotation)
+    let (rotation, rest) = if let Some(after_colon) = rest.trim_start().strip_prefix(':') {
         let after_colon = after_colon.trim_start();
         let num_end = after_colon
             .find(|c: char| !c.is_ascii_digit())
             .unwrap_or(after_colon.len());
         if num_end > 0 {
             let rotation: i32 = after_colon[..num_end].parse().ok()?;
-            return Some((MeshSpec::Atom { name, rotation }, &after_colon[num_end..]));
+            (rotation, &after_colon[num_end..])
+        } else {
+            (0, rest)
+        }
+    } else {
+        (0, rest)
+    };
+
+    let atom = MeshSpec::Atom { name, rotation };
+
+    // optional `:(+|-)axis` (runtime translation)
+    if let Some(after_colon) = rest.trim_start().strip_prefix(':') {
+        if let Some((dir, rest2)) = parse_translation_dir(after_colon.trim_start()) {
+            return Some((MeshSpec::Translation(dir, Box::new(atom)), rest2));
         }
     }
-    Some((MeshSpec::Atom { name, rotation: 0 }, rest))
+
+    Some((atom, rest))
 }
 
 // ─── Character predicates ────────────────────────────────────────────────────
@@ -820,7 +870,7 @@ pub fn slot_tag(slot: UnorientedSlot) -> &'static str {
 /// Slot is encoded for non-trivial atoms because the pivot translation differs by slot.
 pub fn spec_stem(spec: &MeshSpec, slot: UnorientedSlot) -> String {
     match spec {
-        MeshSpec::Rotation(_, inner) => spec_stem(inner, slot),
+        MeshSpec::Rotation(_, inner) | MeshSpec::Translation(_, inner) => spec_stem(inner, slot),
         MeshSpec::Atom { name, rotation: 0 } => name.clone(),
         MeshSpec::Atom { name, rotation } => {
             format!("{name}_{}_r{rotation}", slot_tag(slot))
@@ -921,14 +971,14 @@ H:
 
     #[test]
     fn parse_mesh_spec_union() {
-        let spec = parse_mesh_spec("a + b").unwrap();
+        let spec = parse_mesh_spec("a , b").unwrap();
         check!(spec == MeshSpec::Union(Box::new(atom("a")), Box::new(atom("b"))));
     }
 
     #[test]
     fn parse_mesh_spec_precedence() {
-        // a + b * c  should parse as  a + (b * c)
-        let spec = parse_mesh_spec("a + b * c").unwrap();
+        // a , b * c  should parse as  a , (b * c)
+        let spec = parse_mesh_spec("a , b * c").unwrap();
         let expected = MeshSpec::Union(
             Box::new(atom("a")),
             Box::new(MeshSpec::Intersection(
@@ -1362,6 +1412,41 @@ H: 1=stairs:90 2=stairs:0
         check!(pat.annotations.len() == 2);
         check!(pat.annotations.get(&'1').unwrap().orientation == Some(90));
         check!(pat.annotations.get(&'2').unwrap().orientation == Some(0));
+    }
+
+    // ── Translation parsing ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_mesh_spec_translation_only() {
+        let spec = parse_mesh_spec("mesh:+z").unwrap();
+        check!(spec == MeshSpec::Translation((0, 0, 1), Box::new(atom("mesh"))));
+    }
+
+    #[test]
+    fn parse_mesh_spec_rotation_then_translation() {
+        let spec = parse_mesh_spec("mesh:90:+z").unwrap();
+        check!(spec == MeshSpec::Translation((0, 0, 1), Box::new(atom_r("mesh", 90))));
+    }
+
+    #[test]
+    fn parse_mesh_spec_negative_translation() {
+        let spec = parse_mesh_spec("mesh:-x").unwrap();
+        check!(spec == MeshSpec::Translation((-1, 0, 0), Box::new(atom("mesh"))));
+    }
+
+    #[test]
+    fn parse_mesh_spec_y_translation() {
+        let spec = parse_mesh_spec("mesh:+y").unwrap();
+        check!(spec == MeshSpec::Translation((0, 1, 0), Box::new(atom("mesh"))));
+    }
+
+    /// translation_dir() peeks through the Rotation wrapper that rotate() produces.
+    #[test]
+    fn translation_dir_survives_rotate() {
+        let spec = parse_mesh_spec("mesh:+z").unwrap();
+        let rotated = spec.rotate(90);
+        check!(rotated.outer_rotation() == 90);
+        check!(rotated.translation_dir() == (0, 0, 1));
     }
 
     /// Patterns with no annotation still compile fine (empty map, not an error).
