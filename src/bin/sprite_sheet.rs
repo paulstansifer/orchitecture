@@ -1,22 +1,34 @@
-//! Sprite-sheet generator.
+//! Sprite-sheet generator — headless mode.
 //!
 //! Loads `orcs/human_1.glb`, keeps one of its two models (the male), and renders
 //! four evenly-spaced phases of the "Walk" animation side by side through an
 //! orthographic camera. The result is written to `orcs/human_1_walk.png` with a
 //! transparent background.
 //!
-//! The trick for getting four poses into a single image is to spawn four copies
-//! of the model, each with its own `AnimationPlayer` seeked (and paused) at a
-//! different point in the walk cycle, laid out along the camera's right axis so
-//! they appear as four cells in one render.
+//! The binary runs fully headless (no window, no Winit). The main loop manually
+//! ticks `app.update()` until the scenes and clip are loaded, then settles for a
+//! few frames and reads back the GPU render buffer directly.
+//!
+//! Usage:  cargo run --bin sprite_sheet
 
 use bevy::camera::{RenderTarget, ScalingMode};
-use bevy::image::Image;
+use bevy::image::{Image, TextureFormatPixelInfo};
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::render::{
+    Extract, Render, RenderApp, RenderSystems,
+    render_asset::RenderAssets,
+    render_graph::{self, NodeRunError, RenderGraph, RenderGraphContext, RenderLabel},
+    render_resource::{
+        Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, MapMode, PollType,
+        TexelCopyBufferInfo, TexelCopyBufferLayout, TextureUsages,
+    },
+    renderer::{RenderContext, RenderDevice, RenderQueue},
+    texture::GpuImage,
+};
 use bevy::scene::SceneInstanceReady;
-use bevy::window::ExitCondition;
+use bevy::winit::WinitPlugin;
 use orchitecture_lib::paths::MANIFEST_DIR;
+use std::sync::{Mutex, mpsc};
 
 // --- Configuration knobs -------------------------------------------------
 
@@ -58,14 +70,147 @@ const CELL_SPACING: f32 = VIEW_HEIGHT;
 /// orthographic projection, just needs to clear the near plane).
 const CAMERA_DISTANCE: f32 = 30.0;
 
-/// Frames to wait after posing the models before the first capture attempt, to
-/// let the skinned poses propagate. The capture itself retries if it races the
-/// render and grabs a blank frame, so this only needs to be modest.
+/// Frames to wait after posing the models before capture, to let skinned poses
+/// propagate through the render pipeline.
 const SETTLE_FRAMES: u32 = 8;
+/// Maximum frames to wait for scenes + clip to load before panicking.
+const MAX_LOAD_FRAMES: u32 = 600;
+/// Minimum number of opaque pixels the final image must contain. The wireframe
+/// cube alone produces only a few hundred; all four figures add tens of thousands.
+const MIN_CONTENT_PIXELS: usize = 100;
 
 /// Where to write the finished sheet.
 fn output_path() -> std::path::PathBuf {
     std::path::Path::new(MANIFEST_DIR).join("orcs/human_1_walk.png")
+}
+
+// --- GPU readback snap infrastructure ------------------------------------
+//
+// Architecture mirrors vector-arena/src/bin/headless/runner.rs:
+//
+//   setup_image_copier  (Startup, after setup)
+//     spawns ImageCopier component with GPU buffer + src image handle
+//     spawns SnapCpuImageHandle for the CPU-side readback image
+//
+//   Render world, each frame:
+//     SnapCopyDriver (render graph node) → copies texture to GPU buffer
+//     readback_to_channel               → maps buffer, sends bytes via channel
+//
+//   save_snap() (called from main):
+//     drains stale bytes, ticks pipeline, strips row padding, saves PNG
+
+#[derive(Debug, PartialEq, Eq, Clone, Hash, RenderLabel)]
+struct SnapCopyLabel;
+
+#[derive(Clone, Component)]
+struct ImageCopier {
+    buffer: Buffer,
+    src_image: Handle<Image>,
+}
+
+#[derive(Clone, Default, Resource, Deref, DerefMut)]
+struct ExtractedCopiers(Vec<ImageCopier>);
+
+fn extract_copiers(mut commands: Commands, copiers: Extract<Query<&ImageCopier>>) {
+    commands.insert_resource(ExtractedCopiers(copiers.iter().cloned().collect()));
+}
+
+struct SnapCopyDriver;
+
+impl render_graph::Node for SnapCopyDriver {
+    fn run(
+        &self,
+        _graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext,
+        world: &World,
+    ) -> Result<(), NodeRunError> {
+        let copiers = world.resource::<ExtractedCopiers>();
+        let gpu_images = world.resource::<RenderAssets<GpuImage>>();
+
+        for copier in copiers.iter() {
+            let src = match gpu_images.get(&copier.src_image) {
+                Some(s) => s,
+                None => continue,
+            };
+            let mut encoder = render_context
+                .render_device()
+                .create_command_encoder(&CommandEncoderDescriptor::default());
+
+            let (bx, _) = src.texture_format.block_dimensions();
+            let block_size = src.texture_format.block_copy_size(None).unwrap();
+            let padded = RenderDevice::align_copy_bytes_per_row(
+                (src.size.width as usize / bx as usize) * block_size as usize,
+            );
+
+            encoder.copy_texture_to_buffer(
+                src.texture.as_image_copy(),
+                TexelCopyBufferInfo {
+                    buffer: &copier.buffer,
+                    layout: TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(std::num::NonZero::new(padded as u32).unwrap().into()),
+                        rows_per_image: None,
+                    },
+                },
+                src.size,
+            );
+            world.resource::<RenderQueue>().submit(std::iter::once(encoder.finish()));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Resource)]
+struct SnapBytesTx(mpsc::Sender<Vec<u8>>);
+
+#[derive(Resource)]
+struct SnapBytesRx(Mutex<mpsc::Receiver<Vec<u8>>>);
+
+impl SnapBytesRx {
+    fn try_recv(&self) -> Option<Vec<u8>> {
+        self.0.lock().unwrap().try_recv().ok()
+    }
+}
+
+fn readback_to_channel(
+    copiers: Res<ExtractedCopiers>,
+    render_device: Res<RenderDevice>,
+    tx: Res<SnapBytesTx>,
+) {
+    for copier in copiers.iter() {
+        let slice = copier.buffer.slice(..);
+        let (s, r) = mpsc::channel();
+        slice.map_async(MapMode::Read, move |res| {
+            s.send(res).ok();
+        });
+        render_device.poll(PollType::wait_indefinitely()).expect("poll failed");
+        r.recv().ok();
+        let _ = tx.0.send(slice.get_mapped_range().to_vec());
+        copier.buffer.unmap();
+    }
+}
+
+#[derive(Component)]
+struct SnapCpuImageHandle(Handle<Image>);
+
+struct SnapPlugin;
+
+impl Plugin for SnapPlugin {
+    fn build(&self, app: &mut App) {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        app.insert_resource(SnapBytesRx(Mutex::new(rx)));
+
+        let render_app = app.sub_app_mut(RenderApp);
+        {
+            let mut graph = render_app.world_mut().resource_mut::<RenderGraph>();
+            graph.add_node(SnapCopyLabel, SnapCopyDriver);
+            graph.add_node_edge(bevy::render::graph::CameraDriverLabel, SnapCopyLabel);
+        }
+        render_app
+            .insert_resource(SnapBytesTx(tx))
+            .add_systems(ExtractSchedule, extract_copiers)
+            .add_systems(Render, readback_to_channel.after(RenderSystems::Render));
+    }
 }
 
 // --- Resources & components ----------------------------------------------
@@ -80,17 +225,7 @@ struct Capture {
     ready: u32,
     /// Whether the players have been posed.
     configured: bool,
-    /// Frames elapsed since posing; capture once this passes `SETTLE_FRAMES`.
-    settle: u32,
-    /// Whether the first screenshot has been requested.
-    shot: bool,
-    /// How many capture attempts have come back empty (the capture can race the
-    /// render and grab a blank frame; we retry until we get content).
-    attempts: u32,
 }
-
-/// Maximum number of capture retries before giving up and saving whatever we got.
-const MAX_CAPTURE_ATTEMPTS: u32 = 30;
 
 /// Marks one of the four model copies and records its phase index.
 #[derive(Component, Clone, Copy)]
@@ -99,29 +234,49 @@ struct SpriteCopy {
 }
 
 fn main() {
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(AssetPlugin {
-                    file_path: MANIFEST_DIR.to_string(),
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    // We render to an off-screen image, so the window is just a
-                    // small required surface. Don't exit when it closes; we exit
-                    // ourselves once the file is written.
-                    primary_window: Some(Window {
-                        title: "sprite_sheet".to_string(),
-                        resolution: (256u32, 256u32).into(),
-                        ..default()
-                    }),
-                    exit_condition: ExitCondition::DontExit,
-                    ..default()
-                }),
-        )
-        .add_systems(Startup, setup)
-        .add_systems(Update, (configure_when_ready, capture_when_settled))
-        .run();
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(AssetPlugin {
+                file_path: MANIFEST_DIR.to_string(),
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: bevy::window::ExitCondition::DontExit,
+                ..default()
+            })
+            .disable::<WinitPlugin>()
+            .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
+    )
+    .add_plugins(SnapPlugin)
+    .add_systems(Startup, (setup, setup_image_copier).chain())
+    .add_systems(Update, configure_when_ready);
+
+    app.finish();
+
+    // Tick until scenes and clip are configured (up to MAX_LOAD_FRAMES).
+    let mut frame = 0u32;
+    loop {
+        app.update();
+        frame += 1;
+        if app.world().resource::<Capture>().configured {
+            break;
+        }
+        assert!(
+            frame < MAX_LOAD_FRAMES,
+            "scenes/clip not ready after {MAX_LOAD_FRAMES} frames — asset loading failed"
+        );
+    }
+
+    // Give the render pipeline time to process the new poses.
+    for _ in 0..SETTLE_FRAMES {
+        app.update();
+    }
+
+    save_snap(&mut app);
+
+    std::process::exit(0);
 }
 
 /// Trimetric camera vectors for the requested projection:
@@ -165,8 +320,6 @@ fn setup(
         bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
         None,
     );
-    // The screenshot path reads this back; keep the default usages plus what it
-    // needs and make the format unambiguous.
     image.texture_descriptor.usage |= bevy::render::render_resource::TextureUsages::COPY_SRC;
     let image = images.add(image);
 
@@ -181,7 +334,6 @@ fn setup(
         let offset = cam_r * (phase as f32 - span) * CELL_SPACING;
         commands.spawn((
             SceneRoot(scene.clone()),
-            // Scale down by 2; the root scale halves the world-space bulking effect too.
             Transform::from_translation(center + offset).with_scale(Vec3::splat(0.5)),
             SpriteCopy { phase },
         ));
@@ -193,7 +345,6 @@ fn setup(
     // Trimetric orthographic camera, transparent background, no anti-aliasing.
     let look_at = center + Vec3::Y * LOOK_HEIGHT;
     let cam_pos = look_at - cam_forward * CAMERA_DISTANCE;
-    // Rotation matrix: local +X = cam_r, local +Y = cam_u, local +Z = cam_r × cam_u (= -forward)
     let rotation = Quat::from_mat3(&Mat3::from_cols(cam_r, cam_u, cam_r.cross(cam_u)));
     commands.spawn((
         Camera3d::default(),
@@ -201,7 +352,6 @@ fn setup(
             clear_color: ClearColorConfig::Custom(Color::NONE),
             ..default()
         },
-        // In Bevy 0.18 the render target is its own component, not a `Camera` field.
         RenderTarget::Image(image.clone().into()),
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: ScalingMode::FixedVertical {
@@ -215,14 +365,12 @@ fn setup(
             scale: Vec3::ONE,
         },
         Msaa::Off,
-        // Fill light so the model isn't a silhouette (AmbientLight is per-camera).
         AmbientLight {
             brightness: 400.0,
             ..default()
         },
     ));
 
-    // Key light so the model isn't flat.
     commands.spawn((
         DirectionalLight {
             illuminance: 8_000.0,
@@ -238,15 +386,47 @@ fn setup(
         image,
         ready: 0,
         configured: false,
-        settle: 0,
-        shot: false,
-        attempts: 0,
     });
 
     // Count each scene instance as it finishes spawning.
     commands.add_observer(|_: On<SceneInstanceReady>, mut capture: ResMut<Capture>| {
         capture.ready += 1;
     });
+}
+
+/// Creates the GPU buffer for readback and spawns the `ImageCopier` and CPU image
+/// used by `save_snap`. Must run after `setup` so `Capture.image` is available.
+fn setup_image_copier(
+    mut commands: Commands,
+    capture: Res<Capture>,
+    render_device: Res<RenderDevice>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    let width = CELL_SIZE * PHASES;
+    let height = CELL_SIZE;
+    let row_bytes = width as usize * 4; // Rgba8UnormSrgb = 4 bytes/pixel
+    let padded = RenderDevice::align_copy_bytes_per_row(row_bytes);
+    let buffer = render_device.create_buffer(&BufferDescriptor {
+        label: Some("sprite_sheet_readback"),
+        size: (padded * height as usize) as u64,
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    commands.spawn(ImageCopier {
+        buffer,
+        src_image: capture.image.clone(),
+    });
+
+    // CPU-side image used only for format conversion in save_snap.
+    let cpu_image = Image::new_target_texture(
+        width,
+        height,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        None,
+    );
+    let cpu_handle = images.add(cpu_image);
+    commands.spawn(SnapCpuImageHandle(cpu_handle));
 }
 
 /// Spawns a wireframe unit cube (0..1 on each axis) out of thin cylinders.
@@ -421,59 +601,70 @@ fn find_copy(
     }
 }
 
-/// After the posed models have had a few frames to render, capture the image and
-/// write it out, then exit.
-fn capture_when_settled(mut commands: Commands, mut capture: ResMut<Capture>) {
-    if !capture.configured || capture.shot {
-        return;
-    }
-    if capture.settle < SETTLE_FRAMES {
-        capture.settle += 1;
-        return;
-    }
-    capture.shot = true;
-    request_screenshot(&mut commands, capture.image.clone());
-}
+/// Reads back the rendered frame from the GPU buffer and saves it as a PNG.
+///
+/// Drains any stale bytes from previous frames, ticks once to produce a fresh
+/// frame, then reads back. Panics if no bytes arrive or if the saved image has
+/// too few opaque pixels (indicating the humans didn't render).
+fn save_snap(app: &mut App) {
+    // Drain stale readback bytes.
+    while app.world().resource::<SnapBytesRx>().try_recv().is_some() {}
 
-/// Spawns a one-shot screenshot of the off-screen render target, observed by
-/// [`on_capture`].
-fn request_screenshot(commands: &mut Commands, image: Handle<Image>) {
-    commands
-        .spawn(Screenshot(RenderTarget::Image(image.into())))
-        .observe(on_capture);
-}
+    // Tick to produce a fresh rendered frame.
+    app.update();
 
-/// Handles a captured frame: if it's blank (the capture raced the render), retry
-/// on the next frame; otherwise save it (preserving alpha, unlike Bevy's
-/// `save_to_disk`) and exit.
-fn on_capture(
-    captured: On<ScreenshotCaptured>,
-    mut commands: Commands,
-    mut capture: ResMut<Capture>,
-    mut exit: MessageWriter<AppExit>,
-) {
-    let rgba = match captured.image.clone().try_into_dynamic() {
-        Ok(dyn_img) => dyn_img.to_rgba8(),
-        Err(e) => {
-            error!("Could not convert captured screenshot: {e}");
-            exit.write(AppExit::error());
-            return;
+    // Read back with retries in case the GPU pipeline needs more time.
+    let mut data = None;
+    for _ in 0..8 {
+        if let Some(d) = app.world().resource::<SnapBytesRx>().try_recv() {
+            data = Some(d);
+            break;
         }
-    };
-
-    let has_content = rgba.pixels().any(|p| p.0[3] != 0);
-    if !has_content && capture.attempts < MAX_CAPTURE_ATTEMPTS {
-        // The render hadn't landed in the captured buffer yet; try again.
-        capture.attempts += 1;
-        let image = capture.image.clone();
-        request_screenshot(&mut commands, image);
-        return;
+        app.update();
     }
+    let data = data.expect("GPU readback timed out — render pipeline produced no bytes");
+
+    // De-pad rows (GPU row stride is aligned to 256 bytes; our rows may be shorter).
+    let width = CELL_SIZE * PHASES;
+    let height = CELL_SIZE;
+    let mut cpu_q = app.world_mut().query::<&SnapCpuImageHandle>();
+    let cpu_handle = cpu_q
+        .single(app.world())
+        .expect("SnapCpuImageHandle missing")
+        .0
+        .clone();
+
+    let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+    let img = images.get_mut(&cpu_handle).unwrap();
+    let row_bytes =
+        img.width() as usize * img.texture_descriptor.format.pixel_size().unwrap();
+    let aligned = RenderDevice::align_copy_bytes_per_row(row_bytes);
+    img.data = Some(if row_bytes == aligned {
+        data
+    } else {
+        data.chunks(aligned)
+            .take(height as usize)
+            .flat_map(|row| &row[..row_bytes.min(row.len())])
+            .cloned()
+            .collect()
+    });
+
+    let rgba = img
+        .clone()
+        .try_into_dynamic()
+        .expect("image conversion failed")
+        .to_rgba8();
+
+    // Assert that the human figures actually rendered.
+    let opaque_pixels = rgba.pixels().filter(|p| p.0[3] != 0).count();
+    assert!(
+        opaque_pixels >= MIN_CONTENT_PIXELS,
+        "output has only {opaque_pixels} opaque pixels (need ≥ {MIN_CONTENT_PIXELS}); \
+         human figures did not render — increase SETTLE_FRAMES or check animation setup"
+    );
 
     let path = output_path();
-    match rgba.save(&path) {
-        Ok(()) => info!("Wrote sprite sheet to {}", path.display()),
-        Err(e) => error!("Failed to write sprite sheet: {e}"),
-    }
-    exit.write(AppExit::Success);
+    rgba.save(&path)
+        .unwrap_or_else(|e| panic!("failed to write sprite sheet to {}: {e}", path.display()));
+    println!("Wrote {} ({width}×{height}, {opaque_pixels} opaque px)", path.display());
 }
