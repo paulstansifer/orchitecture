@@ -4,9 +4,7 @@
 //!   `orcs/characters_sheet.png` — columns = characters, rows = Y-rotations (0°, 90°, 180°, 270°).
 //!   `orcs/structures_sheet.png` — columns = structures, rows = Y-rotations.
 //!
-//! Each sprite is rendered inside a wireframe unit cube. Cell size is
-//! 128×128 px of content plus 10 px of padding on every side (148×148 px total).
-//! The image is sized to exactly fit its contents.
+//! Each sprite is rendered inside a wireframe unit cube.
 //!
 //! Usage:  cargo run --bin sprite_sheet
 
@@ -741,20 +739,26 @@ fn run_sheet(config: SheetConfig) {
     };
 
     let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(AssetPlugin {
-                file_path: MANIFEST_DIR.to_string(),
-                ..default()
-            })
-            .set(WindowPlugin {
-                primary_window: None,
-                exit_condition: bevy::window::ExitCondition::DontExit,
-                ..default()
-            })
-            .disable::<WinitPlugin>()
-            .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
-    )
+
+    // In fact, this whole thing isn't meant to run on the web, but we can't disable binaries
+    // per-plaform. We need to hide `pipelined_rendering` so it'll build.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        app.add_plugins(
+            DefaultPlugins
+                .set(AssetPlugin {
+                    file_path: MANIFEST_DIR.to_string(),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: None,
+                    exit_condition: bevy::window::ExitCondition::DontExit,
+                    ..default()
+                })
+                .disable::<WinitPlugin>()
+                .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
+        )
+    }
     .add_plugins(SnapPlugin)
     .insert_resource(config)
     .add_systems(Startup, (setup, setup_image_copier).chain())
