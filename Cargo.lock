@@ -7649,6 +7649,7 @@ dependencies = [
  "gag",
  "getrandom 0.2.16",
  "getrandom 0.4.2",
+ "image",
  "naga 26.0.0",
  "rand 0.9.2",
  "rgb",

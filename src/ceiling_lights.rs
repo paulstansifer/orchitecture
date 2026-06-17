@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 
@@ -212,7 +212,7 @@ pub fn update_ceiling_lights(
                 intensity: LIGHT_INTENSITY,
                 range: LIGHT_RANGE,
                 // Span almost all the way out to 180°, almost full brightness the whole time.
-                inner_angle: FRAC_PI_2 - 0.1,        
+                inner_angle: FRAC_PI_2 - 0.1,
                 outer_angle: FRAC_PI_2 - 0.05,
                 shadows_enabled: false,
                 ..default()

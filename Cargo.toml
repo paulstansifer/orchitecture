@@ -44,6 +44,9 @@ naga = { version = "26.0.0", features = ["termcolor"] }
 ron = "0.12"
 assert2 = "0.4.0"
 bevy_file_dialog = "0.9.1"
+# Used by the `sprite_sheet` binary to save captured frames (kept in lockstep with
+# the version Bevy already pulls in).
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [build-dependencies]
 anyhow = "1"
@@ -56,6 +59,10 @@ required-features = ["training"]
 [[bin]]
 name = "game"
 path = "src/main.rs"
+
+[[bin]]
+name = "sprite_sheet"
+path = "src/bin/sprite_sheet.rs"
 
 [lib]
 name = "orchitecture_lib"
