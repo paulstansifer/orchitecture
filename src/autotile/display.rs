@@ -9,6 +9,7 @@ use crate::structure::{StructureId, StructureList};
 use crate::wall_grid::{
     cell_transform, Cell, GridCellMarker, Proposal, ProposalGhostMarker, WallGrid,
 };
+use crate::zup::zup_scene_transform;
 
 use super::parser::char_matches_name;
 use super::resources::{AutotileHandles, AutotileRules};
@@ -43,11 +44,11 @@ pub fn autotile_transform(loc: SlotCoord, spec: &MeshSpec) -> Transform {
     let rot_deg = spec.outer_rotation();
     if rot_deg != 0 {
         let angle = rot_deg as f32 * std::f32::consts::TAU / 360.0;
-        let q = Quat::from_rotation_z(-angle);
+        let q = Quat::from_rotation_y(-angle);
         let pivot = if unoriented == UnorientedSlot::Wall {
             Vec3::new(0.5, 0.0, 0.0)
         } else {
-            Vec3::new(0.5, 0.5, 0.0)
+            Vec3::new(0.5, 0.0, -0.5)
         };
         transform.translation += transform.rotation * (pivot - q * pivot);
         transform.rotation = transform.rotation * q;
@@ -68,7 +69,7 @@ fn spawn_entities_from_results(
         if let AutotileResult::Mesh { spec, .. } = result {
             let stem = spec_stem(spec, unoriented);
             if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
-                let transform = autotile_transform(loc, spec);
+                let transform = zup_scene_transform(autotile_transform(loc, spec));
                 entities.push(spawn_one(
                     commands,
                     SceneRoot(main_handle.clone()),
@@ -102,7 +103,7 @@ fn apply_autotile_updates(
         }
         let new_entities = if use_fallback && new_results.is_empty() {
             let handle = structure_list.scene_handle(cell.id).clone();
-            let transform = cell_transform(loc.slot, cell.facing, loc.cube);
+            let transform = zup_scene_transform(cell_transform(loc.slot, cell.facing, loc.cube));
             vec![make_entity(commands, SceneRoot(handle), transform, loc)]
         } else {
             spawn_entities_from_results(

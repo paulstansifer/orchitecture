@@ -21,3 +21,4 @@ pub mod structure;
 pub mod ui;
 pub mod wall_grid;
 pub mod world;
+pub mod util;

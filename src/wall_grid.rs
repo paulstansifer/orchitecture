@@ -364,13 +364,12 @@ impl WallGrid {
 
 /// Computes the Bevy Transform for a cell at the given grid position.
 pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
-    let rx = Quat::from_rotation_x(-TAU / 4.0);
     let ry_neg90 = Quat::from_rotation_y(-TAU / 4.0);
 
     let (rotation, translation) = match slot {
         Slot::Room | Slot::Floor => {
             let facing_angle = (1.0 - facing as u8 as f32) * (-TAU / 4.0);
-            let rotation = Quat::from_rotation_y(-TAU / 4.0 + facing_angle) * rx;
+            let rotation = Quat::from_rotation_y(-TAU / 4.0 + facing_angle);
             // Rotate around the cell center rather than the cell corner, so the
             // desk stays in the same cell regardless of facing direction.
             let facing_rot = Quat::from_rotation_y(facing_angle);
@@ -378,9 +377,8 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
             let translation = cell_center + facing_rot.mul_vec3(Vec3::splat(-0.5));
             (rotation, translation)
         }
-        Slot::ZLoWall => (rx, cube.as_vec3()),
-        Slot::XLoWall => (ry_neg90 * rx, cube.as_vec3()),
-        // Slot::Floor => (ry_180 * rx, cube.as_vec3()),
+        Slot::ZLoWall => (Quat::IDENTITY, cube.as_vec3()),
+        Slot::XLoWall => (ry_neg90, cube.as_vec3()),
     };
 
     Transform {
@@ -406,7 +404,8 @@ pub fn apply_changes(
         // Clear autotile state so the per-frame system unconditionally re-evaluates.
         wall_grid.autotile_results.remove(&loc);
         if let Some(cell) = new_cell {
-            let transform = cell_transform(loc.slot, cell.facing, loc.cube);
+            let transform =
+                crate::util::zup_scene_transform(cell_transform(loc.slot, cell.facing, loc.cube));
             let handle = structure_list.scene_handle(cell.id).clone();
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))

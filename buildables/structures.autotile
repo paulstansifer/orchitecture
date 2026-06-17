@@ -38,7 +38,7 @@ H:
  . .
   @
 --> railing_cap
---> railing     # by default, models meet at integer coordinates now
+--> railing     # by default, models meet at integer coordinates
 
 ==wall:wall==
 V:
@@ -85,7 +85,7 @@ V:
   .
  w .
   @ 
---> h_corner_fill_full:90 # TODO: this shouldn't require a :90.
+--> h_corner_fill_full:90
 
 ==floor:floor==
 V:

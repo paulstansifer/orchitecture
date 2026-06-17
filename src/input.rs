@@ -12,6 +12,7 @@ use crate::wall_grid::{
     apply_changes, apply_proposal_changes, cell_transform, GridCellMarker, Material,
     MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets, ProposedCutMarker, WallGrid,
 };
+use crate::util::zup_scene_transform;
 
 #[derive(Resource)]
 pub struct CursorEntities {
@@ -51,7 +52,7 @@ pub fn cursor_system(
                 let s = pos.round();
                 let cube = IVec3::new(s.x as i32, build_state.cur_y, s.z as i32);
                 let facing = Facing::from_number(build_state.cur_dir);
-                let tr = cell_transform(Slot::Room, facing, cube);
+                let tr = zup_scene_transform(cell_transform(Slot::Room, facing, cube));
                 t.translation = tr.translation;
                 t.rotation = tr.rotation;
                 t.scale = Vec3::splat(0.999);

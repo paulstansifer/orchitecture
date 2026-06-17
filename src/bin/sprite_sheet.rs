@@ -71,11 +71,11 @@ const LOOK_HEIGHT: f32 = 0.5;
 const CAMERA_DISTANCE: f32 = 30.0;
 
 /// Frames to settle after posing before capture.
-const SETTLE_FRAMES: u32 = 20;
+const SETTLE_FRAMES: u32 = 30;
 /// Maximum frames to wait for asset loading before panicking.
 const MAX_LOAD_FRAMES: u32 = 600;
 /// Minimum opaque pixels in the final image (sanity check).
-const MIN_CONTENT_PIXELS: usize = 100;
+const MIN_CONTENT_PIXELS: usize = 3000;
 
 fn characters_output_path() -> std::path::PathBuf {
     std::path::Path::new(MANIFEST_DIR).join("orcs/characters_sheet.png")
@@ -355,7 +355,7 @@ fn setup(
                     asset_server.load(GltfAssetLabel::Scene(0).from_asset(path));
                 for (row, &angle) in Y_ROTATIONS.iter().enumerate() {
                     let origin = cell_origin(cam_r, cam_u, col as u32, row as u32, n_cols);
-                    let mut tform = Transform::from_translation(origin + Vec3::new(0.0,0.0,1.0))
+                    let mut tform = Transform::from_translation(origin + Vec3::new(0.0, 0.0, 1.0))
                         .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2));
                     tform.rotate_around(
                         origin + Vec3::new(0.5, 0.0, 0.5),

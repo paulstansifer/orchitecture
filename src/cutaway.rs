@@ -15,6 +15,7 @@ use crate::wall_grid::{
     cell_transform, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
     ProposedCutMarker, WallGrid,
 };
+use crate::util::zup_scene_transform;
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
 /// with. For autotile cells, the transform carries the same rotation the matched
@@ -36,7 +37,12 @@ fn get_cut(
                     .handles
                     .get(&stem)
                     .and_then(|(_, cut)| cut.as_ref())
-                    .map(|cut| (cut.clone(), autotile_transform(loc, spec)))
+                    .map(|cut| {
+                        (
+                            cut.clone(),
+                            zup_scene_transform(autotile_transform(loc, spec)),
+                        )
+                    })
             } else {
                 None
             }
@@ -45,7 +51,11 @@ fn get_cut(
         structure_list.cut_handle(id).map(|h| {
             (
                 h.clone(),
-                cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube),
+                zup_scene_transform(cell_transform(
+                    loc.slot,
+                    crate::sparse3d::Facing::NegX,
+                    loc.cube,
+                )),
             )
         })
     }
