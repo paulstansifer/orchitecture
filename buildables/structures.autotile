@@ -2,25 +2,25 @@
 V:
  F
   @
---> column_caps * top
+--> column_caps * u_top
 V:
   =
  . .
   @
---> column_middle * top
---> column_floating * top
+--> column_middle * u_top
+--> column_floating * u_top
 
 ==column:wall==  # multiple stanzas produces multiple independent rules
 V:
   @
  F
---> column_caps * bottom
+--> column_caps * u_bottom
 V:
   @
  . .
   =
---> column_middle * bottom
---> column_floating * bottom
+--> column_middle * u_bottom
+--> column_floating * u_bottom
 
 ==railing:wall==
 H: 1=stairs:90
@@ -44,7 +44,7 @@ H:
 V:
  O .
   @
---> short_wall # get out of the way of the roofline; the eave will cover it up.
+--> wall * u_shorten_under_roof # get out of the way of the roofline; the eave will cover it up.
 --> wall
 ==window:wall==
 --> window
@@ -56,7 +56,7 @@ V:
  | .   |  .  |
  |     | w . |
  | O . |  @  |
---> (multi) short_v_corner_fill_full 
+--> (multi) v_corner_fill_full * u_shorten_under_roof
 H:
    .
   w .
@@ -113,7 +113,7 @@ V:
  =
  .
  @
---> solid_roof
+--> cube_roof
 V:
  =
   
@@ -143,7 +143,7 @@ H narrow:
    r
   r@r
    r
---> solid_roof
+--> cube_roof
 H narrow:
    r
   r@
@@ -188,6 +188,6 @@ H narrow:
    .
    .
 --> slant_roof * slant_roof:90 * slant_roof:180 * slant_roof:270
---> solid_roof
+--> cube_roof
 
 # Currently, don't use rules for 'stairs' so that they maintain their original direction.

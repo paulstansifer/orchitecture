@@ -216,6 +216,7 @@ mod tests {
         MeshSpec::Atom {
             name: name.to_owned(),
             rotation: 0,
+            translation: None,
         }
     }
 
@@ -682,11 +683,11 @@ H:
 
         check!(stems.len() == 2, "expected 2 stems, got {stems:?}");
         check!(
-            stems.contains(&"isect__column_floating__top".to_string()),
+            stems.contains(&"isect__column_floating__u_top".to_string()),
             "stems={stems:?}"
         );
         check!(
-            stems.contains(&"isect__column_floating__bottom".to_string()),
+            stems.contains(&"isect__column_floating__u_bottom".to_string()),
             "stems={stems:?}"
         );
     }
@@ -716,11 +717,11 @@ H:
             "expected 2 stems for ZLoWall column, got {stems:?}"
         );
         check!(
-            stems.contains(&"isect__column_floating__top".to_string()),
+            stems.contains(&"isect__column_floating__u_top".to_string()),
             "stems={stems:?}"
         );
         check!(
-            stems.contains(&"isect__column_floating__bottom".to_string()),
+            stems.contains(&"isect__column_floating__u_bottom".to_string()),
             "stems={stems:?}"
         );
     }
@@ -762,10 +763,10 @@ H:
 
         check!(all.len() == 4, "expected 4 stems total, got {all:?}");
         for expected in &[
-            "isect__column_floating__top", // bottom column, stanza 1: no column below
-            "isect__column_middle__bottom", // bottom column, stanza 2: column above present
-            "isect__column_middle__top",   // top column,    stanza 1: column below present
-            "isect__column_floating__bottom", // top column,    stanza 2: no column above
+            "isect__column_floating__u_top", // bottom column, stanza 1: no column below
+            "isect__column_middle__u_bottom", // bottom column, stanza 2: column above present
+            "isect__column_middle__u_top",   // top column,    stanza 1: column below present
+            "isect__column_floating__u_bottom", // top column,    stanza 2: no column above
         ] {
             check!(
                 all.contains(&expected.to_string()),

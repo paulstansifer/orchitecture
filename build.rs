@@ -153,6 +153,7 @@ fn generate_structure_meshes(
         let spec = MeshSpec::Atom {
             name: stem.clone(),
             rotation: 0,
+            translation: None,
         };
         let inputs: Vec<&Path> = vec![ron_path.as_path(), scad.as_path()];
         generate_if_needed(
@@ -256,7 +257,14 @@ fn collect_result_specs(
 }
 
 fn is_trivial(spec: &MeshSpec) -> bool {
-    matches!(spec, MeshSpec::Atom { rotation: 0, .. })
+    matches!(
+        spec,
+        MeshSpec::Atom {
+            rotation: 0,
+            translation: None,
+            ..
+        }
+    )
     // Rotation is a runtime-only variant; build.rs never produces it.
 }
 
@@ -277,7 +285,6 @@ fn collect_scad_deps_rec(spec: &MeshSpec, buildables: &Path, deps: &mut Vec<Path
             collect_scad_deps_rec(b, buildables, deps);
         }
         MeshSpec::Rotation(_, _) => unreachable!("Rotation is a runtime-only variant"),
-        MeshSpec::Translation(_, inner) => collect_scad_deps_rec(inner, buildables, deps),
     }
 }
 
@@ -296,15 +303,29 @@ fn pivot_for_slot(slot: UnorientedSlot) -> (&'static str, &'static str) {
 /// Uses bare filenames — all source .scad files are copied into the output dir first.
 fn spec_to_scad(spec: &MeshSpec, slot: UnorientedSlot) -> String {
     match spec {
-        MeshSpec::Atom { name, rotation } => {
+        MeshSpec::Atom {
+            name,
+            rotation,
+            translation,
+        } => {
             let inc = format!("include <{name}.scad>");
-            if *rotation == 0 {
+            // Apply baked rotation first (innermost), then translation (outermost).
+            // In OpenSCAD, transforms are right-to-left: the last line in the source
+            // is the first applied to the geometry.
+            let rotated = if *rotation == 0 {
                 inc
             } else {
                 // Rotation is in degrees around Z (OpenSCAD Z-up, game-Y ≡ OpenSCAD-Z).
                 // Translate so the pivot lands at the origin before rotating, then back.
                 let (pre, post) = pivot_for_slot(slot);
                 format!("translate({post})\nrotate([0, 0, {rotation}])\ntranslate({pre})\n{inc}")
+            };
+            if let Some((dx, dy, dz)) = translation {
+                // Game (dx, dy, dz) → OpenSCAD [dx, -dz, dy]
+                // (OpenSCAD is Z-up; game Y-up ≡ OpenSCAD Z, game Z ≡ OpenSCAD -Y)
+                format!("translate([{dx}, {neg_dz}, {dy}])\n{rotated}", neg_dz = -dz)
+            } else {
+                rotated
             }
         }
         MeshSpec::Union(a, b) => format!(
@@ -317,9 +338,7 @@ fn spec_to_scad(spec: &MeshSpec, slot: UnorientedSlot) -> String {
             spec_to_scad(a, slot),
             spec_to_scad(b, slot)
         ),
-        MeshSpec::Rotation(_, _) | MeshSpec::Translation(_, _) => {
-            unreachable!("Rotation and Translation are runtime-only variants")
-        }
+        MeshSpec::Rotation(_, _) => unreachable!("Rotation is a runtime-only variant"),
     }
 }
 

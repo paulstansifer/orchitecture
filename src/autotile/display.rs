@@ -53,12 +53,6 @@ pub fn autotile_transform(loc: SlotCoord, spec: &MeshSpec) -> Transform {
         transform.translation += transform.rotation * (pivot - q * pivot);
         transform.rotation = transform.rotation * q;
     }
-    let (tdx, tdy, tdz) = spec.translation_dir();
-    if tdx != 0 || tdy != 0 || tdz != 0 {
-        // Direction is in rule-local frame; transform.rotation (which now includes both
-        // the cell base rotation and the rule orientation) converts it to world space.
-        transform.translation += transform.rotation * Vec3::new(tdx as f32, tdy as f32, tdz as f32);
-    }
     transform
 }
 

@@ -100,14 +100,16 @@ pub enum MeshSpec {
     // but that's okay.
     Atom {
         name: String,
+        /// Author-specified baked rotation (degrees, CW in XZ plane); baked into the GLTF.
         rotation: i32,
+        /// Baked translation in the rule's local frame (one grid unit along a cardinal axis).
+        /// Applied after `rotation` but before the rule's runtime rotation, so it rotates
+        /// with the rule when the compiler orients the case.
+        translation: Option<(i32, i32, i32)>,
     },
     /// Runtime rotation applied by the autotile matching system (degrees, CW in XZ plane).
     /// Distinct from Atom's rotation, which is author-specified and baked into the mesh file.
     Rotation(i32, Box<MeshSpec>),
-    /// Runtime translation in the rule-local frame (one grid unit along a cardinal axis).
-    /// Applied before the rule's overall rotation; direction rotates with the rule.
-    Translation((i32, i32, i32), Box<MeshSpec>),
     Union(Box<MeshSpec>, Box<MeshSpec>),
     Intersection(Box<MeshSpec>, Box<MeshSpec>),
 }
@@ -131,21 +133,6 @@ impl MeshSpec {
         match self {
             MeshSpec::Rotation(r, _) => *r,
             _ => 0,
-        }
-    }
-
-    /// Returns the translation direction stored immediately inside the outermost `Rotation`
-    /// (or at the top level if there is no `Rotation`). Direction is in rule-local frame;
-    /// `autotile_transform` converts it to world space via `transform.rotation * dir`.
-    /// Returns `(0, 0, 0)` if no translation is present.
-    pub fn translation_dir(&self) -> (i32, i32, i32) {
-        let inner = match self {
-            MeshSpec::Rotation(_, inner) => inner.as_ref(),
-            other => other,
-        };
-        match inner {
-            MeshSpec::Translation(dir, _) => *dir,
-            _ => (0, 0, 0),
         }
     }
 }
@@ -813,7 +800,7 @@ fn parse_factor(s: &str) -> Option<(MeshSpec, &str)> {
     let rest = &s[end..];
 
     // optional `:number` (baked rotation)
-    let (rotation, rest) = if let Some(after_colon) = rest.trim_start().strip_prefix(':') {
+    let (rotation, mut rest) = if let Some(after_colon) = rest.trim_start().strip_prefix(':') {
         let after_colon = after_colon.trim_start();
         let num_end = after_colon
             .find(|c: char| !c.is_ascii_digit())
@@ -828,16 +815,36 @@ fn parse_factor(s: &str) -> Option<(MeshSpec, &str)> {
         (0, rest)
     };
 
-    let atom = MeshSpec::Atom { name, rotation };
-
-    // optional `:(+|-)axis` (runtime translation)
-    if let Some(after_colon) = rest.trim_start().strip_prefix(':') {
-        if let Some((dir, rest2)) = parse_translation_dir(after_colon.trim_start()) {
-            return Some((MeshSpec::Translation(dir, Box::new(atom)), rest2));
+    // zero or more `:(+|-)axis` suffixes (baked translations; summed)
+    let mut tdx = 0i32;
+    let mut tdy = 0i32;
+    let mut tdz = 0i32;
+    loop {
+        if let Some(after_colon) = rest.trim_start().strip_prefix(':') {
+            if let Some(((dx, dy, dz), rest2)) = parse_translation_dir(after_colon.trim_start()) {
+                tdx += dx;
+                tdy += dy;
+                tdz += dz;
+                rest = rest2;
+                continue;
+            }
         }
+        break;
     }
+    let translation = if (tdx, tdy, tdz) != (0, 0, 0) {
+        Some((tdx, tdy, tdz))
+    } else {
+        None
+    };
 
-    Some((atom, rest))
+    Some((
+        MeshSpec::Atom {
+            name,
+            rotation,
+            translation,
+        },
+        rest,
+    ))
 }
 
 // ─── Character predicates ────────────────────────────────────────────────────
@@ -870,10 +877,37 @@ pub fn slot_tag(slot: UnorientedSlot) -> &'static str {
 /// Slot is encoded for non-trivial atoms because the pivot translation differs by slot.
 pub fn spec_stem(spec: &MeshSpec, slot: UnorientedSlot) -> String {
     match spec {
-        MeshSpec::Rotation(_, inner) | MeshSpec::Translation(_, inner) => spec_stem(inner, slot),
-        MeshSpec::Atom { name, rotation: 0 } => name.clone(),
-        MeshSpec::Atom { name, rotation } => {
-            format!("{name}_{}_r{rotation}", slot_tag(slot))
+        MeshSpec::Rotation(_, inner) => spec_stem(inner, slot),
+        MeshSpec::Atom {
+            name,
+            rotation: 0,
+            translation: None,
+        } => name.clone(),
+        MeshSpec::Atom {
+            name,
+            rotation,
+            translation,
+        } => {
+            let mut s = if *rotation != 0 {
+                format!("{name}_{}_r{rotation}", slot_tag(slot))
+            } else {
+                name.clone()
+            };
+            if let Some((dx, dy, dz)) = translation {
+                s.push_str("_t");
+                for (val, axis) in [(*dx, 'x'), (*dy, 'y'), (*dz, 'z')] {
+                    if val != 0 {
+                        let sign = if val > 0 { 'p' } else { 'n' };
+                        let mag = val.unsigned_abs();
+                        if mag == 1 {
+                            s.push_str(&format!("{sign}{axis}"));
+                        } else {
+                            s.push_str(&format!("{sign}{mag}{axis}"));
+                        }
+                    }
+                }
+            }
+            s
         }
         MeshSpec::Union(a, b) => {
             format!("union__{}__{}", spec_stem(a, slot), spec_stem(b, slot))
@@ -895,12 +929,28 @@ mod tests {
         MeshSpec::Atom {
             name: name.to_owned(),
             rotation: 0,
+            translation: None,
         }
     }
     fn atom_r(name: &str, r: i32) -> MeshSpec {
         MeshSpec::Atom {
             name: name.to_owned(),
             rotation: r,
+            translation: None,
+        }
+    }
+    fn atom_t(name: &str, t: (i32, i32, i32)) -> MeshSpec {
+        MeshSpec::Atom {
+            name: name.to_owned(),
+            rotation: 0,
+            translation: Some(t),
+        }
+    }
+    fn atom_rt(name: &str, r: i32, t: (i32, i32, i32)) -> MeshSpec {
+        MeshSpec::Atom {
+            name: name.to_owned(),
+            rotation: r,
+            translation: Some(t),
         }
     }
 
@@ -1419,34 +1469,42 @@ H: 1=stairs:90 2=stairs:0
     #[test]
     fn parse_mesh_spec_translation_only() {
         let spec = parse_mesh_spec("mesh:+z").unwrap();
-        check!(spec == MeshSpec::Translation((0, 0, 1), Box::new(atom("mesh"))));
+        check!(spec == atom_t("mesh", (0, 0, 1)));
     }
 
     #[test]
     fn parse_mesh_spec_rotation_then_translation() {
         let spec = parse_mesh_spec("mesh:90:+z").unwrap();
-        check!(spec == MeshSpec::Translation((0, 0, 1), Box::new(atom_r("mesh", 90))));
+        check!(spec == atom_rt("mesh", 90, (0, 0, 1)));
     }
 
     #[test]
     fn parse_mesh_spec_negative_translation() {
         let spec = parse_mesh_spec("mesh:-x").unwrap();
-        check!(spec == MeshSpec::Translation((-1, 0, 0), Box::new(atom("mesh"))));
+        check!(spec == atom_t("mesh", (-1, 0, 0)));
     }
 
     #[test]
     fn parse_mesh_spec_y_translation() {
         let spec = parse_mesh_spec("mesh:+y").unwrap();
-        check!(spec == MeshSpec::Translation((0, 1, 0), Box::new(atom("mesh"))));
+        check!(spec == atom_t("mesh", (0, 1, 0)));
     }
 
-    /// translation_dir() peeks through the Rotation wrapper that rotate() produces.
+    /// Multiple translation suffixes are summed into one offset.
     #[test]
-    fn translation_dir_survives_rotate() {
+    fn parse_mesh_spec_multiple_translations() {
+        let spec = parse_mesh_spec("mesh:90:-z:+x").unwrap();
+        check!(spec == atom_rt("mesh", 90, (1, 0, -1)));
+    }
+
+    /// rotate() wraps a translated atom in Rotation; outer_rotation() still works.
+    #[test]
+    fn translation_survives_rotate() {
         let spec = parse_mesh_spec("mesh:+z").unwrap();
         let rotated = spec.rotate(90);
         check!(rotated.outer_rotation() == 90);
-        check!(rotated.translation_dir() == (0, 0, 1));
+        // Inner atom still holds the translation.
+        check!(rotated == MeshSpec::Rotation(90, Box::new(atom_t("mesh", (0, 0, 1)))));
     }
 
     /// Patterns with no annotation still compile fine (empty map, not an error).
