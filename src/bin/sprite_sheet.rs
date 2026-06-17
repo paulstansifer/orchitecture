@@ -335,9 +335,15 @@ fn setup(
     ));
 
     commands.spawn((
-        DirectionalLight { illuminance: 8_000.0, ..default() },
-        Transform::from_xyz(8.0, 12.0, 6.0).looking_at(look_at, Vec3::Y),
+        DirectionalLight { illuminance: 1_000.0, ..default() },
+        Transform::from_xyz(8.0, 12.0, -6.0).looking_at(look_at, Vec3::Y),
     ));
+
+    commands.spawn((
+        DirectionalLight { illuminance: 2_000.0, ..default() },
+        Transform::from_xyz(-8.0, 12.0, 6.0).looking_at(look_at, Vec3::Y),
+    ));
+
 
     commands.insert_resource(Capture {
         graph,
