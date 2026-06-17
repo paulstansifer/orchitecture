@@ -32,17 +32,12 @@ use std::sync::{Mutex, mpsc};
 
 // --- Configuration knobs -------------------------------------------------
 
-/// Renderable content area per cell, in pixels (square).
-const CELL_CONTENT_PX: u32 = 128;
-/// Padding (transparent) on each side of the content area, in pixels.
-const CELL_PAD_PX: u32 = 10;
-/// Total pixel size of one cell (content + 2 × padding).
-const CELL_TOTAL_PX: u32 = CELL_CONTENT_PX + 2 * CELL_PAD_PX; // 148
-
 /// World units per pixel in the orthographic projection.
-const PIXELS_PER_UNIT: f32 = 40.0;
-/// World-space size of one cell (total, including padding).
-const CELL_WORLD: f32 = CELL_TOTAL_PX as f32 / PIXELS_PER_UNIT; // 3.7
+const PIXELS_PER_UNIT: u32 = 60;
+/// TODO: this is ad-hoc.
+const CELL_TOTAL_PX: u32 = 2 * PIXELS_PER_UNIT + 2;
+/// World-space size of one cell.
+const CELL_WORLD: f32 = CELL_TOTAL_PX as f32 / PIXELS_PER_UNIT as f32;
 
 /// Number of sprite rows in the output.
 const N_ROWS: u32 = 2;
@@ -293,7 +288,7 @@ fn setup(
         let origin = cell_origin(cam_r, cam_u, col as u32, 0, n_cols);
         commands.spawn((
             SceneRoot(human_scene.clone()),
-            Transform::from_translation(origin)
+            Transform::from_translation(origin + Vec3::new(0.5, 0.0, 0.5))
                 .with_rotation(Quat::from_rotation_y(angle))
                 .with_scale(Vec3::splat(0.5)),
             SpriteCell { row: 0, col: col as u32 },
@@ -309,7 +304,8 @@ fn setup(
             asset_server.load(GltfAssetLabel::Scene(0).from_asset(path));
         commands.spawn((
             SceneRoot(scene),
-            Transform::from_translation(origin),
+            Transform::from_translation(origin + Vec3::new(0.0,0.0,1.0)).
+            with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
             SpriteCell { row: 1, col: col as u32 },
         ));
         spawn_wireframe_cube(&mut commands, &mut meshes, &mut materials, origin);
@@ -317,7 +313,8 @@ fn setup(
 
     // Camera: orthographic, transparent background, no MSAA.
     let look_at = Vec3::Y * LOOK_HEIGHT;
-    let cam_pos = look_at - cam_forward * CAMERA_DISTANCE;
+    // ad-hoc: bumping by 0.5 pixels X lines up the bars better.
+    let cam_pos = look_at - cam_forward * CAMERA_DISTANCE + Vec3::new(0.5 / PIXELS_PER_UNIT as f32, 0.0, 0.0);
     let rotation = Quat::from_mat3(&Mat3::from_cols(cam_r, cam_u, cam_r.cross(cam_u)));
     commands.spawn((
         Camera3d::default(),
@@ -459,7 +456,7 @@ fn spawn_wireframe_cube(
     materials: &mut Assets<StandardMaterial>,
     base: Vec3,
 ) {
-    let radius = 0.5 / PIXELS_PER_UNIT;
+    let radius = 0.5 / PIXELS_PER_UNIT as f32;
     let material = materials.add(StandardMaterial {
         base_color: Color::BLACK,
         ..default()
