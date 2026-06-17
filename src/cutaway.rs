@@ -21,43 +21,51 @@ use crate::wall_grid::{
 /// with. For autotile cells, the transform carries the same rotation the matched
 /// rule gave the visible mesh (via `autotile_transform`), so the cut face lines up
 /// with the geometry it replaces instead of defaulting to `Facing::NegX`.
-fn get_cut(
+/// Returns one `(handle, transform)` pair per autotile mesh that has a cut variant,
+/// or a single entry for non-autotile cells. Empty when no cut meshes exist.
+fn get_cuts(
     loc: SlotCoord,
     id: StructureId,
     wall_grid: &WallGrid,
     structure_list: &StructureList,
     autotile_handles: &AutotileHandles,
-) -> Option<(Handle<Scene>, Transform)> {
+) -> Vec<(Handle<Scene>, Transform)> {
     if let Some(results) = wall_grid.autotile_results.get(&loc) {
-        // Use the first Mesh result's cut handle; fall through to None if all are None.
-        results.iter().find_map(|result| {
-            if let AutotileResult::Mesh { spec, .. } = result {
-                let stem = spec_stem(spec, slot_to_unoriented(loc.slot));
-                autotile_handles
-                    .handles
-                    .get(&stem)
-                    .and_then(|(_, cut)| cut.as_ref())
-                    .map(|cut| {
-                        (
-                            cut.clone(),
-                            zup_scene_transform(autotile_transform(loc, spec)),
-                        )
-                    })
-            } else {
-                None
-            }
-        })
+        results
+            .iter()
+            .filter_map(|result| {
+                if let AutotileResult::Mesh { spec, .. } = result {
+                    let stem = spec_stem(spec, slot_to_unoriented(loc.slot));
+                    autotile_handles
+                        .handles
+                        .get(&stem)
+                        .and_then(|(_, cut)| cut.as_ref())
+                        .map(|cut| {
+                            (
+                                cut.clone(),
+                                zup_scene_transform(autotile_transform(loc, spec)),
+                            )
+                        })
+                } else {
+                    None
+                }
+            })
+            .collect()
     } else {
-        structure_list.cut_handle(id).map(|h| {
-            (
-                h.clone(),
-                zup_scene_transform(cell_transform(
-                    loc.slot,
-                    crate::sparse3d::Facing::NegX,
-                    loc.cube,
-                )),
-            )
-        })
+        structure_list
+            .cut_handle(id)
+            .map(|h| {
+                (
+                    h.clone(),
+                    zup_scene_transform(cell_transform(
+                        loc.slot,
+                        crate::sparse3d::Facing::NegX,
+                        loc.cube,
+                    )),
+                )
+            })
+            .into_iter()
+            .collect()
     }
 }
 
@@ -790,11 +798,13 @@ pub fn update_cutaway_system(
     wall_grid
         .bypass_change_detection()
         .cut_entities
-        .retain(|loc, (id, entity)| {
+        .retain(|loc, (id, entities)| {
             if desired_regular.get(loc) == Some(id) {
                 true
             } else {
-                commands.entity(*entity).despawn();
+                for e in entities.iter() {
+                    commands.entity(*e).despawn();
+                }
                 false
             }
         });
@@ -804,17 +814,20 @@ pub fn update_cutaway_system(
         if wall_grid.cut_entities.get(&loc).map(|(i, _)| *i) == Some(id) {
             continue;
         }
-        // Resolve the cut handle before mutably borrowing wall_grid via the map.
-        if let Some((cut_handle, transform)) =
-            get_cut(loc, id, &wall_grid, &structure_list, &autotile_handles)
-        {
-            let entity = commands
-                .spawn((SceneRoot(cut_handle), transform, CutCellMarker { loc }))
-                .id();
+        let cuts = get_cuts(loc, id, &wall_grid, &structure_list, &autotile_handles);
+        if !cuts.is_empty() {
+            let entities: Vec<Entity> = cuts
+                .into_iter()
+                .map(|(cut_handle, transform)| {
+                    commands
+                        .spawn((SceneRoot(cut_handle), transform, CutCellMarker { loc }))
+                        .id()
+                })
+                .collect();
             wall_grid
                 .bypass_change_detection()
                 .cut_entities
-                .insert(loc, (id, entity));
+                .insert(loc, (id, entities));
         }
     }
 
@@ -822,34 +835,41 @@ pub fn update_cutaway_system(
     wall_grid
         .bypass_change_detection()
         .proposed_cut_entities
-        .retain(|loc, entity| {
+        .retain(|loc, entities| {
             if desired_proposed.contains_key(loc) {
                 true
             } else {
-                commands.entity(*entity).despawn();
+                for e in entities.iter() {
+                    commands.entity(*e).despawn();
+                }
                 false
             }
         });
 
     // Spawn proposed cut entities for locations newly entering the cut zone.
     for (loc, id) in desired_proposed {
-        // Resolve the cut handle before entering the Entry API (which borrows wall_grid mutably).
-        let cut = get_cut(loc, id, &wall_grid, &structure_list, &autotile_handles);
-        if let Some((cut_handle, transform)) = cut {
+        // Resolve the cut handles before entering the Entry API (which borrows wall_grid mutably).
+        let cuts = get_cuts(loc, id, &wall_grid, &structure_list, &autotile_handles);
+        if !cuts.is_empty() {
             if let std::collections::hash_map::Entry::Vacant(v) = wall_grid
                 .bypass_change_detection()
                 .proposed_cut_entities
                 .entry(loc)
             {
-                let entity = commands
-                    .spawn((
-                        SceneRoot(cut_handle),
-                        transform,
-                        CutCellMarker { loc },
-                        ProposedCutMarker,
-                    ))
-                    .id();
-                v.insert(entity);
+                let entities: Vec<Entity> = cuts
+                    .into_iter()
+                    .map(|(cut_handle, transform)| {
+                        commands
+                            .spawn((
+                                SceneRoot(cut_handle),
+                                transform,
+                                CutCellMarker { loc },
+                                ProposedCutMarker,
+                            ))
+                            .id()
+                    })
+                    .collect();
+                v.insert(entities);
             }
         }
     }

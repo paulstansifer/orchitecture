@@ -260,9 +260,9 @@ pub struct WallGrid {
     /// Persistent cut entities for the y-cut cutaway layer of real cells; keyed by
     /// location with the structure they were built for, managed by diff so they live
     /// long enough to be recolored by material.
-    pub cut_entities: HashMap<SlotCoord, (StructureId, Entity)>,
+    pub cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
-    pub proposed_cut_entities: HashMap<SlotCoord, Entity>,
+    pub proposed_cut_entities: HashMap<SlotCoord, Vec<Entity>>,
     pub(crate) undo_record: Vec<UndoRecord>,
     /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
     pub(crate) redo_record: Vec<UndoRecord>,

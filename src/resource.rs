@@ -46,6 +46,7 @@ pub enum InventoryEntry {
     Collection(Vec<UniqueResource>),
 }
 
+#[allow(dead_code)]
 pub struct Inventory {
     contents: Vec<InventoryEntry>,
     max_types: u8,

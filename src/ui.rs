@@ -176,8 +176,10 @@ fn clear_proposal_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
 
 /// Despawns all persistent proposed-cut entities and drains `proposed_cut_entities`.
 fn clear_proposed_cut_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
-    for (_, entity) in wall_grid.proposed_cut_entities.drain() {
-        commands.entity(entity).despawn();
+    for (_, entities) in wall_grid.proposed_cut_entities.drain() {
+        for entity in entities {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
