@@ -3,6 +3,7 @@ use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 use bevy_file_dialog::prelude::*;
 
 use crate::cutaway::CutawayMode;
+use crate::game_mode::GameMode;
 use crate::input::BuildState;
 use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
@@ -208,7 +209,7 @@ pub fn handle_file_load(
     }
 }
 
-pub fn ui_system(
+pub fn build_ui_system(
     mut commands: Commands,
     mut contexts: EguiContexts,
     structure_list: Res<StructureList>,
@@ -220,7 +221,7 @@ pub fn ui_system(
     mut sandbox: ResMut<SandboxMode>,
     mut furniture_right_click: ResMut<FurnitureRightClick>,
     mut station_highlight: ResMut<crate::wall_grid::StationHighlight>,
-    mut isometric: ResMut<crate::camera::IsometricCamera>,
+    mut next_game_mode: ResMut<NextState<GameMode>>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -240,9 +241,6 @@ pub fn ui_system(
             ui.label(
                 "Up/Dn=layer  R=rotate  Z=undo  Y=redo  Drag=place  Ctrl+drag=erase  V=evaluate",
             );
-
-            ui.separator();
-            ui.checkbox(&mut isometric.enabled, "Isometric");
 
             ui.separator();
             let was_sandbox = sandbox.enabled;
@@ -453,6 +451,10 @@ pub fn ui_system(
                 }
                 LeftPanel::Build => {
                     ui.heading("Orchitecture");
+                    ui.separator();
+                    if ui.button("Walk Around").clicked() {
+                        next_game_mode.set(GameMode::Walk);
+                    }
                     ui.separator();
 
                     ui.label("Structure:");

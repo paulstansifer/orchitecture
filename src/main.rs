@@ -5,21 +5,25 @@ use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
-    camera::{camera_input_system, spawn_camera, CameraState, IsometricCamera},
+    build_ui::{
+        build_ui_system, discover_user_files, enable_ui_input_absorption, handle_file_load,
+        handle_file_save, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
+    },
+    camera::{camera_input_system, spawn_camera, CameraState, GameCamera},
     ceiling_lights::update_ceiling_lights,
     cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
+    game_mode::GameMode,
     grid_preview::GridPreviewPlugin,
     input::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
-        update_room_cursor_mesh, BuildState,
+        update_room_cursor_mesh, BuildState, CursorEntities,
     },
+    ortho_camera::{walk_camera_system, WalkCameraState},
     qnn::ModelPlugin,
     station::spawn_initial_station,
     structure::{spawn_structures, StructureList},
-    ui::{
-        discover_user_files, enable_ui_input_absorption, handle_file_load, handle_file_save,
-        ui_system, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
-    },
+    walk_input::walk_input_system,
+    walk_ui::walk_ui_system,
     wall_grid::{
         spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
         update_station_highlight, StationHighlight, WallGrid,
@@ -50,8 +54,9 @@ fn main() {
         )
         .add_plugins(GridPreviewPlugin)
         .add_plugins(ModelPlugin)
+        .init_state::<GameMode>()
         .insert_resource(CameraState::default())
-        .insert_resource(IsometricCamera::default())
+        .insert_resource(WalkCameraState::default())
         .insert_resource(BuildState::default())
         .insert_resource(UiState::default())
         .insert_resource(StructureList::default())
@@ -59,6 +64,8 @@ fn main() {
         .insert_resource(SandboxMode::default())
         .insert_resource(FurnitureRightClick::default())
         .insert_resource(StationHighlight::default())
+        .add_systems(OnEnter(GameMode::Walk), enter_walk_mode)
+        .add_systems(OnEnter(GameMode::Build), enter_build_mode)
         .add_systems(
             Startup,
             (
@@ -80,10 +87,12 @@ fn main() {
         .add_systems(
             Update,
             (
-                camera_input_system,
-                building_input_system,
-                cursor_system,
-                update_room_cursor_mesh,
+                camera_input_system.run_if(in_state(GameMode::Build)),
+                building_input_system.run_if(in_state(GameMode::Build)),
+                cursor_system.run_if(in_state(GameMode::Build)),
+                update_room_cursor_mesh.run_if(in_state(GameMode::Build)),
+                walk_input_system.run_if(in_state(GameMode::Walk)),
+                walk_camera_system.run_if(in_state(GameMode::Walk)),
                 recolor_new_mesh_children,
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system,
@@ -93,7 +102,47 @@ fn main() {
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))
-        // ui_system must run in EguiPrimaryContextPass (not Update) to access Egui contexts.
-        .add_systems(EguiPrimaryContextPass, ui_system)
+        .add_systems(
+            EguiPrimaryContextPass,
+            (
+                build_ui_system.run_if(in_state(GameMode::Build)),
+                walk_ui_system.run_if(in_state(GameMode::Walk)),
+            ),
+        )
         .run();
+}
+
+fn enter_walk_mode(
+    camera_state: Res<CameraState>,
+    mut walk_state: ResMut<WalkCameraState>,
+    cursor_entities: Res<CursorEntities>,
+    mut visibility_q: Query<&mut Visibility>,
+) {
+    walk_state.target_position = camera_state.target_position;
+    walk_state.camera_direction = 0;
+    walk_state.current_display_angle = 0.0;
+    walk_state.requested_direction = 0.0;
+    walk_state.is_right_dragging = false;
+    walk_state.drag_delta = Vec2::ZERO;
+
+    for entity in [
+        cursor_entities.wall,
+        cursor_entities.room,
+        cursor_entities.preview,
+    ] {
+        if let Ok(mut vis) = visibility_q.get_mut(entity) {
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
+fn enter_build_mode(
+    walk_state: Res<WalkCameraState>,
+    mut camera_state: ResMut<CameraState>,
+    mut camera_q: Query<&mut Projection, With<GameCamera>>,
+) {
+    camera_state.target_position = walk_state.target_position;
+    if let Ok(mut projection) = camera_q.single_mut() {
+        *projection = Projection::Perspective(PerspectiveProjection::default());
+    }
 }

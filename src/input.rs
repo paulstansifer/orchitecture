@@ -3,11 +3,11 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
+use crate::build_ui::SandboxMode;
 use crate::camera::GameCamera;
 use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
-use crate::ui::SandboxMode;
 use crate::util::zup_scene_transform;
 use crate::wall_grid::{
     apply_changes, apply_proposal_changes, cell_transform, GridCellMarker, Material,
@@ -161,7 +161,7 @@ pub fn building_input_system(
     overlay_assets: Res<ProposalOverlayAssets>,
     mut cutaway_mode: ResMut<CutawayMode>,
     sandbox: Res<SandboxMode>,
-    mut furniture_right_click: ResMut<crate::ui::FurnitureRightClick>,
+    mut furniture_right_click: ResMut<crate::build_ui::FurnitureRightClick>,
     mut right_press_pos: Local<Option<Vec2>>,
 ) {
     // --- Layer up/down ---

@@ -2,14 +2,17 @@
 
 pub mod autotile;
 pub mod build_helpers;
+pub mod build_ui;
 pub mod camera;
 pub mod ceiling_lights;
 pub mod construction;
 pub mod cutaway;
 pub mod example_structures;
+pub mod game_mode;
 pub mod grid_preview;
 pub mod input;
 pub mod llm_rooms;
+pub mod ortho_camera;
 pub mod paths;
 pub mod qnn;
 pub mod resource;
@@ -18,7 +21,8 @@ pub mod serialization;
 pub mod sparse3d;
 pub mod station;
 pub mod structure;
-pub mod ui;
 pub mod util;
+pub mod walk_input;
+pub mod walk_ui;
 pub mod wall_grid;
 pub mod world;

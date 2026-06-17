@@ -26,13 +26,11 @@ use bevy::render::{
 };
 use bevy::scene::SceneInstanceReady;
 use bevy::winit::WinitPlugin;
+use orchitecture_lib::ortho_camera::{trimetric_camera_basis, PIXELS_PER_UNIT};
 use orchitecture_lib::paths::MANIFEST_DIR;
 use std::sync::{mpsc, Mutex};
 
 // --- Configuration knobs -------------------------------------------------
-
-/// World units per pixel in the orthographic projection.
-const PIXELS_PER_UNIT: u32 = 60;
 /// TODO: this is ad-hoc.
 const CELL_TOTAL_PX: u32 = 2 * PIXELS_PER_UNIT - 16;
 /// World-space size of one cell.
@@ -244,15 +242,6 @@ struct SpriteCell {
 }
 
 // --- Layout helpers ------------------------------------------------------
-
-/// Trimetric camera basis vectors.
-///   +X world → upper-left at 45° (1:1),  +Z world → upper-right at 1:2,  +Y → straight up.
-fn trimetric_camera_basis() -> (Vec3, Vec3, Vec3) {
-    let cam_r = Vec3::new(-1.0 / 3f32.sqrt(), 0.0, 2.0 / 6f32.sqrt());
-    let cam_u = Vec3::new(1.0 / 3f32.sqrt(), 1.0 / 2f32.sqrt(), 1.0 / 6f32.sqrt());
-    let cam_forward = cam_u.cross(cam_r);
-    (cam_r, cam_u, cam_forward)
-}
 
 /// World-space origin for a sprite cell.
 ///
