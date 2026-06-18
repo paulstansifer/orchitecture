@@ -18,6 +18,7 @@ use orchitecture_lib::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
         update_room_cursor_mesh, BuildState, CursorEntities,
     },
+    orc::{despawn_orc, orc_input_system, setup_orc_animation, spawn_orc},
     ortho_camera::{walk_camera_system, WalkCameraState},
     qnn::ModelPlugin,
     station::spawn_initial_station,
@@ -64,7 +65,8 @@ fn main() {
         .insert_resource(SandboxMode::default())
         .insert_resource(FurnitureRightClick::default())
         .insert_resource(StationHighlight::default())
-        .add_systems(OnEnter(GameMode::Walk), enter_walk_mode)
+        .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))
+        .add_systems(OnExit(GameMode::Walk), despawn_orc)
         .add_systems(OnEnter(GameMode::Build), enter_build_mode)
         .add_systems(
             Startup,
@@ -93,6 +95,8 @@ fn main() {
                 update_room_cursor_mesh.run_if(in_state(GameMode::Build)),
                 walk_input_system.run_if(in_state(GameMode::Walk)),
                 walk_camera_system.run_if(in_state(GameMode::Walk)),
+                setup_orc_animation.run_if(in_state(GameMode::Walk)),
+                orc_input_system.run_if(in_state(GameMode::Walk)),
                 recolor_new_mesh_children,
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system,

@@ -12,6 +12,7 @@ pub mod game_mode;
 pub mod grid_preview;
 pub mod input;
 pub mod llm_rooms;
+pub mod orc;
 pub mod ortho_camera;
 pub mod paths;
 pub mod qnn;
