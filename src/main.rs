@@ -121,6 +121,7 @@ fn enter_walk_mode(
     mut walk_state: ResMut<WalkCameraState>,
     cursor_entities: Res<CursorEntities>,
     mut visibility_q: Query<&mut Visibility>,
+    mut camera_q: Query<&mut Msaa, With<GameCamera>>,
 ) {
     walk_state.target_position = camera_state.target_position;
     walk_state.camera_direction = 0;
@@ -128,6 +129,10 @@ fn enter_walk_mode(
     walk_state.requested_direction = 0.0;
     walk_state.is_right_dragging = false;
     walk_state.drag_delta = Vec2::ZERO;
+
+    if let Ok(mut msaa) = camera_q.single_mut() {
+        *msaa = Msaa::Off;
+    }
 
     for entity in [
         cursor_entities.wall,
@@ -143,10 +148,11 @@ fn enter_walk_mode(
 fn enter_build_mode(
     walk_state: Res<WalkCameraState>,
     mut camera_state: ResMut<CameraState>,
-    mut camera_q: Query<&mut Projection, With<GameCamera>>,
+    mut camera_q: Query<(&mut Projection, &mut Msaa), With<GameCamera>>,
 ) {
     camera_state.target_position = walk_state.target_position;
-    if let Ok(mut projection) = camera_q.single_mut() {
+    if let Ok((mut projection, mut msaa)) = camera_q.single_mut() {
         *projection = Projection::Perspective(PerspectiveProjection::default());
+        *msaa = Msaa::default();
     }
 }
