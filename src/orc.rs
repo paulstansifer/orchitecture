@@ -211,11 +211,11 @@ pub fn orc_input_system(
     };
 
     match (moving, orc.is_walking) {
-        // First frame after animation is ready, or key released: settle into idle.
+        // First frame after animation is ready, or key released: hold idle pose (frame 0).
         (false, None) | (false, Some(true)) => {
             transitions
                 .play(&mut player, idle_node, BLEND_DURATION)
-                .repeat();
+                .set_speed(0.0);
             orc.is_walking = Some(false);
         }
         // Key pressed: transition to walk.
