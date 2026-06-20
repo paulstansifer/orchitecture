@@ -191,9 +191,7 @@ fn bbox(tiles: &HashSet<(i32, i32)>) -> (i32, i32, i32, i32) {
 /// Runs only when WallGrid changes (see main.rs). The visibility system bypasses
 /// change detection for its per-frame mutations so this only fires on real edits.
 ///
-/// TODO: When batch construction is added (placing many tiles before committing),
-/// defer this recalculation until the batch is finalised rather than running on
-/// every individual tile change.
+/// TODO: only run when `.contents` itself changes
 pub fn update_ceiling_lights(
     mut commands: Commands,
     wall_grid: Res<WallGrid>,
