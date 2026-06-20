@@ -10,7 +10,7 @@ use crate::ortho_camera::{cam_fwd_xz_base, trimetric_camera_basis, WalkCameraSta
 /// Clip indices within orcs/human_1.glb.
 /// Order: Charge-Punch(0), Idle(1), Left-Punch(2), Run(3), T-Pose(4), Walk(5), Rest(6), T-pose(7).
 const IDLE_ANIMATION_INDEX: usize = 1;
-const WALK_ANIMATION_INDEX: usize = 3;
+const WALK_ANIMATION_INDEX: usize = 5;
 
 const BLEND_DURATION: Duration = Duration::from_millis(150);
 
@@ -178,7 +178,7 @@ pub fn orc_input_system(
     let cam_r = rot * cam_r_base;
     let cam_fwd_xz = rot * cam_fwd;
 
-    let speed = 2.25;
+    let speed = 2.0;
     let dt = time.delta_secs();
     let mut move_dir = Vec3::ZERO;
 
@@ -222,6 +222,7 @@ pub fn orc_input_system(
         (true, None) | (true, Some(false)) => {
             transitions
                 .play(&mut player, walk_node, BLEND_DURATION)
+                .set_speed(2.5)
                 .repeat();
             orc.is_walking = Some(true);
         }
