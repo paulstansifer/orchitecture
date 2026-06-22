@@ -455,6 +455,9 @@ pub fn build_ui_system(
                     if ui.button("Walk Around").clicked() {
                         next_game_mode.set(GameMode::Walk);
                     }
+                    if ui.button("Surroundings").clicked() {
+                        next_game_mode.set(GameMode::Surroundings);
+                    }
                     ui.separator();
 
                     ui.label("Structure:");
@@ -564,7 +567,7 @@ pub fn build_ui_system(
 /// Each station's count is run through its own accounting approximation and then
 /// the rounded results are summed (round-each-then-sum). A `>` prefix is shown for
 /// a resource when any contributing station rounded its count down.
-fn resource_sidebar(ctx: &egui::Context, wall_grid: &WallGrid) {
+pub(crate) fn resource_sidebar(ctx: &egui::Context, wall_grid: &WallGrid) {
     use crate::resource::{round, UniformResource};
 
     // Preserve a stable display order of resource kinds as first encountered.

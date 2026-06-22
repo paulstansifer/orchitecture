@@ -5,4 +5,5 @@ pub enum GameMode {
     #[default]
     Build,
     Walk,
+    Surroundings,
 }

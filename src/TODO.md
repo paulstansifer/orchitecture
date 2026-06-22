@@ -10,7 +10,8 @@
     * Each farm makes food and possibly some other resource
     * Each farm has a sustenance requirement, and trades the excess
   * May invite farmers to the market to trade
-  * May recruit farmers as builders/specialists if a free station is available
+  * May recruit wayfarers as builders/specialists if a free station is available
+  
 
 # Walk-around mode:
   * Make textures and try pixel-art texturing

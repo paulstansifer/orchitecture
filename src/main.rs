@@ -23,6 +23,9 @@ use orchitecture_lib::{
     qnn::ModelPlugin,
     station::spawn_initial_station,
     structure::{spawn_structures, StructureList},
+    surroundings::{
+        enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
+    },
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
     wall_grid::{
@@ -68,6 +71,8 @@ fn main() {
         .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))
         .add_systems(OnExit(GameMode::Walk), despawn_orc)
         .add_systems(OnEnter(GameMode::Build), enter_build_mode)
+        .add_systems(OnEnter(GameMode::Surroundings), enter_surroundings_mode)
+        .add_systems(OnExit(GameMode::Surroundings), exit_surroundings_mode)
         .add_systems(
             Startup,
             (
@@ -77,6 +82,7 @@ fn main() {
                 (spawn_structures, spawn_grid, spawn_initial_station).chain(),
                 spawn_autotile_rules,
                 load_autotile_handles,
+                generate_farms,
                 spawn_camera,
                 spawn_world,
                 spawn_cursors,
@@ -111,6 +117,7 @@ fn main() {
             (
                 build_ui_system.run_if(in_state(GameMode::Build)),
                 walk_ui_system.run_if(in_state(GameMode::Walk)),
+                surroundings_ui_system.run_if(in_state(GameMode::Surroundings)),
             ),
         )
         .run();
