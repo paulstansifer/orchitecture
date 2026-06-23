@@ -25,6 +25,7 @@ use orchitecture_lib::{
     structure::{spawn_structures, StructureList},
     surroundings::{
         enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
+        GameClock,
     },
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
@@ -68,6 +69,7 @@ fn main() {
         .insert_resource(SandboxMode::default())
         .insert_resource(FurnitureRightClick::default())
         .insert_resource(StationHighlight::default())
+        .insert_resource(GameClock::default())
         .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))
         .add_systems(OnExit(GameMode::Walk), despawn_orc)
         .add_systems(OnEnter(GameMode::Build), enter_build_mode)

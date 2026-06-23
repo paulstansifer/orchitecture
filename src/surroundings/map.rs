@@ -1,0 +1,156 @@
+use bevy::prelude::*;
+
+use super::farmstead::{FarmData, FarmsResource};
+use crate::resource::{Inventory, UniformResource};
+
+const NUM_SEEDS: usize = 200;
+const MAP_EXTENT: f32 = 200.0;
+pub const CLIP_BOUNDS: f32 = 300.0;
+// 200 seeds over a 400×400 map gives ~800 sq-units per cell on average;
+// this scale puts that average at ~6 acres (midpoint of the 2–12 range).
+const ACRES_PER_UNIT_SQ: f32 = 0.0075;
+
+const FARMABLE: &[UniformResource] = &[
+    UniformResource::Potato,
+    UniformResource::Canvas,
+    UniformResource::Thatch,
+    UniformResource::Timber,
+    UniformResource::Block,
+    UniformResource::Fieldstone,
+];
+
+// Sutherland-Hodgman: keep vertices where dot(v - point, normal) >= 0
+fn clip_polygon_by_halfplane(poly: &[Vec2], point: Vec2, normal: Vec2) -> Vec<Vec2> {
+    if poly.is_empty() {
+        return vec![];
+    }
+    let mut result = Vec::new();
+    let n = poly.len();
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let da = (a - point).dot(normal);
+        let db = (b - point).dot(normal);
+        if da >= 0.0 {
+            result.push(a);
+        }
+        if (da >= 0.0) != (db >= 0.0) {
+            let t = da / (da - db);
+            result.push(a + t * (b - a));
+        }
+    }
+    result
+}
+
+fn polygon_area(poly: &[Vec2]) -> f32 {
+    let n = poly.len();
+    let mut sum = 0.0_f32;
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        sum += a.x * b.y - b.x * a.y;
+    }
+    sum.abs() * 0.5
+}
+
+fn voronoi_cell(seed: Vec2, all_seeds: &[Vec2]) -> Vec<Vec2> {
+    let b = CLIP_BOUNDS;
+    let mut poly = vec![
+        Vec2::new(-b, -b),
+        Vec2::new(b, -b),
+        Vec2::new(b, b),
+        Vec2::new(-b, b),
+    ];
+    for &other in all_seeds {
+        if other == seed {
+            continue;
+        }
+        let midpoint = (seed + other) * 0.5;
+        let normal = seed - other; // points toward seed's side
+        poly = clip_polygon_by_halfplane(&poly, midpoint, normal);
+        if poly.is_empty() {
+            break;
+        }
+    }
+    poly
+}
+
+fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
+    use std::f32::consts::TAU;
+    let start_dist = rng.random_range(110.0..150.0_f32);
+    let start_angle: f32 = rng.random_range(0.0..TAU);
+    let start = Vec2::new(
+        start_angle.cos() * start_dist,
+        start_angle.sin() * start_dist,
+    );
+    let main_dir = -start.normalize(); // points toward origin
+    let perp = Vec2::new(-main_dir.y, main_dir.x);
+
+    let mut points = vec![start];
+    let num_middle = 4;
+    for i in 1..=num_middle {
+        let t = i as f32 / (num_middle + 1) as f32;
+        let base = start + main_dir * (start_dist * t);
+        // Perpendicular deviation shrinks as we approach the centre
+        let deviation = rng.random_range(-12.0..12.0_f32) * (1.0 - t * 0.7);
+        points.push(base + perp * deviation);
+    }
+    points.push(Vec2::ZERO);
+    points
+}
+
+pub fn generate_farms(mut commands: Commands) {
+    use rand::Rng;
+    let mut rng = rand::rng();
+
+    let seeds: Vec<Vec2> = (0..NUM_SEEDS)
+        .map(|_| {
+            Vec2::new(
+                rng.random_range(-MAP_EXTENT..MAP_EXTENT),
+                rng.random_range(-MAP_EXTENT..MAP_EXTENT),
+            )
+        })
+        .collect();
+
+    let mut farms = Vec::new();
+    for (i, &seed) in seeds.iter().enumerate() {
+        let polygon = voronoi_cell(seed, &seeds);
+        if polygon.is_empty() {
+            continue;
+        }
+        let area: f32 = (polygon_area(&polygon) * ACRES_PER_UNIT_SQ).clamp(2.0, 12.0);
+        let fertility: f32 = rng.random_range(0.75..1.25_f32);
+        let farmers = ((area * fertility / 1.8).floor() as u32).max(1);
+        let resource = FARMABLE[i % FARMABLE.len()];
+        farms.push(FarmData {
+            seed,
+            polygon,
+            area,
+            fertility,
+            farmers,
+            resource,
+            stockpile: Inventory::new(1, 100.0),
+            invited: false,
+        });
+    }
+
+    let mut circle_pos = Vec2::ZERO;
+    let mut best_dist = f32::MAX;
+    for farm in &farms {
+        for &v in &farm.polygon {
+            let d = v.length_squared();
+            if d < best_dist {
+                best_dist = d;
+                circle_pos = v;
+            }
+        }
+    }
+
+    let path = generate_path(&mut rng);
+
+    commands.insert_resource(FarmsResource {
+        farms,
+        circle_pos,
+        path,
+    });
+}

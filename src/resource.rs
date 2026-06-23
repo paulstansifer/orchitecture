@@ -2,10 +2,11 @@ use rgb::Rgb;
 use serde::{Deserialize, Serialize};
 
 // Only need to store a quantity, since these are all equivalent
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum UniformResource {
     Potato,
     Timber,
+    Thatch,
     WoodBeam,
     Canvas,
     Fieldstone,
@@ -17,15 +18,30 @@ impl UniformResource {
         match self {
             UniformResource::Potato => "Potatoes",
             UniformResource::Timber => "Timber",
+            UniformResource::Thatch => "Thatch",
             UniformResource::WoodBeam => "Wood beams",
             UniformResource::Canvas => "Canvas",
             UniformResource::Fieldstone => "Fieldstone",
             UniformResource::Block => "Blocks",
         }
     }
+
+    pub fn farmable(self) -> bool {
+        // TODO: add quarries; Blocks should not be farmable
+        // TODO: add ground-clearing; Fieldstone should not be farmable
+        matches!(
+            self,
+            UniformResource::Potato
+                | UniformResource::Canvas
+                | UniformResource::Thatch
+                | UniformResource::Timber
+                | UniformResource::Block
+                | UniformResource::Fieldstone
+        )
+    }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum UniqueResource {
     Book { title: String },
     Rug { color: Rgb<u8> },
@@ -40,13 +56,14 @@ impl UniqueResource {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum InventoryEntry {
     Uniform(UniformResource, u16),
     Collection(Vec<UniqueResource>),
 }
 
 #[allow(dead_code)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Inventory {
     contents: Vec<InventoryEntry>,
     max_types: u8,
