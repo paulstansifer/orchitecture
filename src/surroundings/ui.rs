@@ -164,7 +164,7 @@ pub fn surroundings_ui_system(
             rhs_resources.push(*r);
         }
     }
-    rhs_resources.sort_by_key(|r| r.display_order());
+    rhs_resources.sort();
 
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_advance_month = false;

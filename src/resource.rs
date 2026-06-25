@@ -2,11 +2,11 @@ use rgb::Rgb;
 use serde::{Deserialize, Serialize};
 
 // Only need to store a quantity, since these are all equivalent
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum UniformResource {
     Potato,
     Timber,
-    Thatch,
+    Straw,
     WoodBeam,
     Canvas,
     Fieldstone,
@@ -18,7 +18,7 @@ impl UniformResource {
         match self {
             UniformResource::Potato => "Potatoes",
             UniformResource::Timber => "Timber",
-            UniformResource::Thatch => "Thatch",
+            UniformResource::Straw => "Straw",
             UniformResource::WoodBeam => "Wood beams",
             UniformResource::Canvas => "Canvas",
             UniformResource::Fieldstone => "Fieldstone",
@@ -33,30 +33,17 @@ impl UniformResource {
             self,
             UniformResource::Potato
                 | UniformResource::Canvas
-                | UniformResource::Thatch
+                | UniformResource::Straw
                 | UniformResource::Timber
                 | UniformResource::Block
                 | UniformResource::Fieldstone
         )
     }
 
-    /// Canonical display order for the resource sidebar (lower = shown first).
-    pub fn display_order(self) -> u8 {
-        match self {
-            UniformResource::Potato => 0,
-            UniformResource::Canvas => 1,
-            UniformResource::Thatch => 2,
-            UniformResource::Timber => 3,
-            UniformResource::Block => 4,
-            UniformResource::Fieldstone => 5,
-            UniformResource::WoodBeam => 6,
-        }
-    }
-
     pub fn inedible_farmables() -> &'static [UniformResource] {
         &[
             UniformResource::Canvas,
-            UniformResource::Thatch,
+            UniformResource::Straw,
             UniformResource::Timber,
             UniformResource::Block,
             UniformResource::Fieldstone,

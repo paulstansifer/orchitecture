@@ -580,7 +580,7 @@ pub(crate) fn station_resource_totals(
         }
     }
     let mut result: Vec<_> = map.into_iter().map(|(r, (q, d))| (r, q, d)).collect();
-    result.sort_by_key(|(r, _, _)| r.display_order());
+    result.sort_by_key(|(r, _, _)| *r);
     result
 }
 
