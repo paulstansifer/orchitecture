@@ -85,6 +85,69 @@ impl GameClock {
     }
 }
 
+/// Read-only snapshot of what `run_market` would do given the current state.
+pub struct MarketPreview {
+    /// Maps farm index → predicted boost t each farm will receive.
+    pub farm_boosts: HashMap<usize, u32>,
+    /// Resources the player will gain (resource, quantity).
+    pub player_gains: Vec<(UniformResource, u32)>,
+}
+
+/// Compute what the next market run would produce without mutating any state.
+pub fn preview_market(fr: &FarmsResource, market_radius: f32) -> MarketPreview {
+    let circle_pos = fr.circle_pos;
+
+    let invited: Vec<(usize, u32)> = fr
+        .farms
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.invited)
+        .map(|(i, f)| {
+            let dist = f.centroid().distance(circle_pos);
+            let cost = (dist * 8.0 / market_radius.max(1.0)).round() as u32;
+            (i, cost)
+        })
+        .collect();
+
+    let mut potato_pool: u32 = 0;
+    let mut inedible_pool: HashMap<UniformResource, u32> = HashMap::new();
+
+    for &(i, cost) in &invited {
+        let farm = &fr.farms[i];
+        potato_pool += farm.potato_stockpile.saturating_sub(cost);
+        *inedible_pool.entry(farm.resource).or_insert(0) += farm.inedible_stockpile;
+    }
+
+    let mut farm_boosts = HashMap::new();
+    for &(i, _) in &invited {
+        let wanted = fr.farms[i].wanted_resource;
+        let want_max = fr.farms[i].want_max;
+        let available = *inedible_pool.get(&wanted).unwrap_or(&0);
+        let t = available.min(want_max);
+        if t > 0 {
+            *inedible_pool.get_mut(&wanted).unwrap() -= t;
+            let take_potatoes = potato_pool.min(t);
+            potato_pool -= take_potatoes;
+        }
+        farm_boosts.insert(i, t);
+    }
+
+    let mut player_gains = Vec::new();
+    if potato_pool > 0 {
+        player_gains.push((UniformResource::Potato, potato_pool));
+    }
+    for (res, qty) in inedible_pool {
+        if qty > 0 {
+            player_gains.push((res, qty));
+        }
+    }
+
+    MarketPreview {
+        farm_boosts,
+        player_gains,
+    }
+}
+
 /// Run the monthly market for invited farms.
 ///
 /// Each invited farm contributes (potato_stockpile − travel_cost) potatoes and its

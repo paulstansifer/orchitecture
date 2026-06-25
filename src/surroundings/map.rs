@@ -53,6 +53,42 @@ fn polygon_area(poly: &[Vec2]) -> f32 {
     sum.abs() * 0.5
 }
 
+/// True area-weighted centroid via the shoelace formula.
+fn polygon_centroid(poly: &[Vec2]) -> Vec2 {
+    let n = poly.len();
+    let mut cx = 0.0_f32;
+    let mut cy = 0.0_f32;
+    let mut signed_area = 0.0_f32;
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let cross = a.x * b.y - b.x * a.y;
+        cx += (a.x + b.x) * cross;
+        cy += (a.y + b.y) * cross;
+        signed_area += cross;
+    }
+    signed_area *= 0.5;
+    if signed_area.abs() < 1e-6 {
+        let (sx, sy) = poly.iter().fold((0.0_f32, 0.0_f32), |acc, p| (acc.0 + p.x, acc.1 + p.y));
+        return Vec2::new(sx / n as f32, sy / n as f32);
+    }
+    Vec2::new(cx / (6.0 * signed_area), cy / (6.0 * signed_area))
+}
+
+/// Lloyd relaxation: moves each seed to the centroid of its Voronoi cell,
+/// making cell sizes more uniform across iterations.
+fn lloyd_relax(seeds: &mut Vec<Vec2>, steps: usize) {
+    for _ in 0..steps {
+        let snapshot = seeds.clone();
+        for seed in seeds.iter_mut() {
+            let cell = voronoi_cell(*seed, &snapshot);
+            if !cell.is_empty() {
+                *seed = polygon_centroid(&cell);
+            }
+        }
+    }
+}
+
 fn voronoi_cell(seed: Vec2, all_seeds: &[Vec2]) -> Vec<Vec2> {
     let b = CLIP_BOUNDS;
     let mut poly = vec![
@@ -103,7 +139,7 @@ pub fn generate_farms(mut commands: Commands) {
     use rand::Rng;
     let mut rng = rand::rng();
 
-    let seeds: Vec<Vec2> = (0..NUM_SEEDS)
+    let mut seeds: Vec<Vec2> = (0..NUM_SEEDS)
         .map(|_| {
             Vec2::new(
                 rng.random_range(-MAP_EXTENT..MAP_EXTENT),
@@ -111,6 +147,10 @@ pub fn generate_farms(mut commands: Commands) {
             )
         })
         .collect();
+
+    // Relax seeds toward their Voronoi centroids so cell sizes are naturally
+    // closer to the 5–10 acre target before clamping.
+    lloyd_relax(&mut seeds, 5);
 
     let mut farms = Vec::new();
     for (i, &seed) in seeds.iter().enumerate() {

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-use super::farmstead::{run_market, FarmsResource, GameClock, SurroundingsState};
+use super::farmstead::{preview_market, run_market, FarmsResource, GameClock, SurroundingsState};
 
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
@@ -148,6 +148,9 @@ pub fn surroundings_ui_system(
     let short_side = screen_rect.width().min(screen_rect.height());
     let circle_reveal_radius = short_side * 0.45 / PIXELS_PER_UNIT;
 
+    // Market preview: what would happen if we ran the market right now.
+    let preview = preview_market(&*farms, circle_reveal_radius);
+
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_build = false;
 
@@ -184,7 +187,7 @@ pub fn surroundings_ui_system(
 
     // ── Player market goods panel ─────────────────────────────────────────────
     let goods = farms.player_goods.uniform_totals();
-    if !goods.is_empty() {
+    if !goods.is_empty() || !preview.player_gains.is_empty() {
         egui::Area::new(egui::Id::new("player_goods_panel"))
             .fixed_pos(egui::Pos2::new(8.0, 90.0))
             .show(ctx, |ui| {
@@ -204,6 +207,13 @@ pub fn surroundings_ui_system(
                                 egui::RichText::new(format!("{}: {}", res.label(), qty))
                                     .font(FontId::proportional(10.0))
                                     .color(Color32::from_rgb(200, 180, 100)),
+                            );
+                        }
+                        for (res, qty) in &preview.player_gains {
+                            ui.label(
+                                egui::RichText::new(format!("+{} {}", qty, res.label()))
+                                    .font(FontId::proportional(10.0))
+                                    .color(Color32::from_rgb(80, 220, 80)),
                             );
                         }
                     });
@@ -346,13 +356,26 @@ pub fn surroundings_ui_system(
                             .color(Color32::from_rgb(140, 170, 220)),
                         );
 
-                        // Boost (only shown when non-zero)
+                        // Current boost (non-zero means extra production this month)
                         if farm.boost > 0 {
                             ui.label(
                                 egui::RichText::new(format!("+{} boost", farm.boost))
                                     .font(FontId::proportional(9.0))
                                     .color(Color32::from_rgb(220, 160, 80)),
                             );
+                        }
+
+                        // Market preview: predicted boost from next market run
+                        if farm.invited {
+                            if let Some(&t) = preview.farm_boosts.get(&i) {
+                                if t > 0 {
+                                    ui.label(
+                                        egui::RichText::new(format!("+{}", t))
+                                            .font(FontId::proportional(9.0))
+                                            .color(Color32::from_rgb(80, 220, 80)),
+                                    );
+                                }
+                            }
                         }
 
                         ui.checkbox(&mut farm.invited, "Invite");
