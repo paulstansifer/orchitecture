@@ -305,6 +305,21 @@ pub fn surroundings_ui_system(
     // ── Farm info panels ──────────────────────────────────────────────────────
     const PANEL_W: f32 = 110.0;
 
+    // Maximum invitees = number of placed market stand stations.
+    let market_stand_count = wall_grid
+        .stations
+        .iter()
+        .position(|s| s.name == "market stand")
+        .map_or(0, |idx| {
+            wall_grid
+                .placed_stations
+                .iter()
+                .filter(|ps| ps.station == idx)
+                .count()
+        });
+    let invited_count = farms.farms.iter().filter(|f| f.invited).count();
+    let invite_limit_reached = invited_count >= market_stand_count;
+
     for (i, centroid) in revealed {
         let farm = &mut farms.farms[i];
 
@@ -378,7 +393,11 @@ pub fn surroundings_ui_system(
                             }
                         }
 
-                        ui.checkbox(&mut farm.invited, "Invite");
+                        let can_invite = farm.invited || !invite_limit_reached;
+                        ui.add_enabled(
+                            can_invite,
+                            egui::Checkbox::new(&mut farm.invited, "Invite"),
+                        );
                     });
             });
     }
