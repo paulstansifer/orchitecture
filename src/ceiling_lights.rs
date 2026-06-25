@@ -2,9 +2,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use std::f32::consts::FRAC_PI_2;
 
+use bevy::math::IVec3;
 use bevy::prelude::*;
 
-use crate::sparse3d::{Slot, Sparse3D};
+use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
+use crate::structure::{Structure, StructureList};
 use crate::wall_grid::{Cell, WallGrid};
 use crate::world::LightingMode;
 
@@ -15,6 +17,136 @@ const LIGHT_RANGE: f32 = 8.0;
 
 #[derive(Component)]
 pub struct CeilingLight;
+
+#[derive(Component)]
+pub struct WindowLight;
+
+/// Returns true if no Floor tile exists above (cx, cy, cz) within 30 levels.
+fn has_sky_above(contents: &Sparse3D<Cell>, cx: i32, cy: i32, cz: i32) -> bool {
+    for dy in 1..=30 {
+        if contents
+            .get(SlotCoord {
+                cube: IVec3::new(cx, cy + dy, cz),
+                slot: Slot::Floor,
+            })
+            .is_some()
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Returns (position, look_direction) for each exterior window: exactly the side
+/// with a clear path to the sky is the exterior; the light is placed just inside,
+/// facing inward.
+fn compute_window_lights(
+    contents: &Sparse3D<Cell>,
+    structures: &[Structure],
+) -> Vec<(Vec3, Vec3)> {
+    let mut results = Vec::new();
+
+    for (loc, cell) in contents.iter() {
+        if !matches!(loc.slot, Slot::XLoWall | Slot::ZLoWall) {
+            continue;
+        }
+        if structures[cell.id.as_usize()].info.name != "window" {
+            continue;
+        }
+
+        // Cubes on each side of this wall, and the inward direction for each.
+        let (neg_cube, pos_cube, pos_dir) = match loc.slot {
+            Slot::XLoWall => (
+                IVec3::new(loc.cube.x - 1, loc.cube.y, loc.cube.z),
+                loc.cube,
+                Vec3::X,
+            ),
+            Slot::ZLoWall => (
+                IVec3::new(loc.cube.x, loc.cube.y, loc.cube.z - 1),
+                loc.cube,
+                Vec3::Z,
+            ),
+            _ => unreachable!(),
+        };
+
+        let sky_neg = has_sky_above(contents, neg_cube.x, loc.cube.y, neg_cube.z);
+        let sky_pos = has_sky_above(contents, pos_cube.x, loc.cube.y, pos_cube.z);
+
+        // Only exterior windows: exactly one side open to sky.
+        let look_dir = match (sky_neg, sky_pos) {
+            (true, false) => pos_dir,       // exterior -side, interior +side
+            (false, true) => -pos_dir,      // exterior +side, interior -side
+            _ => continue,
+        };
+
+        // World position: at the wall surface, centered in YZ (or YX), 0.1 inside.
+        let offset = 0.1_f32;
+        let pos = match loc.slot {
+            Slot::XLoWall => {
+                let wall_x = loc.cube.x as f32;
+                let ix = if look_dir.x > 0.0 {
+                    wall_x + offset
+                } else {
+                    wall_x - offset
+                };
+                Vec3::new(ix, loc.cube.y as f32 + 0.5, loc.cube.z as f32 + 0.5)
+            }
+            Slot::ZLoWall => {
+                let wall_z = loc.cube.z as f32;
+                let iz = if look_dir.z > 0.0 {
+                    wall_z + offset
+                } else {
+                    wall_z - offset
+                };
+                Vec3::new(loc.cube.x as f32 + 0.5, loc.cube.y as f32 + 0.5, iz)
+            }
+            _ => unreachable!(),
+        };
+
+        results.push((pos, look_dir));
+    }
+
+    results
+}
+
+/// Bevy system: despawns and respawns window-based radiosity spotlights.
+/// Runs when WallGrid changes; visibility is set to match the current LightingMode.
+pub fn update_window_lights(
+    mut commands: Commands,
+    wall_grid: Res<WallGrid>,
+    structure_list: Res<StructureList>,
+    existing: Query<Entity, With<WindowLight>>,
+    lighting_mode: Res<LightingMode>,
+) {
+    for entity in &existing {
+        commands.entity(entity).despawn();
+    }
+
+    let visibility = if *lighting_mode == LightingMode::WindowLights {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+
+    for (pos, look_dir) in
+        compute_window_lights(&wall_grid.contents, &structure_list.structures)
+    {
+        commands.spawn((
+            SpotLight {
+                color: Color::srgb(0.9, 0.95, 1.0),
+                intensity: 100_000.0,
+                range: 10.0,
+                inner_angle: FRAC_PI_2,
+                outer_angle: 160.0_f32.to_radians(),
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_translation(pos).looking_to(look_dir, Vec3::Y),
+            WindowLight,
+            visibility,
+        ));
+    }
+}
 
 /// Computes world-space positions for interior ceiling lights.
 ///

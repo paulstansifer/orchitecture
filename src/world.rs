@@ -3,7 +3,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, PI};
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
-use crate::ceiling_lights::CeilingLight;
+use crate::ceiling_lights::{CeilingLight, WindowLight};
 use crate::road::ROAD_WIDTH;
 
 pub const SUN_ILLUMINANCE: f32 = 5_000.0;
@@ -19,6 +19,8 @@ pub enum LightingMode {
     StraightAbove,
     /// Two shadowless fill lights equally spaced around the sun (120° apart).
     TwoLights,
+    /// Spotlights just inside each exterior window, simulating radiosity.
+    WindowLights,
 }
 
 impl LightingMode {
@@ -27,7 +29,8 @@ impl LightingMode {
             LightingMode::CeilingLights => LightingMode::OppositeDir,
             LightingMode::OppositeDir => LightingMode::StraightAbove,
             LightingMode::StraightAbove => LightingMode::TwoLights,
-            LightingMode::TwoLights => LightingMode::CeilingLights,
+            LightingMode::TwoLights => LightingMode::WindowLights,
+            LightingMode::WindowLights => LightingMode::CeilingLights,
         }
     }
 }
@@ -48,7 +51,8 @@ pub fn lighting_input_system(
 pub fn apply_lighting_mode_system(
     mode: Res<LightingMode>,
     mut commands: Commands,
-    mut ceiling_lights: Query<&mut Visibility, With<CeilingLight>>,
+    mut ceiling_lights: Query<&mut Visibility, (With<CeilingLight>, Without<WindowLight>)>,
+    mut window_lights: Query<&mut Visibility, (With<WindowLight>, Without<CeilingLight>)>,
     extra_lights: Query<Entity, With<ExtraLight>>,
 ) {
     if !mode.is_changed() {
@@ -62,6 +66,15 @@ pub fn apply_lighting_mode_system(
     };
     for mut vis in &mut ceiling_lights {
         *vis = ceiling_vis;
+    }
+
+    let window_vis = if *mode == LightingMode::WindowLights {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut vis in &mut window_lights {
+        *vis = window_vis;
     }
 
     for entity in &extra_lights {
@@ -117,6 +130,7 @@ pub fn apply_lighting_mode_system(
                 ));
             }
         }
+        LightingMode::WindowLights => {}
     }
 }
 
