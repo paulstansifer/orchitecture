@@ -452,14 +452,6 @@ pub fn build_ui_system(
                 LeftPanel::Build => {
                     ui.heading("Orchitecture");
                     ui.separator();
-                    if ui.button("Walk Around").clicked() {
-                        next_game_mode.set(GameMode::Walk);
-                    }
-                    if ui.button("Surroundings").clicked() {
-                        next_game_mode.set(GameMode::Surroundings);
-                    }
-                    ui.separator();
-
                     ui.label("Structure:");
                     let names = wall_grid.get_structure_names();
                     for (i, name) in names.iter().enumerate() {
@@ -559,22 +551,20 @@ pub fn build_ui_system(
     // the overlay meshes every frame.
     station_highlight.set_if_neq(crate::wall_grid::StationHighlight(highlight));
 
-    resource_sidebar(ctx, &wall_grid);
+    if let Some(mode) = resource_sidebar(ctx, &wall_grid) {
+        next_game_mode.set(mode);
+    }
 }
 
-/// Right-hand sidebar summarizing total resources across every storage station.
-///
-/// Each station's count is run through its own accounting approximation and then
-/// the rounded results are summed (round-each-then-sum). A `>` prefix is shown for
-/// a resource when any contributing station rounded its count down.
-pub(crate) fn resource_sidebar(ctx: &egui::Context, wall_grid: &WallGrid) {
+/// Totals of all resources across every storage station, sorted for display.
+/// Returns `(resource, total_quantity, was_any_amount_rounded_down)`.
+pub(crate) fn station_resource_totals(
+    wall_grid: &WallGrid,
+) -> Vec<(crate::resource::UniformResource, u32, bool)> {
     use crate::resource::{round, UniformResource};
+    use std::collections::HashMap;
 
-    // Preserve a stable display order of resource kinds as first encountered.
-    let mut order: Vec<UniformResource> = Vec::new();
-    let mut totals: std::collections::HashMap<UniformResource, (u32, bool)> =
-        std::collections::HashMap::new();
-
+    let mut map: HashMap<UniformResource, (u32, bool)> = HashMap::new();
     for station in &wall_grid.placed_stations {
         let Some(info) = wall_grid.stations.get(station.station) else {
             continue;
@@ -584,27 +574,43 @@ pub(crate) fn resource_sidebar(ctx: &egui::Context, wall_grid: &WallGrid) {
         };
         for (res, qty) in station.contents.uniform_totals() {
             let (rounded, dropped) = round(qty, spec.accounting);
-            let entry = totals.entry(res).or_insert_with(|| {
-                order.push(res);
-                (0, false)
-            });
+            let entry = map.entry(res).or_insert((0, false));
             entry.0 += rounded as u32;
             entry.1 |= dropped;
         }
     }
+    let mut result: Vec<_> = map.into_iter().map(|(r, (q, d))| (r, q, d)).collect();
+    result.sort_by_key(|(r, _, _)| r.display_order());
+    result
+}
 
+/// Right-hand sidebar summarizing total resources across every storage station,
+/// with mode-switch buttons at the bottom.
+///
+/// Returns `Some(mode)` if a mode button was clicked, `None` otherwise.
+pub(crate) fn resource_sidebar(ctx: &egui::Context, wall_grid: &WallGrid) -> Option<GameMode> {
+    let totals = station_resource_totals(wall_grid);
+    let mut goto: Option<GameMode> = None;
     egui::SidePanel::right("resources")
         .min_width(120.0)
         .show(ctx, |ui| {
             ui.heading("Resources");
             ui.separator();
-            if order.is_empty() {
+            if totals.is_empty() {
                 ui.label("(none)");
             }
-            for res in order {
-                let (total, rounded_down) = totals[&res];
-                let prefix = if rounded_down { "> " } else { "" };
+            for (res, total, rounded_down) in &totals {
+                let prefix = if *rounded_down { "> " } else { "" };
                 ui.label(format!("{}{}: {}", prefix, res.label(), total));
             }
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                if ui.button("Surroundings").clicked() {
+                    goto = Some(GameMode::Surroundings);
+                }
+                if ui.button("Walk Around").clicked() {
+                    goto = Some(GameMode::Walk);
+                }
+            });
         });
+    goto
 }
