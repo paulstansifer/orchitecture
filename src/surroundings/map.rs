@@ -1,23 +1,14 @@
 use bevy::prelude::*;
 
 use super::farmstead::{FarmData, FarmsResource};
-use crate::resource::{Inventory, UniformResource};
+use crate::resource::UniformResource;
 
 const NUM_SEEDS: usize = 200;
 const MAP_EXTENT: f32 = 200.0;
 pub const CLIP_BOUNDS: f32 = 300.0;
 // 200 seeds over a 400×400 map gives ~800 sq-units per cell on average;
-// this scale puts that average at ~6 acres (midpoint of the 2–12 range).
+// this scale puts that average at ~6 acres (midpoint of the 5–10 range).
 const ACRES_PER_UNIT_SQ: f32 = 0.0075;
-
-const FARMABLE: &[UniformResource] = &[
-    UniformResource::Potato,
-    UniformResource::Canvas,
-    UniformResource::Thatch,
-    UniformResource::Timber,
-    UniformResource::Block,
-    UniformResource::Fieldstone,
-];
 
 // Sutherland-Hodgman: keep vertices where dot(v - point, normal) >= 0
 fn clip_polygon_by_halfplane(poly: &[Vec2], point: Vec2, normal: Vec2) -> Vec<Vec2> {
@@ -53,6 +44,44 @@ fn polygon_area(poly: &[Vec2]) -> f32 {
     sum.abs() * 0.5
 }
 
+/// True area-weighted centroid via the shoelace formula.
+fn polygon_centroid(poly: &[Vec2]) -> Vec2 {
+    let n = poly.len();
+    let mut cx = 0.0_f32;
+    let mut cy = 0.0_f32;
+    let mut signed_area = 0.0_f32;
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        let cross = a.x * b.y - b.x * a.y;
+        cx += (a.x + b.x) * cross;
+        cy += (a.y + b.y) * cross;
+        signed_area += cross;
+    }
+    signed_area *= 0.5;
+    if signed_area.abs() < 1e-6 {
+        let (sx, sy) = poly
+            .iter()
+            .fold((0.0_f32, 0.0_f32), |acc, p| (acc.0 + p.x, acc.1 + p.y));
+        return Vec2::new(sx / n as f32, sy / n as f32);
+    }
+    Vec2::new(cx / (6.0 * signed_area), cy / (6.0 * signed_area))
+}
+
+/// Lloyd relaxation: moves each seed to the centroid of its Voronoi cell,
+/// making cell sizes more uniform across iterations.
+fn lloyd_relax(seeds: &mut Vec<Vec2>, steps: usize) {
+    for _ in 0..steps {
+        let snapshot = seeds.clone();
+        for seed in seeds.iter_mut() {
+            let cell = voronoi_cell(*seed, &snapshot);
+            if !cell.is_empty() {
+                *seed = polygon_centroid(&cell);
+            }
+        }
+    }
+}
+
 fn voronoi_cell(seed: Vec2, all_seeds: &[Vec2]) -> Vec<Vec2> {
     let b = CLIP_BOUNDS;
     let mut poly = vec![
@@ -73,6 +102,20 @@ fn voronoi_cell(seed: Vec2, all_seeds: &[Vec2]) -> Vec<Vec2> {
         }
     }
     poly
+}
+
+fn two_lowest_indices(vals: &[f32]) -> (usize, usize) {
+    assert!(vals.len() >= 2);
+    let (mut first, mut second) = if vals[0] <= vals[1] { (0, 1) } else { (1, 0) };
+    for i in 2..vals.len() {
+        if vals[i] < vals[first] {
+            second = first;
+            first = i;
+        } else if vals[i] < vals[second] {
+            second = i;
+        }
+    }
+    (first, second)
 }
 
 fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
@@ -100,10 +143,10 @@ fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
 }
 
 pub fn generate_farms(mut commands: Commands) {
-    use rand::Rng;
+    use rand::Rng as _;
     let mut rng = rand::rng();
 
-    let seeds: Vec<Vec2> = (0..NUM_SEEDS)
+    let mut seeds: Vec<Vec2> = (0..NUM_SEEDS)
         .map(|_| {
             Vec2::new(
                 rng.random_range(-MAP_EXTENT..MAP_EXTENT),
@@ -112,24 +155,61 @@ pub fn generate_farms(mut commands: Commands) {
         })
         .collect();
 
+    // One Lloyd step removes degenerate slivers without killing size variance;
+    // more steps converge toward equal-area cells (~6 ac each), which is too uniform.
+    lloyd_relax(&mut seeds, 1);
+
+    // Phase 1: compute Voronoi cells and areas, then sort by distance from
+    // the map centre so resource assignment radiates outward.
+    let mut pre_farms: Vec<(Vec2, Vec<Vec2>, f32)> = seeds
+        .iter()
+        .filter_map(|&seed| {
+            let polygon = voronoi_cell(seed, &seeds);
+            if polygon.is_empty() {
+                return None;
+            }
+            let area = (polygon_area(&polygon) * ACRES_PER_UNIT_SQ).clamp(5.0, 10.0);
+            Some((seed, polygon, area))
+        })
+        .collect();
+    pre_farms.sort_by(|a, b| {
+        a.0.length_squared()
+            .partial_cmp(&b.0.length_squared())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Phase 2: assign resources by acreage balance — always pick one of the
+    // two types with the fewest total acres assigned so far.
+    let farmable = UniformResource::inedible_farmables();
+    let mut resource_acres = vec![0.0f32; farmable.len()];
     let mut farms = Vec::new();
-    for (i, &seed) in seeds.iter().enumerate() {
-        let polygon = voronoi_cell(seed, &seeds);
-        if polygon.is_empty() {
-            continue;
-        }
-        let area: f32 = (polygon_area(&polygon) * ACRES_PER_UNIT_SQ).clamp(2.0, 12.0);
-        let fertility: f32 = rng.random_range(0.75..1.25_f32);
-        let farmers = ((area * fertility / 1.8).floor() as u32).max(1);
-        let resource = FARMABLE[i % FARMABLE.len()];
+
+    for (seed, polygon, area) in pre_farms {
+        let (i0, i1) = two_lowest_indices(&resource_acres);
+        let res_idx = if rng.random_range(0..2usize) == 0 {
+            i0
+        } else {
+            i1
+        };
+        let resource = farmable[res_idx];
+        resource_acres[res_idx] += area;
+
+        let fertility = rng.random_range(0.75..1.25_f32);
+        let wanted_offset = rng.random_range(1..farmable.len());
+        let wanted_resource = farmable[(res_idx + wanted_offset) % farmable.len()];
+        let want_max = (area.round() as u32).max(3);
+
         farms.push(FarmData {
             seed,
             polygon,
             area,
             fertility,
-            farmers,
             resource,
-            stockpile: Inventory::new(1, 100.0),
+            wanted_resource,
+            want_max,
+            potato_stockpile: 0,
+            inedible_stockpile: 0,
+            boost: 0,
             invited: false,
         });
     }

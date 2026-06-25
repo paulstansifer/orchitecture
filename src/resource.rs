@@ -39,6 +39,29 @@ impl UniformResource {
                 | UniformResource::Fieldstone
         )
     }
+
+    /// Canonical display order for the resource sidebar (lower = shown first).
+    pub fn display_order(self) -> u8 {
+        match self {
+            UniformResource::Potato => 0,
+            UniformResource::Canvas => 1,
+            UniformResource::Thatch => 2,
+            UniformResource::Timber => 3,
+            UniformResource::Block => 4,
+            UniformResource::Fieldstone => 5,
+            UniformResource::WoodBeam => 6,
+        }
+    }
+
+    pub fn inedible_farmables() -> &'static [UniformResource] {
+        &[
+            UniformResource::Canvas,
+            UniformResource::Thatch,
+            UniformResource::Timber,
+            UniformResource::Block,
+            UniformResource::Fieldstone,
+        ]
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
