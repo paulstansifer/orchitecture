@@ -10,15 +10,6 @@ pub const CLIP_BOUNDS: f32 = 300.0;
 // this scale puts that average at ~6 acres (midpoint of the 5–10 range).
 const ACRES_PER_UNIT_SQ: f32 = 0.0075;
 
-// Inedible farmable resources (potatoes are produced separately by all farms).
-const FARMABLE: &[UniformResource] = &[
-    UniformResource::Canvas,
-    UniformResource::Thatch,
-    UniformResource::Timber,
-    UniformResource::Block,
-    UniformResource::Fieldstone,
-];
-
 // Sutherland-Hodgman: keep vertices where dot(v - point, normal) >= 0
 fn clip_polygon_by_halfplane(poly: &[Vec2], point: Vec2, normal: Vec2) -> Vec<Vec2> {
     if poly.is_empty() {
@@ -111,6 +102,20 @@ fn voronoi_cell(seed: Vec2, all_seeds: &[Vec2]) -> Vec<Vec2> {
     poly
 }
 
+fn two_lowest_indices(vals: &[f32]) -> (usize, usize) {
+    assert!(vals.len() >= 2);
+    let (mut first, mut second) = if vals[0] <= vals[1] { (0, 1) } else { (1, 0) };
+    for i in 2..vals.len() {
+        if vals[i] < vals[first] {
+            second = first;
+            first = i;
+        } else if vals[i] < vals[second] {
+            second = i;
+        }
+    }
+    (first, second)
+}
+
 fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
     use std::f32::consts::TAU;
     let start_dist = rng.random_range(110.0..150.0_f32);
@@ -136,7 +141,7 @@ fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
 }
 
 pub fn generate_farms(mut commands: Commands) {
-    use rand::Rng;
+    use rand::Rng as _;
     let mut rng = rand::rng();
 
     let mut seeds: Vec<Vec2> = (0..NUM_SEEDS)
@@ -173,27 +178,19 @@ pub fn generate_farms(mut commands: Commands) {
 
     // Phase 2: assign resources by acreage balance — always pick one of the
     // two types with the fewest total acres assigned so far.
-    let mut resource_acres = vec![0.0f32; FARMABLE.len()];
+    let farmable = UniformResource::inedible_farmables();
+    let mut resource_acres = vec![0.0f32; farmable.len()];
     let mut farms = Vec::new();
 
     for (seed, polygon, area) in pre_farms {
-        let mut sorted: Vec<(usize, f32)> = resource_acres
-            .iter()
-            .enumerate()
-            .map(|(i, &a)| (i, a))
-            .collect();
-        sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let res_idx = if rng.random_range(0..2usize) == 0 {
-            sorted[0].0
-        } else {
-            sorted[1].0
-        };
-        let resource = FARMABLE[res_idx];
+        let (i0, i1) = two_lowest_indices(&resource_acres);
+        let res_idx = if rng.random_range(0..2usize) == 0 { i0 } else { i1 };
+        let resource = farmable[res_idx];
         resource_acres[res_idx] += area;
 
         let fertility = rng.random_range(0.75..1.25_f32);
-        let wanted_offset = rng.random_range(1..FARMABLE.len());
-        let wanted_resource = FARMABLE[(res_idx + wanted_offset) % FARMABLE.len()];
+        let wanted_offset = rng.random_range(1..farmable.len());
+        let wanted_resource = farmable[(res_idx + wanted_offset) % farmable.len()];
         let want_max = (area.round() as u32).max(3);
 
         farms.push(FarmData {

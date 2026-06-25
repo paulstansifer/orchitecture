@@ -39,6 +39,16 @@ impl UniformResource {
                 | UniformResource::Fieldstone
         )
     }
+
+    pub fn inedible_farmables() -> &'static [UniformResource] {
+        &[
+            UniformResource::Canvas,
+            UniformResource::Thatch,
+            UniformResource::Timber,
+            UniformResource::Block,
+            UniformResource::Fieldstone,
+        ]
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

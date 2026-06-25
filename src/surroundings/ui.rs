@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-use super::farmstead::{preview_market, run_market, FarmsResource, GameClock, SurroundingsState};
+use super::farmstead::{
+    preview_market, run_market, update_wanted_resources, FarmsResource, GameClock,
+    SurroundingsState,
+};
 
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
@@ -143,13 +146,8 @@ pub fn surroundings_ui_system(
         return;
     };
 
-    // Compute circle_reveal_radius early; used both for fog and as the market radius.
-    let screen_rect = ctx.screen_rect();
-    let short_side = screen_rect.width().min(screen_rect.height());
-    let circle_reveal_radius = short_side * 0.45 / PIXELS_PER_UNIT;
-
     // Market preview: what would happen if we ran the market right now.
-    let preview = preview_market(&*farms, circle_reveal_radius);
+    let preview = preview_market(&*farms);
 
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_build = false;
@@ -179,7 +177,8 @@ pub fn surroundings_ui_system(
                             for farm in &mut farms.farms {
                                 farm.accumulate_monthly();
                             }
-                            run_market(&mut *farms, circle_reveal_radius);
+                            run_market(&mut *farms);
+                            update_wanted_resources(&mut *farms);
                         }
                     }
                 });

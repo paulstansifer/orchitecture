@@ -5,19 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::resource::{Inventory, UniformResource};
 
-const INEDIBLE_FARMABLE: &[UniformResource] = &[
-    UniformResource::Canvas,
-    UniformResource::Thatch,
-    UniformResource::Timber,
-    UniformResource::Block,
-    UniformResource::Fieldstone,
-];
-
 /// Farms within this map-unit radius are considered neighbours for the purpose
 /// of updating a farm's wanted resource after a market visit.
 const WANTED_UPDATE_RADIUS: f32 = 80.0;
 
 const STOCKPILE_MAX: u32 = 40;
+
+/// Market boundary in map units. A farm at this distance pays 8 potatoes travel cost.
+pub const MARKET_RADIUS: f32 = 50.0;
 
 #[derive(Serialize, Deserialize)]
 pub struct FarmData {
@@ -36,12 +31,8 @@ pub struct FarmData {
 
 impl FarmData {
     pub fn centroid(&self) -> Vec2 {
-        let n = self.polygon.len() as f32;
-        let (sx, sy) = self
-            .polygon
-            .iter()
-            .fold((0.0_f32, 0.0_f32), |acc, p| (acc.0 + p.x, acc.1 + p.y));
-        Vec2::new(sx / n, sy / n)
+        // After Lloyd relaxation the seed converges to the polygon centroid.
+        self.seed
     }
 
     pub fn base_production(&self) -> u32 {
@@ -99,61 +90,82 @@ impl GameClock {
 
 /// Read-only snapshot of what `run_market` would do given the current state.
 pub struct MarketPreview {
-    /// Maps farm index → predicted boost t each farm will receive.
+    /// Maps farm index → predicted boost each farm will receive.
     pub farm_boosts: HashMap<usize, u32>,
     /// Resources the player will gain (resource, quantity).
     pub player_gains: Vec<(UniformResource, u32)>,
 }
 
-/// Compute what the next market run would produce without mutating any state.
-pub fn preview_market(fr: &FarmsResource, market_radius: f32) -> MarketPreview {
-    let circle_pos = fr.circle_pos;
-
-    let invited: Vec<(usize, u32)> = fr
-        .farms
+fn invited_with_costs(farms: &[FarmData], circle_pos: Vec2) -> Vec<(usize, u32)> {
+    farms
         .iter()
         .enumerate()
         .filter(|(_, f)| f.invited)
         .map(|(i, f)| {
-            let dist = f.centroid().distance(circle_pos);
-            let cost = (dist * 8.0 / market_radius.max(1.0)).round() as u32;
+            let dist = f.seed.distance(circle_pos);
+            let cost = (dist * 8.0 / MARKET_RADIUS.max(1.0)).round() as u32;
             (i, cost)
         })
-        .collect();
+        .collect()
+}
 
+fn pool_totals(
+    farms: &[FarmData],
+    invited: &[(usize, u32)],
+) -> (u32, HashMap<UniformResource, u32>) {
     let mut potato_pool: u32 = 0;
     let mut inedible_pool: HashMap<UniformResource, u32> = HashMap::new();
-
-    for &(i, cost) in &invited {
-        let farm = &fr.farms[i];
-        potato_pool += farm.potato_stockpile.saturating_sub(cost);
-        *inedible_pool.entry(farm.resource).or_insert(0) += farm.inedible_stockpile;
+    for &(i, cost) in invited {
+        potato_pool += farms[i].potato_stockpile.saturating_sub(cost);
+        *inedible_pool.entry(farms[i].resource).or_insert(0) += farms[i].inedible_stockpile;
     }
+    (potato_pool, inedible_pool)
+}
 
+fn distribute(
+    farms: &[FarmData],
+    invited: &[(usize, u32)],
+    potato_pool: &mut u32,
+    inedible_pool: &mut HashMap<UniformResource, u32>,
+) -> HashMap<usize, u32> {
     let mut farm_boosts = HashMap::new();
-    for &(i, _) in &invited {
-        let wanted = fr.farms[i].wanted_resource;
-        let want_max = fr.farms[i].want_max;
+    for &(i, _) in invited {
+        let wanted = farms[i].wanted_resource;
+        let want_max = farms[i].want_max;
         let available = *inedible_pool.get(&wanted).unwrap_or(&0);
         let t = available.min(want_max);
         if t > 0 {
             *inedible_pool.get_mut(&wanted).unwrap() -= t;
-            let take_potatoes = potato_pool.min(t);
-            potato_pool -= take_potatoes;
+            let take_potatoes = (*potato_pool).min(t);
+            *potato_pool -= take_potatoes;
         }
         farm_boosts.insert(i, t);
     }
+    farm_boosts
+}
 
-    let mut player_gains = Vec::new();
+fn gains_from_pool(
+    potato_pool: u32,
+    inedible_pool: HashMap<UniformResource, u32>,
+) -> Vec<(UniformResource, u32)> {
+    let mut gains = Vec::new();
     if potato_pool > 0 {
-        player_gains.push((UniformResource::Potato, potato_pool));
+        gains.push((UniformResource::Potato, potato_pool));
     }
     for (res, qty) in inedible_pool {
         if qty > 0 {
-            player_gains.push((res, qty));
+            gains.push((res, qty));
         }
     }
+    gains
+}
 
+/// Compute what the next market run would produce without mutating any state.
+pub fn preview_market(fr: &FarmsResource) -> MarketPreview {
+    let invited = invited_with_costs(&fr.farms, fr.circle_pos);
+    let (mut potato_pool, mut inedible_pool) = pool_totals(&fr.farms, &invited);
+    let farm_boosts = distribute(&fr.farms, &invited, &mut potato_pool, &mut inedible_pool);
+    let player_gains = gains_from_pool(potato_pool, inedible_pool);
     MarketPreview {
         farm_boosts,
         player_gains,
@@ -164,73 +176,48 @@ pub fn preview_market(fr: &FarmsResource, market_radius: f32) -> MarketPreview {
 ///
 /// Each invited farm contributes (potato_stockpile − travel_cost) potatoes and its
 /// entire inedible stockpile to a shared pool. Travel cost scales linearly with
-/// distance from circle_pos so that a farm at market_radius units away costs 8.
+/// distance from circle_pos so that a farm at MARKET_RADIUS units away costs 8.
 ///
 /// Then each invited farm takes up to want_max of its wanted resource (call the
 /// amount t) plus t potatoes from the pool. The boost for that farm is set to t.
 /// Whatever remains in the pool goes into player_goods.
-pub fn run_market(fr: &mut FarmsResource, market_radius: f32) {
-    let circle_pos = fr.circle_pos;
+pub fn run_market(fr: &mut FarmsResource) {
+    let invited = invited_with_costs(&fr.farms, fr.circle_pos);
+    let (mut potato_pool, mut inedible_pool) = pool_totals(&fr.farms, &invited);
 
-    // Collect invited indices and per-farm travel costs.
-    let invited: Vec<(usize, u32)> = fr
+    for &(i, _) in &invited {
+        fr.farms[i].potato_stockpile = 0;
+        fr.farms[i].inedible_stockpile = 0;
+    }
+
+    let farm_boosts = distribute(&fr.farms, &invited, &mut potato_pool, &mut inedible_pool);
+    for (i, t) in &farm_boosts {
+        fr.farms[*i].boost = *t;
+    }
+
+    for (res, qty) in gains_from_pool(potato_pool, inedible_pool) {
+        fr.player_goods.add_uniform(res, qty as u16);
+    }
+}
+
+/// After each market visit every participating farm refreshes its wanted resource:
+/// pick a random nearby farm and adopt what it produces, so wanted resources track
+/// systematic shifts in local production.
+pub fn update_wanted_resources(fr: &mut FarmsResource) {
+    use rand::Rng as _;
+    let mut rng = rand::rng();
+    let snapshot: Vec<(Vec2, UniformResource)> =
+        fr.farms.iter().map(|f| (f.seed, f.resource)).collect();
+
+    let invited_indices: Vec<usize> = fr
         .farms
         .iter()
         .enumerate()
         .filter(|(_, f)| f.invited)
-        .map(|(i, f)| {
-            let dist = f.centroid().distance(circle_pos);
-            let cost = (dist * 8.0 / market_radius.max(1.0)).round() as u32;
-            (i, cost)
-        })
+        .map(|(i, _)| i)
         .collect();
 
-    // Build the shared pool.
-    let mut potato_pool: u32 = 0;
-    let mut inedible_pool: HashMap<UniformResource, u32> = HashMap::new();
-
-    for &(i, cost) in &invited {
-        let farm = &mut fr.farms[i];
-        potato_pool += farm.potato_stockpile.saturating_sub(cost);
-        *inedible_pool.entry(farm.resource).or_insert(0) += farm.inedible_stockpile;
-        farm.potato_stockpile = 0;
-        farm.inedible_stockpile = 0;
-    }
-
-    // Each farm takes its wanted resource (and matching potatoes) from the pool.
-    for &(i, _) in &invited {
-        let wanted = fr.farms[i].wanted_resource;
-        let want_max = fr.farms[i].want_max;
-        let available = *inedible_pool.get(&wanted).unwrap_or(&0);
-        let t = available.min(want_max);
-        if t > 0 {
-            *inedible_pool.get_mut(&wanted).unwrap() -= t;
-            let take_potatoes = potato_pool.min(t);
-            potato_pool -= take_potatoes;
-        }
-        fr.farms[i].boost = t;
-    }
-
-    // Remaining pool → player_goods.
-    if potato_pool > 0 {
-        fr.player_goods
-            .add_uniform(UniformResource::Potato, potato_pool as u16);
-    }
-    for (res, qty) in inedible_pool {
-        if qty > 0 {
-            fr.player_goods.add_uniform(res, qty as u16);
-        }
-    }
-
-    // After each market visit every participating farm refreshes its wanted
-    // resource: pick a random nearby farm and adopt what it produces. This
-    // keeps wanted resources tracking systematic shifts in local production.
-    use rand::Rng as _;
-    let mut rng = rand::rng();
-    let snapshot: Vec<(Vec2, UniformResource)> =
-        fr.farms.iter().map(|f| (f.centroid(), f.resource)).collect();
-
-    for &(i, _) in &invited {
+    for i in invited_indices {
         let (farm_pos, own_resource) = snapshot[i];
         let candidates: Vec<UniformResource> = snapshot
             .iter()
@@ -244,7 +231,7 @@ pub fn run_market(fr: &mut FarmsResource, market_radius: f32) {
         fr.farms[i].wanted_resource = if !candidates.is_empty() {
             candidates[rng.random_range(0..candidates.len())]
         } else {
-            let others: Vec<UniformResource> = INEDIBLE_FARMABLE
+            let others: Vec<UniformResource> = UniformResource::inedible_farmables()
                 .iter()
                 .copied()
                 .filter(|&r| r != own_resource)
