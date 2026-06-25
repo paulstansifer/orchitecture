@@ -8,13 +8,17 @@ use bevy::prelude::*;
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{Structure, StructureList};
 use crate::wall_grid::{Cell, WallGrid};
-use crate::world::LightingMode;
 
+#[allow(dead_code)]
 const GRID_PERIOD: i32 = 5;
+#[allow(dead_code)]
 const COVERAGE_RADIUS: i32 = 3;
+#[allow(dead_code)]
 const LIGHT_INTENSITY: f32 = 150_000.0;
+#[allow(dead_code)]
 const LIGHT_RANGE: f32 = 8.0;
 
+#[allow(dead_code)]
 #[derive(Component)]
 pub struct CeilingLight;
 
@@ -107,23 +111,16 @@ fn compute_window_lights(contents: &Sparse3D<Cell>, structures: &[Structure]) ->
 }
 
 /// Bevy system: despawns and respawns window-based radiosity spotlights.
-/// Runs when WallGrid changes; visibility is set to match the current LightingMode.
+/// Runs when WallGrid changes.
 pub fn update_window_lights(
     mut commands: Commands,
     wall_grid: Res<WallGrid>,
     structure_list: Res<StructureList>,
     existing: Query<Entity, With<WindowLight>>,
-    lighting_mode: Res<LightingMode>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-
-    let visibility = if *lighting_mode == LightingMode::WindowLights {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
 
     for (pos, look_dir) in compute_window_lights(&wall_grid.contents, &structure_list.structures) {
         commands.spawn((
@@ -138,7 +135,6 @@ pub fn update_window_lights(
             },
             Transform::from_translation(pos).looking_to(look_dir, Vec3::Y),
             WindowLight,
-            visibility,
         ));
     }
 }
@@ -316,25 +312,16 @@ fn bbox(tiles: &HashSet<(i32, i32)>) -> (i32, i32, i32, i32) {
 
 /// Bevy system: despawns all ceiling lights and respawns them from the current WallGrid.
 ///
-/// Runs only when WallGrid changes (see main.rs). The visibility system bypasses
-/// change detection for its per-frame mutations so this only fires on real edits.
-///
-/// TODO: only run when `.contents` itself changes
+/// Not currently wired into the app — kept for future use.
+#[allow(dead_code)]
 pub fn update_ceiling_lights(
     mut commands: Commands,
     wall_grid: Res<WallGrid>,
     existing: Query<Entity, With<CeilingLight>>,
-    lighting_mode: Res<LightingMode>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
     }
-
-    let visibility = if *lighting_mode == LightingMode::CeilingLights {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
 
     for pos in compute_ceiling_lights(&wall_grid.contents) {
         // SpotLight pointing straight down: the exterior top of the ceiling tile is
@@ -353,7 +340,6 @@ pub fn update_ceiling_lights(
             // looking_to(NEG_Y, X) makes the spotlight's local −Z face world −Y (downward).
             Transform::from_translation(pos).looking_to(Vec3::NEG_Y, Vec3::X),
             CeilingLight,
-            visibility,
         ));
     }
 }

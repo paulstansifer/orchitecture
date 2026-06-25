@@ -10,7 +10,7 @@ use orchitecture_lib::{
         handle_file_save, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
     },
     camera::{camera_input_system, spawn_camera, CameraState, GameCamera},
-    ceiling_lights::{update_ceiling_lights, update_window_lights},
+    ceiling_lights::update_window_lights,
     cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
     game_mode::GameMode,
     grid_preview::GridPreviewPlugin,
@@ -33,7 +33,7 @@ use orchitecture_lib::{
         spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
         update_station_highlight, StationHighlight, WallGrid,
     },
-    world::{apply_lighting_mode_system, lighting_input_system, spawn_world, LightingMode},
+    world::spawn_world,
 };
 
 fn main() {
@@ -70,7 +70,6 @@ fn main() {
         .insert_resource(FurnitureRightClick::default())
         .insert_resource(StationHighlight::default())
         .insert_resource(GameClock::default())
-        .insert_resource(LightingMode::default())
         .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))
         .add_systems(OnExit(GameMode::Walk), despawn_orc)
         .add_systems(OnEnter(GameMode::Build), enter_build_mode)
@@ -110,10 +109,7 @@ fn main() {
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system,
                 propagate_render_layers_system.after(update_cutaway_system),
-                update_ceiling_lights.run_if(resource_changed::<WallGrid>),
                 update_window_lights.run_if(resource_changed::<WallGrid>),
-                lighting_input_system,
-                apply_lighting_mode_system.after(lighting_input_system),
                 update_station_highlight,
             ),
         )

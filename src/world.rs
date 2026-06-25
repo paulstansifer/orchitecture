@@ -1,138 +1,12 @@
-use std::f32::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, PI};
+use std::f32::consts::{FRAC_PI_3, FRAC_PI_4};
 
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
-use crate::ceiling_lights::{CeilingLight, WindowLight};
 use crate::road::ROAD_WIDTH;
 
-pub const SUN_ILLUMINANCE: f32 = 5_000.0;
-
-/// Lighting modes cycled with the X key.
-#[derive(Resource, Default, PartialEq, Eq, Clone, Copy)]
-pub enum LightingMode {
-    #[default]
-    CeilingLights,
-    /// Single shadowless fill light from the opposite direction of the sun.
-    OppositeDir,
-    /// Single shadowless fill light from directly above.
-    StraightAbove,
-    /// Two shadowless fill lights equally spaced around the sun (120° apart).
-    TwoLights,
-    /// Spotlights just inside each exterior window, simulating radiosity.
-    WindowLights,
-}
-
-impl LightingMode {
-    pub fn next(self) -> Self {
-        match self {
-            LightingMode::CeilingLights => LightingMode::OppositeDir,
-            LightingMode::OppositeDir => LightingMode::StraightAbove,
-            LightingMode::StraightAbove => LightingMode::TwoLights,
-            LightingMode::TwoLights => LightingMode::WindowLights,
-            LightingMode::WindowLights => LightingMode::CeilingLights,
-        }
-    }
-}
-
-/// Marker for non-sun directional lights spawned by lighting mode 2–4.
-#[derive(Component)]
-pub struct ExtraLight;
-
-pub fn lighting_input_system(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut lighting_mode: ResMut<LightingMode>,
-) {
-    if keyboard.just_pressed(KeyCode::KeyX) {
-        *lighting_mode = lighting_mode.next();
-    }
-}
-
-pub fn apply_lighting_mode_system(
-    mode: Res<LightingMode>,
-    mut commands: Commands,
-    mut ceiling_lights: Query<&mut Visibility, (With<CeilingLight>, Without<WindowLight>)>,
-    mut window_lights: Query<&mut Visibility, (With<WindowLight>, Without<CeilingLight>)>,
-    extra_lights: Query<Entity, With<ExtraLight>>,
-) {
-    if !mode.is_changed() {
-        return;
-    }
-
-    let ceiling_vis = if *mode == LightingMode::CeilingLights {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    for mut vis in &mut ceiling_lights {
-        *vis = ceiling_vis;
-    }
-
-    let window_vis = if *mode == LightingMode::WindowLights {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    for mut vis in &mut window_lights {
-        *vis = window_vis;
-    }
-
-    for entity in &extra_lights {
-        commands.entity(entity).despawn();
-    }
-
-    const FILL: f32 = SUN_ILLUMINANCE / 3.0;
-
-    match *mode {
-        LightingMode::CeilingLights => {}
-        LightingMode::OppositeDir => {
-            commands.spawn((
-                DirectionalLight {
-                    illuminance: FILL,
-                    shadows_enabled: false,
-                    ..default()
-                },
-                Transform::from_rotation(Quat::from_euler(
-                    EulerRot::YXZ,
-                    FRAC_PI_3 + PI,
-                    -FRAC_PI_4,
-                    0.0,
-                )),
-                ExtraLight,
-            ));
-        }
-        LightingMode::StraightAbove => {
-            commands.spawn((
-                DirectionalLight {
-                    illuminance: FILL,
-                    shadows_enabled: false,
-                    ..default()
-                },
-                Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
-                ExtraLight,
-            ));
-        }
-        LightingMode::TwoLights => {
-            for y_angle in [FRAC_PI_3 + 2.0 * PI / 3.0, FRAC_PI_3 - 2.0 * PI / 3.0] {
-                commands.spawn((
-                    DirectionalLight {
-                        illuminance: FILL,
-                        shadows_enabled: false,
-                        ..default()
-                    },
-                    Transform::from_rotation(Quat::from_euler(
-                        EulerRot::YXZ,
-                        y_angle,
-                        -FRAC_PI_4,
-                        0.0,
-                    )),
-                    ExtraLight,
-                ));
-            }
-        }
-        LightingMode::WindowLights => {}
-    }
-}
+const SUN_ILLUMINANCE: f32 = 5_000.0;
+const FILL_ILLUMINANCE: f32 = SUN_ILLUMINANCE / 3.0;
 
 /// Startup system: spawns directional lights, the ground plane, and road meshes.
 pub fn spawn_world(
@@ -153,6 +27,21 @@ pub fn spawn_world(
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, FRAC_PI_3, -FRAC_PI_4, 0.0)),
         light_layers.clone(),
     ));
+
+    // Two fill lights equally spaced around the sun (120° apart, same elevation).
+    for y_angle in [
+        FRAC_PI_3 + 2.0 * std::f32::consts::PI / 3.0,
+        FRAC_PI_3 - 2.0 * std::f32::consts::PI / 3.0,
+    ] {
+        commands.spawn((
+            DirectionalLight {
+                illuminance: FILL_ILLUMINANCE,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, y_angle, -FRAC_PI_4, 0.0)),
+        ));
+    }
 
     ambient_light.brightness = 100.0;
 
