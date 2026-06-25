@@ -5,6 +5,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::resource::{Inventory, UniformResource};
 
+const INEDIBLE_FARMABLE: &[UniformResource] = &[
+    UniformResource::Canvas,
+    UniformResource::Thatch,
+    UniformResource::Timber,
+    UniformResource::Block,
+    UniformResource::Fieldstone,
+];
+
+/// Farms within this map-unit radius are considered neighbours for the purpose
+/// of updating a farm's wanted resource after a market visit.
+const WANTED_UPDATE_RADIUS: f32 = 80.0;
+
 const STOCKPILE_MAX: u32 = 40;
 
 #[derive(Serialize, Deserialize)]
@@ -208,5 +220,36 @@ pub fn run_market(fr: &mut FarmsResource, market_radius: f32) {
         if qty > 0 {
             fr.player_goods.add_uniform(res, qty as u16);
         }
+    }
+
+    // After each market visit every participating farm refreshes its wanted
+    // resource: pick a random nearby farm and adopt what it produces. This
+    // keeps wanted resources tracking systematic shifts in local production.
+    use rand::Rng as _;
+    let mut rng = rand::rng();
+    let snapshot: Vec<(Vec2, UniformResource)> =
+        fr.farms.iter().map(|f| (f.centroid(), f.resource)).collect();
+
+    for &(i, _) in &invited {
+        let (farm_pos, own_resource) = snapshot[i];
+        let candidates: Vec<UniformResource> = snapshot
+            .iter()
+            .enumerate()
+            .filter(|(j, (pos, res))| {
+                *j != i && *res != own_resource && pos.distance(farm_pos) <= WANTED_UPDATE_RADIUS
+            })
+            .map(|(_, (_, res))| *res)
+            .collect();
+
+        fr.farms[i].wanted_resource = if !candidates.is_empty() {
+            candidates[rng.random_range(0..candidates.len())]
+        } else {
+            let others: Vec<UniformResource> = INEDIBLE_FARMABLE
+                .iter()
+                .copied()
+                .filter(|&r| r != own_resource)
+                .collect();
+            others[rng.random_range(0..others.len())]
+        };
     }
 }

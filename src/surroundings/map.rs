@@ -152,20 +152,50 @@ pub fn generate_farms(mut commands: Commands) {
     // closer to the 5–10 acre target before clamping.
     lloyd_relax(&mut seeds, 5);
 
+    // Phase 1: compute Voronoi cells and areas, then sort by distance from
+    // the map centre so resource assignment radiates outward.
+    let mut pre_farms: Vec<(Vec2, Vec<Vec2>, f32)> = seeds
+        .iter()
+        .filter_map(|&seed| {
+            let polygon = voronoi_cell(seed, &seeds);
+            if polygon.is_empty() {
+                return None;
+            }
+            let area = (polygon_area(&polygon) * ACRES_PER_UNIT_SQ).clamp(5.0, 10.0);
+            Some((seed, polygon, area))
+        })
+        .collect();
+    pre_farms.sort_by(|a, b| {
+        a.0.length_squared()
+            .partial_cmp(&b.0.length_squared())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Phase 2: assign resources by acreage balance — always pick one of the
+    // two types with the fewest total acres assigned so far.
+    let mut resource_acres = vec![0.0f32; FARMABLE.len()];
     let mut farms = Vec::new();
-    for (i, &seed) in seeds.iter().enumerate() {
-        let polygon = voronoi_cell(seed, &seeds);
-        if polygon.is_empty() {
-            continue;
-        }
-        let area: f32 = (polygon_area(&polygon) * ACRES_PER_UNIT_SQ).clamp(5.0, 10.0);
-        let fertility: f32 = rng.random_range(0.75..1.25_f32);
-        let res_idx = i % FARMABLE.len();
+
+    for (seed, polygon, area) in pre_farms {
+        let mut sorted: Vec<(usize, f32)> = resource_acres
+            .iter()
+            .enumerate()
+            .map(|(i, &a)| (i, a))
+            .collect();
+        sorted.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let res_idx = if rng.random_range(0..2usize) == 0 {
+            sorted[0].0
+        } else {
+            sorted[1].0
+        };
         let resource = FARMABLE[res_idx];
-        // wanted_resource is a different inedible resource
+        resource_acres[res_idx] += area;
+
+        let fertility = rng.random_range(0.75..1.25_f32);
         let wanted_offset = rng.random_range(1..FARMABLE.len());
         let wanted_resource = FARMABLE[(res_idx + wanted_offset) % FARMABLE.len()];
         let want_max = (area.round() as u32).max(3);
+
         farms.push(FarmData {
             seed,
             polygon,
