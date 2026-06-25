@@ -137,7 +137,7 @@ pub fn surroundings_ui_system(
     mut state: ResMut<SurroundingsState>,
     mut clock: ResMut<GameClock>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
-    wall_grid: Res<crate::wall_grid::WallGrid>,
+    mut wall_grid: ResMut<crate::wall_grid::WallGrid>,
 ) {
     use crate::game_mode::GameMode;
     use egui::{Color32, FontId, Pos2, Sense, Shape, Stroke};
@@ -149,75 +149,77 @@ pub fn surroundings_ui_system(
     // Market preview: what would happen if we ran the market right now.
     let preview = preview_market(&*farms);
 
+    // Gains map for quick lookup in the resource panel.
+    let gains_map: std::collections::HashMap<crate::resource::UniformResource, u32> =
+        preview.player_gains.iter().copied().collect();
+
+    // Current station resource totals (sorted canonically).
+    let station_totals = crate::build_ui::station_resource_totals(&*wall_grid);
+
+    // All resources that appear in current storage OR in preview gains, sorted canonically.
+    let mut rhs_resources: Vec<crate::resource::UniformResource> =
+        station_totals.iter().map(|(r, _, _)| *r).collect();
+    for (r, _) in &preview.player_gains {
+        if !rhs_resources.contains(r) {
+            rhs_resources.push(*r);
+        }
+    }
+    rhs_resources.sort_by_key(|r| r.display_order());
+
     let mut pan_delta: Option<egui::Vec2> = None;
+    let mut go_advance_month = false;
+    let mut go_walk = false;
     let mut go_build = false;
 
-    crate::build_ui::resource_sidebar(ctx, &wall_grid);
-
-    // ── Clock panel ───────────────────────────────────────────────────────────
-    egui::Area::new(egui::Id::new("clock_panel"))
-        .fixed_pos(egui::Pos2::new(8.0, 8.0))
+    // ── Right-hand sidebar ────────────────────────────────────────────────────
+    egui::SidePanel::right("resources")
+        .min_width(130.0)
         .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(Color32::from_rgba_unmultiplied(20, 20, 20, 200))
-                .inner_margin(egui::Margin::same(8))
-                .corner_radius(4.0)
-                .show(ui, |ui| {
-                    let month = clock.month() + 1;
-                    let week = clock.week_of_month() + 1;
-                    ui.label(
-                        egui::RichText::new(format!("Month {month}, Week {week}"))
-                            .color(Color32::from_gray(220))
-                            .font(FontId::proportional(12.0)),
-                    );
-                    ui.add_space(4.0);
-                    if ui.button("Advance Week").clicked() {
-                        let new_month = clock.advance_week();
-                        if new_month {
-                            for farm in &mut farms.farms {
-                                farm.accumulate_monthly();
-                            }
-                            run_market(&mut *farms);
-                            update_wanted_resources(&mut *farms);
-                        }
-                    }
-                });
-        });
+            let month = clock.month() + 1;
+            ui.label(
+                egui::RichText::new(format!("Month {}", month))
+                    .color(Color32::from_gray(220))
+                    .font(FontId::proportional(13.0)),
+            );
+            ui.add_space(2.0);
+            if ui.button("Advance Month").clicked() {
+                go_advance_month = true;
+            }
+            ui.separator();
+            ui.heading("Resources");
+            if rhs_resources.is_empty() {
+                ui.label("(none)");
+            }
+            for res in &rhs_resources {
+                let (current, rounded_down) = station_totals
+                    .iter()
+                    .find(|(r, _, _)| r == res)
+                    .map(|(_, q, d)| (*q, *d))
+                    .unwrap_or((0, false));
+                let gain = *gains_map.get(res).unwrap_or(&0);
+                let prefix = if rounded_down { "> " } else { "" };
+                let text = if gain > 0 {
+                    format!("{}{}: {} + {}", prefix, res.label(), current, gain)
+                } else {
+                    format!("{}{}: {}", prefix, res.label(), current)
+                };
+                ui.label(egui::RichText::new(text).color(if gain > 0 {
+                    Color32::from_rgb(160, 220, 140)
+                } else {
+                    Color32::from_gray(200)
+                }));
+            }
 
-    // ── Player market goods panel ─────────────────────────────────────────────
-    let goods = farms.player_goods.uniform_totals();
-    if !goods.is_empty() || !preview.player_gains.is_empty() {
-        egui::Area::new(egui::Id::new("player_goods_panel"))
-            .fixed_pos(egui::Pos2::new(8.0, 90.0))
-            .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(20, 20, 20, 200))
-                    .inner_margin(egui::Margin::same(8))
-                    .corner_radius(4.0)
-                    .show(ui, |ui| {
-                        ui.set_max_width(120.0);
-                        ui.label(
-                            egui::RichText::new("Market Goods")
-                                .color(Color32::from_gray(200))
-                                .font(FontId::proportional(11.0)),
-                        );
-                        for (res, qty) in &goods {
-                            ui.label(
-                                egui::RichText::new(format!("{}: {}", res.label(), qty))
-                                    .font(FontId::proportional(10.0))
-                                    .color(Color32::from_rgb(200, 180, 100)),
-                            );
-                        }
-                        for (res, qty) in &preview.player_gains {
-                            ui.label(
-                                egui::RichText::new(format!("+{} {}", qty, res.label()))
-                                    .font(FontId::proportional(10.0))
-                                    .color(Color32::from_rgb(80, 220, 80)),
-                            );
-                        }
-                    });
+            // Mode buttons pushed to the bottom of the panel.
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                if ui.button("Build").clicked() {
+                    go_build = true;
+                }
+                if ui.button("Walk Around").clicked() {
+                    go_walk = true;
+                }
             });
-    }
+        });
 
     // Collect revealed farm indices and their screen centroids.
     let mut revealed: Vec<(usize, egui::Pos2)> = Vec::new();
@@ -340,12 +342,9 @@ pub fn surroundings_ui_system(
 
                         // Potato stockpile
                         ui.label(
-                            egui::RichText::new(format!(
-                                "Potatoes: {}",
-                                farm.potato_stockpile
-                            ))
-                            .font(FontId::proportional(9.0))
-                            .color(Color32::from_rgb(220, 210, 120)),
+                            egui::RichText::new(format!("Potatoes: {}", farm.potato_stockpile))
+                                .font(FontId::proportional(9.0))
+                                .color(Color32::from_rgb(220, 210, 120)),
                         );
 
                         // Inedible resource stockpile
@@ -401,9 +400,41 @@ pub fn surroundings_ui_system(
             });
     }
 
+    // ── Apply deferred actions ────────────────────────────────────────────────
     if let Some(delta) = pan_delta {
         state.viewport_offset.x -= delta.x / PIXELS_PER_UNIT;
         state.viewport_offset.y += delta.y / PIXELS_PER_UNIT;
+    }
+    if go_advance_month {
+        clock.advance_month();
+        for farm in &mut farms.farms {
+            farm.accumulate_monthly();
+        }
+        let gains = run_market(&mut *farms);
+        update_wanted_resources(&mut *farms);
+        // Uncheck all invites for the next month.
+        for farm in &mut farms.farms {
+            farm.invited = false;
+        }
+        // Deposit gains into the first available storage station; silently drop if none.
+        if !gains.is_empty() {
+            let storage_idx = wall_grid.placed_stations.iter().position(|ps| {
+                wall_grid
+                    .stations
+                    .get(ps.station)
+                    .map_or(false, |info| info.storage.is_some())
+            });
+            if let Some(idx) = storage_idx {
+                for (res, qty) in gains {
+                    wall_grid.placed_stations[idx]
+                        .contents
+                        .add_uniform(res, qty as u16);
+                }
+            }
+        }
+    }
+    if go_walk {
+        next_game_mode.set(GameMode::Walk);
     }
     if go_build {
         next_game_mode.set(GameMode::Build);

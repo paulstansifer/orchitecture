@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use super::farmstead::{FarmData, FarmsResource};
-use crate::resource::{Inventory, UniformResource};
+use crate::resource::UniformResource;
 
 const NUM_SEEDS: usize = 200;
 const MAP_EXTENT: f32 = 200.0;
@@ -60,7 +60,9 @@ fn polygon_centroid(poly: &[Vec2]) -> Vec2 {
     }
     signed_area *= 0.5;
     if signed_area.abs() < 1e-6 {
-        let (sx, sy) = poly.iter().fold((0.0_f32, 0.0_f32), |acc, p| (acc.0 + p.x, acc.1 + p.y));
+        let (sx, sy) = poly
+            .iter()
+            .fold((0.0_f32, 0.0_f32), |acc, p| (acc.0 + p.x, acc.1 + p.y));
         return Vec2::new(sx / n as f32, sy / n as f32);
     }
     Vec2::new(cx / (6.0 * signed_area), cy / (6.0 * signed_area))
@@ -184,7 +186,11 @@ pub fn generate_farms(mut commands: Commands) {
 
     for (seed, polygon, area) in pre_farms {
         let (i0, i1) = two_lowest_indices(&resource_acres);
-        let res_idx = if rng.random_range(0..2usize) == 0 { i0 } else { i1 };
+        let res_idx = if rng.random_range(0..2usize) == 0 {
+            i0
+        } else {
+            i1
+        };
         let resource = farmable[res_idx];
         resource_acres[res_idx] += area;
 
@@ -226,6 +232,5 @@ pub fn generate_farms(mut commands: Commands) {
         farms,
         circle_pos,
         path,
-        player_goods: Inventory::new(8, 10000.0),
     });
 }

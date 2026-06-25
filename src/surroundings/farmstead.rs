@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::resource::{Inventory, UniformResource};
+use crate::resource::UniformResource;
 
 /// Farms within this map-unit radius are considered neighbours for the purpose
 /// of updating a farm's wanted resource after a market visit.
@@ -19,13 +19,13 @@ pub struct FarmData {
     pub seed: Vec2,
     pub polygon: Vec<Vec2>,
     pub area: f32,
-    pub fertility: f32,              // kept only for map coloring
-    pub resource: UniformResource,   // inedible resource this farm produces
+    pub fertility: f32,                   // kept only for map coloring
+    pub resource: UniformResource,        // inedible resource this farm produces
     pub wanted_resource: UniformResource, // resource this farm wants from others
-    pub want_max: u32,               // how many of wanted_resource it wants (>= 3)
-    pub potato_stockpile: u32,       // accumulated potatoes, max 40
-    pub inedible_stockpile: u32,     // accumulated inedible resource, max 40
-    pub boost: u32,                  // extra production per month; declines by 1 each month
+    pub want_max: u32,                    // how many of wanted_resource it wants (>= 3)
+    pub potato_stockpile: u32,            // accumulated potatoes, max 40
+    pub inedible_stockpile: u32,          // accumulated inedible resource, max 40
+    pub boost: u32,                       // extra production per month; declines by 1 each month
     pub invited: bool,
 }
 
@@ -55,8 +55,6 @@ pub struct FarmsResource {
     pub circle_pos: Vec2,
     /// Path from a distant point toward the map origin, in map coordinates.
     pub path: Vec<Vec2>,
-    /// Resources accumulated from monthly market exchanges.
-    pub player_goods: Inventory,
 }
 
 /// Transient resource: exists only while in Surroundings mode.
@@ -65,26 +63,19 @@ pub struct SurroundingsState {
     pub viewport_offset: Vec2,
 }
 
-/// In-game calendar: tracks time in weeks (four weeks per month).
+/// In-game calendar.
 #[derive(Resource, Default, Serialize, Deserialize)]
 pub struct GameClock {
-    pub weeks: u32,
+    pub months: u32,
 }
 
 impl GameClock {
     pub fn month(&self) -> u32 {
-        self.weeks / 4
+        self.months
     }
 
-    pub fn week_of_month(&self) -> u32 {
-        self.weeks % 4
-    }
-
-    /// Advances by one week. Returns `true` if a new month just began.
-    pub fn advance_week(&mut self) -> bool {
-        let prev = self.month();
-        self.weeks += 1;
-        self.month() != prev
+    pub fn advance_month(&mut self) {
+        self.months += 1;
     }
 }
 
@@ -174,14 +165,9 @@ pub fn preview_market(fr: &FarmsResource) -> MarketPreview {
 
 /// Run the monthly market for invited farms.
 ///
-/// Each invited farm contributes (potato_stockpile − travel_cost) potatoes and its
-/// entire inedible stockpile to a shared pool. Travel cost scales linearly with
-/// distance from circle_pos so that a farm at MARKET_RADIUS units away costs 8.
-///
-/// Then each invited farm takes up to want_max of its wanted resource (call the
-/// amount t) plus t potatoes from the pool. The boost for that farm is set to t.
-/// Whatever remains in the pool goes into player_goods.
-pub fn run_market(fr: &mut FarmsResource) {
+/// Returns the resources the player gains; the caller is responsible for depositing
+/// them into station storage.
+pub fn run_market(fr: &mut FarmsResource) -> Vec<(UniformResource, u32)> {
     let invited = invited_with_costs(&fr.farms, fr.circle_pos);
     let (mut potato_pool, mut inedible_pool) = pool_totals(&fr.farms, &invited);
 
@@ -195,9 +181,7 @@ pub fn run_market(fr: &mut FarmsResource) {
         fr.farms[*i].boost = *t;
     }
 
-    for (res, qty) in gains_from_pool(potato_pool, inedible_pool) {
-        fr.player_goods.add_uniform(res, qty as u16);
-    }
+    gains_from_pool(potato_pool, inedible_pool)
 }
 
 /// After each market visit every participating farm refreshes its wanted resource:
