@@ -40,10 +40,7 @@ fn has_sky_above(contents: &Sparse3D<Cell>, cx: i32, cy: i32, cz: i32) -> bool {
 /// Returns (position, look_direction) for each exterior window: exactly the side
 /// with a clear path to the sky is the exterior; the light is placed just inside,
 /// facing inward.
-fn compute_window_lights(
-    contents: &Sparse3D<Cell>,
-    structures: &[Structure],
-) -> Vec<(Vec3, Vec3)> {
+fn compute_window_lights(contents: &Sparse3D<Cell>, structures: &[Structure]) -> Vec<(Vec3, Vec3)> {
     let mut results = Vec::new();
 
     for (loc, cell) in contents.iter() {
@@ -74,8 +71,8 @@ fn compute_window_lights(
 
         // Only exterior windows: exactly one side open to sky.
         let look_dir = match (sky_neg, sky_pos) {
-            (true, false) => pos_dir,       // exterior -side, interior +side
-            (false, true) => -pos_dir,      // exterior +side, interior -side
+            (true, false) => pos_dir,  // exterior -side, interior +side
+            (false, true) => -pos_dir, // exterior +side, interior -side
             _ => continue,
         };
 
@@ -128,16 +125,14 @@ pub fn update_window_lights(
         Visibility::Hidden
     };
 
-    for (pos, look_dir) in
-        compute_window_lights(&wall_grid.contents, &structure_list.structures)
-    {
+    for (pos, look_dir) in compute_window_lights(&wall_grid.contents, &structure_list.structures) {
         commands.spawn((
             SpotLight {
-                color: Color::srgb(0.9, 0.95, 1.0),
-                intensity: 100_000.0,
+                color: Color::srgb(0.95, 0.95, 0.9),
+                intensity: 50_000.0,
                 range: 10.0,
-                inner_angle: FRAC_PI_2,
-                outer_angle: 160.0_f32.to_radians(),
+                inner_angle: 20.0_f32.to_radians(),
+                outer_angle: 85.0_f32.to_radians(),
                 shadows_enabled: false,
                 ..default()
             },

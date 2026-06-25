@@ -95,7 +95,7 @@ pub fn apply_lighting_mode_system(
                 Transform::from_rotation(Quat::from_euler(
                     EulerRot::YXZ,
                     FRAC_PI_3 + PI,
-                    FRAC_PI_4,
+                    -FRAC_PI_4,
                     0.0,
                 )),
                 ExtraLight,
