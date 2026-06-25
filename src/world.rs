@@ -5,6 +5,9 @@ use bevy::prelude::*;
 
 use crate::road::ROAD_WIDTH;
 
+const SUN_ILLUMINANCE: f32 = 5_000.0;
+const FILL_ILLUMINANCE: f32 = SUN_ILLUMINANCE / 3.0;
+
 /// Startup system: spawns directional lights, the ground plane, and road meshes.
 pub fn spawn_world(
     mut commands: Commands,
@@ -16,7 +19,7 @@ pub fn spawn_world(
     let light_layers = RenderLayers::default().with(1);
     commands.spawn((
         DirectionalLight {
-            illuminance: 5_000.0,
+            illuminance: SUN_ILLUMINANCE,
             shadows_enabled: true,
             soft_shadow_size: None,
             ..default()
@@ -24,6 +27,21 @@ pub fn spawn_world(
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, FRAC_PI_3, -FRAC_PI_4, 0.0)),
         light_layers.clone(),
     ));
+
+    // Two fill lights equally spaced around the sun (120° apart, same elevation).
+    for y_angle in [
+        FRAC_PI_3 + 2.0 * std::f32::consts::PI / 3.0,
+        FRAC_PI_3 - 2.0 * std::f32::consts::PI / 3.0,
+    ] {
+        commands.spawn((
+            DirectionalLight {
+                illuminance: FILL_ILLUMINANCE,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, y_angle, -FRAC_PI_4, 0.0)),
+        ));
+    }
 
     ambient_light.brightness = 100.0;
 
