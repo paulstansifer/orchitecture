@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-use super::farmstead::{FarmsResource, GameClock, SurroundingsState};
+use super::farmstead::{run_market, FarmsResource, GameClock, SurroundingsState};
 
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
@@ -137,18 +137,23 @@ pub fn surroundings_ui_system(
     wall_grid: Res<crate::wall_grid::WallGrid>,
 ) {
     use crate::game_mode::GameMode;
-    use egui::{Color32, FontId, Pos2, Rect, Sense, Shape, Stroke};
+    use egui::{Color32, FontId, Pos2, Sense, Shape, Stroke};
 
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
+
+    // Compute circle_reveal_radius early; used both for fog and as the market radius.
+    let screen_rect = ctx.screen_rect();
+    let short_side = screen_rect.width().min(screen_rect.height());
+    let circle_reveal_radius = short_side * 0.45 / PIXELS_PER_UNIT;
 
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_build = false;
 
     crate::build_ui::resource_sidebar(ctx, &wall_grid);
 
-    // Clock panel
+    // ── Clock panel ───────────────────────────────────────────────────────────
     egui::Area::new(egui::Id::new("clock_panel"))
         .fixed_pos(egui::Pos2::new(8.0, 8.0))
         .show(ctx, |ui| {
@@ -168,18 +173,44 @@ pub fn surroundings_ui_system(
                     if ui.button("Advance Week").clicked() {
                         let new_month = clock.advance_week();
                         if new_month {
-                            let month_index = clock.month().saturating_sub(1);
                             for farm in &mut farms.farms {
-                                farm.accumulate_monthly(month_index);
+                                farm.accumulate_monthly();
                             }
+                            run_market(&mut *farms, circle_reveal_radius);
                         }
                     }
                 });
         });
 
+    // ── Player market goods panel ─────────────────────────────────────────────
+    let goods = farms.player_goods.uniform_totals();
+    if !goods.is_empty() {
+        egui::Area::new(egui::Id::new("player_goods_panel"))
+            .fixed_pos(egui::Pos2::new(8.0, 90.0))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(20, 20, 20, 200))
+                    .inner_margin(egui::Margin::same(8))
+                    .corner_radius(4.0)
+                    .show(ui, |ui| {
+                        ui.set_max_width(120.0);
+                        ui.label(
+                            egui::RichText::new("Market Goods")
+                                .color(Color32::from_gray(200))
+                                .font(FontId::proportional(11.0)),
+                        );
+                        for (res, qty) in &goods {
+                            ui.label(
+                                egui::RichText::new(format!("{}: {}", res.label(), qty))
+                                    .font(FontId::proportional(10.0))
+                                    .color(Color32::from_rgb(200, 180, 100)),
+                            );
+                        }
+                    });
+            });
+    }
+
     // Collect revealed farm indices and their screen centroids.
-    // Done with a shared borrow of farms so the CentralPanel closure doesn't
-    // conflict with the mutable borrow needed for the farm-panel Areas below.
     let mut revealed: Vec<(usize, egui::Pos2)> = Vec::new();
 
     egui::CentralPanel::default()
@@ -203,7 +234,7 @@ pub fn surroundings_ui_system(
             let circle_pos = farms.circle_pos;
             let expanded = panel_rect.expand(300.0);
 
-            // ── Pass 1: polygon fills (under fog) ─────────────────────────────────
+            // ── Pass 1: polygon fills (under fog) ─────────────────────────────
             for (i, farm) in farms.farms.iter().enumerate() {
                 let screen_pts: Vec<Pos2> =
                     farm.polygon.iter().map(|&p| map_to_screen(p)).collect();
@@ -215,14 +246,7 @@ pub fn surroundings_ui_system(
                 let stroke = Stroke::new(1.0, Color32::from_gray(40));
                 painter.add(Shape::convex_polygon(screen_pts, fill, stroke));
 
-                // Record centroid if this farm is revealed.
-                let n = farm.polygon.len() as f32;
-                let (sx, sy) = farm
-                    .polygon
-                    .iter()
-                    .fold((0.0_f32, 0.0_f32), |acc, p| (acc.0 + p.x, acc.1 + p.y));
-                let map_centroid = Vec2::new(sx / n, sy / n);
-
+                let map_centroid = farm.centroid();
                 if fog_alpha_at(map_centroid, circle_reveal_radius, &path) < REVEAL_THRESHOLD {
                     let centroid = map_to_screen(map_centroid);
                     if panel_rect.contains(centroid) {
@@ -231,7 +255,7 @@ pub fn surroundings_ui_system(
                 }
             }
 
-            // ── Fog-of-war mesh ───────────────────────────────────────────────────
+            // ── Fog-of-war mesh ───────────────────────────────────────────────
             let fog_mesh = build_fog_mesh(
                 panel_rect,
                 screen_centre,
@@ -241,7 +265,7 @@ pub fn surroundings_ui_system(
             );
             painter.add(egui::Shape::mesh(fog_mesh));
 
-            // ── Navigation circle (above fog) ─────────────────────────────────────
+            // ── Navigation circle (above fog) ─────────────────────────────────
             let cs = map_to_screen(circle_pos);
             painter.circle_filled(cs, CIRCLE_RADIUS, Color32::WHITE);
             painter.circle_stroke(cs, CIRCLE_RADIUS, Stroke::new(2.0, Color32::from_gray(40)));
@@ -268,11 +292,8 @@ pub fn surroundings_ui_system(
             }
         });
 
-    // ── Farm info panels (egui Areas, above the CentralPanel layer) ───────────
-    // Being on a higher layer means these capture mouse events before the
-    // CentralPanel's full-panel response, so checkboxes work correctly.
-    const PANEL_W: f32 = 88.0;
-    const BAR_W: f32 = PANEL_W - 8.0; // inner width minus padding
+    // ── Farm info panels ──────────────────────────────────────────────────────
+    const PANEL_W: f32 = 110.0;
 
     for (i, centroid) in revealed {
         let farm = &mut farms.farms[i];
@@ -288,59 +309,49 @@ pub fn surroundings_ui_system(
                         ui.set_max_width(PANEL_W);
 
                         ui.label(
+                            egui::RichText::new(format!("{:.0} ac", farm.area))
+                                .font(FontId::proportional(10.0))
+                                .color(Color32::from_gray(210)),
+                        );
+
+                        // Potato stockpile
+                        ui.label(
                             egui::RichText::new(format!(
-                                "{:.0}ac  {}f  ×{:.2}",
-                                farm.area, farm.farmers, farm.fertility
+                                "Potatoes: {}",
+                                farm.potato_stockpile
                             ))
-                            .font(FontId::proportional(10.0))
-                            .color(Color32::from_gray(210)),
+                            .font(FontId::proportional(9.0))
+                            .color(Color32::from_rgb(220, 210, 120)),
                         );
 
-                        // Surplus bar
-                        let (bar_rect, _) =
-                            ui.allocate_exact_size(egui::vec2(BAR_W, 6.0), egui::Sense::hover());
-                        let p = ui.painter();
-                        p.rect_filled(bar_rect, 0.0, Color32::from_gray(200));
-                        let surplus =
-                            farm.area * farm.fertility / (2.0 * farm.farmers as f32) - 1.0;
-                        let clamped = surplus.clamp(-0.3, 0.3);
-                        let cx = bar_rect.center().x;
-                        if clamped >= 0.0 {
-                            let fw = (clamped / 0.3) * (bar_rect.width() / 2.0);
-                            p.rect_filled(
-                                Rect::from_min_size(
-                                    egui::Pos2::new(cx, bar_rect.min.y),
-                                    egui::vec2(fw, bar_rect.height()),
-                                ),
-                                0.0,
-                                Color32::from_rgb(60, 160, 60),
-                            );
-                        } else {
-                            let fw = (-clamped / 0.3) * (bar_rect.width() / 2.0);
-                            p.rect_filled(
-                                Rect::from_min_size(
-                                    egui::Pos2::new(cx - fw, bar_rect.min.y),
-                                    egui::vec2(fw, bar_rect.height()),
-                                ),
-                                0.0,
-                                Color32::from_rgb(180, 60, 60),
-                            );
-                        }
-                        p.line_segment(
-                            [
-                                egui::Pos2::new(cx, bar_rect.min.y),
-                                egui::Pos2::new(cx, bar_rect.max.y),
-                            ],
-                            egui::Stroke::new(1.0, Color32::from_gray(80)),
+                        // Inedible resource stockpile
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{}: {}",
+                                farm.resource.label(),
+                                farm.inedible_stockpile
+                            ))
+                            .font(FontId::proportional(9.0))
+                            .color(Color32::from_rgb(160, 200, 140)),
                         );
 
-                        // Stockpile
-                        let qty = farm.stockpile_qty();
-                        if qty > 0 {
+                        // Wanted resource
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Wants {} {}",
+                                farm.want_max,
+                                farm.wanted_resource.label()
+                            ))
+                            .font(FontId::proportional(9.0))
+                            .color(Color32::from_rgb(140, 170, 220)),
+                        );
+
+                        // Boost (only shown when non-zero)
+                        if farm.boost > 0 {
                             ui.label(
-                                egui::RichText::new(format!("{}: {}", farm.resource.label(), qty))
+                                egui::RichText::new(format!("+{} boost", farm.boost))
                                     .font(FontId::proportional(9.0))
-                                    .color(Color32::from_rgb(200, 180, 100)),
+                                    .color(Color32::from_rgb(220, 160, 80)),
                             );
                         }
 

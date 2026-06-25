@@ -7,11 +7,11 @@ const NUM_SEEDS: usize = 200;
 const MAP_EXTENT: f32 = 200.0;
 pub const CLIP_BOUNDS: f32 = 300.0;
 // 200 seeds over a 400×400 map gives ~800 sq-units per cell on average;
-// this scale puts that average at ~6 acres (midpoint of the 2–12 range).
+// this scale puts that average at ~6 acres (midpoint of the 5–10 range).
 const ACRES_PER_UNIT_SQ: f32 = 0.0075;
 
+// Inedible farmable resources (potatoes are produced separately by all farms).
 const FARMABLE: &[UniformResource] = &[
-    UniformResource::Potato,
     UniformResource::Canvas,
     UniformResource::Thatch,
     UniformResource::Timber,
@@ -118,18 +118,25 @@ pub fn generate_farms(mut commands: Commands) {
         if polygon.is_empty() {
             continue;
         }
-        let area: f32 = (polygon_area(&polygon) * ACRES_PER_UNIT_SQ).clamp(2.0, 12.0);
+        let area: f32 = (polygon_area(&polygon) * ACRES_PER_UNIT_SQ).clamp(5.0, 10.0);
         let fertility: f32 = rng.random_range(0.75..1.25_f32);
-        let farmers = ((area * fertility / 1.8).floor() as u32).max(1);
-        let resource = FARMABLE[i % FARMABLE.len()];
+        let res_idx = i % FARMABLE.len();
+        let resource = FARMABLE[res_idx];
+        // wanted_resource is a different inedible resource
+        let wanted_offset = rng.random_range(1..FARMABLE.len());
+        let wanted_resource = FARMABLE[(res_idx + wanted_offset) % FARMABLE.len()];
+        let want_max = (area.round() as u32).max(3);
         farms.push(FarmData {
             seed,
             polygon,
             area,
             fertility,
-            farmers,
             resource,
-            stockpile: Inventory::new(1, 100.0),
+            wanted_resource,
+            want_max,
+            potato_stockpile: 0,
+            inedible_stockpile: 0,
+            boost: 0,
             invited: false,
         });
     }
@@ -152,5 +159,6 @@ pub fn generate_farms(mut commands: Commands) {
         farms,
         circle_pos,
         path,
+        player_goods: Inventory::new(8, 10000.0),
     });
 }
