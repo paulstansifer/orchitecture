@@ -3,7 +3,10 @@
     * Sort out resource requirements 
   * More architectural details?
   * Probably pull some things out of build.rs
-
+  * More raw goods:
+    * Lime (quarried?) 
+  * Finished goods:
+    * Baskets, barrels, candles, clothes
 # Zoomed-out mode:
   * Create a new mode!
   * Add farms
