@@ -6,6 +6,7 @@ use bevy::prelude::*;
 
 use crate::sparse3d::{Slot, Sparse3D};
 use crate::wall_grid::{Cell, WallGrid};
+use crate::world::LightingMode;
 
 const GRID_PERIOD: i32 = 5;
 const COVERAGE_RADIUS: i32 = 3;
@@ -196,10 +197,17 @@ pub fn update_ceiling_lights(
     mut commands: Commands,
     wall_grid: Res<WallGrid>,
     existing: Query<Entity, With<CeilingLight>>,
+    lighting_mode: Res<LightingMode>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
     }
+
+    let visibility = if *lighting_mode == LightingMode::CeilingLights {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
 
     for pos in compute_ceiling_lights(&wall_grid.contents) {
         // SpotLight pointing straight down: the exterior top of the ceiling tile is
@@ -218,6 +226,7 @@ pub fn update_ceiling_lights(
             // looking_to(NEG_Y, X) makes the spotlight's local −Z face world −Y (downward).
             Transform::from_translation(pos).looking_to(Vec3::NEG_Y, Vec3::X),
             CeilingLight,
+            visibility,
         ));
     }
 }
