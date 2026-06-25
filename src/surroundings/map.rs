@@ -155,9 +155,9 @@ pub fn generate_farms(mut commands: Commands) {
         })
         .collect();
 
-    // Relax seeds toward their Voronoi centroids so cell sizes are naturally
-    // closer to the 5–10 acre target before clamping.
-    lloyd_relax(&mut seeds, 5);
+    // One Lloyd step removes degenerate slivers without killing size variance;
+    // more steps converge toward equal-area cells (~6 ac each), which is too uniform.
+    lloyd_relax(&mut seeds, 1);
 
     // Phase 1: compute Voronoi cells and areas, then sort by distance from
     // the map centre so resource assignment radiates outward.
