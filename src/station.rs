@@ -1,7 +1,7 @@
 use crate::resource::{Approximation, Inventory, UniformResource};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::StructureList;
-use crate::wall_grid::{apply_changes, Cell, Material, WallGrid};
+use crate::wall_grid::{apply_changes, AssembledWorld, Cell, ConstructedWorld, Material};
 use bevy::math::IVec3;
 use bevy::prelude::{Commands, Res, ResMut};
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ fn manhattan2d(a: IVec3, b: IVec3) -> i32 {
 
 /// All furniture cubes named `name` within `STATION_DIST` (2D Manhattan, same
 /// y-layer) of `origin`. Includes `origin` itself when it qualifies.
-fn furniture_of_name_near(wall_grid: &WallGrid, origin: IVec3, name: &str) -> Vec<IVec3> {
+fn furniture_of_name_near(cw: &ConstructedWorld, origin: IVec3, name: &str) -> Vec<IVec3> {
     let mut found = Vec::new();
     for dx in -STATION_DIST..=STATION_DIST {
         let zspan = STATION_DIST - dx.abs();
@@ -69,8 +69,8 @@ fn furniture_of_name_near(wall_grid: &WallGrid, origin: IVec3, name: &str) -> Ve
                 cube,
                 slot: Slot::Room,
             };
-            if let Some(cell) = wall_grid.contents.get(loc) {
-                let info = &wall_grid.structures[cell.id.as_usize()];
+            if let Some(cell) = cw.contents.get(loc) {
+                let info = &cw.structures[cell.id.as_usize()];
                 if info.furniture && info.name == name {
                     found.push(cube);
                 }
@@ -81,37 +81,37 @@ fn furniture_of_name_near(wall_grid: &WallGrid, origin: IVec3, name: &str) -> Ve
 }
 
 /// True if `core` has at least `min` of every required structure within range.
-fn requirements_met(wall_grid: &WallGrid, core: IVec3, station: &StationInfo) -> bool {
-    station.requirements.iter().all(|req| {
-        furniture_of_name_near(wall_grid, core, &req.structure).len() >= req.min as usize
-    })
+fn requirements_met(cw: &ConstructedWorld, core: IVec3, station: &StationInfo) -> bool {
+    station
+        .requirements
+        .iter()
+        .all(|req| furniture_of_name_near(cw, core, &req.structure).len() >= req.min as usize)
 }
 
 /// Choose the core structure for `station_idx` nearest to the clicked `cube`
 /// (the cube itself preferred) whose surroundings satisfy every requirement.
-fn choose_core(wall_grid: &WallGrid, cube: IVec3, station_idx: usize) -> Option<IVec3> {
-    let station = &wall_grid.stations[station_idx];
+fn choose_core(cw: &ConstructedWorld, cube: IVec3, station_idx: usize) -> Option<IVec3> {
+    let station = &cw.stations[station_idx];
     let core_name = &station.requirements[0].structure;
-    let mut cores = furniture_of_name_near(wall_grid, cube, core_name);
+    let mut cores = furniture_of_name_near(cw, cube, core_name);
     cores.sort_by_key(|c| (*c != cube, manhattan2d(*c, cube)));
     cores
         .into_iter()
-        .find(|core| requirements_met(wall_grid, *core, station))
+        .find(|core| requirements_met(cw, *core, station))
 }
 
-/// Stations (indices into `wall_grid.stations`) that could be formed around the
+/// Stations (indices into `cw.stations`) that could be formed around the
 /// furniture at `cube`.
-pub fn valid_stations_for(wall_grid: &WallGrid, cube: IVec3) -> Vec<usize> {
-    (0..wall_grid.stations.len())
-        .filter(|&idx| choose_core(wall_grid, cube, idx).is_some())
+pub fn valid_stations_for(cw: &ConstructedWorld, cube: IVec3) -> Vec<usize> {
+    (0..cw.stations.len())
+        .filter(|&idx| choose_core(cw, cube, idx).is_some())
         .collect()
 }
 
-/// The placed-station index (into `wall_grid.placed_stations`) that owns the
+/// The placed-station index (into `cw.placed_stations`) that owns the
 /// furniture at `cube`, if any.
-pub fn station_index_at(wall_grid: &WallGrid, cube: IVec3) -> Option<usize> {
-    wall_grid
-        .placed_stations
+pub fn station_index_at(cw: &ConstructedWorld, cube: IVec3) -> Option<usize> {
+    cw.placed_stations
         .iter()
         .position(|ps| ps.structure_locations.contains(&cube))
 }
@@ -130,12 +130,12 @@ pub struct AssignmentPlan {
 /// Plan assigning structures to a new instance of `station_idx` around `cube`.
 /// Prefers unassigned structures; only pulls from other stations to reach `min`.
 pub fn plan_assignment(
-    wall_grid: &WallGrid,
+    cw: &ConstructedWorld,
     cube: IVec3,
     station_idx: usize,
 ) -> Option<AssignmentPlan> {
-    let core = choose_core(wall_grid, cube, station_idx)?;
-    let station = &wall_grid.stations[station_idx];
+    let core = choose_core(cw, cube, station_idx)?;
+    let station = &cw.stations[station_idx];
 
     let mut chosen: Vec<IVec3> = Vec::new();
     // For each donor station, which of its locations we'd take.
@@ -150,11 +150,11 @@ pub fn plan_assignment(
         // already owned by another station, keeping each owner's index.
         let mut free: Vec<IVec3> = Vec::new();
         let mut assigned: Vec<(IVec3, usize)> = Vec::new();
-        for c in furniture_of_name_near(wall_grid, core, &req.structure) {
+        for c in furniture_of_name_near(cw, core, &req.structure) {
             if chosen.contains(&c) {
                 continue;
             }
-            match station_index_at(wall_grid, c) {
+            match station_index_at(cw, c) {
                 None => free.push(c),
                 Some(owner) => assigned.push((c, owner)),
             }
@@ -176,20 +176,19 @@ pub fn plan_assignment(
     // longer meets some minimum.
     let mut destroy = Vec::new();
     for (&ps_idx, pulled_locs) in &pulled_from {
-        let ps = &wall_grid.placed_stations[ps_idx];
-        let def = &wall_grid.stations[ps.station];
+        let ps = &cw.placed_stations[ps_idx];
+        let def = &cw.stations[ps.station];
         let still_meets = def.requirements.iter().all(|req| {
             ps.structure_locations
                 .iter()
                 .filter(|l| !pulled_locs.contains(l))
                 .filter(|l| {
-                    wall_grid
-                        .contents
+                    cw.contents
                         .get(SlotCoord {
                             cube: **l,
                             slot: Slot::Room,
                         })
-                        .map(|c| wall_grid.structures[c.id.as_usize()].name == req.structure)
+                        .map(|c| cw.structures[c.id.as_usize()].name == req.structure)
                         .unwrap_or(false)
                 })
                 .count()
@@ -211,24 +210,24 @@ pub fn plan_assignment(
 }
 
 /// Commit an assignment: create the station, pulling/destroying as planned.
-pub fn commit_assignment(wall_grid: &mut WallGrid, cube: IVec3, station_idx: usize) {
-    let Some(plan) = plan_assignment(wall_grid, cube, station_idx) else {
+pub fn commit_assignment(cw: &mut ConstructedWorld, cube: IVec3, station_idx: usize) {
+    let Some(plan) = plan_assignment(cw, cube, station_idx) else {
         return;
     };
 
     // Take chosen structures away from any station currently holding them.
-    for ps in &mut wall_grid.placed_stations {
+    for ps in &mut cw.placed_stations {
         ps.structure_locations.retain(|l| !plan.chosen.contains(l));
     }
 
     // Destroy donor stations that fell below a minimum. `plan.destroy` is sorted
     // descending so earlier indices stay valid. Their inventory is discarded.
     for idx in &plan.destroy {
-        wall_grid.placed_stations.remove(*idx);
+        cw.placed_stations.remove(*idx);
     }
 
     let max_volume = 20.0 * plan.chosen.len() as f32;
-    wall_grid.placed_stations.push(ParticularStation {
+    cw.placed_stations.push(ParticularStation {
         station: station_idx,
         structure_locations: plan.chosen,
         contents: Inventory::new(8, max_volume),
@@ -236,9 +235,9 @@ pub fn commit_assignment(wall_grid: &mut WallGrid, cube: IVec3, station_idx: usi
 }
 
 /// Remove a placed station, discarding its inventory contents.
-pub fn unassign_station(wall_grid: &mut WallGrid, idx: usize) {
-    if idx < wall_grid.placed_stations.len() {
-        wall_grid.placed_stations.remove(idx);
+pub fn unassign_station(cw: &mut ConstructedWorld, idx: usize) {
+    if idx < cw.placed_stations.len() {
+        cw.placed_stations.remove(idx);
     }
 }
 
@@ -255,12 +254,13 @@ const NUM_BINS: usize = 5;
 pub fn spawn_initial_station(
     mut commands: Commands,
     structure_list: Res<StructureList>,
-    mut wall_grid: ResMut<WallGrid>,
+    mut constructed: ResMut<ConstructedWorld>,
+    mut assembled: ResMut<AssembledWorld>,
 ) {
-    let Some(bin_id) = wall_grid.find_structure_by_name("bin") else {
+    let Some(bin_id) = constructed.find_structure_by_name("bin") else {
         return;
     };
-    let Some(storage_room_index) = wall_grid
+    let Some(storage_room_index) = constructed
         .stations
         .iter()
         .position(|s| s.name == "storage room")
@@ -293,10 +293,10 @@ pub fn spawn_initial_station(
             evaluation: None,
             material: Material::Planks,
         };
-        wall_grid.contents.set(loc, cell.clone());
+        constructed.contents.set(loc, cell.clone());
         changes.push((loc, Some(cell)));
     }
-    apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
+    apply_changes(&mut commands, &mut assembled, &structure_list, changes);
 
     // Stock the inventory and register the station.
     let mut inv = Inventory::new(8, 20.0 * NUM_BINS as f32);
@@ -304,7 +304,7 @@ pub fn spawn_initial_station(
     inv.add_uniform(UniformResource::Timber, 20);
     inv.add_uniform(UniformResource::Canvas, 10);
 
-    wall_grid.placed_stations.push(ParticularStation {
+    constructed.placed_stations.push(ParticularStation {
         station: storage_room_index,
         structure_locations: chosen,
         contents: inv,
@@ -346,13 +346,13 @@ mod tests {
         }
     }
 
-    fn grid_with_bins(def: StationInfo, bins: &[IVec3]) -> WallGrid {
-        let mut grid = WallGrid::new(bin_structures());
-        grid.road_forbidden_zone = false;
-        grid.stations = vec![def];
-        let bin_id = grid.find_structure_by_name("bin").unwrap();
+    fn grid_with_bins(def: StationInfo, bins: &[IVec3]) -> ConstructedWorld {
+        let mut cw = ConstructedWorld::new(bin_structures());
+        cw.road_forbidden_zone = false;
+        cw.stations = vec![def];
+        let bin_id = cw.find_structure_by_name("bin").unwrap();
         for cube in bins {
-            grid.contents.set(
+            cw.contents.set(
                 SlotCoord {
                     cube: *cube,
                     slot: Slot::Room,
@@ -365,7 +365,7 @@ mod tests {
                 },
             );
         }
-        grid
+        cw
     }
 
     fn b(x: i32, z: i32) -> IVec3 {

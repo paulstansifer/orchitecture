@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 use bevy_file_dialog::prelude::*;
 
+use crate::construction::{construct, load_from_offline};
 use crate::cutaway::CutawayMode;
 use crate::game_mode::GameMode;
 use crate::input::BuildState;
@@ -9,7 +10,8 @@ use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
 use crate::structure::StructureList;
 use crate::wall_grid::{
-    apply_changes, apply_proposal_changes, Material, ProposalOverlayAssets, WallGrid,
+    apply_changes, apply_proposal_changes, AssembledWorld, ConstructedWorld, Material,
+    ProposalOverlayAssets, ProposedWorld, ViewableWorld,
 };
 
 /// Maps bundled at compile time; always available on all platforms.
@@ -167,8 +169,8 @@ pub fn discover_user_files(mut ui_state: ResMut<UiState>) {
 }
 
 /// Despawns all proposal preview entities and drains `proposal_entities`.
-fn clear_proposal_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
-    for (_, entities) in wall_grid.proposal_entities.drain() {
+fn clear_proposal_entities(commands: &mut Commands, assembled: &mut AssembledWorld) {
+    for (_, entities) in assembled.proposal_entities.drain() {
         for entity in entities {
             commands.entity(entity).despawn();
         }
@@ -176,8 +178,8 @@ fn clear_proposal_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
 }
 
 /// Despawns all persistent proposed-cut entities and drains `proposed_cut_entities`.
-fn clear_proposed_cut_entities(commands: &mut Commands, wall_grid: &mut WallGrid) {
-    for (_, entities) in wall_grid.proposed_cut_entities.drain() {
+fn clear_proposed_cut_entities(commands: &mut Commands, viewable: &mut ViewableWorld) {
+    for (_, entities) in viewable.proposed_cut_entities.drain() {
         for entity in entities {
             commands.entity(entity).despawn();
         }
@@ -196,15 +198,18 @@ pub fn handle_file_load(
     mut ev_loaded: MessageReader<DialogFileLoaded<LoadDialog>>,
     mut commands: Commands,
     structure_list: Res<StructureList>,
-    mut wall_grid: ResMut<WallGrid>,
+    mut constructed: ResMut<ConstructedWorld>,
+    mut pending: ResMut<ProposedWorld>,
+    mut assembled: ResMut<AssembledWorld>,
+    mut viewable: ResMut<ViewableWorld>,
 ) {
     for ev in ev_loaded.read() {
         if let Ok(content) = std::str::from_utf8(&ev.contents) {
-            let new_contents = serialization::load_from_str(content, &wall_grid.structures);
-            clear_proposal_entities(&mut commands, &mut wall_grid);
-            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
-            let changes = wall_grid.load_from_offline(new_contents);
-            apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
+            let new_contents = serialization::load_from_str(content, &constructed.structures);
+            clear_proposal_entities(&mut commands, &mut assembled);
+            clear_proposed_cut_entities(&mut commands, &mut viewable);
+            let changes = load_from_offline(&mut constructed, &mut pending, new_contents);
+            apply_changes(&mut commands, &mut assembled, &structure_list, changes);
         }
     }
 }
@@ -213,7 +218,10 @@ pub fn build_ui_system(
     mut commands: Commands,
     mut contexts: EguiContexts,
     structure_list: Res<StructureList>,
-    mut wall_grid: ResMut<WallGrid>,
+    mut constructed: ResMut<ConstructedWorld>,
+    mut pending: ResMut<ProposedWorld>,
+    mut assembled: ResMut<AssembledWorld>,
+    mut viewable: ResMut<ViewableWorld>,
     mut build_state: ResMut<BuildState>,
     mut ui_state: ResMut<UiState>,
     overlay_assets: Res<ProposalOverlayAssets>,
@@ -247,15 +255,16 @@ pub fn build_ui_system(
             ui.checkbox(&mut sandbox.enabled, "Sandbox");
             if sandbox.enabled && !was_sandbox {
                 // Switching into sandbox commits any pending proposals immediately.
-                let real_changes = wall_grid.construct();
-                clear_proposal_entities(&mut commands, &mut wall_grid);
-                clear_proposed_cut_entities(&mut commands, &mut wall_grid);
-                apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
+                let real_changes = construct(&mut constructed, &mut pending);
+                clear_proposal_entities(&mut commands, &mut assembled);
+                clear_proposed_cut_entities(&mut commands, &mut viewable);
+                apply_changes(&mut commands, &mut assembled, &structure_list, real_changes);
             }
 
             ui.separator();
             if ui.button("Save").clicked() {
-                let bytes = serialization::serialize(&wall_grid.contents, &wall_grid.structures);
+                let bytes =
+                    serialization::serialize(&constructed.contents, &constructed.structures);
                 commands
                     .dialog()
                     .add_filter("Orchitecture Map", &["txt"])
@@ -321,10 +330,10 @@ pub fn build_ui_system(
                     if let Ok(idx) = ui_state.example_idx.parse::<usize>() {
                         let examples = crate::example_structures::make_structures();
                         if let Some(map) = examples.into_iter().nth(idx) {
-                            clear_proposal_entities(&mut commands, &mut wall_grid);
-                            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
-                            let changes = wall_grid.load_from_offline(map);
-                            apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
+                            clear_proposal_entities(&mut commands, &mut assembled);
+                            clear_proposed_cut_entities(&mut commands, &mut viewable);
+                            let changes = load_from_offline(&mut constructed, &mut pending, map);
+                            apply_changes(&mut commands, &mut assembled, &structure_list, changes);
                         }
                     }
                 }
@@ -335,21 +344,24 @@ pub fn build_ui_system(
     // A dropdown click loads the selected map immediately on all platforms.
     if let Some(name) = dropdown_load {
         let new_contents_opt = if let Some(content) = find_bundled(&name) {
-            Some(serialization::load_from_str(content, &wall_grid.structures))
+            Some(serialization::load_from_str(
+                content,
+                &constructed.structures,
+            ))
         } else {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let path = std::path::PathBuf::from(crate::paths::USER_DIR).join(&name);
-                Some(serialization::load(&path, &wall_grid.structures))
+                Some(serialization::load(&path, &constructed.structures))
             }
             #[cfg(target_arch = "wasm32")]
             None
         };
         if let Some(new_contents) = new_contents_opt {
-            clear_proposal_entities(&mut commands, &mut wall_grid);
-            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
-            let changes = wall_grid.load_from_offline(new_contents);
-            apply_changes(&mut commands, &mut wall_grid, &structure_list, changes);
+            clear_proposal_entities(&mut commands, &mut assembled);
+            clear_proposed_cut_entities(&mut commands, &mut viewable);
+            let changes = load_from_offline(&mut constructed, &mut pending, new_contents);
+            apply_changes(&mut commands, &mut assembled, &structure_list, changes);
         }
     }
 
@@ -373,22 +385,22 @@ pub fn build_ui_system(
                         next_panel = Some(LeftPanel::Build);
                     }
                     ui.separator();
-                    match crate::station::station_index_at(&wall_grid, cube) {
+                    match crate::station::station_index_at(&constructed, cube) {
                         Some(idx) => {
-                            let ps = &wall_grid.placed_stations[idx];
-                            let def = &wall_grid.stations[ps.station];
+                            let ps = &constructed.placed_stations[idx];
+                            let def = &constructed.stations[ps.station];
                             ui.label(format!("Name: {}", def.name));
 
                             let mut counts: std::collections::BTreeMap<String, usize> =
                                 std::collections::BTreeMap::new();
                             for loc in &ps.structure_locations {
-                                if let Some(cell) = wall_grid.contents.get(SlotCoord {
+                                if let Some(cell) = constructed.contents.get(SlotCoord {
                                     cube: *loc,
                                     slot: Slot::Room,
                                 }) {
                                     *counts
                                         .entry(
-                                            wall_grid.structures[cell.id.as_usize()].name.clone(),
+                                            constructed.structures[cell.id.as_usize()].name.clone(),
                                         )
                                         .or_default() += 1;
                                 }
@@ -421,9 +433,9 @@ pub fn build_ui_system(
                         None => {
                             // A `Some` plan is exactly the validity test, so one pass over
                             // the stations both filters and yields the "Pulls N" count.
-                            let plans: Vec<(usize, usize)> = (0..wall_grid.stations.len())
+                            let plans: Vec<(usize, usize)> = (0..constructed.stations.len())
                                 .filter_map(|s_idx| {
-                                    crate::station::plan_assignment(&wall_grid, cube, s_idx)
+                                    crate::station::plan_assignment(&constructed, cube, s_idx)
                                         .map(|plan| (s_idx, plan.pulled))
                                 })
                                 .collect();
@@ -433,7 +445,7 @@ pub fn build_ui_system(
                                 ui.label("Create station:");
                             }
                             for (s_idx, pulled) in plans {
-                                if ui.button(&wall_grid.stations[s_idx].name).clicked() {
+                                if ui.button(&constructed.stations[s_idx].name).clicked() {
                                     assign = Some((cube, s_idx));
                                 }
                                 if pulled > 0 {
@@ -453,7 +465,7 @@ pub fn build_ui_system(
                     ui.heading("Orchitecture");
                     ui.separator();
                     ui.label("Structure:");
-                    let names = wall_grid.get_structure_names();
+                    let names = constructed.get_structure_names();
                     for (i, name) in names.iter().enumerate() {
                         let selected = build_state.selected_structure == i;
                         let label = if i < 9 {
@@ -486,10 +498,10 @@ pub fn build_ui_system(
                         ui.label(format!("Interest:  {:.3}", interest));
                     }
 
-                    let n = wall_grid.num_proposed_changes();
+                    let n = pending.num_changes();
                     if n > 0 {
                         ui.separator();
-                        let months = wall_grid.months_for_construction();
+                        let months = pending.months_for_construction();
                         let months_label = if months == 1 {
                             "month".to_string()
                         } else {
@@ -499,38 +511,32 @@ pub fn build_ui_system(
                             .button(format!("Construct! ({months} {months_label})"))
                             .clicked()
                         {
-                            // commit() writes to contents (triggers ceiling-light recompute)
-                            let real_changes = wall_grid.construct();
-                            clear_proposal_entities(&mut commands, &mut wall_grid);
-                            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
+                            let real_changes = construct(&mut constructed, &mut pending);
+                            clear_proposal_entities(&mut commands, &mut assembled);
+                            clear_proposed_cut_entities(&mut commands, &mut viewable);
                             apply_changes(
                                 &mut commands,
-                                &mut wall_grid,
+                                &mut assembled,
                                 &structure_list,
                                 real_changes,
                             );
                         }
                         if ui.button("Reset").clicked() {
-                            // Reset clears proposals without committing; bypass detection so
-                            // ceiling lights don't recompute.
-                            let deltas = {
-                                let wg = wall_grid.bypass_change_detection();
-                                let locs: Vec<_> =
-                                    wg.proposed_changes.iter().map(|(l, _)| l).collect();
-                                wg.reset_proposals();
-                                locs.into_iter()
-                                    .map(|loc| (loc, crate::wall_grid::ProposalView::None))
-                                    .collect::<Vec<_>>()
-                            };
-                            // Despawn all proposal entities (bypassing is fine since we already have mut wg above)
+                            let locs: Vec<_> =
+                                pending.proposed_changes.iter().map(|(l, _)| l).collect();
+                            pending.reset();
+                            let deltas: Vec<_> = locs
+                                .into_iter()
+                                .map(|loc| (loc, crate::wall_grid::ProposalView::None))
+                                .collect();
                             apply_proposal_changes(
                                 &mut commands,
-                                &mut wall_grid,
+                                &mut assembled,
                                 &structure_list,
                                 &overlay_assets,
                                 deltas,
                             );
-                            clear_proposed_cut_entities(&mut commands, &mut wall_grid);
+                            clear_proposed_cut_entities(&mut commands, &mut viewable);
                         }
                     }
                 }
@@ -539,10 +545,10 @@ pub fn build_ui_system(
 
     // Apply deferred station mutations now that the panel closure has ended.
     if let Some((cube, s_idx)) = assign {
-        crate::station::commit_assignment(&mut wall_grid, cube, s_idx);
+        crate::station::commit_assignment(&mut constructed, cube, s_idx);
     }
     if let Some(idx) = unassign {
-        crate::station::unassign_station(&mut wall_grid, idx);
+        crate::station::unassign_station(&mut constructed, idx);
     }
     if let Some(p) = next_panel {
         ui_state.left_panel = p;
@@ -551,7 +557,7 @@ pub fn build_ui_system(
     // the overlay meshes every frame.
     station_highlight.set_if_neq(crate::wall_grid::StationHighlight(highlight));
 
-    if let Some(mode) = resource_sidebar(ctx, &wall_grid) {
+    if let Some(mode) = resource_sidebar(ctx, &constructed) {
         next_game_mode.set(mode);
     }
 }
@@ -559,14 +565,14 @@ pub fn build_ui_system(
 /// Totals of all resources across every storage station, sorted for display.
 /// Returns `(resource, total_quantity, was_any_amount_rounded_down)`.
 pub(crate) fn station_resource_totals(
-    wall_grid: &WallGrid,
+    constructed: &ConstructedWorld,
 ) -> Vec<(crate::resource::UniformResource, u32, bool)> {
     use crate::resource::{round, UniformResource};
     use std::collections::HashMap;
 
     let mut map: HashMap<UniformResource, (u32, bool)> = HashMap::new();
-    for station in &wall_grid.placed_stations {
-        let Some(info) = wall_grid.stations.get(station.station) else {
+    for station in &constructed.placed_stations {
+        let Some(info) = constructed.stations.get(station.station) else {
             continue;
         };
         let Some(spec) = &info.storage else {
@@ -588,8 +594,11 @@ pub(crate) fn station_resource_totals(
 /// with mode-switch buttons at the bottom.
 ///
 /// Returns `Some(mode)` if a mode button was clicked, `None` otherwise.
-pub(crate) fn resource_sidebar(ctx: &egui::Context, wall_grid: &WallGrid) -> Option<GameMode> {
-    let totals = station_resource_totals(wall_grid);
+pub(crate) fn resource_sidebar(
+    ctx: &egui::Context,
+    constructed: &ConstructedWorld,
+) -> Option<GameMode> {
+    let totals = station_resource_totals(constructed);
     let mut goto: Option<GameMode> = None;
     egui::SidePanel::right("resources")
         .min_width(120.0)

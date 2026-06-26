@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{Structure, StructureList};
-use crate::wall_grid::{Cell, WallGrid};
+use crate::wall_grid::{Cell, ConstructedWorld};
 
 #[allow(dead_code)]
 const GRID_PERIOD: i32 = 5;
@@ -111,10 +111,10 @@ fn compute_window_lights(contents: &Sparse3D<Cell>, structures: &[Structure]) ->
 }
 
 /// Bevy system: despawns and respawns window-based radiosity spotlights.
-/// Runs when WallGrid changes.
+/// Runs when ConstructedWorld changes.
 pub fn update_window_lights(
     mut commands: Commands,
-    wall_grid: Res<WallGrid>,
+    constructed: Res<ConstructedWorld>,
     structure_list: Res<StructureList>,
     existing: Query<Entity, With<WindowLight>>,
 ) {
@@ -122,7 +122,8 @@ pub fn update_window_lights(
         commands.entity(entity).despawn();
     }
 
-    for (pos, look_dir) in compute_window_lights(&wall_grid.contents, &structure_list.structures) {
+    for (pos, look_dir) in compute_window_lights(&constructed.contents, &structure_list.structures)
+    {
         commands.spawn((
             SpotLight {
                 color: Color::srgb(0.95, 0.95, 0.9),
@@ -316,14 +317,14 @@ fn bbox(tiles: &HashSet<(i32, i32)>) -> (i32, i32, i32, i32) {
 #[allow(dead_code)]
 pub fn update_ceiling_lights(
     mut commands: Commands,
-    wall_grid: Res<WallGrid>,
+    constructed: Res<ConstructedWorld>,
     existing: Query<Entity, With<CeilingLight>>,
 ) {
     for entity in &existing {
         commands.entity(entity).despawn();
     }
 
-    for pos in compute_ceiling_lights(&wall_grid.contents) {
+    for pos in compute_ceiling_lights(&constructed.contents) {
         // SpotLight pointing straight down: the exterior top of the ceiling tile is
         // above the light and therefore outside the cone, so it receives no illumination.
         commands.spawn((

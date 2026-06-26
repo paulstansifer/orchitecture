@@ -3,6 +3,7 @@ use std::f32::consts::TAU;
 
 #[cfg(autotile_matching)]
 use crate::autotile::AutotileResult;
+use bevy::ecs::system::SystemParam;
 use bevy::math::{IVec3, Quat, Vec3};
 use bevy::prelude::{
     AlphaMode, Assets, Color, Commands, Component, DetectChanges, Entity, Image, Mesh, Mesh3d,
@@ -247,56 +248,28 @@ pub struct ProposalOverlayAssets {
 
 use bevy::asset::Handle;
 
+/// Committed, authoritative world state. Change detection on this resource
+/// triggers GI recomputation.
 #[derive(Resource)]
-pub struct WallGrid {
+pub struct ConstructedWorld {
     pub contents: Sparse3D<Cell>,
-    /// Proposed changes not yet committed; does not affect shadows or ceiling lights.
-    pub proposed_changes: Sparse3D<Proposal>,
-    /// Entities spawned for each placed (real) cell (may be multiple for autotile cells).
-    pub cell_entities: HashMap<SlotCoord, Vec<Entity>>,
-    /// Last-rendered autotile results per location (one per matching rule), for change detection.
-    pub autotile_results: HashMap<SlotCoord, Vec<crate::autotile::AutotileResult>>,
-    /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
-    pub proposal_entities: HashMap<SlotCoord, Vec<Entity>>,
-    /// Persistent cut entities for the y-cut cutaway layer of real cells; keyed by
-    /// location with the structure they were built for, managed by diff so they live
-    /// long enough to be recolored by material.
-    pub cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
-    /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
-    pub proposed_cut_entities: HashMap<SlotCoord, Vec<Entity>>,
-    pub(crate) undo_record: Vec<UndoRecord>,
-    /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
-    pub(crate) redo_record: Vec<UndoRecord>,
     /// Stations placed in the world.
     pub placed_stations: Vec<crate::station::ParticularStation>,
     pub road_forbidden_zone: bool,
-    /// Last-rendered autotile results per proposed-addition location, for change detection.
-    #[cfg(autotile_matching)]
-    pub proposal_autotile_results: HashMap<SlotCoord, Vec<AutotileResult>>,
     /// Duplicated from the `Res<>` for simplicity:
     pub structures: Vec<StructureInfo>,
     /// Duplicated from the `Res<>` for simplicity:
     pub stations: Vec<crate::station::StationInfo>,
 }
 
-impl WallGrid {
+impl ConstructedWorld {
     pub fn new(structures: Vec<StructureInfo>) -> Self {
-        WallGrid {
+        ConstructedWorld {
             structures,
             contents: Sparse3D::new(),
-            proposed_changes: Sparse3D::new(),
-            cell_entities: HashMap::new(),
-            autotile_results: HashMap::new(),
-            proposal_entities: HashMap::new(),
-            cut_entities: HashMap::new(),
-            proposed_cut_entities: HashMap::new(),
-            undo_record: Vec::new(),
-            redo_record: Vec::new(),
             stations: Vec::new(),
             placed_stations: Vec::new(),
             road_forbidden_zone: true,
-            #[cfg(autotile_matching)]
-            proposal_autotile_results: HashMap::new(),
         }
     }
 
@@ -315,51 +288,156 @@ impl WallGrid {
             .map(|idx| StructureId(idx as u32))
     }
 
-    /// Returns `(real, proposed_add)`:
-    /// - `real`: the cell in `contents`, if any (present even under a `Proposal::Remove`).
-    /// - `proposed_add`: the proposed cell only when it is an addition with no real cell beneath it.
-    pub fn get_real_and_proposed(
-        &self,
-        loc: impl Into<SlotCoord>,
-    ) -> (Option<&Cell>, Option<&Cell>) {
-        let loc: SlotCoord = loc.into();
-        let real = self.contents.get(loc);
-        let proposed_add = match self.proposed_changes.get(loc) {
-            Some(Proposal::Place(cell)) if real.is_none() => Some(cell),
-            _ => None,
-        };
-        (real, proposed_add)
+    pub fn replace_contents(
+        &mut self,
+        new_contents: Sparse3D<Cell>,
+    ) -> Vec<(SlotCoord, Option<Cell>)> {
+        let mut changes: Vec<(SlotCoord, Option<Cell>)> = Vec::new();
+        for (loc, _) in self.contents.iter() {
+            changes.push((loc, None));
+        }
+        for (loc, cell) in new_contents.iter() {
+            changes.push((loc, Some(cell.clone())));
+        }
+        self.contents = new_contents;
+        changes
     }
+}
 
-    /// If both, returns `real`.
-    pub fn get_real_or_proposed(&self, loc: impl Into<SlotCoord>) -> Option<&Cell> {
-        let (real, proposed) = self.get_real_and_proposed(loc);
-        real.or(proposed)
-    }
+/// Proposed edits not yet committed via Construct!. Mutating this does NOT
+/// trigger GI recomputation.
+#[derive(Resource)]
+pub struct ProposedWorld {
+    pub proposed_changes: Sparse3D<Proposal>,
+    pub(crate) undo_record: Vec<UndoRecord>,
+    /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
+    pub(crate) redo_record: Vec<UndoRecord>,
+}
 
-    /// If both, returns `real`.
-    pub fn get_proposed_or_real(&self, loc: impl Into<SlotCoord>) -> Option<&Cell> {
-        let (real, proposed) = self.get_real_and_proposed(loc);
-        proposed.or(real)
-    }
-
-    /// The cell the user currently wants at `loc`: the proposed state if one
-    /// exists (`Place` → that cell, `Remove` → empty), otherwise the real cell.
-    pub fn desired(&self, loc: impl Into<SlotCoord>) -> Option<Cell> {
-        let loc: SlotCoord = loc.into();
-        match self.proposed_changes.get(loc) {
-            Some(Proposal::Place(cell)) => Some(cell.clone()),
-            Some(Proposal::Remove) => None,
-            None => self.contents.get(loc).cloned(),
+impl ProposedWorld {
+    pub fn new() -> Self {
+        ProposedWorld {
+            proposed_changes: Sparse3D::new(),
+            undo_record: Vec::new(),
+            redo_record: Vec::new(),
         }
     }
 
-    pub fn num_proposed_changes(&self) -> usize {
+    pub fn num_changes(&self) -> usize {
         self.proposed_changes.iter().count()
     }
 
     pub fn months_for_construction(&self) -> usize {
-        (self.num_proposed_changes() + 79) / 80
+        (self.num_changes() + 79) / 80
+    }
+}
+
+/// Autotile-generated ECS entities for both real and proposed cells.
+#[derive(Resource)]
+pub struct AssembledWorld {
+    /// Entities spawned for each placed (real) cell (may be multiple for autotile cells).
+    pub cell_entities: HashMap<SlotCoord, Vec<Entity>>,
+    /// Last-rendered autotile results per location (one per matching rule), for change detection.
+    pub autotile_results: HashMap<SlotCoord, Vec<crate::autotile::AutotileResult>>,
+    /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
+    pub proposal_entities: HashMap<SlotCoord, Vec<Entity>>,
+    /// Last-rendered autotile results per proposed-addition location, for change detection.
+    #[cfg(autotile_matching)]
+    pub proposal_autotile_results: HashMap<SlotCoord, Vec<AutotileResult>>,
+}
+
+impl AssembledWorld {
+    pub fn new() -> Self {
+        AssembledWorld {
+            cell_entities: HashMap::new(),
+            autotile_results: HashMap::new(),
+            proposal_entities: HashMap::new(),
+            #[cfg(autotile_matching)]
+            proposal_autotile_results: HashMap::new(),
+        }
+    }
+}
+
+/// Cutaway-generated ECS entities (cut-plane variants of walls/floors).
+#[derive(Resource)]
+pub struct ViewableWorld {
+    /// Persistent cut entities for the y-cut cutaway layer of real cells; keyed by
+    /// location with the structure they were built for, managed by diff so they live
+    /// long enough to be recolored by material.
+    pub cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
+    /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
+    pub proposed_cut_entities: HashMap<SlotCoord, Vec<Entity>>,
+}
+
+impl ViewableWorld {
+    pub fn new() -> Self {
+        ViewableWorld {
+            cut_entities: HashMap::new(),
+            proposed_cut_entities: HashMap::new(),
+        }
+    }
+}
+
+/// Groups the three mutable world resources into a single `SystemParam` so that
+/// systems with many other parameters don't exceed Bevy's 16-parameter limit.
+#[derive(SystemParam)]
+pub struct BuildWorldParams<'w> {
+    pub constructed: ResMut<'w, ConstructedWorld>,
+    pub pending: ResMut<'w, ProposedWorld>,
+    pub assembled: ResMut<'w, AssembledWorld>,
+}
+
+/// Returns `(real, proposed_add)`:
+/// - `real`: the cell in `contents`, if any (present even under a `Proposal::Remove`).
+/// - `proposed_add`: the proposed cell only when it is an addition with no real cell beneath it.
+pub fn get_real_and_proposed<'a>(
+    cw: &'a ConstructedWorld,
+    pw: &'a ProposedWorld,
+    loc: impl Into<SlotCoord>,
+) -> (Option<&'a Cell>, Option<&'a Cell>) {
+    let loc: SlotCoord = loc.into();
+    let real = cw.contents.get(loc);
+    let proposed_add = match pw.proposed_changes.get(loc) {
+        Some(Proposal::Place(cell)) if real.is_none() => Some(cell),
+        _ => None,
+    };
+    (real, proposed_add)
+}
+
+/// Returns real cell if present, otherwise the proposed addition if present.
+/// If both, returns `real`.
+pub fn get_real_or_proposed<'a>(
+    cw: &'a ConstructedWorld,
+    pw: &'a ProposedWorld,
+    loc: impl Into<SlotCoord>,
+) -> Option<&'a Cell> {
+    let (real, proposed) = get_real_and_proposed(cw, pw, loc);
+    real.or(proposed)
+}
+
+/// Returns proposed addition if present, otherwise the real cell.
+/// If both, returns `real`.
+pub fn get_proposed_or_real<'a>(
+    cw: &'a ConstructedWorld,
+    pw: &'a ProposedWorld,
+    loc: impl Into<SlotCoord>,
+) -> Option<&'a Cell> {
+    let (real, proposed) = get_real_and_proposed(cw, pw, loc);
+    proposed.or(real)
+}
+
+/// The cell the user currently wants at `loc`: the proposed state if one
+/// exists (`Place` → that cell, `Remove` → empty), otherwise the real cell.
+pub fn desired(
+    cw: &ConstructedWorld,
+    pw: &ProposedWorld,
+    loc: impl Into<SlotCoord>,
+) -> Option<Cell> {
+    let loc: SlotCoord = loc.into();
+    match pw.proposed_changes.get(loc) {
+        Some(Proposal::Place(cell)) => Some(cell.clone()),
+        Some(Proposal::Remove) => None,
+        None => cw.contents.get(loc).cloned(),
     }
 }
 
@@ -392,18 +470,18 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
 /// Applies a list of real cell changes: despawns old entities, spawns new ones.
 pub fn apply_changes(
     commands: &mut Commands,
-    wall_grid: &mut WallGrid,
+    assembled: &mut AssembledWorld,
     structure_list: &StructureList,
     changes: Vec<(SlotCoord, Option<Cell>)>,
 ) {
     for (loc, new_cell) in changes {
-        if let Some(old_entities) = wall_grid.cell_entities.remove(&loc) {
+        if let Some(old_entities) = assembled.cell_entities.remove(&loc) {
             for e in old_entities {
                 commands.entity(e).despawn();
             }
         }
         // Clear autotile state so the per-frame system unconditionally re-evaluates.
-        wall_grid.autotile_results.remove(&loc);
+        assembled.autotile_results.remove(&loc);
         if let Some(cell) = new_cell {
             let transform =
                 crate::util::zup_scene_transform(cell_transform(loc.slot, cell.facing, loc.cube));
@@ -411,7 +489,7 @@ pub fn apply_changes(
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
                 .id();
-            wall_grid.cell_entities.insert(loc, vec![entity]);
+            assembled.cell_entities.insert(loc, vec![entity]);
         }
     }
 }
@@ -557,13 +635,13 @@ fn spawn_ring_overlay(
 /// Applies a list of proposal view changes: despawns old overlays/ghosts, spawns new ones.
 pub fn apply_proposal_changes(
     commands: &mut Commands,
-    wall_grid: &mut WallGrid,
+    assembled: &mut AssembledWorld,
     _structure_list: &StructureList,
     overlay_assets: &ProposalOverlayAssets,
     changes: Vec<(SlotCoord, ProposalView)>,
 ) {
     for (loc, view) in changes {
-        if let Some(entities) = wall_grid.proposal_entities.remove(&loc) {
+        if let Some(entities) = assembled.proposal_entities.remove(&loc) {
             for entity in entities {
                 commands.entity(entity).despawn();
             }
@@ -571,25 +649,25 @@ pub fn apply_proposal_changes(
         match view {
             ProposalView::None => {
                 #[cfg(autotile_matching)]
-                wall_grid.proposal_autotile_results.remove(&loc);
+                assembled.proposal_autotile_results.remove(&loc);
             }
             ProposalView::Add(_) => {
                 // Ghost entities for additions are managed by `proposal_autotile_update_system`.
                 // Clear the cached results so that system re-evaluates this location next frame.
                 #[cfg(autotile_matching)]
-                wall_grid.proposal_autotile_results.remove(&loc);
+                assembled.proposal_autotile_results.remove(&loc);
             }
             ProposalView::Remove => {
                 #[cfg(autotile_matching)]
-                wall_grid.proposal_autotile_results.remove(&loc);
+                assembled.proposal_autotile_results.remove(&loc);
                 let entities = spawn_x_overlay(commands, overlay_assets, loc);
-                wall_grid.proposal_entities.insert(loc, entities);
+                assembled.proposal_entities.insert(loc, entities);
             }
             ProposalView::Replace => {
                 #[cfg(autotile_matching)]
-                wall_grid.proposal_autotile_results.remove(&loc);
+                assembled.proposal_autotile_results.remove(&loc);
                 let entities = spawn_ring_overlay(commands, overlay_assets, loc);
-                wall_grid.proposal_entities.insert(loc, entities);
+                assembled.proposal_entities.insert(loc, entities);
             }
         }
     }
@@ -755,14 +833,17 @@ pub fn update_station_highlight(
     }
 }
 
-/// Startup system: creates the WallGrid resource from the already-populated StructureList.
+/// Startup system: creates the four world resources from the already-populated StructureList.
 pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<StructureList>) {
     let infos = structure_list
         .structures
         .iter()
         .map(|s| s.info.clone())
         .collect();
-    let mut wall_grid = WallGrid::new(infos);
-    wall_grid.stations = crate::station::load_station_info();
-    commands.insert_resource(wall_grid);
+    let mut constructed = ConstructedWorld::new(infos);
+    constructed.stations = crate::station::load_station_info();
+    commands.insert_resource(constructed);
+    commands.insert_resource(ProposedWorld::new());
+    commands.insert_resource(AssembledWorld::new());
+    commands.insert_resource(ViewableWorld::new());
 }

@@ -10,7 +10,6 @@ use orchitecture_lib::{
         handle_file_save, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
     },
     camera::{camera_input_system, spawn_camera, CameraState, GameCamera},
-    ceiling_lights::update_window_lights,
     cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
     game_mode::GameMode,
     gi_material::GiPlugin,
@@ -23,6 +22,7 @@ use orchitecture_lib::{
     orc::{despawn_orc, orc_input_system, setup_orc_animation, spawn_orc},
     ortho_camera::{walk_camera_system, WalkCameraState},
     qnn::ModelPlugin,
+    scene::spawn_scene,
     station::spawn_initial_station,
     structure::{spawn_structures, StructureList},
     surroundings::{
@@ -33,9 +33,8 @@ use orchitecture_lib::{
     walk_ui::walk_ui_system,
     wall_grid::{
         spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
-        update_station_highlight, StationHighlight, WallGrid,
+        update_station_highlight, ConstructedWorld, StationHighlight,
     },
-    world::spawn_world,
 };
 
 fn main() {
@@ -89,7 +88,7 @@ fn main() {
                 load_autotile_handles,
                 generate_farms,
                 spawn_camera,
-                spawn_world,
+                spawn_scene,
                 spawn_cursors,
                 spawn_proposal_overlay_assets,
                 spawn_material_assets,
@@ -112,8 +111,8 @@ fn main() {
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system,
                 propagate_render_layers_system.after(update_cutaway_system),
-                //update_window_lights.run_if(resource_changed::<WallGrid>),
-                update_global_illumination.run_if(resource_changed::<WallGrid>),
+                //update_window_lights.run_if(resource_changed::<ConstructedWorld>),
+                update_global_illumination.run_if(resource_changed::<ConstructedWorld>),
                 update_station_highlight,
             ),
         )

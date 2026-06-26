@@ -5,13 +5,15 @@ use bevy::window::PrimaryWindow;
 use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
 use crate::build_ui::SandboxMode;
 use crate::camera::GameCamera;
+use crate::construction::construct;
 use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
 use crate::wall_grid::{
-    apply_changes, apply_proposal_changes, cell_transform, GridCellMarker, Material,
-    MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets, ProposedCutMarker, WallGrid,
+    apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, BuildWorldParams,
+    ConstructedWorld, GridCellMarker, Material, MaterialAssets, ProposedWorld, ProposalGhostMarker,
+    ProposalOverlayAssets, ProposedCutMarker,
 };
 
 #[derive(Resource)]
@@ -26,12 +28,12 @@ pub fn cursor_system(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     build_state: Res<BuildState>,
-    wall_grid: Res<WallGrid>,
+    constructed: Res<ConstructedWorld>,
     cursor_entities: Res<CursorEntities>,
     mut cursors: Query<(&mut Transform, &mut Visibility)>,
 ) {
     let id = StructureId(build_state.selected_structure as u32);
-    let is_room = wall_grid.structure_is_room_plop(id);
+    let is_room = constructed.structure_is_room_plop(id);
     let maybe_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32);
     let y = build_state.cur_y as f32;
 
@@ -63,7 +65,7 @@ pub fn cursor_system(
     }
 
     if let Ok((mut t, mut vis)) = cursors.get_mut(cursor_entities.preview) {
-        let style = wall_grid.structures[id.as_usize()].placement_style;
+        let style = constructed.structures[id.as_usize()].placement_style;
         let show = build_state
             .drag_start
             .zip(maybe_pos)
@@ -152,7 +154,7 @@ pub fn building_input_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
-    mut wall_grid: ResMut<WallGrid>,
+    mut world: BuildWorldParams,
     structure_list: Res<StructureList>,
     mut build_state: ResMut<BuildState>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
@@ -164,6 +166,11 @@ pub fn building_input_system(
     mut furniture_right_click: ResMut<crate::build_ui::FurnitureRightClick>,
     mut right_press_pos: Local<Option<Vec2>>,
 ) {
+    let (mut constructed, mut pending, mut assembled) = (
+        &mut world.constructed,
+        &mut world.pending,
+        &mut world.assembled,
+    );
     // --- Layer up/down ---
     if keyboard.just_pressed(KeyCode::ArrowUp) {
         build_state.cur_y = (build_state.cur_y + 1).min(10);
@@ -208,7 +215,7 @@ pub fn building_input_system(
             KeyCode::Digit8,
             KeyCode::Digit9,
         ];
-        let num_structures = wall_grid.get_structure_names().len();
+        let num_structures = constructed.get_structure_names().len();
         for (i, key) in DIGIT_KEYS.iter().enumerate() {
             if keyboard.just_pressed(*key) && i < num_structures {
                 build_state.selected_structure = i;
@@ -217,26 +224,22 @@ pub fn building_input_system(
     }
 
     // --- Undo / Redo ---
-    // Use bypass_change_detection so the proposal edits these create don't
-    // trigger ceiling-light recomputation.
     let undo_redo_changes = if keyboard.just_pressed(KeyCode::KeyZ) {
-        Some(wall_grid.bypass_change_detection().undo())
+        Some(pending.undo(&constructed))
     } else if keyboard.just_pressed(KeyCode::KeyY) {
-        Some(wall_grid.bypass_change_detection().redo())
+        Some(pending.redo(&constructed))
     } else {
         None
     };
     if let Some(changes) = undo_redo_changes {
         if !changes.is_empty() {
             if sandbox.enabled {
-                // Sandbox: commit the resulting proposal immediately, like any edit.
-                let real_changes = wall_grid.construct();
-                apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
+                let real_changes = construct(&mut constructed, &mut pending);
+                apply_changes(&mut commands, &mut assembled, &structure_list, real_changes);
             } else {
-                let wg = wall_grid.bypass_change_detection();
                 apply_proposal_changes(
                     &mut commands,
-                    &mut *wg,
+                    &mut assembled,
                     &structure_list,
                     &overlay_assets,
                     changes,
@@ -252,8 +255,8 @@ pub fn building_input_system(
                 let holder = holder.lock().unwrap();
                 let metrics = crate::qnn::compute_metrics(
                     &holder,
-                    &wall_grid.contents,
-                    &wall_grid.structures,
+                    &constructed.contents,
+                    &constructed.structures,
                     world_pos,
                 );
                 if metrics.len() >= 2 {
@@ -287,29 +290,20 @@ pub fn building_input_system(
 
             let dist_sq = (end - start).length_squared();
 
-            // All proposal edits bypass change detection so ceiling lights don't recompute.
             let changes = if dist_sq < 0.25 {
-                wall_grid
-                    .bypass_change_detection()
-                    .click(start, id, dir, remove, material)
+                pending.click(&constructed, start, id, dir, remove, material)
             } else {
-                wall_grid
-                    .bypass_change_detection()
-                    .drag(start, end, dir, id, remove, material)
+                pending.drag(&constructed, start, end, dir, id, remove, material)
             };
 
             if !changes.is_empty() {
                 if sandbox.enabled {
-                    // Sandbox: commit immediately so the edit takes effect without a
-                    // Construct! step. Uses normal change detection so ceiling lights
-                    // recompute.
-                    let real_changes = wall_grid.construct();
-                    apply_changes(&mut commands, &mut wall_grid, &structure_list, real_changes);
+                    let real_changes = construct(&mut constructed, &mut pending);
+                    apply_changes(&mut commands, &mut assembled, &structure_list, real_changes);
                 } else {
-                    let wg = wall_grid.bypass_change_detection();
                     apply_proposal_changes(
                         &mut commands,
-                        &mut *wg,
+                        &mut assembled,
                         &structure_list,
                         &overlay_assets,
                         changes,
@@ -337,8 +331,8 @@ pub fn building_input_system(
                     cube,
                     slot: Slot::Room,
                 };
-                if let Some(cell) = wall_grid.contents.get(loc) {
-                    if wall_grid.structures[cell.id.as_usize()].furniture {
+                if let Some(cell) = constructed.contents.get(loc) {
+                    if constructed.structures[cell.id.as_usize()].furniture {
                         furniture_right_click.0 = Some(cube);
                     }
                 }
@@ -354,7 +348,7 @@ pub fn update_room_cursor_mesh(
     build_state: Res<BuildState>,
     cursor_entities: Res<CursorEntities>,
     structure_list: Res<StructureList>,
-    wall_grid: Res<WallGrid>,
+    constructed: Res<ConstructedWorld>,
     autotile_rules: Res<AutotileRules>,
     autotile_handles: Res<AutotileHandles>,
     mut commands: Commands,
@@ -367,7 +361,7 @@ pub fn update_room_cursor_mesh(
     *last_id = Some(id);
     let struct_id = StructureId(id as u32);
     // The last case of the first rule is used as the preview
-    if wall_grid.structure_is_room_plop(struct_id) {
+    if constructed.structure_is_room_plop(struct_id) {
         let name = &structure_list.structures[id].info.name;
         let autotile_handle = autotile_rules
             .0
@@ -412,7 +406,8 @@ pub fn recolor_new_mesh_children(
     cursor_entities: Res<CursorEntities>,
     overlay_assets: Res<ProposalOverlayAssets>,
     material_assets: Res<MaterialAssets>,
-    wall_grid: Res<WallGrid>,
+    constructed: Res<ConstructedWorld>,
+    pending: Res<ProposedWorld>,
     ghost_markers_q: Query<(), With<ProposalGhostMarker>>,
     proposed_cut_q: Query<(), With<ProposedCutMarker>>,
     cell_markers_q: Query<&GridCellMarker>,
@@ -464,8 +459,7 @@ pub fn recolor_new_mesh_children(
             // child may be despawned (autotile/cutaway respawn) before this flushes, so
             // re-check the entity at apply time rather than letting the command panic.
             Some(Recolor::Material(loc)) => {
-                let material = wall_grid
-                    .get_real_or_proposed(loc)
+                let material = get_real_or_proposed(&constructed, &pending, loc)
                     .map(|c| c.material)
                     .unwrap_or_default();
                 let handle = material_assets.get(material);

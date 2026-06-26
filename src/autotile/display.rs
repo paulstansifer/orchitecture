@@ -2,13 +2,14 @@ use std::collections::HashMap;
 
 use bevy::ecs::entity::Entity;
 use bevy::math::{Quat, Vec3};
-use bevy::prelude::{Commands, DetectChangesMut, Res, ResMut, SceneRoot, Transform};
+use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 
 use crate::sparse3d::{Facing, SlotCoord};
 use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
 use crate::wall_grid::{
-    cell_transform, Cell, GridCellMarker, Proposal, ProposalGhostMarker, WallGrid,
+    cell_transform, get_proposed_or_real, AssembledWorld, Cell, ConstructedWorld, GridCellMarker,
+    ProposedWorld, Proposal, ProposalGhostMarker,
 };
 
 use super::parser::char_matches_name;
@@ -126,7 +127,9 @@ fn apply_autotile_updates(
 
 pub fn autotile_update_system(
     mut commands: Commands,
-    mut wall_grid: ResMut<WallGrid>,
+    constructed: Res<ConstructedWorld>,
+    pending: Res<ProposedWorld>,
+    mut assembled: ResMut<AssembledWorld>,
     autotile_rules: Res<AutotileRules>,
     autotile_handles: Res<AutotileHandles>,
     structure_list: Res<StructureList>,
@@ -138,7 +141,7 @@ pub fn autotile_update_system(
         .collect();
 
     // Real cells.
-    let real_updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)> = wall_grid
+    let real_updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)> = constructed
         .contents
         .iter()
         .filter_map(|(loc, cell)| {
@@ -147,7 +150,7 @@ pub fn autotile_update_system(
                 loc.into(),
                 anchor,
                 &autotile_rules.0,
-                |nloc| wall_grid.contents.get(nloc).map(|c| (c.id, c.facing)),
+                |nloc| constructed.contents.get(nloc).map(|c| (c.id, c.facing)),
                 |ch, id, facing| char_matches(ch, id, facing, anchor, &struct_names),
                 |name, id| struct_names[id.as_usize()] == name,
             )?;
@@ -155,19 +158,19 @@ pub fn autotile_update_system(
         })
         .collect();
 
-    let real_stale: Vec<SlotCoord> = wall_grid
+    let real_stale: Vec<SlotCoord> = assembled
         .autotile_results
         .keys()
-        .filter(|&&loc| wall_grid.contents.get(loc).is_none())
+        .filter(|&&loc| constructed.contents.get(loc).is_none())
         .copied()
         .collect();
 
     // Proposed additions (snapshot before calling get_proposed_or_real).
-    let proposed_additions: Vec<(SlotCoord, Cell)> = wall_grid
+    let proposed_additions: Vec<(SlotCoord, Cell)> = pending
         .proposed_changes
         .iter()
         .filter_map(|(loc, proposal)| match proposal {
-            Proposal::Place(cell) if wall_grid.contents.get(loc).is_none() => {
+            Proposal::Place(cell) if constructed.contents.get(loc).is_none() => {
                 Some((loc, cell.clone()))
             }
             _ => None,
@@ -182,11 +185,7 @@ pub fn autotile_update_system(
                 loc.into(),
                 anchor,
                 &autotile_rules.0,
-                |nloc| {
-                    wall_grid
-                        .get_proposed_or_real(nloc)
-                        .map(|c| (c.id, c.facing))
-                },
+                |nloc| get_proposed_or_real(&constructed, &pending, nloc).map(|c| (c.id, c.facing)),
                 |ch, id, facing| char_matches(ch, id, facing, anchor, &struct_names),
                 |name, id| struct_names[id.as_usize()] == name,
             )
@@ -195,45 +194,57 @@ pub fn autotile_update_system(
         })
         .collect();
 
-    let proposal_stale: Vec<SlotCoord> = wall_grid
+    #[cfg(autotile_matching)]
+    let proposal_stale: Vec<SlotCoord> = assembled
         .proposal_autotile_results
         .keys()
         .filter(|&&loc| {
-            !matches!(
-                wall_grid.proposed_changes.get(loc),
-                Some(Proposal::Place(_))
-            ) || wall_grid.contents.get(loc).is_some()
+            !matches!(pending.proposed_changes.get(loc), Some(Proposal::Place(_)))
+                || constructed.contents.get(loc).is_some()
         })
         .copied()
         .collect();
+    #[cfg(not(autotile_matching))]
+    let proposal_stale: Vec<SlotCoord> = vec![];
 
-    // Apply — split-borrow the four cache fields so both calls can proceed.
-    // bypass_change_detection: autotile only updates visual caches (autotile_results,
-    // cell_entities), not structural contents, so we must not trigger WallGrid change detection.
-    let wg = wall_grid.bypass_change_detection();
-    apply_autotile_updates(
-        &mut commands,
-        &autotile_handles,
-        &structure_list,
-        real_updates,
-        real_stale,
-        &mut wg.autotile_results,
-        &mut wg.cell_entities,
-        false,
-        |cmd, scene, transform, loc| cmd.spawn((scene, transform, GridCellMarker { loc })).id(),
-    );
-    apply_autotile_updates(
-        &mut commands,
-        &autotile_handles,
-        &structure_list,
-        proposal_updates,
-        proposal_stale,
-        &mut wg.proposal_autotile_results,
-        &mut wg.proposal_entities,
-        true,
-        |cmd, scene, transform, loc| {
-            cmd.spawn((scene, transform, ProposalGhostMarker { loc }))
-                .id()
-        },
-    );
+    {
+        let aw: &mut AssembledWorld = &mut *assembled;
+        let results = &mut aw.autotile_results;
+        let entities = &mut aw.cell_entities;
+        apply_autotile_updates(
+            &mut commands,
+            &autotile_handles,
+            &structure_list,
+            real_updates,
+            real_stale,
+            results,
+            entities,
+            false,
+            |cmd, scene, transform, loc| cmd.spawn((scene, transform, GridCellMarker { loc })).id(),
+        );
+    }
+    {
+        let aw: &mut AssembledWorld = &mut *assembled;
+        #[cfg(autotile_matching)]
+        let results = &mut aw.proposal_autotile_results;
+        #[cfg(not(autotile_matching))]
+        let mut dummy_results = HashMap::new();
+        #[cfg(not(autotile_matching))]
+        let results = &mut dummy_results;
+        let entities = &mut aw.proposal_entities;
+        apply_autotile_updates(
+            &mut commands,
+            &autotile_handles,
+            &structure_list,
+            proposal_updates,
+            proposal_stale,
+            results,
+            entities,
+            true,
+            |cmd, scene, transform, loc| {
+                cmd.spawn((scene, transform, ProposalGhostMarker { loc }))
+                    .id()
+            },
+        );
+    }
 }

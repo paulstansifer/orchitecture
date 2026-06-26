@@ -137,7 +137,7 @@ pub fn surroundings_ui_system(
     mut state: ResMut<SurroundingsState>,
     mut clock: ResMut<GameClock>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
-    mut wall_grid: ResMut<crate::wall_grid::WallGrid>,
+    mut constructed: ResMut<crate::wall_grid::ConstructedWorld>,
 ) {
     use crate::game_mode::GameMode;
     use egui::{Color32, FontId, Pos2, Sense, Shape, Stroke};
@@ -154,7 +154,7 @@ pub fn surroundings_ui_system(
         preview.player_gains.iter().copied().collect();
 
     // Current station resource totals (sorted canonically).
-    let station_totals = crate::build_ui::station_resource_totals(&*wall_grid);
+    let station_totals = crate::build_ui::station_resource_totals(&*constructed);
 
     // All resources that appear in current storage OR in preview gains, sorted canonically.
     let mut rhs_resources: Vec<crate::resource::UniformResource> =
@@ -307,12 +307,12 @@ pub fn surroundings_ui_system(
     const PANEL_W: f32 = 110.0;
 
     // Maximum invitees = number of placed market stand stations.
-    let market_stand_count = wall_grid
+    let market_stand_count = constructed
         .stations
         .iter()
         .position(|s| s.name == "market stand")
         .map_or(0, |idx| {
-            wall_grid
+            constructed
                 .placed_stations
                 .iter()
                 .filter(|ps| ps.station == idx)
@@ -418,15 +418,15 @@ pub fn surroundings_ui_system(
         }
         // Deposit gains into the first available storage station; silently drop if none.
         if !gains.is_empty() {
-            let storage_idx = wall_grid.placed_stations.iter().position(|ps| {
-                wall_grid
+            let storage_idx = constructed.placed_stations.iter().position(|ps| {
+                constructed
                     .stations
                     .get(ps.station)
                     .map_or(false, |info| info.storage.is_some())
             });
             if let Some(idx) = storage_idx {
                 for (res, qty) in gains {
-                    wall_grid.placed_stations[idx]
+                    constructed.placed_stations[idx]
                         .contents
                         .add_uniform(res, qty as u16);
                 }

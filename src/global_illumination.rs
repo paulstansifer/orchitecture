@@ -9,7 +9,7 @@ use bevy::render::render_resource::{
 use crate::gi_material::{GiMaterial, GI_INTENSITY};
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
-use crate::wall_grid::{Cell, MaterialAssets, WallGrid};
+use crate::wall_grid::{Cell, ConstructedWorld, MaterialAssets};
 
 const FALLOFF: f32 = 0.40;
 
@@ -279,15 +279,15 @@ pub fn gi_to_image(
 }
 
 /// Bevy system: recomputes the GI volume texture and rebinds it (along with the
-/// volume bounds) on every building material, run whenever `WallGrid` changes.
+/// volume bounds) on every building material, run whenever `ConstructedWorld` changes.
 pub fn update_global_illumination(
-    wall_grid: Res<WallGrid>,
+    constructed: Res<ConstructedWorld>,
     structure_list: Res<StructureList>,
     material_assets: Res<MaterialAssets>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<GiMaterial>>,
 ) {
-    let contents = &wall_grid.contents;
+    let contents = &constructed.contents;
     if contents.size() == 0 {
         return;
     }
@@ -302,7 +302,13 @@ pub fn update_global_illumination(
         return;
     }
 
+    // Expand by 1 to match `compute_sky_illuminance`'s search range, so the exterior
+    // ring of cubes is in the texture: this gives boundary walls their outside-facing
+    // illuminance and stops interior light from bleeding out (the exterior cube also
+    // carries the boundary wall's transmission on its low face). See `boundary_transmission`.
     let (min_cube, max_cube) = contents.bounding_box();
+    let min_cube = min_cube - IVec3::ONE;
+    let max_cube = max_cube + IVec3::ONE;
 
     let image = gi_to_image(
         &illuminance,

@@ -9,7 +9,7 @@ const SUN_ILLUMINANCE: f32 = 5_000.0;
 const FILL_ILLUMINANCE: f32 = SUN_ILLUMINANCE / 8.0;
 
 /// Startup system: spawns directional lights, the ground plane, and road meshes.
-pub fn spawn_world(
+pub fn spawn_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,

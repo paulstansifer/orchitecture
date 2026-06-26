@@ -13,24 +13,22 @@ use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
 use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
 use crate::wall_grid::{
-    cell_transform, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
-    ProposedCutMarker, WallGrid,
+    cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledWorld, ConstructedWorld,
+    GridCellMarker, ProposedWorld, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
+    ProposedCutMarker, ViewableWorld,
 };
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
-/// with. For autotile cells, the transform carries the same rotation the matched
-/// rule gave the visible mesh (via `autotile_transform`), so the cut face lines up
-/// with the geometry it replaces instead of defaulting to `Facing::NegX`.
-/// Returns one `(handle, transform)` pair per autotile mesh that has a cut variant,
+/// with. Returns one `(handle, transform)` pair per autotile mesh that has a cut variant,
 /// or a single entry for non-autotile cells. Empty when no cut meshes exist.
 fn get_cuts(
     loc: SlotCoord,
     id: StructureId,
-    wall_grid: &WallGrid,
+    assembled: &AssembledWorld,
     structure_list: &StructureList,
     autotile_handles: &AutotileHandles,
 ) -> Vec<(Handle<Scene>, Transform)> {
-    if let Some(results) = wall_grid.autotile_results.get(&loc) {
+    if let Some(results) = assembled.autotile_results.get(&loc) {
         results
             .iter()
             .filter_map(|result| {
@@ -147,12 +145,15 @@ fn cursor_cube(focus: Vec3, camera: Vec3, is_room_plop: bool) -> (i32, i32) {
 }
 
 /// Searches downward from `from_y` for the first Floor cell at (x, z).
-fn descend_to_floor(wall_grid: &WallGrid, x: i32, z: i32, from_y: i32) -> Option<i32> {
+fn descend_to_floor(
+    cw: &ConstructedWorld,
+    pe: &ProposedWorld,
+    x: i32,
+    z: i32,
+    from_y: i32,
+) -> Option<i32> {
     for y in (from_y - 30..=from_y).rev() {
-        if wall_grid
-            .get_real_or_proposed(RelSlotCoord::new(x, y, z, RelSlot::Floor))
-            .is_some()
-        {
+        if get_real_or_proposed(cw, pe, RelSlotCoord::new(x, y, z, RelSlot::Floor)).is_some() {
             return Some(y);
         }
     }
@@ -160,13 +161,16 @@ fn descend_to_floor(wall_grid: &WallGrid, x: i32, z: i32, from_y: i32) -> Option
 }
 
 /// BFS over Floor cells at `floor_y`, ignoring walls. Returns (x, z) of all reachable cells.
-fn ground_floor_fill(wall_grid: &WallGrid, sx: i32, floor_y: i32, sz: i32) -> HashSet<(i32, i32)> {
+fn ground_floor_fill(
+    cw: &ConstructedWorld,
+    pe: &ProposedWorld,
+    sx: i32,
+    floor_y: i32,
+    sz: i32,
+) -> HashSet<(i32, i32)> {
     let mut visited: HashSet<(i32, i32)> = HashSet::new();
     let mut queue: VecDeque<(i32, i32)> = VecDeque::new();
-    if wall_grid
-        .get_real_or_proposed(RelSlotCoord::new(sx, floor_y, sz, RelSlot::Floor))
-        .is_none()
-    {
+    if get_real_or_proposed(cw, pe, RelSlotCoord::new(sx, floor_y, sz, RelSlot::Floor)).is_none() {
         return visited;
     }
     visited.insert((sx, sz));
@@ -174,8 +178,7 @@ fn ground_floor_fill(wall_grid: &WallGrid, sx: i32, floor_y: i32, sz: i32) -> Ha
     while let Some((fx, fz)) = queue.pop_front() {
         for (nx, nz) in [(fx + 1, fz), (fx - 1, fz), (fx, fz + 1), (fx, fz - 1)] {
             if !visited.contains(&(nx, nz))
-                && wall_grid
-                    .get_real_or_proposed(RelSlotCoord::new(nx, floor_y, nz, RelSlot::Floor))
+                && get_real_or_proposed(cw, pe, RelSlotCoord::new(nx, floor_y, nz, RelSlot::Floor))
                     .is_some()
             {
                 visited.insert((nx, nz));
@@ -189,7 +192,8 @@ fn ground_floor_fill(wall_grid: &WallGrid, sx: i32, floor_y: i32, sz: i32) -> Ha
 /// BFS over Floor cells at `sy` starting from `(sx, sz)`, stopping at walls.
 /// Marks all found cells as visited, pushes them to `hidden`, returns their (x, z).
 fn upper_floor_fill(
-    wall_grid: &WallGrid,
+    cw: &ConstructedWorld,
+    pe: &ProposedWorld,
     sx: i32,
     sy: i32,
     sz: i32,
@@ -201,10 +205,7 @@ fn upper_floor_fill(
     if floor_visited.contains(&(sx, sy, sz)) {
         return cells;
     }
-    if wall_grid
-        .get_real_or_proposed(RelSlotCoord::new(sx, sy, sz, RelSlot::Floor))
-        .is_none()
-    {
+    if get_real_or_proposed(cw, pe, RelSlotCoord::new(sx, sy, sz, RelSlot::Floor)).is_none() {
         return cells;
     }
     floor_visited.insert((sx, sy, sz));
@@ -254,12 +255,10 @@ fn upper_floor_fill(
             if floor_visited.contains(&(nx, sy, nz)) {
                 continue;
             }
-            if wall_grid.get_real_or_proposed(wall_loc).is_some() {
+            if get_real_or_proposed(cw, pe, wall_loc).is_some() {
                 continue;
             }
-            if wall_grid
-                .get_real_or_proposed(RelSlotCoord::new(nx, sy, nz, RelSlot::Floor))
-                .is_some()
+            if get_real_or_proposed(cw, pe, RelSlotCoord::new(nx, sy, nz, RelSlot::Floor)).is_some()
             {
                 floor_visited.insert((nx, sy, nz));
                 hidden.push(SlotCoord {
@@ -274,10 +273,10 @@ fn upper_floor_fill(
     cells
 }
 
-/// For each cell in `floor_cells` (at `floor_y`), finds camera-facing exterior walls:
-/// edges where there is no adjacent floor cell in `x_dir`/`z_dir` direction.
+/// For each cell in `floor_cells` (at `floor_y`), finds camera-facing exterior walls.
 fn find_wall_seeds(
-    wall_grid: &WallGrid,
+    cw: &ConstructedWorld,
+    pe: &ProposedWorld,
     floor_cells: &HashSet<(i32, i32)>,
     floor_y: i32,
     x_dir: i32,
@@ -298,7 +297,7 @@ fn find_wall_seeds(
                 cube: IVec3::new(wx, floor_y, fz),
                 slot: Slot::XLoWall,
             };
-            if wall_grid.get_real_or_proposed(loc).is_some() {
+            if get_real_or_proposed(cw, pe, loc).is_some() {
                 walls.push(loc);
             }
         }
@@ -308,7 +307,7 @@ fn find_wall_seeds(
                 cube: IVec3::new(fx, floor_y, wz),
                 slot: Slot::ZLoWall,
             };
-            if wall_grid.get_real_or_proposed(loc).is_some() {
+            if get_real_or_proposed(cw, pe, loc).is_some() {
                 walls.push(loc);
             }
         }
@@ -317,10 +316,9 @@ fn find_wall_seeds(
 }
 
 /// Climbs a wall column upward from `bottom_loc`, hiding all walls in it.
-/// The first (lowest) wall gets a cut entry. Pushes seeds for upper floor fills
-/// adjacent to the top of the column. Uses `visited_walls` to avoid re-processing.
 fn climb_wall_column(
-    wall_grid: &WallGrid,
+    cw: &ConstructedWorld,
+    pe: &ProposedWorld,
     bottom_loc: SlotCoord,
     x_dir: i32,
     z_dir: i32,
@@ -342,7 +340,7 @@ fn climb_wall_column(
             cube: IVec3::new(bottom_loc.cube.x, y, bottom_loc.cube.z),
             slot: bottom_loc.slot,
         };
-        let (real, proposed) = wall_grid.get_real_and_proposed(cur_loc);
+        let (real, proposed) = get_real_and_proposed(cw, pe, cur_loc);
         let Some(cell) = real.or(proposed) else {
             break;
         };
@@ -358,7 +356,7 @@ fn climb_wall_column(
             cube: IVec3::new(bottom_loc.cube.x, y + 1, bottom_loc.cube.z),
             slot: bottom_loc.slot,
         };
-        if wall_grid.get_real_or_proposed(next_loc).is_none() {
+        if get_real_or_proposed(cw, pe, next_loc).is_none() {
             let y_above = y + 1;
             match bottom_loc.slot {
                 Slot::XLoWall => {
@@ -380,7 +378,8 @@ fn climb_wall_column(
 }
 
 pub fn compute_floor_edge(
-    wall_grid: &WallGrid,
+    cw: &ConstructedWorld,
+    pe: &ProposedWorld,
     (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
     cur_y: i32,
@@ -391,11 +390,11 @@ pub fn compute_floor_edge(
 
     let (x_dir, z_dir) = camera_facing_dirs(focus_location, camera_location);
     let (sx, sz) = cursor_cube(focus_location, camera_location, is_room_plop);
-    let Some(floor_y) = descend_to_floor(wall_grid, sx, sz, cur_y) else {
+    let Some(floor_y) = descend_to_floor(cw, pe, sx, sz, cur_y) else {
         return (hidden, cut);
     };
 
-    let ground_cells = ground_floor_fill(wall_grid, sx, floor_y, sz);
+    let ground_cells = ground_floor_fill(cw, pe, sx, floor_y, sz);
     if ground_cells.is_empty() {
         return (hidden, cut);
     }
@@ -405,7 +404,7 @@ pub fn compute_floor_edge(
     let mut pending_walls: VecDeque<SlotCoord> = VecDeque::new();
     let mut pending_floors: VecDeque<(i32, i32, i32, bool)> = VecDeque::new();
 
-    for wall_loc in find_wall_seeds(wall_grid, &ground_cells, floor_y, x_dir, z_dir, false) {
+    for wall_loc in find_wall_seeds(cw, pe, &ground_cells, floor_y, x_dir, z_dir, false) {
         pending_walls.push_back(wall_loc);
     }
 
@@ -413,7 +412,8 @@ pub fn compute_floor_edge(
         while let Some(wall_loc) = pending_walls.pop_front() {
             let mut floor_seeds: Vec<(i32, i32, i32, bool)> = Vec::new();
             climb_wall_column(
-                wall_grid,
+                cw,
+                pe,
                 wall_loc,
                 x_dir,
                 z_dir,
@@ -439,13 +439,13 @@ pub fn compute_floor_edge(
             continue;
         }
 
-        let upper_cells = upper_floor_fill(wall_grid, fx, fy, fz, &mut floor_visited, &mut hidden);
+        let upper_cells = upper_floor_fill(cw, pe, fx, fy, fz, &mut floor_visited, &mut hidden);
         if upper_cells.is_empty() {
             continue;
         }
 
         let upper_set: HashSet<(i32, i32)> = upper_cells.into_iter().collect();
-        for wall_loc in find_wall_seeds(wall_grid, &upper_set, fy, x_dir, z_dir, inverted) {
+        for wall_loc in find_wall_seeds(cw, pe, &upper_set, fy, x_dir, z_dir, inverted) {
             pending_walls.push_back(wall_loc);
         }
     }
@@ -464,15 +464,18 @@ pub fn compute_floor_edge(
                 cube: IVec3::new(x, y, z),
                 slot: Slot::Room,
             };
-            if wall_grid.get_real_or_proposed(room_loc).is_some() {
+            if get_real_or_proposed(cw, pe, room_loc).is_some() {
                 hidden.push(room_loc);
             }
-            if wall_grid
-                .get_real_or_proposed(SlotCoord {
+            if get_real_or_proposed(
+                cw,
+                pe,
+                SlotCoord {
                     cube: IVec3::new(x, y + 1, z),
                     slot: Slot::Floor,
-                })
-                .is_some()
+                },
+            )
+            .is_some()
             {
                 break;
             }
@@ -483,18 +486,13 @@ pub fn compute_floor_edge(
         }
     }
 
-    // The floors visited by the initial traverse (the ones that seed the edge-wall
-    // search) are *replaced* with the "cut" version of their mesh rather than left
-    // intact: they're hidden so the original stops rendering, and added to `cut` so
-    // the cut mesh takes their place. This is added after the Room-object loop above
-    // so that objects resting on the viewed floor stay visible. Floors without a cut
-    // handle resolve to nothing in `get_cut`, so they simply read as hidden.
+    // The floors visited by the initial traverse are replaced with the "cut" version.
     for &(gx, gz) in &ground_cells {
         let floor_loc = SlotCoord {
             cube: IVec3::new(gx, floor_y, gz),
             slot: Slot::Floor,
         };
-        let (real, proposed) = wall_grid.get_real_and_proposed(floor_loc);
+        let (real, proposed) = get_real_and_proposed(cw, pe, floor_loc);
         if let Some(cell) = real.or(proposed) {
             hidden.push(floor_loc);
             cut.push((floor_loc, cell.id, real.is_none()));
@@ -527,7 +525,8 @@ fn octant_hidden(loc: SlotCoord, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_ne
 
 /// Collects cut-face entries for the SimpleOctant algorithm.
 fn simple_octant_cuts(
-    wall_grid: &WallGrid,
+    cw: &ConstructedWorld,
+    pe: &ProposedWorld,
     sx: i32,
     sz: i32,
     cut_y: i32,
@@ -548,13 +547,13 @@ fn simple_octant_cuts(
         x_ok && z_ok && loc.cube.y == cut_y && loc.slot != Slot::Floor
     };
     let mut cuts = vec![];
-    for (loc, cell) in wall_grid.contents.iter() {
+    for (loc, cell) in cw.contents.iter() {
         if is_cut_face(loc) {
             cuts.push((loc, cell.id, false));
         }
     }
-    for (loc, proposal) in wall_grid.proposed_changes.iter() {
-        if is_cut_face(loc) && wall_grid.contents.get(loc).is_none() {
+    for (loc, proposal) in pe.proposed_changes.iter() {
+        if is_cut_face(loc) && cw.contents.get(loc).is_none() {
             if let Proposal::Place(cell) = proposal {
                 cuts.push((loc, cell.id, true));
             }
@@ -609,13 +608,6 @@ impl HiddenPredicate {
 }
 
 /// Propagates `RenderLayers` from scene-root entities to newly-spawned children.
-///
-/// Bevy instantiates `SceneRoot` hierarchies in `PreUpdate`, so when
-/// `update_cutaway_system` first runs in `Update`, the children may not exist yet.
-/// The optimization in that system (skip if root layers already match) then prevents
-/// a follow-up traversal. This system fires whenever `Children` changes on a
-/// `GridCellMarker` or `ProposalGhostMarker` entity and pushes the root's current
-/// `RenderLayers` down to the new descendants.
 pub fn propagate_render_layers_system(
     changed_q: Query<
         (Entity, Option<&RenderLayers>),
@@ -642,7 +634,10 @@ pub fn propagate_render_layers_system(
 
 pub fn update_cutaway_system(
     mut commands: Commands,
-    mut wall_grid: ResMut<WallGrid>,
+    constructed: Res<ConstructedWorld>,
+    pending: Res<ProposedWorld>,
+    assembled: Res<AssembledWorld>,
+    mut viewable: ResMut<ViewableWorld>,
     structure_list: Res<StructureList>,
     autotile_handles: Res<AutotileHandles>,
     build_state: Res<BuildState>,
@@ -669,10 +664,11 @@ pub fn update_cutaway_system(
     let (hidden, cut_entries): (HiddenPredicate, Vec<(SlotCoord, StructureId, bool)>) =
         match *cutaway_mode {
             CutawayMode::FloorEdge => {
-                let is_room_plop = wall_grid
+                let is_room_plop = constructed
                     .structure_is_room_plop(StructureId(build_state.selected_structure as u32));
                 let (locs, cuts) = compute_floor_edge(
-                    &wall_grid,
+                    &constructed,
+                    &pending,
                     (focus_pos, is_room_plop),
                     camera_pos,
                     build_state.cur_y,
@@ -685,7 +681,7 @@ pub fn update_cutaway_system(
                 let cut_y = build_state.cur_y;
                 let x_neg = camera_pos.x < focus_pos.x;
                 let z_neg = camera_pos.z < focus_pos.z;
-                let cuts = simple_octant_cuts(&wall_grid, sx, sz, cut_y, x_neg, z_neg);
+                let cuts = simple_octant_cuts(&constructed, &pending, sx, sz, cut_y, x_neg, z_neg);
                 let pred = HiddenPredicate::Octant {
                     sx,
                     sz,
@@ -701,10 +697,11 @@ pub fn update_cutaway_system(
                 let cut_y = build_state.cur_y;
                 let x_neg = camera_pos.x < focus_pos.x;
                 let z_neg = camera_pos.z < focus_pos.z;
-                let is_room_plop = wall_grid
+                let is_room_plop = constructed
                     .structure_is_room_plop(StructureId(build_state.selected_structure as u32));
                 let (locs, mut cuts) = compute_floor_edge(
-                    &wall_grid,
+                    &constructed,
+                    &pending,
                     (focus_pos, is_room_plop),
                     camera_pos,
                     build_state.cur_y,
@@ -714,7 +711,9 @@ pub fn update_cutaway_system(
                     .drain(..)
                     .map(|(loc, id, po)| (loc, (id, po)))
                     .collect();
-                for (loc, id, po) in simple_octant_cuts(&wall_grid, sx, sz, cut_y, x_neg, z_neg) {
+                for (loc, id, po) in
+                    simple_octant_cuts(&constructed, &pending, sx, sz, cut_y, x_neg, z_neg)
+                {
                     cut_map
                         .entry(loc)
                         .and_modify(|e| {
@@ -741,8 +740,6 @@ pub fn update_cutaway_system(
         };
 
     for (entity, marker, mut vis, current_layers) in vis_q.iter_mut() {
-        // Camera hiding is done via RenderLayers, not Visibility, so hidden geometry
-        // keeps Visibility::Inherited and still participates in shadow passes.
         if *vis != Visibility::Inherited {
             *vis = Visibility::Inherited;
         }
@@ -753,7 +750,6 @@ pub fn update_cutaway_system(
             RenderLayers::default()
         };
 
-        // Only traverse the scene tree when the layer assignment actually changes.
         if current_layers.map_or(true, |l| l != &desired) {
             apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
         }
@@ -792,29 +788,24 @@ pub fn update_cutaway_system(
         }
     }
 
-    // Diff regular cut entities so unchanged cuts persist across frames (and stay
-    // recolored by material). Despawn entities whose location left the cut zone or
-    // whose underlying structure changed.
-    wall_grid
-        .bypass_change_detection()
-        .cut_entities
-        .retain(|loc, (id, entities)| {
-            if desired_regular.get(loc) == Some(id) {
-                true
-            } else {
-                for e in entities.iter() {
-                    commands.entity(*e).despawn();
-                }
-                false
+    // Diff regular cut entities so unchanged cuts persist across frames.
+    viewable.cut_entities.retain(|loc, (id, entities)| {
+        if desired_regular.get(loc) == Some(id) {
+            true
+        } else {
+            for e in entities.iter() {
+                commands.entity(*e).despawn();
             }
-        });
+            false
+        }
+    });
 
     // Spawn regular cut entities for locations newly entering the cut zone.
     for (loc, id) in desired_regular {
-        if wall_grid.cut_entities.get(&loc).map(|(i, _)| *i) == Some(id) {
+        if viewable.cut_entities.get(&loc).map(|(i, _)| *i) == Some(id) {
             continue;
         }
-        let cuts = get_cuts(loc, id, &wall_grid, &structure_list, &autotile_handles);
+        let cuts = get_cuts(loc, id, &assembled, &structure_list, &autotile_handles);
         if !cuts.is_empty() {
             let entities: Vec<Entity> = cuts
                 .into_iter()
@@ -824,37 +815,28 @@ pub fn update_cutaway_system(
                         .id()
                 })
                 .collect();
-            wall_grid
-                .bypass_change_detection()
-                .cut_entities
-                .insert(loc, (id, entities));
+            viewable.cut_entities.insert(loc, (id, entities));
         }
     }
 
     // Despawn proposed cut entities whose locations left the cut zone.
-    wall_grid
-        .bypass_change_detection()
-        .proposed_cut_entities
-        .retain(|loc, entities| {
-            if desired_proposed.contains_key(loc) {
-                true
-            } else {
-                for e in entities.iter() {
-                    commands.entity(*e).despawn();
-                }
-                false
+    viewable.proposed_cut_entities.retain(|loc, entities| {
+        if desired_proposed.contains_key(loc) {
+            true
+        } else {
+            for e in entities.iter() {
+                commands.entity(*e).despawn();
             }
-        });
+            false
+        }
+    });
 
     // Spawn proposed cut entities for locations newly entering the cut zone.
     for (loc, id) in desired_proposed {
-        // Resolve the cut handles before entering the Entry API (which borrows wall_grid mutably).
-        let cuts = get_cuts(loc, id, &wall_grid, &structure_list, &autotile_handles);
+        let cuts = get_cuts(loc, id, &assembled, &structure_list, &autotile_handles);
         if !cuts.is_empty() {
-            if let std::collections::hash_map::Entry::Vacant(v) = wall_grid
-                .bypass_change_detection()
-                .proposed_cut_entities
-                .entry(loc)
+            if let std::collections::hash_map::Entry::Vacant(v) =
+                viewable.proposed_cut_entities.entry(loc)
             {
                 let entities: Vec<Entity> = cuts
                     .into_iter()
@@ -887,32 +869,27 @@ mod tests {
     use crate::build_helpers::Builder;
     use crate::sparse3d::Facing;
     use crate::structure::load_structure_info;
-    use crate::wall_grid::Cell;
+    use crate::wall_grid::{AssembledWorld, Cell, ConstructedWorld, ProposedWorld, ViewableWorld};
 
-    /// Builds a 3×1×3-cube room (Floor at Y=0 and Y=1, canonical XLoWall/ZLoWall
-    /// on all four sides at Y=0) and returns the contents plus the loaded structures.
+    /// Builds a 3×1×3-cube room and returns the contents plus the loaded structures.
     fn two_level_room() -> (
         crate::sparse3d::Sparse3D<crate::wall_grid::Cell>,
         Vec<crate::structure::StructureInfo>,
     ) {
         let structures = load_structure_info();
         let mut builder = Builder::new(&structures);
-        // Ground floor
         builder.build_plane(
             IVec3::new(0, 0, 0),
             IVec3::new(2, 0, 2),
             RelSlot::Floor,
             None,
         );
-        // Roof floor (= ceiling of the single interior story)
         builder.build_plane(
             IVec3::new(0, 1, 0),
             IVec3::new(2, 1, 2),
             RelSlot::Floor,
             None,
         );
-        // Walls — using XLoWall/ZLoWall (canonical slots) so that compute_cutaway
-        // can round-trip correctly through find_wall_seeds.
         builder.build_plane(
             IVec3::new(0, 0, 0),
             IVec3::new(0, 0, 2),
@@ -940,29 +917,21 @@ mod tests {
         (builder.get(), structures)
     }
 
-    // ── visibility + layer test ─────────────────────────────────────────────
-
-    /// With the camera to the +x side and the cursor inside the box:
-    ///   - The right wall (XLoWall at x=3) should be hidden.
-    ///   - The roof floor tiles (Y=1) should be hidden (obscured by climbing the wall).
-    ///   - Every hidden tile should receive the shadow-only layer, even the roof tiles
-    ///     that would otherwise be exempt from ceiling-light illumination.
     #[test]
     fn test_visibility_cursor_inside_hides_right_wall_and_roof() {
         let (contents, structures) = two_level_room();
-        let mut wg = WallGrid::new(structures);
-        wg.contents = contents;
+        let mut cw = ConstructedWorld::new(structures);
+        let pe = ProposedWorld::new();
+        cw.contents = contents;
 
-        // Camera from +x, cursor inside the room at ground level.
         let camera_pos = Vec3::new(10.0, 5.0, 1.5);
         let focus_pos = Vec3::new(1.5, 0.0, 1.5);
 
-        let (hidden_locs, _cut) = compute_floor_edge(&wg, (focus_pos, false), camera_pos, 0);
+        let (hidden_locs, _cut) = compute_floor_edge(&cw, &pe, (focus_pos, false), camera_pos, 0);
         let hidden_set: HashSet<SlotCoord> = hidden_locs.into_iter().collect();
 
         check!(!hidden_set.is_empty());
 
-        // The camera-facing right wall (XLoWall at x=3) must be hidden.
         let hidden_right_wall: Vec<SlotCoord> = hidden_set
             .iter()
             .filter(|l| l.slot == Slot::XLoWall && l.cube.x == 3)
@@ -970,7 +939,6 @@ mod tests {
             .collect();
         check!(hidden_right_wall.len() == 3);
 
-        // Upper floor fill should hide all 9 roof-floor tiles at Y=1.
         let hidden_roof_tiles: Vec<SlotCoord> = hidden_set
             .iter()
             .filter(|l| l.slot == Slot::Floor && l.cube.y == 1)
@@ -981,12 +949,6 @@ mod tests {
         check!(SHADOW_ONLY_LAYER == 1);
     }
 
-    // ── shadow-layer / RenderLayers system tests ────────────────────────────
-
-    /// Builds a minimal Bevy app containing both cutaway systems and the resources
-    /// `update_cutaway_system` needs.  Uses `SimpleOctant` with the camera at
-    /// (10, 5, 10) so any cell at (x≥0, z≥0, y>0) is inside the hidden region.
-    /// A floor cell at (0, 1, 0) is pre-populated in the WallGrid.
     fn shadow_layer_test_app() -> (App, SlotCoord) {
         let loc = SlotCoord {
             cube: IVec3::new(0, 1, 0),
@@ -1003,8 +965,8 @@ mod tests {
         );
 
         let structures = load_structure_info();
-        let mut wg = WallGrid::new(structures);
-        wg.contents.set(
+        let mut cw = ConstructedWorld::new(structures);
+        cw.contents.set(
             loc,
             Cell {
                 id: StructureId(0),
@@ -1013,15 +975,17 @@ mod tests {
                 material: crate::wall_grid::Material::default(),
             },
         );
-        app.insert_resource(wg);
+        app.insert_resource(cw);
+        app.insert_resource(ProposedWorld::new());
+        app.insert_resource(AssembledWorld::new());
+        app.insert_resource(ViewableWorld::new());
         app.insert_resource(StructureList::default());
         app.insert_resource(AutotileHandles {
             handles: std::collections::HashMap::new(),
         });
-        app.insert_resource(BuildState::default()); // cur_y = 0
+        app.insert_resource(BuildState::default());
         app.insert_resource(CutawayMode::SimpleOctant);
 
-        // Camera at (10, 5, 10): x_neg=false, z_neg=false.
         app.world_mut().spawn((
             Camera::default(),
             GlobalTransform::from(Transform::from_xyz(10.0, 5.0, 10.0)),
@@ -1031,9 +995,6 @@ mod tests {
         (app, loc)
     }
 
-    /// When all scene children already exist at the time `update_cutaway_system`
-    /// runs (fast load), it must apply the shadow-only layer to the root entity
-    /// AND every descendant via `apply_render_layers_to_tree`.
     #[test]
     fn test_cutaway_shadow_layer_set_on_root_and_loaded_children() {
         let (mut app, loc) = shadow_layer_test_app();
@@ -1055,38 +1016,25 @@ mod tests {
         check!(app.world().get::<RenderLayers>(grandchild).cloned() == Some(desired));
     }
 
-    /// Simulates the async scene-load race: `update_cutaway_system` runs first
-    /// with no children present, then scene children arrive (as Bevy's
-    /// `SceneSpawner` would deliver them in `PreUpdate`).
-    /// `propagate_render_layers_system` must detect `Changed<Children>` and
-    /// push the shadow-only layer down so the hidden cell still casts shadows.
     #[test]
     fn test_shadow_layer_propagates_to_late_loaded_children() {
         let (mut app, loc) = shadow_layer_test_app();
 
-        // Spawn root with NO children yet.
         let root = app
             .world_mut()
             .spawn((GridCellMarker { loc }, Visibility::default()))
             .id();
 
-        // Update 1: update_cutaway_system sets root to the shadow layer,
-        // but apply_render_layers_to_tree finds no children to traverse.
         app.update();
 
         let desired = RenderLayers::layer(SHADOW_ONLY_LAYER);
         check!(app.world().get::<RenderLayers>(root).cloned() == Some(desired.clone()));
 
-        // Scene finishes loading (would arrive via SceneSpawner in PreUpdate).
-        // The tick advanced at the end of the previous update, so these writes
-        // are stamped with a newer tick than update_cutaway_system's last run.
         let grandchild = app.world_mut().spawn_empty().id();
         let child = app.world_mut().spawn_empty().id();
         app.world_mut().entity_mut(child).add_child(grandchild);
         app.world_mut().entity_mut(root).add_child(child);
 
-        // Update 2: propagate_render_layers_system detects Changed<Children>
-        // and propagates the shadow-only layer down.
         app.update();
 
         check!(app.world().get::<RenderLayers>(child).cloned() == Some(desired.clone()));
