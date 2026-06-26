@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use crate::road::ROAD_WIDTH;
 
 const SUN_ILLUMINANCE: f32 = 5_000.0;
-const FILL_ILLUMINANCE: f32 = SUN_ILLUMINANCE / 3.0;
+const FILL_ILLUMINANCE: f32 = SUN_ILLUMINANCE / 8.0;
 
 /// Startup system: spawns directional lights, the ground plane, and road meshes.
 pub fn spawn_world(
@@ -43,7 +43,7 @@ pub fn spawn_world(
         ));
     }
 
-    ambient_light.brightness = 100.0;
+    ambient_light.brightness = 10.0;
 
     // Ground plane (grass).
     commands.spawn((

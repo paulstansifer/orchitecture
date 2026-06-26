@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy::ecs::entity::Entity;
 use bevy::math::{Quat, Vec3};
-use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
+use bevy::prelude::{Commands, DetectChangesMut, Res, ResMut, SceneRoot, Transform};
 
 use crate::sparse3d::{Facing, SlotCoord};
 use crate::structure::{StructureId, StructureList};
@@ -208,7 +208,9 @@ pub fn autotile_update_system(
         .collect();
 
     // Apply — split-borrow the four cache fields so both calls can proceed.
-    let wg = &mut *wall_grid;
+    // bypass_change_detection: autotile only updates visual caches (autotile_results,
+    // cell_entities), not structural contents, so we must not trigger WallGrid change detection.
+    let wg = wall_grid.bypass_change_detection();
     apply_autotile_updates(
         &mut commands,
         &autotile_handles,

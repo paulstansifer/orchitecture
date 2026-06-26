@@ -13,6 +13,7 @@ use orchitecture_lib::{
     ceiling_lights::update_window_lights,
     cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
     game_mode::GameMode,
+    global_illumination::update_global_illumination,
     grid_preview::GridPreviewPlugin,
     input::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
@@ -109,7 +110,8 @@ fn main() {
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system,
                 propagate_render_layers_system.after(update_cutaway_system),
-                update_window_lights.run_if(resource_changed::<WallGrid>),
+                //update_window_lights.run_if(resource_changed::<WallGrid>),
+                update_global_illumination.run_if(resource_changed::<WallGrid>),
                 update_station_highlight,
             ),
         )

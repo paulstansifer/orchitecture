@@ -7,6 +7,7 @@
     * Lime (quarried?) 
   * Finished goods:
     * Baskets, barrels, candles, clothes
+  * Split `WallGrid` into multiple things to make change-detection meaningful
 # Zoomed-out mode:
   * Create a new mode!
   * Add farms
@@ -14,7 +15,7 @@
     * Each farm has a sustenance requirement, and trades the excess
   * May invite farmers to the market to trade
   * May recruit wayfarers as builders/specialists if a free station is available
-  
+
 
 # Walk-around mode:
   * Make textures and try pixel-art texturing
