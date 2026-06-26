@@ -10,7 +10,7 @@ use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
-use crate::wall_grid::{
+use crate::world::{
     apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, BuildWorldParams,
     ConstructedWorld, GridCellMarker, Material, MaterialAssets, ProposedWorld, ProposalGhostMarker,
     ProposalOverlayAssets, ProposedCutMarker,

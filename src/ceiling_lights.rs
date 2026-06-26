@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{Structure, StructureList};
-use crate::wall_grid::{Cell, ConstructedWorld};
+use crate::world::{Cell, ConstructedWorld};
 
 #[allow(dead_code)]
 const GRID_PERIOD: i32 = 5;

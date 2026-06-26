@@ -137,7 +137,7 @@ pub fn surroundings_ui_system(
     mut state: ResMut<SurroundingsState>,
     mut clock: ResMut<GameClock>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
-    mut constructed: ResMut<crate::wall_grid::ConstructedWorld>,
+    mut constructed: ResMut<crate::world::ConstructedWorld>,
 ) {
     use crate::game_mode::GameMode;
     use egui::{Color32, FontId, Pos2, Sense, Shape, Stroke};

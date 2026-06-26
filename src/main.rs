@@ -31,7 +31,7 @@ use orchitecture_lib::{
     },
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
-    wall_grid::{
+    world::{
         spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
         update_station_highlight, ConstructedWorld, StationHighlight,
     },

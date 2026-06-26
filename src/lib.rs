@@ -29,4 +29,4 @@ pub mod surroundings;
 pub mod util;
 pub mod walk_input;
 pub mod walk_ui;
-pub mod wall_grid;
+pub mod world;

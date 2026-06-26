@@ -5,10 +5,10 @@ use enum_derived::Rand;
 
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::{StructureId, StructureInfo};
-use crate::wall_grid::{ConstrainedScoreExt, Material, VantageEvaluation};
+use crate::world::{ConstrainedScoreExt, Material, VantageEvaluation};
 use crate::{
     sparse3d::{RelSlotCoord, SlotCoord, Sparse3D},
-    wall_grid::Cell,
+    world::Cell,
 };
 use rand::{prelude::SliceRandom, rngs::StdRng, Rng};
 
@@ -214,8 +214,8 @@ impl Builder {
     pub fn set_vantage(
         &mut self,
         loc: IVec3,
-        coherence: impl Into<crate::wall_grid::ConstrainedScore>,
-        interest: impl Into<crate::wall_grid::ConstrainedScore>,
+        coherence: impl Into<crate::world::ConstrainedScore>,
+        interest: impl Into<crate::world::ConstrainedScore>,
     ) {
         self.map.set(
             RelSlotCoord::new(loc.x, loc.y, loc.z, RelSlot::Room),
@@ -261,7 +261,7 @@ pub fn add_noise(
     rng: &mut StdRng,
 ) -> Vec<Sparse3D<Cell>> {
     use crate::sparse3d::RelSlot::{Floor, Room, XLoWall, ZLoWall};
-    use crate::wall_grid::VantageEvaluation;
+    use crate::world::VantageEvaluation;
 
     let mut results: Vec<Sparse3D<Cell>> = Vec::new();
 
@@ -409,7 +409,7 @@ pub fn add_noise(
 
 #[test]
 fn test_add_noise() {
-    use crate::wall_grid::{ConstrainedScore, VantageEvaluation};
+    use crate::world::{ConstrainedScore, VantageEvaluation};
     use assert2::{assert, check};
     use rand::rngs::StdRng;
     use rand::SeedableRng;

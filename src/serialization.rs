@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, Sparse3D};
 use crate::structure::{StructureId, StructureInfo};
-use crate::wall_grid::Cell;
+use crate::world::Cell;
 
 pub fn serialize_slot(
     id: StructureId,
@@ -219,7 +219,7 @@ pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Ce
                 id,
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::wall_grid::Material::default(),
+                material: crate::world::Material::default(),
             })
         },
         &structures_by_char,

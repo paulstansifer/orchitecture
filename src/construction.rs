@@ -2,7 +2,7 @@ use bevy::math::{IVec3, Vec3};
 
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 use crate::structure::{PlacementStyle, StructureId};
-use crate::wall_grid::{
+use crate::world::{
     desired, Cell, ConstructedWorld, Material, ProposedWorld, Proposal, ProposalView, UndoRecord,
     VantageEvaluation,
 };
@@ -371,7 +371,7 @@ mod tests {
 
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
     use crate::structure::{PlacementStyle, StructureId, StructureInfo};
-    use crate::wall_grid::{
+    use crate::world::{
         Cell, ConstructedWorld, Material, ProposedWorld, Proposal, ProposalView,
     };
 
@@ -745,7 +745,7 @@ mod tests {
 
     #[test]
     fn get_real_or_proposed_removal() {
-        use crate::wall_grid::get_real_or_proposed;
+        use crate::world::get_real_or_proposed;
         let (mut cw, mut pw) = make_world();
         let loc = xlowall(0, 0, 0);
         // Real cell with id=0
@@ -758,7 +758,7 @@ mod tests {
 
     #[test]
     fn get_real_or_proposed_falls_back_to_real() {
-        use crate::wall_grid::get_real_or_proposed;
+        use crate::world::get_real_or_proposed;
         let (mut cw, pw) = make_world();
         let loc = xlowall(0, 0, 0);
         cw.contents.set(loc, wall_cell(thing(&cw).unwrap()));

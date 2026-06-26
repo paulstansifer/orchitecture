@@ -1,7 +1,7 @@
 use crate::resource::{Approximation, Inventory, UniformResource};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::StructureList;
-use crate::wall_grid::{apply_changes, AssembledWorld, Cell, ConstructedWorld, Material};
+use crate::world::{apply_changes, AssembledWorld, Cell, ConstructedWorld, Material};
 use bevy::math::IVec3;
 use bevy::prelude::{Commands, Res, ResMut};
 use serde::{Deserialize, Serialize};

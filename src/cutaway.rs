@@ -12,7 +12,7 @@ use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
 use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
-use crate::wall_grid::{
+use crate::world::{
     cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledWorld, ConstructedWorld,
     GridCellMarker, ProposedWorld, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
     ProposedCutMarker, ViewableWorld,
@@ -869,11 +869,11 @@ mod tests {
     use crate::build_helpers::Builder;
     use crate::sparse3d::Facing;
     use crate::structure::load_structure_info;
-    use crate::wall_grid::{AssembledWorld, Cell, ConstructedWorld, ProposedWorld, ViewableWorld};
+    use crate::world::{AssembledWorld, Cell, ConstructedWorld, ProposedWorld, ViewableWorld};
 
     /// Builds a 3×1×3-cube room and returns the contents plus the loaded structures.
     fn two_level_room() -> (
-        crate::sparse3d::Sparse3D<crate::wall_grid::Cell>,
+        crate::sparse3d::Sparse3D<crate::world::Cell>,
         Vec<crate::structure::StructureInfo>,
     ) {
         let structures = load_structure_info();
@@ -972,7 +972,7 @@ mod tests {
                 id: StructureId(0),
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::wall_grid::Material::default(),
+                material: crate::world::Material::default(),
             },
         );
         app.insert_resource(cw);

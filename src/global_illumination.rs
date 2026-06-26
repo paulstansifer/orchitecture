@@ -9,7 +9,7 @@ use bevy::render::render_resource::{
 use crate::gi_material::{GiMaterial, GI_INTENSITY};
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
-use crate::wall_grid::{Cell, ConstructedWorld, MaterialAssets};
+use crate::world::{Cell, ConstructedWorld, MaterialAssets};
 
 const FALLOFF: f32 = 0.40;
 

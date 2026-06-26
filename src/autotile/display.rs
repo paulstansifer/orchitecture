@@ -7,7 +7,7 @@ use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 use crate::sparse3d::{Facing, SlotCoord};
 use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
-use crate::wall_grid::{
+use crate::world::{
     cell_transform, get_proposed_or_real, AssembledWorld, Cell, ConstructedWorld, GridCellMarker,
     ProposedWorld, Proposal, ProposalGhostMarker,
 };

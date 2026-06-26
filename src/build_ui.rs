@@ -9,7 +9,7 @@ use crate::input::BuildState;
 use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
 use crate::structure::StructureList;
-use crate::wall_grid::{
+use crate::world::{
     apply_changes, apply_proposal_changes, AssembledWorld, ConstructedWorld, Material,
     ProposalOverlayAssets, ProposedWorld, ViewableWorld,
 };
@@ -228,7 +228,7 @@ pub fn build_ui_system(
     mut cutaway_mode: ResMut<CutawayMode>,
     mut sandbox: ResMut<SandboxMode>,
     mut furniture_right_click: ResMut<FurnitureRightClick>,
-    mut station_highlight: ResMut<crate::wall_grid::StationHighlight>,
+    mut station_highlight: ResMut<crate::world::StationHighlight>,
     mut next_game_mode: ResMut<NextState<GameMode>>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -527,7 +527,7 @@ pub fn build_ui_system(
                             pending.reset();
                             let deltas: Vec<_> = locs
                                 .into_iter()
-                                .map(|loc| (loc, crate::wall_grid::ProposalView::None))
+                                .map(|loc| (loc, crate::world::ProposalView::None))
                                 .collect();
                             apply_proposal_changes(
                                 &mut commands,
@@ -555,7 +555,7 @@ pub fn build_ui_system(
     }
     // Write only on change (set_if_neq), so the highlight system doesn't respawn
     // the overlay meshes every frame.
-    station_highlight.set_if_neq(crate::wall_grid::StationHighlight(highlight));
+    station_highlight.set_if_neq(crate::world::StationHighlight(highlight));
 
     if let Some(mode) = resource_sidebar(ctx, &constructed) {
         next_game_mode.set(mode);

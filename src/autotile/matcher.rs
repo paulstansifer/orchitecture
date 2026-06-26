@@ -209,7 +209,7 @@ mod tests {
     use super::*;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
     use crate::structure::StructureId;
-    use crate::wall_grid::Cell;
+    use crate::world::Cell;
     use assert2::check;
 
     fn atom(name: &str) -> MeshSpec {

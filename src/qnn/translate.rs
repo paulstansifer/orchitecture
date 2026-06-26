@@ -7,7 +7,7 @@ use std::error::Error;
 #[cfg(feature = "training")]
 use crate::structure::{self, StructureInfo};
 #[cfg(feature = "training")]
-use crate::wall_grid::Cell;
+use crate::world::Cell;
 #[cfg(feature = "training")]
 use burn::backend::Autodiff;
 #[cfg(feature = "training")]
@@ -34,7 +34,7 @@ pub enum ScoreConstraint {
 }
 
 #[cfg(feature = "training")]
-impl crate::wall_grid::ConstrainedScore {
+impl crate::world::ConstrainedScore {
     pub fn disassemble(self) -> (f32, ScoreConstraint) {
         match self {
             Self::Exact(v) => (v, ScoreConstraint::Exact),
@@ -217,7 +217,7 @@ pub fn load_training_data<B: Backend>(
                         id,
                         facing: crate::sparse3d::Facing::NegX, // TODO!!!
                         evaluation: None,
-                        material: crate::wall_grid::Material::default(),
+                        material: crate::world::Material::default(),
                     })
                 },
                 &structures_by_char,
