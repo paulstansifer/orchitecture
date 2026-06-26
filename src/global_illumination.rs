@@ -11,7 +11,7 @@ use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
 use crate::world::{Cell, ConstructedWorld, MaterialAssets};
 
-const FALLOFF: f32 = 0.40;
+const FALLOFF: f32 = 0.30;
 
 /// Heap entry ordered by light level (higher = higher priority) with cube
 /// coordinates as a tiebreaker so that `Ord` and `PartialEq` are consistent.
@@ -54,7 +54,6 @@ fn has_sky_above(contents: &Sparse3D<Cell>, cube: IVec3, top_y: i32) -> bool {
 }
 
 /// Returns how much light passes through the boundary between adjacent cubes `from` and `to`.
-/// 0.0 = fully blocked, 0.5 = window/doorway, 1.0 = open air or transparent structure.
 fn boundary_transmission(
     contents: &Sparse3D<Cell>,
     structures: &[StructureInfo],
@@ -98,7 +97,7 @@ fn boundary_transmission(
         None => 1.0,
         Some(cell) => match structures[cell.id.as_usize()].name.as_str() {
             "wall" | "floor" => 0.0,
-            "window" | "doorway" => 0.5,
+            "window" | "doorway" => 1.0,
             _ => 1.0,
         },
     }
