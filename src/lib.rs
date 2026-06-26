@@ -9,6 +9,7 @@ pub mod construction;
 pub mod cutaway;
 pub mod example_structures;
 pub mod game_mode;
+pub mod gi_material;
 pub mod global_illumination;
 pub mod grid_preview;
 pub mod input;

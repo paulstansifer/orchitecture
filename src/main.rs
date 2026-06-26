@@ -13,6 +13,7 @@ use orchitecture_lib::{
     ceiling_lights::update_window_lights,
     cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
     game_mode::GameMode,
+    gi_material::GiPlugin,
     global_illumination::update_global_illumination,
     grid_preview::GridPreviewPlugin,
     input::{
@@ -59,6 +60,7 @@ fn main() {
                 .with_load_file::<LoadDialog>(),
         )
         .add_plugins(GridPreviewPlugin)
+        .add_plugins(GiPlugin)
         .add_plugins(ModelPlugin)
         .init_state::<GameMode>()
         .insert_resource(CameraState::default())

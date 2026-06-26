@@ -5,11 +5,12 @@ use std::f32::consts::TAU;
 use crate::autotile::AutotileResult;
 use bevy::math::{IVec3, Quat, Vec3};
 use bevy::prelude::{
-    AlphaMode, Assets, Color, Commands, Component, DetectChanges, Entity, Mesh, Mesh3d,
+    AlphaMode, Assets, Color, Commands, Component, DetectChanges, Entity, Image, Mesh, Mesh3d,
     MeshMaterial3d, Query, Res, ResMut, Resource, SceneRoot, StandardMaterial, Transform, With,
 };
 use serde::{Deserialize, Serialize};
 
+use crate::gi_material::{default_gi_image, GiExtension, GiMaterial};
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureId, StructureInfo, StructureList};
 
@@ -645,27 +646,44 @@ pub fn spawn_proposal_overlay_assets(
 }
 
 /// Solid-color material handles, one per `Material`, used to recolor cell meshes.
+/// These are `GiMaterial` (StandardMaterial + global-illumination extension); the
+/// extension's GI volume is rebound by `update_global_illumination`.
 #[derive(Resource)]
 pub struct MaterialAssets {
-    handles: [Handle<StandardMaterial>; Material::ALL.len()],
+    handles: [Handle<GiMaterial>; Material::ALL.len()],
 }
 
 impl MaterialAssets {
-    pub fn get(&self, material: Material) -> Handle<StandardMaterial> {
+    pub fn get(&self, material: Material) -> Handle<GiMaterial> {
         self.handles[material as usize].clone()
+    }
+
+    /// All material handles (one per `Material` variant).
+    pub fn all(&self) -> impl Iterator<Item = &Handle<GiMaterial>> {
+        self.handles.iter()
     }
 }
 
-/// Startup system: creates one `StandardMaterial` per `Material` variant.
+/// Startup system: creates one `GiMaterial` per `Material` variant. The GI volume
+/// starts as a 1×1×1 zero texture (no GI) until `update_global_illumination` runs.
 pub fn spawn_material_assets(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<GiMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
+    let gi_tex = images.add(default_gi_image());
     let handles = Material::ALL.map(|material| {
-        materials.add(StandardMaterial {
-            base_color: material.color(),
-            perceptual_roughness: 0.9,
-            ..Default::default()
+        materials.add(GiMaterial {
+            base: StandardMaterial {
+                base_color: material.color(),
+                perceptual_roughness: 0.9,
+                ..Default::default()
+            },
+            extension: GiExtension {
+                min_cube: bevy::math::Vec4::ZERO,
+                resolution: bevy::math::Vec4::ONE,
+                gi_tex: gi_tex.clone(),
+            },
         })
     });
     commands.insert_resource(MaterialAssets { handles });

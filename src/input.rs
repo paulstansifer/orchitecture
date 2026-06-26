@@ -418,6 +418,7 @@ pub fn recolor_new_mesh_children(
     cell_markers_q: Query<&GridCellMarker>,
     cut_markers_q: Query<&CutCellMarker, Without<ProposedCutMarker>>,
     child_of_q: Query<&ChildOf>,
+    mut commands: Commands,
     mut param_set: ParamSet<(
         Query<Entity, Added<MeshMaterial3d<StandardMaterial>>>,
         Query<&mut MeshMaterial3d<StandardMaterial>>,
@@ -446,20 +447,36 @@ pub fn recolor_new_mesh_children(
             }
         };
 
-        let handle = match recolor {
-            Some(Recolor::Cursor) => cursor_entities.cyan_mat.clone(),
-            Some(Recolor::Ghost) => overlay_assets.ghost_mat.clone(),
+        match recolor {
+            // Cursor/ghost overlays keep their plain `StandardMaterial`.
+            Some(Recolor::Cursor) => {
+                if let Ok(mut m) = param_set.p1().get_mut(entity) {
+                    *m = MeshMaterial3d(cursor_entities.cyan_mat.clone());
+                }
+            }
+            Some(Recolor::Ghost) => {
+                if let Ok(mut m) = param_set.p1().get_mut(entity) {
+                    *m = MeshMaterial3d(overlay_assets.ghost_mat.clone());
+                }
+            }
+            // Real placed cells (and furniture) get the GI extended material, so we
+            // swap out the GLTF-supplied `StandardMaterial` for `GiMaterial`. The mesh
+            // child may be despawned (autotile/cutaway respawn) before this flushes, so
+            // re-check the entity at apply time rather than letting the command panic.
             Some(Recolor::Material(loc)) => {
                 let material = wall_grid
                     .get_real_or_proposed(loc)
                     .map(|c| c.material)
                     .unwrap_or_default();
-                material_assets.get(material)
+                let handle = material_assets.get(material);
+                commands.queue(move |world: &mut World| {
+                    if let Ok(mut e) = world.get_entity_mut(entity) {
+                        e.remove::<MeshMaterial3d<StandardMaterial>>();
+                        e.insert(MeshMaterial3d(handle));
+                    }
+                });
             }
             None => continue,
-        };
-        if let Ok(mut m) = param_set.p1().get_mut(entity) {
-            *m = MeshMaterial3d(handle);
         }
     }
 }

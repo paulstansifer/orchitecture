@@ -1,18 +1,17 @@
 use std::collections::{BinaryHeap, HashMap};
 
 use bevy::asset::RenderAssetUsages;
-use bevy::light::IrradianceVolume;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
 };
 
+use crate::gi_material::{GiMaterial, GI_INTENSITY};
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
-use crate::wall_grid::{Cell, WallGrid};
+use crate::wall_grid::{Cell, MaterialAssets, WallGrid};
 
 const FALLOFF: f32 = 0.40;
-const IRRADIANCE_VOLUME_INTENSITY: f32 = 1800.0;
 
 /// Heap entry ordered by light level (higher = higher priority) with cube
 /// coordinates as a tiebreaker so that `Ord` and `PartialEq` are consistent.
@@ -37,9 +36,6 @@ impl PartialOrd for HeapEntry {
         Some(self.cmp(other))
     }
 }
-
-#[derive(Component)]
-pub struct GlobalIlluminationVolume;
 
 /// Returns true if no Floor cell exists above `cube` within the grid's bounding box.
 fn has_sky_above(contents: &Sparse3D<Cell>, cube: IVec3, top_y: i32) -> bool {
@@ -206,60 +202,57 @@ pub fn compute_sky_illuminance(
     illuminance
 }
 
-/// Packs a flood-filled illuminance map into a Bevy `Image` suitable for
-/// `IrradianceVolume::voxels`.
+/// Boundary transmission on a cube's three low faces (−X, −Y, −Z), i.e. the
+/// `XLoWall`, `Floor` and `ZLoWall` slots. These are the faces shared with the
+/// neighbors at `cube - X`, `cube - Y`, `cube - Z`, so storing only the low faces
+/// per cube covers every boundary exactly once.
+fn low_face_transmissions(
+    contents: &Sparse3D<Cell>,
+    structures: &[StructureInfo],
+    cube: IVec3,
+) -> [f32; 3] {
+    [
+        boundary_transmission(contents, structures, cube - IVec3::X, cube),
+        boundary_transmission(contents, structures, cube - IVec3::Y, cube),
+        boundary_transmission(contents, structures, cube - IVec3::Z, cube),
+    ]
+}
+
+/// Packs per-cube illuminance and low-face transmissions into a 3D `Rgba8Unorm`
+/// texture, one voxel per cube (size `(Rx, Ry, Rz)`).
 ///
-/// The image is a 3D `Rgba32Float` texture in Bevy's ambient-cube layout:
-/// dimensions `(Rx, 2·Ry, 3·Rz)` where `(Rx, Ry, Rz)` is the voxel resolution.
-/// All six directional faces of each voxel receive the same isotropic light level.
+/// Channels: `R` = illuminance, `G`/`B`/`A` = transmission on the cube's −X / −Y / −Z
+/// faces (0 = wall, 0.5 = window/doorway, 1 = open). Sampled with `textureLoad` and
+/// interpolated manually in [shaders/gi.wgsl], so the format need not be filterable.
 ///
 /// `bounds` is the inclusive range `(min_cube, max_cube)` in world grid coordinates;
 /// voxel `(x, y, z)` corresponds to world cube `min_cube + (x, y, z)`.
-pub fn illuminance_to_image(
+pub fn gi_to_image(
     illuminance: &HashMap<IVec3, f32>,
+    contents: &Sparse3D<Cell>,
+    structures: &[StructureInfo],
     (min_cube, max_cube): (IVec3, IVec3),
 ) -> Image {
     let rx = (max_cube.x - min_cube.x + 1) as u32;
     let ry = (max_cube.y - min_cube.y + 1) as u32;
     let rz = (max_cube.z - min_cube.z + 1) as u32;
 
-    // Texture dimensions for Bevy's ambient-cube irradiance volume format.
-    let width = rx;
-    let height = 2 * ry;
-    let depth = 3 * rz;
-
-    // Rgba8Unorm: 4 bytes per pixel, values in [0, 255] map to [0.0, 1.0] in the shader.
-    // This format is universally filterable, unlike Rgba32Float which requires
-    // the optional FLOAT32_FILTERABLE feature and silently breaks linear sampling without it.
     const BYTES_PER_PIXEL: usize = 4;
-    let mut data = vec![0u8; (width * height * depth) as usize * BYTES_PER_PIXEL];
+    let mut data = vec![0u8; (rx * ry * rz) as usize * BYTES_PER_PIXEL];
 
-    // (t_offset, p_offset) for each face: -X, +X, -Y, +Y, -Z, +Z.
-    let face_offsets: [(u32, u32); 6] = [
-        (0, 0),
-        (ry, 0),
-        (0, rz),
-        (ry, rz),
-        (0, 2 * rz),
-        (ry, 2 * rz),
-    ];
+    let quantize = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
 
     for z in 0..rz {
         for y in 0..ry {
             for x in 0..rx {
                 let world_cube = min_cube + IVec3::new(x as i32, y as i32, z as i32);
                 let level = illuminance.get(&world_cube).copied().unwrap_or(0.0);
-                let byte = (level.clamp(0.0, 1.0) * 255.0).round() as u8;
-                let pixel = [byte, byte, byte, 255u8];
+                let [tx, ty, tz] = low_face_transmissions(contents, structures, world_cube);
+                let pixel = [quantize(level), quantize(tx), quantize(ty), quantize(tz)];
 
-                for &(t_off, p_off) in &face_offsets {
-                    let s = x;
-                    let t = y + t_off;
-                    let p = z + p_off;
-                    let pixel_idx = (s + t * width + p * width * height) as usize;
-                    data[pixel_idx * BYTES_PER_PIXEL..pixel_idx * BYTES_PER_PIXEL + 4]
-                        .copy_from_slice(&pixel);
-                }
+                let pixel_idx = (x + y * rx + z * rx * ry) as usize;
+                data[pixel_idx * BYTES_PER_PIXEL..pixel_idx * BYTES_PER_PIXEL + 4]
+                    .copy_from_slice(&pixel);
             }
         }
     }
@@ -269,9 +262,9 @@ pub fn illuminance_to_image(
         texture_descriptor: TextureDescriptor {
             label: None,
             size: Extent3d {
-                width,
-                height,
-                depth_or_array_layers: depth,
+                width: rx,
+                height: ry,
+                depth_or_array_layers: rz,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -280,25 +273,20 @@ pub fn illuminance_to_image(
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         },
-        // sampler: bevy::image::ImageSampler::nearest(),
         asset_usage: RenderAssetUsages::RENDER_WORLD,
         ..default()
     }
 }
 
-/// Bevy system: despawns old irradiance volumes and spawns one covering the full
-/// building bounding box, run whenever `WallGrid` changes.
+/// Bevy system: recomputes the GI volume texture and rebinds it (along with the
+/// volume bounds) on every building material, run whenever `WallGrid` changes.
 pub fn update_global_illumination(
-    mut commands: Commands,
     wall_grid: Res<WallGrid>,
     structure_list: Res<StructureList>,
-    existing: Query<Entity, With<GlobalIlluminationVolume>>,
+    material_assets: Res<MaterialAssets>,
     mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<GiMaterial>>,
 ) {
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
-
     let contents = &wall_grid.contents;
     if contents.size() == 0 {
         return;
@@ -316,39 +304,25 @@ pub fn update_global_illumination(
 
     let (min_cube, max_cube) = contents.bounding_box();
 
-    let min_lum = illuminance.values().cloned().fold(f32::INFINITY, f32::min);
-    let max_lum = illuminance
-        .values()
-        .cloned()
-        .fold(f32::NEG_INFINITY, f32::max);
-    let dark_count = illuminance.values().filter(|&&v| v < 0.01).count();
-    info!(
-        "GI: bbox {:?}..{:?}, illuminance {:.3}..{:.3}, {} dark voxels / {} total",
-        min_cube,
-        max_cube,
-        min_lum,
-        max_lum,
-        dark_count,
-        illuminance.len()
+    let image = gi_to_image(
+        &illuminance,
+        contents,
+        &structure_infos,
+        (min_cube, max_cube),
     );
-
-    let image = illuminance_to_image(&illuminance, (min_cube, max_cube));
     let handle = images.add(image);
 
-    // The IrradianceVolume is conceptually a 1×1×1 cube; the Transform stretches
-    // it to cover the building's bounding box in world space.
-    let size = (max_cube - min_cube + IVec3::ONE).as_vec3();
-    let center = (min_cube.as_vec3() + (max_cube + IVec3::ONE).as_vec3()) / 2.0;
+    let resolution = (max_cube - min_cube + IVec3::ONE).as_vec3();
+    let min_cube = min_cube.as_vec3();
 
-    commands.spawn((
-        IrradianceVolume {
-            voxels: handle,
-            intensity: IRRADIANCE_VOLUME_INTENSITY,
-            affects_lightmapped_meshes: true,
-        },
-        Transform::from_translation(center).with_scale(size),
-        GlobalIlluminationVolume,
-    ));
+    // All building materials share the one GI volume; rebind it on each.
+    for material_handle in material_assets.all() {
+        if let Some(material) = materials.get_mut(material_handle) {
+            material.extension.min_cube = min_cube.extend(GI_INTENSITY);
+            material.extension.resolution = resolution.extend(0.0);
+            material.extension.gi_tex = handle.clone();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -404,5 +378,36 @@ mod tests {
         // One step deeper into the box.
         let deeper = IVec3::new(1, 1, 1);
         check!(illuminance.get(&deeper).copied().unwrap_or(0.0) > 0.0);
+    }
+
+    /// The per-cube low-face transmissions feed the shader's adjacency-aware blend:
+    /// a solid wall reports 0 (no bleed), a window reports 0.5.
+    #[test]
+    fn test_low_face_transmissions() {
+        use super::low_face_transmissions;
+
+        let structure_infos = load_structure_info();
+        let mut builder = Builder::new(&structure_infos);
+        builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 2, 2));
+        builder.build_plane(
+            IVec3::new(0, 1, 1),
+            IVec3::new(0, 1, 1),
+            RelSlot::XLoWall,
+            Some("window"),
+        );
+        let contents = builder.get();
+
+        // Cube (0,1,1): its −X face is now a window (0.5); its −Y/−Z faces are open
+        // interior air (1.0) since neighbors within the box share no wall there.
+        let [tx, _ty, _tz] =
+            low_face_transmissions(&contents, &structure_infos, IVec3::new(0, 1, 1));
+        check!(tx == 0.5);
+
+        // Cube (1,1,1): its −X face is the wall shared with (0,1,1)? No — that
+        // boundary (XLoWall of cube 1) is open interior, so 1.0. Confirm an actual
+        // box wall reads 0: cube (0,1,1)'s −Z face is the box's Z-low wall.
+        let [_, _, tz_wall] =
+            low_face_transmissions(&contents, &structure_infos, IVec3::new(1, 1, 0));
+        check!(tz_wall == 0.0);
     }
 }
