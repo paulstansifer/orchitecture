@@ -16,7 +16,7 @@ pub struct TravelerDemand {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Traveler {
     pub appear_chance: f32,
-    /// Fraction of the current view-circle radius.
+    /// Fraction of the view-circle radius.
     pub origin_dist: std::ops::Range<f32>,
     pub demands: Vec<TravelerDemand>,
 }

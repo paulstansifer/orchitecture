@@ -6,6 +6,50 @@ use crate::resource::UniformResource;
 const NUM_SEEDS: usize = 200;
 const MAP_EXTENT: f32 = 200.0;
 pub const CLIP_BOUNDS: f32 = 300.0;
+
+// Fog-of-war parameters (all distances in map units).
+pub const CIRCLE_REVEAL_RADIUS: f32 = 35.0;
+pub const PATH_REVEAL_RADIUS: f32 = 12.0;
+pub const FOG_FADE_WIDTH: f32 = 10.0;
+pub const FOG_MAX_ALPHA: u8 = 215;
+
+// Farm UI is shown only when the centroid's fog alpha is below this value.
+pub const REVEAL_THRESHOLD: u8 = 64;
+
+fn segment_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let ab = b - a;
+    let len_sq = ab.dot(ab);
+    if len_sq < 1e-6 {
+        return (p - a).length();
+    }
+    let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
+    (p - (a + ab * t)).length()
+}
+
+/// Returns the fog alpha (0 = fully clear, FOG_MAX_ALPHA = fully fogged) for a map-space point.
+pub fn fog_alpha_at(map_pos: Vec2, paths: &[&[Vec2]]) -> u8 {
+    let dist_circle = (map_pos.length() - CIRCLE_REVEAL_RADIUS).max(0.0);
+
+    let dist_path = paths
+        .iter()
+        .map(|path| {
+            if path.len() >= 2 {
+                let raw = path
+                    .windows(2)
+                    .map(|seg| segment_dist(map_pos, seg[0], seg[1]))
+                    .fold(f32::MAX, f32::min);
+                (raw - PATH_REVEAL_RADIUS).max(0.0)
+            } else {
+                f32::MAX
+            }
+        })
+        .fold(f32::MAX, f32::min);
+
+    let dist = dist_circle.min(dist_path);
+    let t = (dist / FOG_FADE_WIDTH).clamp(0.0, 1.0);
+    let t = t * t * (3.0 - 2.0 * t);
+    (t * FOG_MAX_ALPHA as f32) as u8
+}
 // 200 seeds over a 400×400 map gives ~800 sq-units per cell on average;
 // this scale puts that average at ~6 acres (midpoint of the 5–10 range).
 const ACRES_PER_UNIT_SQ: f32 = 0.0075;

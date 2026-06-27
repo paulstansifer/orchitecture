@@ -9,7 +9,7 @@ use crate::structure::StructureList;
 use crate::surroundings::farmstead::{
     preview_market, run_market, update_wanted_resources, FarmsResource, GameClock,
 };
-use crate::surroundings::ViewCircleRadius;
+use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
 use crate::world::{AssembledWorld, ConstructedWorld, ProposedWorld, ViewableWorld};
 
@@ -27,7 +27,6 @@ pub fn shared_ui_system(
     mut viewable: ResMut<ViewableWorld>,
     structure_list: Res<StructureList>,
     mut traveler_state: ResMut<TravelerState>,
-    view_circle_radius: Res<ViewCircleRadius>,
 ) {
     use egui::{Color32, FontId};
 
@@ -78,9 +77,12 @@ pub fn shared_ui_system(
     let has_farms_invited = invited_count > 0;
     let has_traveler_invited = traveler_state.invited;
 
-    let can_afford_traveler = traveler_state.current_offer.as_ref().map_or(false, |offer| {
-        traveler::can_afford_traveler(offer, &station_totals, &preview.player_gains)
-    });
+    let can_afford_traveler = traveler_state
+        .current_offer
+        .as_ref()
+        .map_or(false, |offer| {
+            traveler::can_afford_traveler(offer, &station_totals, &preview.player_gains)
+        });
 
     let wait_id = egui::Id::new("wait_confirmation");
 
@@ -226,7 +228,10 @@ pub fn shared_ui_system(
             );
             // Clone demands before the closure to avoid borrow conflict with &mut traveler_state.invited.
             let offer_demands: Option<Vec<(crate::resource::UniformResource, u16)>> =
-                traveler_state.current_offer.as_ref().map(|o| o.demands.clone());
+                traveler_state
+                    .current_offer
+                    .as_ref()
+                    .map(|o| o.demands.clone());
 
             if let Some(demands) = offer_demands {
                 egui::Frame::new()
@@ -328,9 +333,8 @@ pub fn shared_ui_system(
         traveler_state.invited = false;
         // Roll a new offer for next month.
         {
-            use rand::Rng as _;
             let mut rng = rand::rng();
-            traveler::roll_traveler_offer(&mut *traveler_state, view_circle_radius.0, &mut rng);
+            traveler::roll_traveler_offer(&mut *traveler_state, CIRCLE_REVEAL_RADIUS, &mut rng);
         }
 
         if !gains.is_empty() {
