@@ -181,7 +181,7 @@ fn clear_proposal_entities(commands: &mut Commands, assembled: &mut AssembledWor
 
 /// Despawns all persistent proposed-cut entities and drains `proposed_cut_entities`.
 fn clear_proposed_cut_entities(commands: &mut Commands, viewable: &mut ViewableWorld) {
-    for (_, entities) in viewable.proposed_cut_entities.drain() {
+    for (_, (_, entities)) in viewable.proposed_cut_entities.drain() {
         for entity in entities {
             commands.entity(entity).despawn();
         }

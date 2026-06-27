@@ -644,14 +644,9 @@ pub fn update_cutaway_system(
     cutaway_mode: Res<CutawayMode>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
-    mut vis_q: Query<(
-        Entity,
-        &GridCellMarker,
-        &mut Visibility,
-        Option<&RenderLayers>,
-    )>,
-    mut ghost_q: Query<(Entity, &ProposalGhostMarker, Option<&RenderLayers>)>,
-    mut overlay_q: Query<(Entity, &ProposalOverlayMarker, Option<&RenderLayers>)>,
+    vis_q: Query<(Entity, &GridCellMarker, Option<&RenderLayers>)>,
+    ghost_q: Query<(Entity, &ProposalGhostMarker, Option<&RenderLayers>)>,
+    overlay_q: Query<(Entity, &ProposalOverlayMarker, Option<&RenderLayers>)>,
     children_q: Query<&Children>,
 ) {
     let Ok((_, cam_gt)) = camera_q.single() else {
@@ -739,40 +734,35 @@ pub fn update_cutaway_system(
             }
         };
 
-    for (entity, marker, mut vis, current_layers) in vis_q.iter_mut() {
-        if *vis != Visibility::Inherited {
-            *vis = Visibility::Inherited;
-        }
-
+    for (entity, marker, current_layers) in vis_q.iter() {
         let desired = if hidden.contains(marker.loc) {
             RenderLayers::layer(SHADOW_ONLY_LAYER)
         } else {
             RenderLayers::default()
         };
-
-        if current_layers.map_or(true, |l| l != &desired) {
+        if current_layers.map_or(desired != RenderLayers::default(), |l| l != &desired) {
             apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
         }
     }
 
-    for (entity, marker, current_layers) in ghost_q.iter_mut() {
+    for (entity, marker, current_layers) in ghost_q.iter() {
         let desired = if hidden.contains(marker.loc) {
             RenderLayers::layer(SHADOW_ONLY_LAYER)
         } else {
             RenderLayers::default()
         };
-        if current_layers.map_or(true, |l| l != &desired) {
+        if current_layers.map_or(desired != RenderLayers::default(), |l| l != &desired) {
             apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
         }
     }
 
-    for (entity, marker, current_layers) in overlay_q.iter_mut() {
+    for (entity, marker, current_layers) in overlay_q.iter() {
         let desired = if hidden.contains(marker.loc) {
             RenderLayers::layer(SHADOW_ONLY_LAYER)
         } else {
             RenderLayers::default()
         };
-        if current_layers.map_or(true, |l| l != &desired) {
+        if current_layers.map_or(desired != RenderLayers::default(), |l| l != &desired) {
             apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
         }
     }
@@ -819,40 +809,41 @@ pub fn update_cutaway_system(
         }
     }
 
-    // Despawn proposed cut entities whose locations left the cut zone.
-    viewable.proposed_cut_entities.retain(|loc, entities| {
-        if desired_proposed.contains_key(loc) {
-            true
-        } else {
-            for e in entities.iter() {
-                commands.entity(*e).despawn();
+    // Despawn proposed cut entities whose location or structure ID changed.
+    viewable
+        .proposed_cut_entities
+        .retain(|loc, (id, entities)| {
+            if desired_proposed.get(loc) == Some(id) {
+                true
+            } else {
+                for e in entities.iter() {
+                    commands.entity(*e).despawn();
+                }
+                false
             }
-            false
-        }
-    });
+        });
 
     // Spawn proposed cut entities for locations newly entering the cut zone.
     for (loc, id) in desired_proposed {
+        if viewable.proposed_cut_entities.get(&loc).map(|(i, _)| *i) == Some(id) {
+            continue;
+        }
         let cuts = get_cuts(loc, id, &assembled, &structure_list, &autotile_handles);
         if !cuts.is_empty() {
-            if let std::collections::hash_map::Entry::Vacant(v) =
-                viewable.proposed_cut_entities.entry(loc)
-            {
-                let entities: Vec<Entity> = cuts
-                    .into_iter()
-                    .map(|(cut_handle, transform)| {
-                        commands
-                            .spawn((
-                                SceneRoot(cut_handle),
-                                transform,
-                                CutCellMarker { loc },
-                                ProposedCutMarker,
-                            ))
-                            .id()
-                    })
-                    .collect();
-                v.insert(entities);
-            }
+            let entities: Vec<Entity> = cuts
+                .into_iter()
+                .map(|(cut_handle, transform)| {
+                    commands
+                        .spawn((
+                            SceneRoot(cut_handle),
+                            transform,
+                            CutCellMarker { loc },
+                            ProposedCutMarker,
+                        ))
+                        .id()
+                })
+                .collect();
+            viewable.proposed_cut_entities.insert(loc, (id, entities));
         }
     }
 }
