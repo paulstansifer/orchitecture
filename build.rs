@@ -542,6 +542,10 @@ fn convert_sprites(manifest: &Path) {
         for path in &svgs {
             let stem = path.file_stem().unwrap().to_str().unwrap();
             let out = out_dir.join(format!("{stem}.png"));
+            // Declaring the output as a rerun-if-changed path causes Cargo to
+            // re-run this build script whenever the PNG is missing, so a fresh
+            // clone or a deleted PNG is repaired without any manual `touch`.
+            println!("cargo:rerun-if-changed={}", out.display());
             match Command::new("rsvg-convert")
                 .args(["-w", &w.to_string(), "-h", &h.to_string()])
                 .arg(path)

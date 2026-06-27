@@ -79,10 +79,10 @@ sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev librsvg2-bin
 * `librsvg2-bin` — provides `rsvg-convert`, used by `build.rs` to rasterise the
   sprite SVGs into PNGs that are `include_bytes!`-d by `resource_icons.rs`
 
-After installing the libraries, trigger a rebuild of the PNGs by touching the SVGs:
+After installing the libraries, run tests normally — the PNGs are regenerated
+automatically if missing:
 
 ```
-touch sprites/*.svg
 cargo test --lib
 ```
 
