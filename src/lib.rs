@@ -27,6 +27,7 @@ pub mod sparse3d;
 pub mod station;
 pub mod structure;
 pub mod surroundings;
+pub mod traveler;
 pub mod ui;
 pub mod util;
 pub mod walk_input;

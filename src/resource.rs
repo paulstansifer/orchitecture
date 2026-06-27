@@ -70,6 +70,7 @@ impl UniformResource {
 pub enum UniqueResource {
     Book { title: String },
     Rug { color: Rgb<u8> },
+    Tool,
 }
 
 impl UniqueResource {
@@ -77,6 +78,7 @@ impl UniqueResource {
         match self {
             UniqueResource::Book { .. } => 0.05,
             UniqueResource::Rug { .. } => 1.0,
+            UniqueResource::Tool => 0.5,
         }
     }
 }
@@ -147,6 +149,37 @@ impl Inventory {
 
     pub fn may_add(&self, _new_stuff: &InventoryEntry) -> bool {
         todo!()
+    }
+
+    pub fn add_unique(&mut self, item: UniqueResource) {
+        for entry in &mut self.contents {
+            if let InventoryEntry::Collection(items) = entry {
+                items.push(item);
+                return;
+            }
+        }
+        self.contents.push(InventoryEntry::Collection(vec![item]));
+    }
+
+    pub fn tool_count(&self) -> usize {
+        let mut count = 0;
+        for entry in &self.contents {
+            if let InventoryEntry::Collection(items) = entry {
+                count += items.iter().filter(|i| matches!(i, UniqueResource::Tool)).count();
+            }
+        }
+        count
+    }
+
+    pub fn subtract_uniform(&mut self, res: UniformResource, qty: u16) {
+        for entry in &mut self.contents {
+            if let InventoryEntry::Uniform(existing, existing_qty) = entry {
+                if *existing == res {
+                    *existing_qty = existing_qty.saturating_sub(qty);
+                    return;
+                }
+            }
+        }
     }
 }
 

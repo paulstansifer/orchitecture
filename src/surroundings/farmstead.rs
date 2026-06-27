@@ -55,6 +55,9 @@ pub struct FarmsResource {
     pub circle_pos: Vec2,
     /// Path from a distant point toward the map origin, in map coordinates.
     pub path: Vec<Vec2>,
+    /// Additional paths revealed by traveler arrivals.
+    #[serde(default)]
+    pub extra_paths: Vec<Vec<Vec2>>,
 }
 
 /// Transient resource: exists only while in Surroundings mode.
@@ -62,6 +65,10 @@ pub struct FarmsResource {
 pub struct SurroundingsState {
     pub viewport_offset: Vec2,
 }
+
+/// Updated each frame by surroundings_ui_system; read by traveler roll logic.
+#[derive(Resource, Default)]
+pub struct ViewCircleRadius(pub f32);
 
 /// In-game calendar.
 #[derive(Resource, Default, Serialize, Deserialize)]
