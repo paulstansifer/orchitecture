@@ -6,6 +6,8 @@ use crate::construction::{construct, load_from_offline};
 use crate::cutaway::CutawayMode;
 use crate::game_mode::GameMode;
 use crate::input::BuildState;
+use crate::resource::UniformResource;
+use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
 use crate::structure::StructureList;
@@ -230,7 +232,9 @@ pub fn build_ui_system(
     mut furniture_right_click: ResMut<FurnitureRightClick>,
     mut station_highlight: ResMut<crate::world::StationHighlight>,
     mut next_game_mode: ResMut<NextState<GameMode>>,
+    resource_icons: Res<ResourceIcons>,
 ) {
+    let icon_textures = resource_icons.texture_ids_large(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -418,7 +422,14 @@ pub fn build_ui_system(
                                 ui.label("  (empty)");
                             }
                             for (res, qty) in totals {
-                                ui.label(format!("  {}: {}", res.label(), qty));
+                                ui.horizontal(|ui| {
+                                    if let Some(&tex) = icon_textures.get(&res) {
+                                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                            tex, LARGE_SIZE,
+                                        )));
+                                    }
+                                    ui.label(format!("{}", qty));
+                                });
                             }
 
                             // Highlight this station's furniture in 3D.
@@ -557,7 +568,7 @@ pub fn build_ui_system(
     // the overlay meshes every frame.
     station_highlight.set_if_neq(crate::world::StationHighlight(highlight));
 
-    if let Some(mode) = resource_sidebar(ctx, &constructed) {
+    if let Some(mode) = resource_sidebar(ctx, &constructed, &icon_textures) {
         next_game_mode.set(mode);
     }
 }
@@ -597,6 +608,7 @@ pub(crate) fn station_resource_totals(
 pub(crate) fn resource_sidebar(
     ctx: &egui::Context,
     constructed: &ConstructedWorld,
+    icon_textures: &std::collections::HashMap<UniformResource, egui::TextureId>,
 ) -> Option<GameMode> {
     let totals = station_resource_totals(constructed);
     let mut goto: Option<GameMode> = None;
@@ -610,7 +622,14 @@ pub(crate) fn resource_sidebar(
             }
             for (res, total, rounded_down) in &totals {
                 let prefix = if *rounded_down { "> " } else { "" };
-                ui.label(format!("{}{}: {}", prefix, res.label(), total));
+                ui.horizontal(|ui| {
+                    if let Some(&tex) = icon_textures.get(res) {
+                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                            tex, LARGE_SIZE,
+                        )));
+                    }
+                    ui.label(format!("{}{}: {}", prefix, res.label(), total));
+                });
             }
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 if ui.button("Surroundings").clicked() {

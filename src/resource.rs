@@ -11,6 +11,20 @@ pub enum UniformResource {
     Canvas,
     Fieldstone,
     Block,
+    Lime,
+}
+
+impl UniformResource {
+    pub const ALL: &'static [UniformResource] = &[
+        UniformResource::Potato,
+        UniformResource::Timber,
+        UniformResource::Straw,
+        UniformResource::WoodBeam,
+        UniformResource::Canvas,
+        UniformResource::Fieldstone,
+        UniformResource::Block,
+        UniformResource::Lime,
+    ];
 }
 
 impl UniformResource {
@@ -23,6 +37,7 @@ impl UniformResource {
             UniformResource::Canvas => "Canvas",
             UniformResource::Fieldstone => "Fieldstone",
             UniformResource::Block => "Blocks",
+            UniformResource::Lime => "Lime",
         }
     }
 

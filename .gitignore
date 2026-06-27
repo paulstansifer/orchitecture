@@ -26,3 +26,4 @@ target/
 dist/
 
 buildables/autotile/*
+sprites/pngs/*

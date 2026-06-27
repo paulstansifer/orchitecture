@@ -14,8 +14,8 @@ use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
 use crate::world::{
     cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledWorld, ConstructedWorld,
-    GridCellMarker, ProposedWorld, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
-    ProposedCutMarker, ViewableWorld,
+    GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker, ProposedCutMarker,
+    ProposedWorld, ViewableWorld,
 };
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned

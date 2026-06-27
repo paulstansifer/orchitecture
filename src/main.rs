@@ -22,6 +22,7 @@ use orchitecture_lib::{
     orc::{despawn_orc, orc_input_system, setup_orc_animation, spawn_orc},
     ortho_camera::{walk_camera_system, WalkCameraState},
     qnn::ModelPlugin,
+    resource_icons::spawn_resource_icons,
     scene::spawn_scene,
     station::spawn_initial_station,
     structure::{spawn_structures, StructureList},
@@ -94,6 +95,7 @@ fn main() {
                 spawn_material_assets,
                 spawn_highlight_assets,
                 discover_user_files,
+                spawn_resource_icons,
             ),
         )
         .add_systems(

@@ -3,7 +3,7 @@ use bevy::math::{IVec3, Vec3};
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 use crate::structure::{PlacementStyle, StructureId};
 use crate::world::{
-    desired, Cell, ConstructedWorld, Material, ProposedWorld, Proposal, ProposalView, UndoRecord,
+    desired, Cell, ConstructedWorld, Material, Proposal, ProposalView, ProposedWorld, UndoRecord,
     VantageEvaluation,
 };
 
@@ -371,9 +371,7 @@ mod tests {
 
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
     use crate::structure::{PlacementStyle, StructureId, StructureInfo};
-    use crate::world::{
-        Cell, ConstructedWorld, Material, ProposedWorld, Proposal, ProposalView,
-    };
+    use crate::world::{Cell, ConstructedWorld, Material, Proposal, ProposalView, ProposedWorld};
 
     use super::{construct, load_from_offline};
 
