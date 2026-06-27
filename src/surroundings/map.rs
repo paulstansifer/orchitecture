@@ -27,7 +27,7 @@ fn segment_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 }
 
 /// Returns the fog alpha (0 = fully clear, FOG_MAX_ALPHA = fully fogged) for a map-space point.
-pub fn fog_alpha_at(map_pos: Vec2, paths: &[&[Vec2]]) -> u8 {
+pub fn fog_alpha_at(map_pos: Vec2, paths: &[Vec<Vec2>]) -> u8 {
     let dist_circle = (map_pos.length() - CIRCLE_REVEAL_RADIUS).max(0.0);
 
     let dist_path = paths

@@ -319,6 +319,7 @@ mod tests {
     fn bin_structures() -> Vec<StructureInfo> {
         vec![StructureInfo {
             name: "bin".to_string(),
+            structure_type: crate::materials::StructureType::Furniture,
             placement_style: PlacementStyle::RoomPlop,
             x_char: None,
             z_char: None,

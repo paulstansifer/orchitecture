@@ -125,9 +125,19 @@ mod tests {
         // ── XLoWall: boundary between cube(x-1) and cube(x) ──────────────
 
         // Wall at x=0 inside north arm: x-1=-1 is outside the arm → NOT forbidden
-        check!(!is_in_road_forbidden_zone(loc(0, 0, ROAD_WIDTH + 1, Slot::XLoWall)));
+        check!(!is_in_road_forbidden_zone(loc(
+            0,
+            0,
+            ROAD_WIDTH + 1,
+            Slot::XLoWall
+        )));
 
         // Wall at x=2 inside north arm: both x=1 and x=2 are interior → IS forbidden
-        check!(is_in_road_forbidden_zone(loc(2, 0, ROAD_WIDTH + 1, Slot::XLoWall)));
+        check!(is_in_road_forbidden_zone(loc(
+            2,
+            0,
+            ROAD_WIDTH + 1,
+            Slot::XLoWall
+        )));
     }
 }

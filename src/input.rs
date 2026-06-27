@@ -144,8 +144,8 @@ pub struct BuildState {
     pub drag_start: Option<Vec3>,
     /// Latest evaluation results (coherence, interest).
     pub evaluation: Option<(f32, f32)>,
-    /// Material applied to newly placed (non-furniture) structures.
-    pub selected_material: Material,
+    /// Selected material (by position in `MaterialList::for_type`) per structure type.
+    pub material_per_type: std::collections::HashMap<crate::materials::StructureType, usize>,
 }
 
 pub fn building_input_system(
@@ -164,7 +164,8 @@ pub fn building_input_system(
     mut cutaway_mode: ResMut<CutawayMode>,
     sandbox: Res<SandboxMode>,
     mut furniture_right_click: ResMut<crate::build_ui::FurnitureRightClick>,
-    mut right_press_pos: Local<Option<Vec2>>,
+    // mut right_press_pos: Local<Option<Vec2>>,
+    material_list: Res<crate::materials::MaterialList>,
 ) {
     let (mut constructed, mut pending, mut assembled) = (
         &mut world.constructed,
@@ -202,7 +203,7 @@ pub fn building_input_system(
         };
     }
 
-    // --- Structure selection by digit key ---
+    // --- Structure selection by digit key (in sorted display order) ---
     if !egui_wants_input.wants_keyboard_input() {
         const DIGIT_KEYS: [KeyCode; 9] = [
             KeyCode::Digit1,
@@ -215,10 +216,12 @@ pub fn building_input_system(
             KeyCode::Digit8,
             KeyCode::Digit9,
         ];
-        let num_structures = constructed.get_structure_names().len();
-        for (i, key) in DIGIT_KEYS.iter().enumerate() {
-            if keyboard.just_pressed(*key) && i < num_structures {
-                build_state.selected_structure = i;
+        let sorted = crate::structure::sorted_structure_indices(&constructed.structures);
+        for (display_idx, key) in DIGIT_KEYS.iter().enumerate() {
+            if keyboard.just_pressed(*key) {
+                if let Some(&struct_idx) = sorted.get(display_idx) {
+                    build_state.selected_structure = struct_idx;
+                }
             }
         }
     }
@@ -286,7 +289,24 @@ pub fn building_input_system(
         ) {
             let id = StructureId(build_state.selected_structure as u32);
             let dir = build_state.cur_dir as i32;
-            let material = build_state.selected_material;
+            let material = {
+                let info = &constructed.structures[id.as_usize()];
+                if info.furniture {
+                    Material::Planks
+                } else {
+                    let stype = info.structure_type;
+                    let options = material_list.for_type(stype);
+                    let local_idx = build_state
+                        .material_per_type
+                        .get(&stype)
+                        .copied()
+                        .unwrap_or(0);
+                    options
+                        .get(local_idx)
+                        .map(|m| m.world_material())
+                        .unwrap_or_default()
+                }
+            };
 
             let dist_sq = (end - start).length_squared();
 
@@ -314,11 +334,13 @@ pub fn building_input_system(
     }
 
     // --- Right-click: pick a real furniture cell (vs. right-drag = camera rotate) ---
-    if mouse_button.just_pressed(MouseButton::Right) {
-        *right_press_pos = window.cursor_position();
-    }
+    // TODO: the Local<> for right_pres_pos makes the signature too long. TEMPORARY FIX!
+    // if mouse_button.just_pressed(MouseButton::Right) {
+    //     *right_press_pos = window.cursor_position();
+    // }
     if mouse_button.just_released(MouseButton::Right) {
-        let pressed = right_press_pos.take();
+        //let pressed = right_press_pos.take();
+        let pressed =window.cursor_position();
         let moved = pressed
             .zip(window.cursor_position())
             .map(|(a, b)| a.distance(b))

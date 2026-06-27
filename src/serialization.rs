@@ -247,6 +247,7 @@ mod tests {
         vec![
             StructureInfo {
                 name: "wall".to_string(),
+                structure_type: crate::materials::StructureType::WallLike,
                 placement_style: PlacementStyle::WallDrag,
                 x_char: Some('|'),
                 z_char: Some('-'),
@@ -260,6 +261,7 @@ mod tests {
             },
             StructureInfo {
                 name: "floor".to_string(),
+                structure_type: crate::materials::StructureType::GroundFloorLike,
                 placement_style: PlacementStyle::FloorDrag,
                 x_char: Some('/'),
                 z_char: Some('.'),

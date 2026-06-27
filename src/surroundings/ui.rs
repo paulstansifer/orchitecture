@@ -47,7 +47,7 @@ fn build_fog_mesh(
     panel_rect: egui::Rect,
     screen_centre: egui::Pos2,
     viewport_offset: Vec2,
-    paths: &[&[Vec2]],
+    paths: &[Vec<Vec2>],
 ) -> egui::Mesh {
     let cols = (panel_rect.width() / FOG_GRID_STEP_PX).ceil() as usize + 1;
     let rows = (panel_rect.height() / FOG_GRID_STEP_PX).ceil() as usize + 1;
@@ -132,12 +132,7 @@ pub fn surroundings_ui_system(
                 Pos2::new(screen_centre.x + rel.x, screen_centre.y - rel.y)
             };
 
-            let primary_path: Vec<Vec2> = farms.path.clone();
-            let extra: Vec<Vec<Vec2>> = farms.traveler_reveals.clone();
-            let mut all_paths: Vec<&[Vec2]> = vec![primary_path.as_slice()];
-            for ep in &extra {
-                all_paths.push(ep.as_slice());
-            }
+
             let circle_pos = farms.circle_pos;
             let expanded = panel_rect.expand(300.0);
 
@@ -154,7 +149,7 @@ pub fn surroundings_ui_system(
                 painter.add(Shape::convex_polygon(screen_pts, fill, stroke));
 
                 let map_centroid = farm.centroid();
-                if fog_alpha_at(map_centroid, &all_paths) < REVEAL_THRESHOLD {
+                if fog_alpha_at(map_centroid, &farms.traveler_reveals) < REVEAL_THRESHOLD {
                     let centroid = map_to_screen(map_centroid);
                     if panel_rect.contains(centroid) {
                         revealed.push((i, centroid));
@@ -163,7 +158,7 @@ pub fn surroundings_ui_system(
             }
 
             // ── Fog-of-war mesh ───────────────────────────────────────────────
-            let fog_mesh = build_fog_mesh(panel_rect, screen_centre, viewport_offset, &all_paths);
+            let fog_mesh = build_fog_mesh(panel_rect, screen_centre, viewport_offset, &farms.traveler_reveals);
             painter.add(egui::Shape::mesh(fog_mesh));
 
             // ── Navigation circle (above fog) ─────────────────────────────────

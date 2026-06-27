@@ -39,6 +39,15 @@ pub struct StructureInfo {
     /// Furniture is always made of planks, regardless of the selected material.
     #[serde(default)]
     pub furniture: bool,
+    pub structure_type: crate::materials::StructureType,
+}
+
+/// Indices into `structures` sorted by `structure_type`, then by original position.
+/// Use this for UI display order and digit-key shortcuts so both stay consistent.
+pub fn sorted_structure_indices(structures: &[StructureInfo]) -> Vec<usize> {
+    let mut idxs: Vec<usize> = (0..structures.len()).collect();
+    idxs.sort_by_key(|&i| structures[i].structure_type);
+    idxs
 }
 
 pub struct Structure {

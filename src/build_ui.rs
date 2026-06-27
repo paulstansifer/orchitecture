@@ -5,14 +5,15 @@ use bevy_file_dialog::prelude::*;
 use crate::construction::{construct, load_from_offline};
 use crate::cutaway::CutawayMode;
 use crate::input::BuildState;
+use crate::materials::MaterialList;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
+use crate::structure::sorted_structure_indices;
 use crate::structure::StructureList;
 use crate::world::{
     apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
-    AssembledWorld, ConstructedWorld, Material, ProposalOverlayAssets, ProposedWorld,
-    ViewableWorld,
+    AssembledWorld, ConstructedWorld, ProposalOverlayAssets, ProposedWorld, ViewableWorld,
 };
 
 /// Maps bundled at compile time; always available on all platforms.
@@ -234,6 +235,7 @@ pub fn build_ui_system(
     mut furniture_right_click: ResMut<FurnitureRightClick>,
     mut station_highlight: ResMut<crate::world::StationHighlight>,
     resource_icons: Res<ResourceIcons>,
+    material_list: Res<MaterialList>,
 ) {
     let icon_textures = resource_icons.texture_ids_large(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -476,28 +478,54 @@ pub fn build_ui_system(
                 LeftPanel::Build => {
                     ui.heading("Orchitecture");
                     ui.separator();
-                    ui.label("Structure:");
-                    let names = constructed.get_structure_names();
-                    for (i, name) in names.iter().enumerate() {
-                        let selected = build_state.selected_structure == i;
-                        let label = if i < 9 {
-                            format!("{}. {}", i + 1, name)
+
+                    // Structures sorted by type with group headers.
+                    let sorted = sorted_structure_indices(&constructed.structures);
+                    let mut last_stype: Option<crate::materials::StructureType> = None;
+                    for (display_idx, &struct_idx) in sorted.iter().enumerate() {
+                        let info = &constructed.structures[struct_idx];
+                        let stype = info.structure_type;
+                        if last_stype != Some(stype) {
+                            if last_stype.is_some() {
+                                ui.separator();
+                            }
+                            ui.label(
+                                egui::RichText::new(stype.label())
+                                    .small()
+                                    .color(egui::Color32::from_gray(140)),
+                            );
+                            last_stype = Some(stype);
+                        }
+                        let selected = build_state.selected_structure == struct_idx;
+                        let label = if display_idx < 9 {
+                            format!("{}. {}", display_idx + 1, info.name)
                         } else {
-                            name.clone()
+                            info.name.clone()
                         };
                         if ui.selectable_label(selected, &label).clicked() {
-                            build_state.selected_structure = i;
+                            build_state.selected_structure = struct_idx;
                         }
                     }
 
-                    ui.separator();
-                    ui.label("Material:");
-                    for material in Material::ALL {
-                        ui.radio_value(
-                            &mut build_state.selected_material,
-                            material,
-                            material.label(),
-                        );
+                    // Material picker for the selected structure's type.
+                    let selected_info = &constructed.structures[build_state.selected_structure];
+                    let stype = selected_info.structure_type;
+                    let options = material_list.for_type(stype);
+                    if !options.is_empty() {
+                        ui.separator();
+                        ui.label("Material:");
+                        let current = build_state
+                            .material_per_type
+                            .get(&stype)
+                            .copied()
+                            .unwrap_or(0);
+                        let mut chosen = current;
+                        for (local_idx, mat) in options.iter().enumerate() {
+                            ui.radio_value(&mut chosen, local_idx, &mat.name);
+                        }
+                        if chosen != current {
+                            build_state.material_per_type.insert(stype, chosen);
+                        }
                     }
 
                     ui.separator();

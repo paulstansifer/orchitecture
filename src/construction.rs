@@ -407,6 +407,7 @@ mod tests {
         use crate::structure::StructureEmbedding;
         let structs = vec![StructureInfo {
             name: "test_wall".to_string(),
+            structure_type: crate::materials::StructureType::WallLike,
             placement_style: PlacementStyle::WallDrag,
             x_char: None,
             z_char: None,

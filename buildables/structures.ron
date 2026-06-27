@@ -11,6 +11,7 @@
             striated: 0.0,
         ),
         furniture: true,
+        structure_type: Furniture,
     ),
     (
         name: "doorway",
@@ -23,6 +24,7 @@
             decorative: 0.0,
             striated: 0.0,
         ),
+        structure_type: WallLike,
     ),
     (
         name: "window",
@@ -35,6 +37,7 @@
             decorative: 0.75,
             striated: 0.0,
         ),
+        structure_type: WallLike,
     ),
     (
         name: "floor",
@@ -47,6 +50,7 @@
             decorative: 0.0,
             striated: 0.0,
         ),
+        structure_type: GroundFloorLike,
     ),
     (
         name: "stairs",
@@ -59,6 +63,7 @@
             decorative: 0.5,
             striated: 1.0,
         ),
+        structure_type: PillarLike,
     ),
     (
         name: "roof",
@@ -71,6 +76,7 @@
             decorative: 0.7,
             striated: 0.0,
         ),
+        structure_type: RoofLike,
     ),
     (
         name: "wall",
@@ -83,6 +89,7 @@
             decorative: 0.0,
             striated: 0.0,
         ),
+        structure_type: WallLike,
     ),
     (
         name: "railing",
@@ -95,6 +102,7 @@
             decorative: 0.5,
             striated: 1.0,
         ),
+        structure_type: PillarLike,
     ),
     (
         name: "column",
@@ -107,6 +115,7 @@
             decorative: 1.0,
             striated: 0.0,
         ),
+        structure_type: PillarLike,
     ),
     (
         name: "market stand",
@@ -120,6 +129,7 @@
             striated: 0.3,
         ),
         furniture: true,
+        structure_type: Furniture,
     ),
     (
         name: "rack",
@@ -133,6 +143,7 @@
             striated: 0.5,
         ),
         furniture: true,
+        structure_type: Furniture,
     ),
     (
         name: "bin",
@@ -146,5 +157,6 @@
             striated: 0.0,
         ),
         furniture: true,
+        structure_type: Furniture,
     ),
 ]

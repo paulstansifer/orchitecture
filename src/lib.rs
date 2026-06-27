@@ -14,6 +14,7 @@ pub mod global_illumination;
 pub mod grid_preview;
 pub mod input;
 pub mod llm_rooms;
+pub mod materials;
 pub mod orc;
 pub mod ortho_camera;
 pub mod paths;
