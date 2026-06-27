@@ -4,16 +4,15 @@ use bevy_file_dialog::prelude::*;
 
 use crate::construction::{construct, load_from_offline};
 use crate::cutaway::CutawayMode;
-use crate::game_mode::GameMode;
 use crate::input::BuildState;
-use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
 use crate::structure::StructureList;
 use crate::world::{
-    apply_changes, apply_proposal_changes, AssembledWorld, ConstructedWorld, Material,
-    ProposalOverlayAssets, ProposedWorld, ViewableWorld,
+    apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
+    AssembledWorld, ConstructedWorld, Material, ProposalOverlayAssets, ProposedWorld,
+    ViewableWorld,
 };
 
 /// Maps bundled at compile time; always available on all platforms.
@@ -170,24 +169,6 @@ pub fn discover_user_files(mut ui_state: ResMut<UiState>) {
     }
 }
 
-/// Despawns all proposal preview entities and drains `proposal_entities`.
-fn clear_proposal_entities(commands: &mut Commands, assembled: &mut AssembledWorld) {
-    for (_, entities) in assembled.proposal_entities.drain() {
-        for entity in entities {
-            commands.entity(entity).despawn();
-        }
-    }
-}
-
-/// Despawns all persistent proposed-cut entities and drains `proposed_cut_entities`.
-fn clear_proposed_cut_entities(commands: &mut Commands, viewable: &mut ViewableWorld) {
-    for (_, (_, entities)) in viewable.proposed_cut_entities.drain() {
-        for entity in entities {
-            commands.entity(entity).despawn();
-        }
-    }
-}
-
 pub fn handle_file_save(mut ev_saved: MessageReader<DialogFileSaved<SaveDialog>>) {
     for ev in ev_saved.read() {
         if let Err(e) = &ev.result {
@@ -231,7 +212,6 @@ pub fn build_ui_system(
     mut sandbox: ResMut<SandboxMode>,
     mut furniture_right_click: ResMut<FurnitureRightClick>,
     mut station_highlight: ResMut<crate::world::StationHighlight>,
-    mut next_game_mode: ResMut<NextState<GameMode>>,
     resource_icons: Res<ResourceIcons>,
 ) {
     let icon_textures = resource_icons.texture_ids_large(&mut contexts);
@@ -509,29 +489,8 @@ pub fn build_ui_system(
                         ui.label(format!("Interest:  {:.3}", interest));
                     }
 
-                    let n = pending.num_changes();
-                    if n > 0 {
+                    if pending.num_changes() > 0 {
                         ui.separator();
-                        let months = pending.months_for_construction();
-                        let months_label = if months == 1 {
-                            "month".to_string()
-                        } else {
-                            "months".to_string()
-                        };
-                        if ui
-                            .button(format!("Construct! ({months} {months_label})"))
-                            .clicked()
-                        {
-                            let real_changes = construct(&mut constructed, &mut pending);
-                            clear_proposal_entities(&mut commands, &mut assembled);
-                            clear_proposed_cut_entities(&mut commands, &mut viewable);
-                            apply_changes(
-                                &mut commands,
-                                &mut assembled,
-                                &structure_list,
-                                real_changes,
-                            );
-                        }
                         if ui.button("Reset").clicked() {
                             let locs: Vec<_> =
                                 pending.proposed_changes.iter().map(|(l, _)| l).collect();
@@ -567,10 +526,6 @@ pub fn build_ui_system(
     // Write only on change (set_if_neq), so the highlight system doesn't respawn
     // the overlay meshes every frame.
     station_highlight.set_if_neq(crate::world::StationHighlight(highlight));
-
-    if let Some(mode) = resource_sidebar(ctx, &constructed, &icon_textures) {
-        next_game_mode.set(mode);
-    }
 }
 
 /// Totals of all resources across every storage station, sorted for display.
@@ -599,46 +554,4 @@ pub(crate) fn station_resource_totals(
     let mut result: Vec<_> = map.into_iter().map(|(r, (q, d))| (r, q, d)).collect();
     result.sort_by_key(|(r, _, _)| *r);
     result
-}
-
-/// Right-hand sidebar summarizing total resources across every storage station,
-/// with mode-switch buttons at the bottom.
-///
-/// Returns `Some(mode)` if a mode button was clicked, `None` otherwise.
-pub(crate) fn resource_sidebar(
-    ctx: &egui::Context,
-    constructed: &ConstructedWorld,
-    icon_textures: &std::collections::HashMap<UniformResource, egui::TextureId>,
-) -> Option<GameMode> {
-    let totals = station_resource_totals(constructed);
-    let mut goto: Option<GameMode> = None;
-    egui::SidePanel::right("resources")
-        .min_width(120.0)
-        .show(ctx, |ui| {
-            ui.heading("Resources");
-            ui.separator();
-            if totals.is_empty() {
-                ui.label("(none)");
-            }
-            for (res, total, rounded_down) in &totals {
-                let prefix = if *rounded_down { "> " } else { "" };
-                ui.horizontal(|ui| {
-                    if let Some(&tex) = icon_textures.get(res) {
-                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                            tex, LARGE_SIZE,
-                        )));
-                    }
-                    ui.label(format!("{}{}: {}", prefix, res.label(), total));
-                });
-            }
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                if ui.button("Surroundings").clicked() {
-                    goto = Some(GameMode::Surroundings);
-                }
-                if ui.button("Walk Around").clicked() {
-                    goto = Some(GameMode::Walk);
-                }
-            });
-        });
-    goto
 }

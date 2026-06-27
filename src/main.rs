@@ -30,6 +30,7 @@ use orchitecture_lib::{
         enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
         GameClock,
     },
+    ui::shared_ui_system,
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
     world::{
@@ -122,6 +123,7 @@ fn main() {
         .add_systems(
             EguiPrimaryContextPass,
             (
+                shared_ui_system,
                 build_ui_system.run_if(in_state(GameMode::Build)),
                 walk_ui_system.run_if(in_state(GameMode::Walk)),
                 surroundings_ui_system.run_if(in_state(GameMode::Surroundings)),

@@ -12,8 +12,8 @@ use crate::world::{
     Proposal, ProposalGhostMarker, ProposedWorld,
 };
 
-use super::parser::char_matches_name;
 use super::meshes::{AutotileHandles, AutotileRules};
+use super::parser::char_matches_name;
 use super::{
     evaluate_autotile_rules, slot_to_unoriented, spec_stem, AutotileResult, MeshSpec,
     UnorientedSlot,

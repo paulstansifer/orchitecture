@@ -312,6 +312,8 @@ pub struct ProposedWorld {
     pub(crate) undo_record: Vec<UndoRecord>,
     /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
     pub(crate) redo_record: Vec<UndoRecord>,
+    /// Months already waited toward completing the current construction project.
+    pub months_waited: u32,
 }
 
 impl ProposedWorld {
@@ -320,6 +322,7 @@ impl ProposedWorld {
             proposed_changes: Sparse3D::new(),
             undo_record: Vec::new(),
             redo_record: Vec::new(),
+            months_waited: 0,
         }
     }
 
@@ -329,6 +332,22 @@ impl ProposedWorld {
 
     pub fn months_for_construction(&self) -> usize {
         (self.num_changes() + 79) / 80
+    }
+}
+
+pub fn clear_proposal_entities(commands: &mut Commands, assembled: &mut AssembledWorld) {
+    for (_, entities) in assembled.proposal_entities.drain() {
+        for entity in entities {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+pub fn clear_proposed_cut_entities(commands: &mut Commands, viewable: &mut ViewableWorld) {
+    for (_, (_, entities)) in viewable.proposed_cut_entities.drain() {
+        for entity in entities {
+            commands.entity(entity).despawn();
+        }
     }
 }
 

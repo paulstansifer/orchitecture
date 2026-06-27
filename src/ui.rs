@@ -1,0 +1,268 @@
+use bevy::prelude::*;
+use bevy_egui::{egui, EguiContexts};
+
+use crate::construction::advance_construction;
+use crate::game_mode::GameMode;
+use crate::resource::UniformResource;
+use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
+use crate::structure::StructureList;
+use crate::surroundings::farmstead::{
+    preview_market, run_market, update_wanted_resources, FarmsResource, GameClock,
+};
+use crate::world::{AssembledWorld, ConstructedWorld, ProposedWorld, ViewableWorld};
+
+pub fn shared_ui_system(
+    mut contexts: EguiContexts,
+    mut clock: ResMut<GameClock>,
+    mut farms: ResMut<FarmsResource>,
+    mut pending: ResMut<ProposedWorld>,
+    mut constructed: ResMut<ConstructedWorld>,
+    resource_icons: Res<ResourceIcons>,
+    mut next_game_mode: ResMut<NextState<GameMode>>,
+    current_mode: Res<State<GameMode>>,
+    mut commands: Commands,
+    mut assembled: ResMut<AssembledWorld>,
+    mut viewable: ResMut<ViewableWorld>,
+    structure_list: Res<StructureList>,
+) {
+    use egui::{Color32, FontId};
+
+    let icon_textures_lg = resource_icons.texture_ids_large(&mut contexts);
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+
+    // Market preview for resource gain display.
+    let preview = preview_market(&*farms);
+    let gains_map: std::collections::HashMap<UniformResource, u32> =
+        preview.player_gains.iter().copied().collect();
+
+    let station_totals = crate::build_ui::station_resource_totals(&*constructed);
+    let mut rhs_resources: Vec<UniformResource> =
+        station_totals.iter().map(|(r, _, _)| *r).collect();
+    for (r, _) in &preview.player_gains {
+        if !rhs_resources.contains(r) {
+            rhs_resources.push(*r);
+        }
+    }
+    rhs_resources.sort();
+
+    // Construction status.
+    let has_project = pending.num_changes() > 0;
+    let m = pending.months_waited as usize;
+    let months_remaining = if has_project {
+        let raw_n = pending.months_for_construction();
+        (raw_n as isize - m as isize).max(1) as usize
+    } else {
+        0
+    };
+    let n_display = m + months_remaining;
+
+    // Farm/market status.
+    let market_stand_count = constructed
+        .stations
+        .iter()
+        .position(|s| s.name == "market stand")
+        .map_or(0, |idx| {
+            constructed
+                .placed_stations
+                .iter()
+                .filter(|ps| ps.station == idx)
+                .count()
+        });
+    let invited_count = farms.farms.iter().filter(|f| f.invited).count();
+    let has_farms_invited = invited_count > 0;
+
+    let wait_id = egui::Id::new("wait_confirmation");
+
+    let mut go_advance_month = false;
+    let mut go_walk = false;
+    let mut go_build = false;
+    let mut go_surroundings = false;
+
+    egui::SidePanel::right("resources")
+        .min_width(130.0)
+        .show(ctx, |ui| {
+            let month = clock.month() + 1;
+            ui.label(
+                egui::RichText::new(format!("Month {}", month))
+                    .color(Color32::from_gray(220))
+                    .font(FontId::proportional(13.0)),
+            );
+            ui.add_space(2.0);
+
+            if has_project || has_farms_invited {
+                if ui.button("Advance Month").clicked() {
+                    go_advance_month = true;
+                }
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_min_width(0.0);
+                        if has_project {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Construction: {} of {} months",
+                                    m, n_display
+                                ))
+                                .color(Color32::from_gray(180))
+                                .font(FontId::proportional(10.0)),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new("No current project")
+                                    .color(Color32::from_gray(130))
+                                    .font(FontId::proportional(10.0)),
+                            );
+                        }
+                    });
+                    ui.vertical(|ui| {
+                        ui.set_min_width(0.0);
+                        if market_stand_count == 0 {
+                            ui.label(
+                                egui::RichText::new("No market stalls")
+                                    .color(Color32::from_gray(130))
+                                    .font(FontId::proportional(10.0)),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{}/{} farms invited",
+                                    invited_count, market_stand_count
+                                ))
+                                .color(Color32::from_gray(180))
+                                .font(FontId::proportional(10.0)),
+                            );
+                        }
+                    });
+                });
+            } else {
+                let confirmed: bool = ctx.data(|d| d.get_temp(wait_id).unwrap_or(false));
+                if ui.button("Wait?").clicked() {
+                    ctx.data_mut(|d| d.insert_temp(wait_id, true));
+                }
+                if confirmed {
+                    ui.label(
+                        egui::RichText::new(
+                            "There's no ongoing construction, and no farms are invited to the \
+                             next market. Wait anyways?",
+                        )
+                        .color(Color32::from_gray(160))
+                        .font(FontId::proportional(10.0)),
+                    );
+                    if ui.button("Advance Month").clicked() {
+                        go_advance_month = true;
+                    }
+                }
+            }
+
+            ui.separator();
+            ui.heading("Resources");
+            if rhs_resources.is_empty() {
+                ui.label("(none)");
+            }
+            for res in &rhs_resources {
+                let (current, rounded_down) = station_totals
+                    .iter()
+                    .find(|(r, _, _)| r == res)
+                    .map(|(_, q, d)| (*q, *d))
+                    .unwrap_or((0, false));
+                let gain = *gains_map.get(res).unwrap_or(&0);
+                let prefix = if rounded_down { "> " } else { "" };
+                let text = if gain > 0 {
+                    format!("{}{}: {} + {}", prefix, res.label(), current, gain)
+                } else {
+                    format!("{}{}: {}", prefix, res.label(), current)
+                };
+                let color = if gain > 0 {
+                    Color32::from_rgb(160, 220, 140)
+                } else {
+                    Color32::from_gray(200)
+                };
+                ui.horizontal(|ui| {
+                    if let Some(&tex) = icon_textures_lg.get(res) {
+                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                            tex, LARGE_SIZE,
+                        )));
+                    }
+                    ui.label(egui::RichText::new(text).color(color));
+                });
+            }
+
+            // Mode buttons pushed to the bottom of the panel.
+            ui.with_layout(
+                egui::Layout::bottom_up(egui::Align::LEFT),
+                |ui| match *current_mode.get() {
+                    GameMode::Build => {
+                        if ui.button("Surroundings").clicked() {
+                            go_surroundings = true;
+                        }
+                        if ui.button("Walk Around").clicked() {
+                            go_walk = true;
+                        }
+                    }
+                    GameMode::Walk => {
+                        if ui.button("Surroundings").clicked() {
+                            go_surroundings = true;
+                        }
+                        if ui.button("Build").clicked() {
+                            go_build = true;
+                        }
+                    }
+                    GameMode::Surroundings => {
+                        if ui.button("Build").clicked() {
+                            go_build = true;
+                        }
+                        if ui.button("Walk Around").clicked() {
+                            go_walk = true;
+                        }
+                    }
+                },
+            );
+        });
+
+    // ── Apply deferred actions ────────────────────────────────────────────────
+    if go_advance_month {
+        clock.advance_month();
+        for farm in &mut farms.farms {
+            farm.accumulate_monthly();
+        }
+        let gains = run_market(&mut *farms);
+        update_wanted_resources(&mut *farms);
+        for farm in &mut farms.farms {
+            farm.invited = false;
+        }
+        if !gains.is_empty() {
+            let storage_idx = constructed.placed_stations.iter().position(|ps| {
+                constructed
+                    .stations
+                    .get(ps.station)
+                    .map_or(false, |info| info.storage.is_some())
+            });
+            if let Some(idx) = storage_idx {
+                for (res, qty) in gains {
+                    constructed.placed_stations[idx]
+                        .contents
+                        .add_uniform(res, qty as u16);
+                }
+            }
+        }
+        advance_construction(
+            &mut *pending,
+            &mut *constructed,
+            &mut commands,
+            &mut *assembled,
+            &mut *viewable,
+            &structure_list,
+        );
+        ctx.data_mut(|d| d.remove::<bool>(wait_id));
+    }
+    if go_walk {
+        next_game_mode.set(GameMode::Walk);
+    }
+    if go_build {
+        next_game_mode.set(GameMode::Build);
+    }
+    if go_surroundings {
+        next_game_mode.set(GameMode::Surroundings);
+    }
+}

@@ -1,10 +1,12 @@
 use bevy::math::{IVec3, Vec3};
+use bevy::prelude::Commands;
 
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
-use crate::structure::{PlacementStyle, StructureId};
+use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::world::{
-    desired, Cell, ConstructedWorld, Material, Proposal, ProposalView, ProposedWorld, UndoRecord,
-    VantageEvaluation,
+    apply_changes, clear_proposal_entities, clear_proposed_cut_entities, desired, AssembledWorld,
+    Cell, ConstructedWorld, Material, Proposal, ProposalView, ProposedWorld, UndoRecord,
+    VantageEvaluation, ViewableWorld,
 };
 
 fn proposal_view(proposal: &Option<Proposal>, has_real_cell: bool) -> ProposalView {
@@ -311,6 +313,7 @@ impl ProposedWorld {
     /// Entity cleanup is the caller's responsibility.
     pub fn reset(&mut self) {
         self.proposed_changes = Sparse3D::new();
+        self.months_waited = 0;
     }
 }
 
@@ -345,6 +348,31 @@ pub fn construct(
         }
     }
     real_changes
+}
+
+/// Advances one month of construction progress. If enough months have elapsed,
+/// commits all proposals and resets the counter. Should be called once per
+/// "Advance Month" action when proposals are present.
+pub fn advance_construction(
+    pending: &mut ProposedWorld,
+    constructed: &mut ConstructedWorld,
+    commands: &mut Commands,
+    assembled: &mut AssembledWorld,
+    viewable: &mut ViewableWorld,
+    structure_list: &StructureList,
+) {
+    if pending.num_changes() > 0 {
+        pending.months_waited += 1;
+        if pending.months_waited as usize >= pending.months_for_construction() {
+            let real_changes = construct(constructed, pending);
+            clear_proposal_entities(commands, assembled);
+            clear_proposed_cut_entities(commands, viewable);
+            apply_changes(commands, assembled, structure_list, real_changes);
+            pending.months_waited = 0;
+        }
+    } else {
+        pending.months_waited = 0;
+    }
 }
 
 /// Loads a new building, replacing contents and clearing all history.
