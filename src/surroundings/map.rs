@@ -276,12 +276,9 @@ pub fn generate_farms(mut commands: Commands) {
         }
     }
 
-    let path = generate_path(&mut rng);
-
     commands.insert_resource(FarmsResource {
         farms,
         circle_pos,
-        path,
-        extra_paths: Vec::new(),
+        traveler_reveals: Vec::new(),
     });
 }

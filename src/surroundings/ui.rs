@@ -133,7 +133,7 @@ pub fn surroundings_ui_system(
             };
 
             let primary_path: Vec<Vec2> = farms.path.clone();
-            let extra: Vec<Vec<Vec2>> = farms.extra_paths.clone();
+            let extra: Vec<Vec<Vec2>> = farms.traveler_reveals.clone();
             let mut all_paths: Vec<&[Vec2]> = vec![primary_path.as_slice()];
             for ep in &extra {
                 all_paths.push(ep.as_slice());

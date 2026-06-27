@@ -326,7 +326,7 @@ pub fn shared_ui_system(
             if let Some(offer) = traveler_state.current_offer.take() {
                 if traveler::can_afford_traveler(&offer, &station_totals, &preview.player_gains) {
                     let new_path = traveler::accept_traveler(&offer, &mut *constructed);
-                    farms.extra_paths.push(new_path);
+                    farms.traveler_reveals.push(new_path);
                 }
             }
         }

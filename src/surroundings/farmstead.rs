@@ -53,11 +53,9 @@ impl FarmData {
 pub struct FarmsResource {
     pub farms: Vec<FarmData>,
     pub circle_pos: Vec2,
-    /// Path from a distant point toward the map origin, in map coordinates.
-    pub path: Vec<Vec2>,
-    /// Additional paths revealed by traveler arrivals.
+    /// Paths revealed by traveler arrivals.
     #[serde(default)]
-    pub extra_paths: Vec<Vec<Vec2>>,
+    pub traveler_reveals: Vec<Vec<Vec2>>,
 }
 
 /// Transient resource: exists only while in Surroundings mode.
