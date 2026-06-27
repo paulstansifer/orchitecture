@@ -39,7 +39,7 @@ const N_ROTATIONS: u32 = 4;
 /// Number of walk-cycle phase columns in the characters sheet.
 const N_WALK_PHASES: u32 = 6;
 /// Maximum number of building sprites to include in the structures sheet.
-const MAX_BUILDINGS: usize = 16;
+const MAX_BUILDINGS: usize = 32;
 
 /// The GLB to load for the orc character, relative to the asset root.
 const MODEL_ASSET: &str = "orcs/orc1_mesh2motion.glb";
@@ -56,7 +56,7 @@ const Y_ROTATIONS: [f32; 4] = [
 ];
 
 /// Outward surface inflation for the human model (world units). 0 = disabled.
-const BULK_WORLD_UNITS: f32 = 0.15;
+const BULK_WORLD_UNITS: f32 = 0.0;
 const MESH_UNITS_PER_WORLD_UNIT: f32 = 0.66;
 
 /// World-space Y the camera looks at (midpoint of the unit cube height).

@@ -461,6 +461,69 @@ mod tests {
         check!(illuminance.get(&deeper).copied().unwrap_or(0.0) > 0.0);
     }
 
+    /// An open cube (nothing above it in the grid) seeds itself as a sky source
+    /// and should report full illuminance.
+    #[test]
+    fn test_open_cube_has_full_illuminance() {
+        let structure_infos = load_structure_info();
+        let mut builder = Builder::new(&structure_infos);
+        // Place a single floor cell; nothing is above it → sky is visible.
+        builder.build_plane(
+            IVec3::new(0, 0, 0),
+            IVec3::new(0, 0, 0),
+            RelSlot::Floor,
+            None,
+        );
+        let contents = builder.get();
+        let illuminance = compute_sky_illuminance(&contents, &structure_infos);
+        check!(illuminance.get(&IVec3::new(0, 0, 0)).copied().unwrap_or(0.0) == 1.0);
+    }
+
+    /// Light level decreases as it propagates away from the sky through open air.
+    /// Check that a cube one hop into a tunnel is dimmer than the entrance.
+    #[test]
+    fn test_illuminance_decreases_with_depth() {
+        let structure_infos = load_structure_info();
+        let mut builder = Builder::new(&structure_infos);
+        // Build a sealed 1×1×4 tunnel: floor/ceiling at y=0 and y=1, walls on
+        // the sides, open entrance at z=0 (no ZLoWall there).
+        builder.build_box(IVec3::new(0, 0, 0), IVec3::new(0, 1, 3));
+        // Remove the entrance wall so light can enter from z=0 face.
+        builder.build_plane(
+            IVec3::new(0, 0, 0),
+            IVec3::new(0, 0, 0),
+            RelSlot::ZLoWall,
+            Some("doorway"),
+        );
+        let contents = builder.get();
+        let illuminance = compute_sky_illuminance(&contents, &structure_infos);
+
+        let entrance = illuminance.get(&IVec3::new(0, 0, 0)).copied().unwrap_or(0.0);
+        let deep = illuminance.get(&IVec3::new(0, 0, 3)).copied().unwrap_or(0.0);
+        check!(entrance > deep);
+    }
+
+    /// `gi_to_image` should produce a texture whose dimensions match the supplied
+    /// bounding box (inclusive, so size = max - min + 1 on each axis).
+    #[test]
+    fn test_gi_to_image_dimensions() {
+        use super::gi_to_image;
+        use std::collections::HashMap;
+
+        let structure_infos = load_structure_info();
+        let contents = crate::sparse3d::Sparse3D::new();
+        let illuminance: HashMap<bevy::math::IVec3, f32> = HashMap::new();
+
+        let min = IVec3::new(0, 0, 0);
+        let max = IVec3::new(3, 4, 2); // 4×5×3 voxels
+
+        let image = gi_to_image(&illuminance, &contents, &structure_infos, (min, max));
+        let desc = &image.texture_descriptor;
+        check!(desc.size.width == 4);
+        check!(desc.size.height == 5);
+        check!(desc.size.depth_or_array_layers == 3);
+    }
+
     /// The per-cube low-face transmissions feed the shader's adjacency-aware blend:
     /// a solid wall reports 0 (no bleed), a window reports 0.5.
     #[test]

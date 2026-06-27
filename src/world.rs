@@ -866,3 +866,96 @@ pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<Str
     commands.insert_resource(AssembledWorld::new());
     commands.insert_resource(ViewableWorld::new());
 }
+
+#[cfg(test)]
+mod tests {
+    use assert2::check;
+
+    use super::{ConstrainedScore, ConstrainedScoreExt};
+
+    #[test]
+    fn constrained_score_add_preserves_variant() {
+        check!(ConstrainedScore::Exact(3.0).add(1.5) == ConstrainedScore::Exact(4.5));
+        check!(
+            ConstrainedScore::AtMost { at_most: 5.0 }.add(-2.0)
+                == ConstrainedScore::AtMost { at_most: 3.0 }
+        );
+        check!(
+            ConstrainedScore::AtLeast { at_least: 1.0 }.add(0.5)
+                == ConstrainedScore::AtLeast { at_least: 1.5 }
+        );
+    }
+
+    #[test]
+    fn constrained_score_subtract_is_neg_add() {
+        check!(ConstrainedScore::Exact(5.0).subtract(2.0) == ConstrainedScore::Exact(3.0));
+        check!(
+            ConstrainedScore::AtLeast { at_least: 4.0 }.subtract(1.0)
+                == ConstrainedScore::AtLeast { at_least: 3.0 }
+        );
+    }
+
+    #[test]
+    fn constrained_score_unbound_higher_converts_to_at_least() {
+        check!(
+            ConstrainedScore::Exact(4.0).unbound_higher()
+                == ConstrainedScore::AtLeast { at_least: 4.0 }
+        );
+        check!(
+            ConstrainedScore::AtMost { at_most: 2.0 }.unbound_higher()
+                == ConstrainedScore::AtLeast { at_least: 2.0 }
+        );
+        check!(
+            ConstrainedScore::AtLeast { at_least: 7.0 }.unbound_higher()
+                == ConstrainedScore::AtLeast { at_least: 7.0 }
+        );
+    }
+
+    #[test]
+    fn constrained_score_unbound_lower_converts_to_at_most() {
+        check!(
+            ConstrainedScore::Exact(4.0).unbound_lower()
+                == ConstrainedScore::AtMost { at_most: 4.0 }
+        );
+        check!(
+            ConstrainedScore::AtLeast { at_least: 2.0 }.unbound_lower()
+                == ConstrainedScore::AtMost { at_most: 2.0 }
+        );
+        check!(
+            ConstrainedScore::AtMost { at_most: 7.0 }.unbound_lower()
+                == ConstrainedScore::AtMost { at_most: 7.0 }
+        );
+    }
+
+    #[test]
+    fn constrained_score_value_extracts_threshold() {
+        check!(ConstrainedScore::Exact(3.0).value() == 3.0);
+        check!(ConstrainedScore::AtMost { at_most: 5.0 }.value() == 5.0);
+        check!(ConstrainedScore::AtLeast { at_least: 7.0 }.value() == 7.0);
+    }
+
+    #[test]
+    fn option_constrained_score_propagates_through_none() {
+        let none: Option<ConstrainedScore> = None;
+        check!(none.add(1.0).is_none());
+        check!(none.subtract(1.0).is_none());
+        check!(none.unbound_higher().is_none());
+        check!(none.unbound_lower().is_none());
+    }
+
+    #[test]
+    fn option_constrained_score_maps_through_some() {
+        let some = Some(ConstrainedScore::Exact(2.0));
+        check!(some.add(3.0) == Some(ConstrainedScore::Exact(5.0)));
+        check!(some.unbound_lower() == Some(ConstrainedScore::AtMost { at_most: 2.0 }));
+    }
+
+    #[test]
+    fn constrained_score_chained_ops() {
+        let result = ConstrainedScore::Exact(1.0)
+            .add(2.0)
+            .unbound_higher()
+            .add(1.0);
+        check!(result == ConstrainedScore::AtLeast { at_least: 4.0 });
+    }
+}
