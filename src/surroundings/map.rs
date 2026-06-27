@@ -181,17 +181,6 @@ pub fn generate_path_from_pos(start: Vec2, rng: &mut impl rand::Rng) -> Vec<Vec2
     points
 }
 
-fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
-    use std::f32::consts::TAU;
-    let start_dist = rng.random_range(110.0..150.0_f32);
-    let start_angle: f32 = rng.random_range(0.0..TAU);
-    let start = Vec2::new(
-        start_angle.cos() * start_dist,
-        start_angle.sin() * start_dist,
-    );
-    generate_path_from_pos(start, rng)
-}
-
 pub fn generate_farms(mut commands: Commands) {
     use rand::Rng as _;
     let mut rng = rand::rng();
