@@ -11,7 +11,9 @@ use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
 use crate::world::{Cell, ConstructedWorld, MaterialAssets};
 
-const FALLOFF: f32 = 0.40;
+const FALLOFF: f32 = 0.30;
+// Not sure this works, so not using it yet.
+const FALLOFF_DOWNWARD: f32 = 0.30;
 /// Half-width of the per-hop falloff noise: effective falloff ∈ [FALLOFF − R, FALLOFF + R].
 const FALLOFF_NOISE_RADIUS: f32 = 0.10;
 
@@ -110,7 +112,7 @@ fn boundary_transmission(
         None => 1.0,
         Some(cell) => match structures[cell.id.as_usize()].name.as_str() {
             "wall" | "floor" => 0.0,
-            "window" | "doorway" => 0.5,
+            "window" | "doorway" => 0.75,
             _ => 1.0,
         },
     }
@@ -118,8 +120,7 @@ fn boundary_transmission(
 
 /// Maps a voxel coordinate to a stable value in [0.0, 1.0) via bit-mixing.
 fn coord_hash(v: IVec3) -> f32 {
-    let mut h = (v.x as u32)
-        .wrapping_mul(0x9e3779b9)
+    let mut h = (v.x as u32).wrapping_mul(0x9e3779b9)
         ^ (v.y as u32).wrapping_mul(0x6c62272e)
         ^ (v.z as u32).wrapping_mul(0x517cc1b7);
     h ^= h >> 16;
@@ -193,7 +194,12 @@ pub fn compute_sky_illuminance(
         IVec3::NEG_Z,
     ];
 
-    while let Some(HeapEntry { level_bits, cube, source }) = heap.pop() {
+    while let Some(HeapEntry {
+        level_bits,
+        cube,
+        source,
+    }) = heap.pop()
+    {
         let level = f32::from_bits(level_bits);
 
         // Discard stale entries: a better path for this (source, cube) pair was
@@ -223,9 +229,13 @@ pub fn compute_sky_illuminance(
             if transmission == 0.0 {
                 continue;
             }
+            let falloff = if dir == IVec3::NEG_Y {
+                FALLOFF_DOWNWARD
+            } else {
+                FALLOFF
+            };
 
-            let falloff =
-                FALLOFF + FALLOFF_NOISE_RADIUS * (coord_hash(neighbor) * 2.0 - 1.0);
+            let falloff = falloff + FALLOFF_NOISE_RADIUS * (coord_hash(neighbor) * 2.0 - 1.0);
             let new_level = level * (1.0 - falloff) * transmission;
 
             // Decide whether to update (source, neighbor): either improve an existing
@@ -261,10 +271,7 @@ pub fn compute_sky_illuminance(
     contributions
         .into_iter()
         .map(|(cube, source_map)| {
-            let screen = 1.0
-                - source_map
-                    .values()
-                    .fold(1.0_f32, |acc, &v| acc * (1.0 - v));
+            let screen = 1.0 - source_map.values().fold(1.0_f32, |acc, &v| acc * (1.0 - v));
             (cube, screen)
         })
         .collect()
