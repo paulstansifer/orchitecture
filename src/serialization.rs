@@ -231,3 +231,119 @@ pub fn load(path: &std::path::PathBuf, structures: &[StructureInfo]) -> Sparse3D
     let content = std::fs::read_to_string(path).unwrap();
     load_from_str(&content, structures)
 }
+
+#[cfg(test)]
+mod tests {
+    use assert2::check;
+    use std::collections::HashMap;
+
+    use crate::sparse3d::{Facing, RelSlot, RelSlotCoord};
+    use crate::structure::{PlacementStyle, StructureEmbedding, StructureId, StructureInfo};
+    use crate::world::{Cell, Material};
+
+    use super::{deserialize, load_from_str, serialize};
+
+    fn make_structures() -> Vec<StructureInfo> {
+        vec![
+            StructureInfo {
+                name: "wall".to_string(),
+                placement_style: PlacementStyle::WallDrag,
+                x_char: Some('|'),
+                z_char: Some('-'),
+                embedding: StructureEmbedding {
+                    tall: 0.0,
+                    passable: 0.0,
+                    decorative: 0.0,
+                    striated: 0.0,
+                },
+                furniture: false,
+            },
+            StructureInfo {
+                name: "floor".to_string(),
+                placement_style: PlacementStyle::FloorDrag,
+                x_char: Some('/'),
+                z_char: Some('.'),
+                embedding: StructureEmbedding {
+                    tall: 0.0,
+                    passable: 1.0,
+                    decorative: 0.0,
+                    striated: 0.0,
+                },
+                furniture: false,
+            },
+        ]
+    }
+
+    fn cell(id: u32) -> Cell {
+        Cell {
+            id: StructureId(id),
+            facing: Facing::NegX,
+            evaluation: None,
+            material: Material::default(),
+        }
+    }
+
+    #[test]
+    fn round_trip_single_zwall() {
+        let structures = make_structures();
+        let mut grid = super::super::sparse3d::Sparse3D::new();
+        let loc = RelSlotCoord::new(0, 0, 0, RelSlot::ZLoWall);
+        grid.set(loc, cell(0));
+
+        let bytes = serialize(&grid, &structures);
+        let restored = load_from_str(std::str::from_utf8(&bytes).unwrap(), &structures);
+
+        check!(restored.size() == 1);
+        check!(restored.get(loc).map(|c| c.id) == Some(StructureId(0)));
+    }
+
+    #[test]
+    fn round_trip_multiple_slots() {
+        let structures = make_structures();
+        let mut grid = super::super::sparse3d::Sparse3D::new();
+        let zwall = RelSlotCoord::new(0, 0, 0, RelSlot::ZLoWall);
+        let xwall = RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall);
+        let floor = RelSlotCoord::new(0, 0, 0, RelSlot::Floor);
+        grid.set(zwall, cell(0));
+        grid.set(xwall, cell(0));
+        grid.set(floor, cell(1));
+
+        let bytes = serialize(&grid, &structures);
+        let restored = load_from_str(std::str::from_utf8(&bytes).unwrap(), &structures);
+
+        check!(restored.size() == 3);
+        check!(restored.get(zwall).map(|c| c.id) == Some(StructureId(0)));
+        check!(restored.get(xwall).map(|c| c.id) == Some(StructureId(0)));
+        check!(restored.get(floor).map(|c| c.id) == Some(StructureId(1)));
+    }
+
+    #[test]
+    fn round_trip_multi_level() {
+        let structures = make_structures();
+        let mut grid = super::super::sparse3d::Sparse3D::new();
+        let lo = RelSlotCoord::new(0, 0, 0, RelSlot::ZLoWall);
+        let hi = RelSlotCoord::new(0, 2, 0, RelSlot::ZLoWall);
+        grid.set(lo, cell(0));
+        grid.set(hi, cell(0));
+
+        let bytes = serialize(&grid, &structures);
+        let restored = load_from_str(std::str::from_utf8(&bytes).unwrap(), &structures);
+
+        check!(restored.get(lo).is_some());
+        check!(restored.get(hi).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown character for deserialization")]
+    fn deserialize_panics_on_unknown_char() {
+        let map: HashMap<char, StructureId> = HashMap::new();
+        deserialize('X', &map);
+    }
+
+    #[test]
+    fn deserialize_returns_correct_id_for_known_char() {
+        let mut map = HashMap::new();
+        map.insert('A', StructureId(7));
+        check!(deserialize('A', &map) == StructureId(7));
+    }
+}

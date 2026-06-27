@@ -908,6 +908,116 @@ mod tests {
         (builder.get(), structures)
     }
 
+    // ── camera_facing_dirs ────────────────────────────────────────────────
+
+    #[test]
+    fn camera_facing_dirs_pure_x() {
+        // Camera directly to the +X side
+        let (xd, zd) = camera_facing_dirs(Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0));
+        check!(xd == 1);
+        check!(zd == 0);
+    }
+
+    #[test]
+    fn camera_facing_dirs_pure_neg_z() {
+        let (xd, zd) = camera_facing_dirs(Vec3::ZERO, Vec3::new(0.0, 0.0, -10.0));
+        check!(xd == 0);
+        check!(zd == -1);
+    }
+
+    #[test]
+    fn camera_facing_dirs_diagonal_gives_both_signs() {
+        // 45° diagonal: both components should be ±1
+        let (xd, zd) = camera_facing_dirs(Vec3::ZERO, Vec3::new(5.0, 0.0, 5.0));
+        check!(xd == 1);
+        check!(zd == 1);
+    }
+
+    #[test]
+    fn camera_facing_dirs_near_cardinal_snaps() {
+        // Within 5° of +X axis — should snap to (1, 0)
+        let small_z = 10.0f32 * 3.0f32.to_radians().tan(); // ~3° off +X
+        let (xd, zd) = camera_facing_dirs(Vec3::ZERO, Vec3::new(10.0, 0.0, small_z));
+        check!(xd == 1);
+        check!(zd == 0);
+    }
+
+    // ── cursor_cube ───────────────────────────────────────────────────────
+
+    #[test]
+    fn cursor_cube_room_plop_floors_focus() {
+        // RoomPlop mode: floor(focus) gives the containing cube
+        let focus = Vec3::new(2.7, 0.0, 3.9);
+        let (cx, cz) = cursor_cube(focus, Vec3::new(10.0, 5.0, 10.0), true);
+        check!(cx == 2);
+        check!(cz == 3);
+    }
+
+    #[test]
+    fn cursor_cube_wall_mode_biases_toward_camera() {
+        // Camera is to +X of focus; cursor should pick the cube on the camera side
+        let focus = Vec3::new(2.5, 0.0, 2.5); // exactly on a grid corner
+        let camera = Vec3::new(10.0, 5.0, 2.5); // +X of focus (dx > 0)
+        let (cx, _cz) = cursor_cube(focus, camera, false);
+        // dx = 10 - 2.5 = 7.5 >= 0 → cx = round(2.5) = 2 (or 3), bias cx (no -1)
+        check!(cx == 2 || cx == 3); // round(2.5) is 2 or 3 depending on tie-break
+    }
+
+    #[test]
+    fn cursor_cube_wall_mode_neg_x_biases_away() {
+        // Camera is to -X side; should subtract 1 from rounded x
+        let focus = Vec3::new(3.0, 0.0, 1.0);
+        let camera = Vec3::new(-5.0, 5.0, 1.0); // dx < 0
+        let (cx, _cz) = cursor_cube(focus, camera, false);
+        // round(3.0) = 3, dx < 0 → cx = 3 - 1 = 2
+        check!(cx == 2);
+    }
+
+    // ── compute_floor_edge: camera from +Z hides front Z-wall ─────────────
+
+    #[test]
+    fn test_visibility_camera_from_z_hides_front_zwall() {
+        let (contents, structures) = two_level_room();
+        let mut cw = ConstructedWorld::new(structures);
+        let pe = ProposedWorld::new();
+        cw.contents = contents;
+
+        // Camera from +Z side, cursor inside the room
+        let camera_pos = Vec3::new(1.5, 5.0, 10.0);
+        let focus_pos = Vec3::new(1.5, 0.0, 1.5);
+
+        let (hidden_locs, _cut) = compute_floor_edge(&cw, &pe, (focus_pos, false), camera_pos, 0);
+        let hidden_set: HashSet<SlotCoord> = hidden_locs.into_iter().collect();
+
+        check!(!hidden_set.is_empty());
+
+        // The far-Z wall (z=3) should be hidden
+        let hidden_z_walls: Vec<SlotCoord> = hidden_set
+            .iter()
+            .filter(|l| l.slot == Slot::ZLoWall && l.cube.z == 3)
+            .copied()
+            .collect();
+        check!(!hidden_z_walls.is_empty());
+    }
+
+    /// With an empty world, compute_floor_edge should hide nothing.
+    #[test]
+    fn test_floor_edge_empty_world_hides_nothing() {
+        let structures = load_structure_info();
+        let cw = ConstructedWorld::new(structures);
+        let pe = ProposedWorld::new();
+
+        let (hidden, cut) = compute_floor_edge(
+            &cw,
+            &pe,
+            (Vec3::new(1.5, 0.0, 1.5), false),
+            Vec3::new(10.0, 5.0, 1.5),
+            0,
+        );
+        check!(hidden.is_empty());
+        check!(cut.is_empty());
+    }
+
     #[test]
     fn test_visibility_cursor_inside_hides_right_wall_and_roof() {
         let (contents, structures) = two_level_room();

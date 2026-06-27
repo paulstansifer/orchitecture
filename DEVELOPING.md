@@ -62,8 +62,20 @@ for f in buildables/*.scad; do dest="$(echo "$f" | sed 's/.scad/.gltf/')"; opens
 
 (You need to do `sudo apt install openscad assimp-utils` to get those programs.)
 
+
 The files used at runtime are located in:
-  * `buildables/`: 3D models of structures
+  * `buildables/autotile`: 3D models of structures
   * `models/`: saved weights for the QNN
   * `training/`: example structures
   * `shadlers/`: shaders
+  * `sprites/png`: icons
+
+# Running tests on headless Linux
+
+`cargo test --lib` requires three system libraries and one SVG converter that are
+not installed by default on minimal Ubuntu images.  Install them once, then tests
+run normally:
+
+```
+sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev librsvg2-bin
+```
