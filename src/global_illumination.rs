@@ -12,6 +12,8 @@ use crate::structure::{StructureInfo, StructureList};
 use crate::world::{Cell, ConstructedWorld, MaterialAssets};
 
 const FALLOFF: f32 = 0.40;
+/// Half-width of the per-hop falloff noise: effective falloff ∈ [FALLOFF − R, FALLOFF + R].
+const FALLOFF_NOISE_RADIUS: f32 = 0.10;
 
 /// Number of independent sky-source contributions tracked per cell.
 /// Since the heap is max-ordered, the first MAX_SOURCES to settle at any cell
@@ -114,6 +116,18 @@ fn boundary_transmission(
     }
 }
 
+/// Maps a voxel coordinate to a stable value in [0.0, 1.0) via bit-mixing.
+fn coord_hash(v: IVec3) -> f32 {
+    let mut h = (v.x as u32)
+        .wrapping_mul(0x9e3779b9)
+        ^ (v.y as u32).wrapping_mul(0x6c62272e)
+        ^ (v.z as u32).wrapping_mul(0x517cc1b7);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x45d9f3b);
+    h ^= h >> 16;
+    h as f32 * (1.0 / u32::MAX as f32)
+}
+
 /// Flood-fills sky illuminance from sky-visible cube voxels.
 ///
 /// Seeds all cubes within the grid bounding box (expanded by 1) that have an
@@ -121,9 +135,11 @@ fn boundary_transmission(
 /// light source identified by its position. Propagates outward using a
 /// max-priority queue so the brightest frontier is always settled first.
 ///
-/// Each hop multiplies the current level by `(1 - FALLOFF) * transmission`:
-/// - open air: × 0.60
-/// - window/doorway: × 0.60 × 0.5 = 0.30
+/// Each hop multiplies the current level by `(1 - falloff) * transmission` where
+/// `falloff` is `FALLOFF` ± `FALLOFF_NOISE_RADIUS`, hashed from the destination
+/// voxel's coordinates for stable, view-independent variation:
+/// - open air: × ≈0.60  (range 0.50–0.70)
+/// - window/doorway: × ≈0.30  (range 0.25–0.35)
 /// - wall/floor: blocked (× 0.0)
 ///
 /// Per cell, the top `MAX_SOURCES` contributions (by level) are retained; the
@@ -208,7 +224,9 @@ pub fn compute_sky_illuminance(
                 continue;
             }
 
-            let new_level = level * (1.0 - FALLOFF) * transmission;
+            let falloff =
+                FALLOFF + FALLOFF_NOISE_RADIUS * (coord_hash(neighbor) * 2.0 - 1.0);
+            let new_level = level * (1.0 - falloff) * transmission;
 
             // Decide whether to update (source, neighbor): either improve an existing
             // contribution or add a new one if the cell still has room.
