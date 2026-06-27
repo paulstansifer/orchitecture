@@ -83,8 +83,8 @@ pub fn find_structure_by_name(structures: &[StructureInfo], name: &str) -> Optio
 
 /// The mesh-file stem for a structure: its name with spaces converted to
 /// underscores (e.g. `"market stand"` → `"market_stand"`). The fallback meshes
-/// for a structure live at `buildables/autotile/{stem}.gltf` (and, when the
-/// structure has a cutaway variant, `buildables/autotile/{stem}-cut-y-pos.gltf`);
+/// for a structure live at `assets/generated/autotile/{stem}.gltf` (and, when the
+/// structure has a cutaway variant, `assets/generated/autotile/{stem}-cut-y-pos.gltf`);
 /// build.rs generates both from `buildables/{stem}.scad`.
 pub fn structure_mesh_stem(name: &str) -> String {
     name.replace(' ', "_")
@@ -96,14 +96,14 @@ pub fn structure_mesh_stem(name: &str) -> String {
 /// as "no mesh".
 fn autotile_gltf_present(stem: &str, suffix: &str) -> bool {
     let path = std::path::Path::new(crate::paths::MANIFEST_DIR)
-        .join(format!("buildables/autotile/{stem}{suffix}.gltf"));
+        .join(format!("assets/generated/autotile/{stem}{suffix}.gltf"));
     std::fs::metadata(&path)
         .map(|m| m.len() > 0)
         .unwrap_or(false)
 }
 
 /// Startup system: loads structure infos and their fallback mesh handles from
-/// `buildables/autotile/`, populating StructureList. (Most structures are drawn
+/// `assets/generated/autotile/`, populating StructureList. (Most structures are drawn
 /// by the autotile system; these handles are the fallback used when no autotile
 /// rule matches — and the primary mesh for structures with no autotile rules.)
 pub fn spawn_structures(asset_server: Res<AssetServer>, mut structure_list: ResMut<StructureList>) {
@@ -111,9 +111,12 @@ pub fn spawn_structures(asset_server: Res<AssetServer>, mut structure_list: ResM
 
     for info in &infos {
         let stem = structure_mesh_stem(&info.name);
-        let mesh_handle = asset_server.load(format!("buildables/autotile/{stem}.gltf#Scene0"));
+        let mesh_handle =
+            asset_server.load(format!("assets/generated/autotile/{stem}.gltf#Scene0"));
         let cut_handle = if autotile_gltf_present(&stem, "-cut-y-pos") {
-            Some(asset_server.load(format!("buildables/autotile/{stem}-cut-y-pos.gltf#Scene0")))
+            Some(asset_server.load(format!(
+                "assets/generated/autotile/{stem}-cut-y-pos.gltf#Scene0"
+            )))
         } else {
             None
         };

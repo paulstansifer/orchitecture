@@ -476,7 +476,13 @@ mod tests {
         );
         let contents = builder.get();
         let illuminance = compute_sky_illuminance(&contents, &structure_infos);
-        check!(illuminance.get(&IVec3::new(0, 0, 0)).copied().unwrap_or(0.0) == 1.0);
+        check!(
+            illuminance
+                .get(&IVec3::new(0, 0, 0))
+                .copied()
+                .unwrap_or(0.0)
+                == 1.0
+        );
     }
 
     /// Light level decreases as it propagates away from the sky through open air.
@@ -498,8 +504,14 @@ mod tests {
         let contents = builder.get();
         let illuminance = compute_sky_illuminance(&contents, &structure_infos);
 
-        let entrance = illuminance.get(&IVec3::new(0, 0, 0)).copied().unwrap_or(0.0);
-        let deep = illuminance.get(&IVec3::new(0, 0, 3)).copied().unwrap_or(0.0);
+        let entrance = illuminance
+            .get(&IVec3::new(0, 0, 0))
+            .copied()
+            .unwrap_or(0.0);
+        let deep = illuminance
+            .get(&IVec3::new(0, 0, 3))
+            .copied()
+            .unwrap_or(0.0);
         check!(entrance > deep);
     }
 

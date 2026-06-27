@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use burn::record::Recorder;
 use std::sync::Mutex;
 
-const MODEL_ARGS: &str = include_str!("../../models/model_args.ron");
+const MODEL_ARGS: &str = include_str!("../../assets/static/models/model_args.ron");
 
 #[cfg(not(target_arch = "wasm32"))]
 type AppBackend = burn::backend::Wgpu;
@@ -111,8 +111,8 @@ pub struct ModelState {
 
 fn setup_model_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(ModelState {
-        interest_handle: asset_server.load("models/interest_model.mpk"),
-        coherence_handle: asset_server.load("models/coherence_model.mpk"),
+        interest_handle: asset_server.load("assets/static/models/interest_model.mpk"),
+        coherence_handle: asset_server.load("assets/static/models/coherence_model.mpk"),
         holder: None,
     });
 }

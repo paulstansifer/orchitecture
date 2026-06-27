@@ -1,8 +1,8 @@
 //! Sprite-sheet generator — headless mode.
 //!
 //! Generates two PNG files:
-//!   `orcs/characters_sheet.png` — columns = characters, rows = Y-rotations (0°, 90°, 180°, 270°).
-//!   `orcs/structures_sheet.png` — columns = structures, rows = Y-rotations.
+//!   `assets/static/orcs/characters_sheet.png` — columns = characters, rows = Y-rotations (0°, 90°, 180°, 270°).
+//!   `assets/static/orcs/structures_sheet.png` — columns = structures, rows = Y-rotations.
 //!
 //! Each sprite is rendered inside a wireframe unit cube.
 //!
@@ -42,7 +42,7 @@ const N_WALK_PHASES: u32 = 6;
 const MAX_BUILDINGS: usize = 32;
 
 /// The GLB to load for the orc character, relative to the asset root.
-const MODEL_ASSET: &str = "orcs/orc1_mesh2motion.glb";
+const MODEL_ASSET: &str = "assets/static/orcs/orc1_mesh2motion.glb";
 /// Index of the "Walk" clip within the GLB's animation list.
 /// Order: Idle Listening(0), Sitting_Enter(1), Sprint_Loop(2), Walk_Loop(3).
 const WALK_ANIMATION_INDEX: usize = 3;
@@ -72,11 +72,11 @@ const MAX_LOAD_FRAMES: u32 = 600;
 const MIN_CONTENT_PIXELS: usize = 3000;
 
 fn characters_output_path() -> std::path::PathBuf {
-    std::path::Path::new(MANIFEST_DIR).join("orcs/characters_sheet.png")
+    std::path::Path::new(MANIFEST_DIR).join("assets/static/orcs/characters_sheet.png")
 }
 
 fn structures_output_path() -> std::path::PathBuf {
-    std::path::Path::new(MANIFEST_DIR).join("orcs/structures_sheet.png")
+    std::path::Path::new(MANIFEST_DIR).join("assets/static/orcs/structures_sheet.png")
 }
 
 // --- GPU readback snap infrastructure ------------------------------------
@@ -335,7 +335,7 @@ fn setup(
             let image = images.add(image);
 
             for (col, name) in config.buildings.iter().enumerate() {
-                let path = format!("buildables/autotile/{name}.gltf");
+                let path = format!("assets/generated/autotile/{name}.gltf");
                 let scene: Handle<Scene> =
                     asset_server.load(GltfAssetLabel::Scene(0).from_asset(path));
                 for (row, &angle) in Y_ROTATIONS.iter().enumerate() {
@@ -703,8 +703,8 @@ fn find_matching_buildings() -> Vec<String> {
         })
         .collect();
 
-    let mut matches: Vec<String> = std::fs::read_dir(base.join("buildables/autotile"))
-        .expect("buildables/autotile/ not found")
+    let mut matches: Vec<String> = std::fs::read_dir(base.join("assets/generated/autotile"))
+        .expect("assets/generated/autotile/ not found")
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let p = e.path();

@@ -17,77 +17,98 @@ use crate::world::{
 
 /// Maps bundled at compile time; always available on all platforms.
 const BUNDLED_MAPS: &[(&str, &str)] = &[
-    ("boring_room", include_str!("../training/boring_room.txt")),
+    (
+        "boring_room",
+        include_str!("../assets/static/training/boring_room.txt"),
+    ),
     (
         "boring_room_blob",
-        include_str!("../training/boring_room_blob.txt"),
+        include_str!("../assets/static/training/boring_room_blob.txt"),
     ),
     (
         "boring_room_tall",
-        include_str!("../training/boring_room_tall.txt"),
+        include_str!("../assets/static/training/boring_room_tall.txt"),
     ),
     (
         "boring_room_tall_with_boxes",
-        include_str!("../training/boring_room_tall_with_boxes.txt"),
+        include_str!("../assets/static/training/boring_room_tall_with_boxes.txt"),
     ),
     (
         "boring_room_tiny",
-        include_str!("../training/boring_room_tiny.txt"),
+        include_str!("../assets/static/training/boring_room_tiny.txt"),
     ),
     (
         "boring_room_with_alcove",
-        include_str!("../training/boring_room_with_alcove.txt"),
+        include_str!("../assets/static/training/boring_room_with_alcove.txt"),
     ),
-    ("cavern", include_str!("../training/cavern.txt")),
+    (
+        "cavern",
+        include_str!("../assets/static/training/cavern.txt"),
+    ),
     (
         "chaotic_apartment",
-        include_str!("../training/chaotic_apartment.txt"),
+        include_str!("../assets/static/training/chaotic_apartment.txt"),
     ),
     (
         "corner_in_corner",
-        include_str!("../training/corner_in_corner.txt"),
+        include_str!("../assets/static/training/corner_in_corner.txt"),
     ),
-    ("corners", include_str!("../training/corners.txt")),
+    (
+        "corners",
+        include_str!("../assets/static/training/corners.txt"),
+    ),
     (
         "double_balconies",
-        include_str!("../training/double_balconies.txt"),
+        include_str!("../assets/static/training/double_balconies.txt"),
     ),
-    ("gallery", include_str!("../training/gallery.txt")),
+    (
+        "gallery",
+        include_str!("../assets/static/training/gallery.txt"),
+    ),
     (
         "hall_turn_fat_pillars",
-        include_str!("../training/hall_turn_fat_pillars.txt"),
+        include_str!("../assets/static/training/hall_turn_fat_pillars.txt"),
     ),
     (
         "hall_turn_stations",
-        include_str!("../training/hall_turn_stations.txt"),
+        include_str!("../assets/static/training/hall_turn_stations.txt"),
     ),
     (
         "long_apartment",
-        include_str!("../training/long_apartment.txt"),
+        include_str!("../assets/static/training/long_apartment.txt"),
     ),
-    ("meta_pillars", include_str!("../training/meta_pillars.txt")),
+    (
+        "meta_pillars",
+        include_str!("../assets/static/training/meta_pillars.txt"),
+    ),
     (
         "random_but_coherent",
-        include_str!("../training/random_but_coherent.txt"),
+        include_str!("../assets/static/training/random_but_coherent.txt"),
     ),
     (
         "rotational_apartment",
-        include_str!("../training/rotational_apartment.txt"),
+        include_str!("../assets/static/training/rotational_apartment.txt"),
     ),
-    ("sanctuary", include_str!("../training/sanctuary.txt")),
+    (
+        "sanctuary",
+        include_str!("../assets/static/training/sanctuary.txt"),
+    ),
     (
         "simple_apartment",
-        include_str!("../training/simple_apartment.txt"),
+        include_str!("../assets/static/training/simple_apartment.txt"),
     ),
     (
         "simple_balcony",
-        include_str!("../training/simple_balcony.txt"),
+        include_str!("../assets/static/training/simple_balcony.txt"),
     ),
     (
         "two_level_apartment",
-        include_str!("../training/two_level_apartment.txt"),
+        include_str!("../assets/static/training/two_level_apartment.txt"),
     ),
-    ("porches", include_str!("../training/porches.txt")),
+    (
+        "porches",
+        include_str!("../assets/static/training/porches.txt"),
+    ),
 ];
 
 fn find_bundled(name: &str) -> Option<&'static str> {

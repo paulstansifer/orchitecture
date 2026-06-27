@@ -63,7 +63,7 @@ macro_rules! icon_map {
         $(
             map.insert(
                 UniformResource::$res,
-                load_png(include_bytes!(concat!("../sprites/pngs/", $dir, "/", $file, ".png")), $images),
+                load_png(include_bytes!(concat!("../assets/generated/sprites/", $dir, "/", $file, ".png")), $images),
             );
         )*
         map

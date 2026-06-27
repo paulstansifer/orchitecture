@@ -18,7 +18,7 @@ pub struct GridPreviewMaterial {
 
 impl Material for GridPreviewMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/grid_preview.wgsl".into()
+        "assets/static/shaders/grid_preview.wgsl".into()
     }
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend

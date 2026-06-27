@@ -7,7 +7,7 @@ use bevy::scene::SceneInstanceReady;
 
 use crate::ortho_camera::{cam_fwd_xz_base, trimetric_camera_basis, WalkCameraState};
 
-/// Clip indices within orcs/orc1_mesh2motion.glb.
+/// Clip indices within assets/static/orcs/orc1_mesh2motion.glb.
 /// Order: Idle Listening(0), Sitting_Enter(1), Sprint_Loop(2), Walk_Loop(3).
 const IDLE_ANIMATION_INDEX: usize = 0;
 const WALK_ANIMATION_INDEX: usize = 3;
@@ -37,7 +37,7 @@ pub fn spawn_orc(mut commands: Commands, asset_server: Res<AssetServer>) {
                 walk_node: None,
                 is_walking: None,
             },
-            SceneRoot(asset_server.load("orcs/orc1_mesh2motion.glb#Scene0")),
+            SceneRoot(asset_server.load("assets/static/orcs/orc1_mesh2motion.glb#Scene0")),
             Transform::from_xyz(0.0, 0.1, 0.0).with_scale(Vec3::splat(0.5)),
         ))
         .observe(on_orc_scene_ready);
@@ -61,7 +61,7 @@ fn on_orc_scene_ready(
     };
 
     orc.anim_player = Some(player_entity);
-    orc.gltf_handle = Some(asset_server.load("orcs/orc1_mesh2motion.glb"));
+    orc.gltf_handle = Some(asset_server.load("assets/static/orcs/orc1_mesh2motion.glb"));
 }
 
 /// Polls each frame until the Gltf asset is loaded, then builds the AnimationGraph

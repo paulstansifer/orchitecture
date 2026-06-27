@@ -32,7 +32,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
 
-    let out_dir = buildables.join("autotile");
+    let out_dir = manifest.join("assets/generated/autotile");
     fs::create_dir_all(&out_dir)
         .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_dir.display()));
 
@@ -536,7 +536,7 @@ fn convert_sprites(manifest: &Path) {
         .collect();
 
     for &(dir_name, w, h) in SPRITE_SIZES {
-        let out_dir = manifest.join("sprites/pngs").join(dir_name);
+        let out_dir = manifest.join("assets/generated/sprites").join(dir_name);
         fs::create_dir_all(&out_dir)
             .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_dir.display()));
         for path in &svgs {

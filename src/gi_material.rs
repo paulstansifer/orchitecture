@@ -48,7 +48,7 @@ pub struct GiExtension {
 
 impl MaterialExtension for GiExtension {
     fn fragment_shader() -> ShaderRef {
-        "shaders/gi.wgsl".into()
+        "assets/static/shaders/gi.wgsl".into()
     }
 }
 

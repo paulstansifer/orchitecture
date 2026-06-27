@@ -25,5 +25,8 @@ rust-scripts/target/
 target/
 dist/
 
+# TODO: delete these lines
 buildables/autotile/*
 sprites/pngs/*
+
+assets/generated/*

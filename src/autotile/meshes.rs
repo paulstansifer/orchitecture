@@ -18,7 +18,7 @@ pub struct AutotileHandles {
 
 fn gltf_is_empty(stem: &str, suffix: &str) -> bool {
     let path = std::path::Path::new(crate::paths::MANIFEST_DIR)
-        .join(format!("buildables/autotile/{stem}{suffix}.gltf"));
+        .join(format!("assets/generated/autotile/{stem}{suffix}.gltf"));
     std::fs::metadata(&path)
         .map(|m| m.len() == 0)
         .unwrap_or(false)
@@ -48,14 +48,13 @@ pub fn load_autotile_handles(asset_server: Res<AssetServer>, mut commands: Comma
                     "main gltf for {stem} is empty; only cut meshes may be empty"
                 );
                 let main: Handle<Scene> =
-                    asset_server.load(format!("buildables/autotile/{stem}.gltf#Scene0"));
+                    asset_server.load(format!("assets/generated/autotile/{stem}.gltf#Scene0"));
                 let cut: Option<Handle<Scene>> = if gltf_is_empty(&stem, "-cut-y-pos") {
                     None
                 } else {
-                    Some(
-                        asset_server
-                            .load(format!("buildables/autotile/{stem}-cut-y-pos.gltf#Scene0")),
-                    )
+                    Some(asset_server.load(format!(
+                        "assets/generated/autotile/{stem}-cut-y-pos.gltf#Scene0"
+                    )))
                 };
                 handles.insert(stem, (main, cut));
             }
