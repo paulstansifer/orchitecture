@@ -1,0 +1,11 @@
+[
+    (
+        appear_chance: 0.25,
+        origin_dist_min: 1.5,
+        origin_dist_max: 2.5,
+        potato_demand_min: 10,
+        potato_demand_max: 15,
+        other_demand_min: 5,
+        other_demand_max: 10,
+    ),
+]

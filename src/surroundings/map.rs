@@ -118,14 +118,9 @@ fn two_lowest_indices(vals: &[f32]) -> (usize, usize) {
     (first, second)
 }
 
-fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
-    use std::f32::consts::TAU;
-    let start_dist = rng.random_range(110.0..150.0_f32);
-    let start_angle: f32 = rng.random_range(0.0..TAU);
-    let start = Vec2::new(
-        start_angle.cos() * start_dist,
-        start_angle.sin() * start_dist,
-    );
+/// Generates a winding path from `start` toward the map origin.
+pub fn generate_path_from_pos(start: Vec2, rng: &mut impl rand::Rng) -> Vec<Vec2> {
+    let start_dist = start.length();
     let main_dir = -start.normalize(); // points toward origin
     let perp = Vec2::new(-main_dir.y, main_dir.x);
 
@@ -140,6 +135,17 @@ fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
     }
     points.push(Vec2::ZERO);
     points
+}
+
+fn generate_path(rng: &mut impl rand::Rng) -> Vec<Vec2> {
+    use std::f32::consts::TAU;
+    let start_dist = rng.random_range(110.0..150.0_f32);
+    let start_angle: f32 = rng.random_range(0.0..TAU);
+    let start = Vec2::new(
+        start_angle.cos() * start_dist,
+        start_angle.sin() * start_dist,
+    );
+    generate_path_from_pos(start, rng)
 }
 
 pub fn generate_farms(mut commands: Commands) {
@@ -232,5 +238,6 @@ pub fn generate_farms(mut commands: Commands) {
         farms,
         circle_pos,
         path,
+        extra_paths: Vec::new(),
     });
 }

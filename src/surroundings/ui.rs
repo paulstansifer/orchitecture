@@ -3,7 +3,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::resource_icons::SMALL_SIZE;
 
-use super::farmstead::{preview_market, FarmsResource, SurroundingsState};
+use super::farmstead::{preview_market, FarmsResource, SurroundingsState, ViewCircleRadius};
 
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
@@ -61,18 +61,23 @@ fn segment_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 }
 
 /// Returns the fog alpha (0 = fully clear, FOG_MAX_ALPHA = fully fogged) for a map-space point.
-fn fog_alpha_at(map_pos: Vec2, circle_reveal_radius: f32, path: &[Vec2]) -> u8 {
+fn fog_alpha_at(map_pos: Vec2, circle_reveal_radius: f32, paths: &[&[Vec2]]) -> u8 {
     let dist_circle = (map_pos.length() - circle_reveal_radius).max(0.0);
 
-    let dist_path = if path.len() >= 2 {
-        let raw = path
-            .windows(2)
-            .map(|seg| segment_dist(map_pos, seg[0], seg[1]))
-            .fold(f32::MAX, f32::min);
-        (raw - PATH_REVEAL_RADIUS).max(0.0)
-    } else {
-        f32::MAX
-    };
+    let dist_path = paths
+        .iter()
+        .map(|path| {
+            if path.len() >= 2 {
+                let raw = path
+                    .windows(2)
+                    .map(|seg| segment_dist(map_pos, seg[0], seg[1]))
+                    .fold(f32::MAX, f32::min);
+                (raw - PATH_REVEAL_RADIUS).max(0.0)
+            } else {
+                f32::MAX
+            }
+        })
+        .fold(f32::MAX, f32::min);
 
     let dist = dist_circle.min(dist_path);
     let t = (dist / FOG_FADE_WIDTH).clamp(0.0, 1.0);
@@ -85,7 +90,7 @@ fn build_fog_mesh(
     screen_centre: egui::Pos2,
     viewport_offset: Vec2,
     circle_reveal_radius: f32,
-    path: &[Vec2],
+    paths: &[&[Vec2]],
 ) -> egui::Mesh {
     let cols = (panel_rect.width() / FOG_GRID_STEP_PX).ceil() as usize + 1;
     let rows = (panel_rect.height() / FOG_GRID_STEP_PX).ceil() as usize + 1;
@@ -101,7 +106,7 @@ fn build_fog_mesh(
                 (sx - screen_centre.x) / PIXELS_PER_UNIT + viewport_offset.x,
                 -(sy - screen_centre.y) / PIXELS_PER_UNIT + viewport_offset.y,
             );
-            let alpha = fog_alpha_at(map_pos, circle_reveal_radius, path);
+            let alpha = fog_alpha_at(map_pos, circle_reveal_radius, paths);
             mesh.colored_vertex(
                 egui::Pos2::new(sx, sy),
                 egui::Color32::from_rgba_unmultiplied(160, 164, 180, alpha),
@@ -137,6 +142,7 @@ pub fn surroundings_ui_system(
     constructed: Res<crate::world::ConstructedWorld>,
     resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
+    mut view_circle_radius: ResMut<ViewCircleRadius>,
 ) {
     use crate::game_mode::GameMode;
     use egui::{Color32, FontId, Pos2, Sense, Shape, Stroke};
@@ -172,7 +178,13 @@ pub fn surroundings_ui_system(
 
             let short_side = panel_rect.width().min(panel_rect.height());
             let circle_reveal_radius = short_side * 0.45 / PIXELS_PER_UNIT;
-            let path = farms.path.clone();
+            view_circle_radius.0 = circle_reveal_radius;
+            let primary_path: Vec<Vec2> = farms.path.clone();
+            let extra: Vec<Vec<Vec2>> = farms.extra_paths.clone();
+            let mut all_paths: Vec<&[Vec2]> = vec![primary_path.as_slice()];
+            for ep in &extra {
+                all_paths.push(ep.as_slice());
+            }
             let circle_pos = farms.circle_pos;
             let expanded = panel_rect.expand(300.0);
 
@@ -189,7 +201,7 @@ pub fn surroundings_ui_system(
                 painter.add(Shape::convex_polygon(screen_pts, fill, stroke));
 
                 let map_centroid = farm.centroid();
-                if fog_alpha_at(map_centroid, circle_reveal_radius, &path) < REVEAL_THRESHOLD {
+                if fog_alpha_at(map_centroid, circle_reveal_radius, &all_paths) < REVEAL_THRESHOLD {
                     let centroid = map_to_screen(map_centroid);
                     if panel_rect.contains(centroid) {
                         revealed.push((i, centroid));
@@ -203,7 +215,7 @@ pub fn surroundings_ui_system(
                 screen_centre,
                 viewport_offset,
                 circle_reveal_radius,
-                &path,
+                &all_paths,
             );
             painter.add(egui::Shape::mesh(fog_mesh));
 

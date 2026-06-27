@@ -9,6 +9,8 @@ use crate::structure::StructureList;
 use crate::surroundings::farmstead::{
     preview_market, run_market, update_wanted_resources, FarmsResource, GameClock,
 };
+use crate::surroundings::ViewCircleRadius;
+use crate::traveler::{self, TravelerState};
 use crate::world::{AssembledWorld, ConstructedWorld, ProposedWorld, ViewableWorld};
 
 pub fn shared_ui_system(
@@ -24,6 +26,8 @@ pub fn shared_ui_system(
     mut assembled: ResMut<AssembledWorld>,
     mut viewable: ResMut<ViewableWorld>,
     structure_list: Res<StructureList>,
+    mut traveler_state: ResMut<TravelerState>,
+    view_circle_radius: Res<ViewCircleRadius>,
 ) {
     use egui::{Color32, FontId};
 
@@ -72,6 +76,11 @@ pub fn shared_ui_system(
         });
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
     let has_farms_invited = invited_count > 0;
+    let has_traveler_invited = traveler_state.invited;
+
+    let can_afford_traveler = traveler_state.current_offer.as_ref().map_or(false, |offer| {
+        traveler::can_afford_traveler(offer, &station_totals, &preview.player_gains)
+    });
 
     let wait_id = egui::Id::new("wait_confirmation");
 
@@ -91,7 +100,7 @@ pub fn shared_ui_system(
             );
             ui.add_space(2.0);
 
-            if has_project || has_farms_invited {
+            if has_project || has_farms_invited || has_traveler_invited {
                 if ui.button("Advance Month").clicked() {
                     go_advance_month = true;
                 }
@@ -188,6 +197,87 @@ pub fn shared_ui_system(
                 });
             }
 
+            // Tools count (UniqueResource — tracked separately from uniform resources).
+            let total_tools: usize = constructed
+                .placed_stations
+                .iter()
+                .filter(|ps| {
+                    constructed
+                        .stations
+                        .get(ps.station)
+                        .map_or(false, |info| info.storage.is_some())
+                })
+                .map(|ps| ps.contents.tool_count())
+                .sum();
+            if total_tools > 0 {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Tools: {}", total_tools))
+                            .color(Color32::from_gray(200)),
+                    );
+                });
+            }
+
+            ui.separator();
+            ui.label(
+                egui::RichText::new("Travelers")
+                    .color(Color32::from_gray(220))
+                    .font(FontId::proportional(13.0)),
+            );
+            // Extract offer display values before the closure to avoid borrow conflicts
+            // with &mut traveler_state.invited inside the frame closure.
+            let offer_display: Option<(u16, u16, &'static str)> =
+                traveler_state.current_offer.as_ref().map(|o| {
+                    (o.potato_demand, o.other_demand, o.other_resource.label())
+                });
+
+            if let Some((potato_demand, other_demand, other_label)) = offer_display {
+                egui::Frame::new()
+                    .fill(Color32::from_rgba_unmultiplied(20, 20, 30, 200))
+                    .inner_margin(egui::Margin::same(4))
+                    .corner_radius(4.0)
+                    .show(ui, |ui| {
+                        ui.set_max_width(ui.available_width());
+                        ui.label(
+                            egui::RichText::new("Traveler")
+                                .font(FontId::proportional(11.0))
+                                .color(Color32::from_gray(210)),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("Wants {} potatoes", potato_demand))
+                                .font(FontId::proportional(10.0))
+                                .color(Color32::from_gray(190)),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("+ {} {}", other_demand, other_label))
+                                .font(FontId::proportional(10.0))
+                                .color(Color32::from_gray(190)),
+                        );
+                        ui.label(
+                            egui::RichText::new("Brings: 1 Tool + reveals a path")
+                                .font(FontId::proportional(10.0))
+                                .color(Color32::from_rgb(180, 220, 180)),
+                        );
+                        ui.add_enabled(
+                            can_afford_traveler || traveler_state.invited,
+                            egui::Checkbox::new(&mut traveler_state.invited, "Invite"),
+                        );
+                        if !can_afford_traveler {
+                            ui.label(
+                                egui::RichText::new("(insufficient resources)")
+                                    .font(FontId::proportional(9.0))
+                                    .color(Color32::from_gray(120)),
+                            );
+                        }
+                    });
+            } else {
+                ui.label(
+                    egui::RichText::new("(no traveler this month)")
+                        .font(FontId::proportional(10.0))
+                        .color(Color32::from_gray(120)),
+                );
+            }
+
             // Mode buttons pushed to the bottom of the panel.
             ui.with_layout(
                 egui::Layout::bottom_up(egui::Align::LEFT),
@@ -231,6 +321,24 @@ pub fn shared_ui_system(
         for farm in &mut farms.farms {
             farm.invited = false;
         }
+
+        // Traveler resolution: deduct demands, deposit a Tool, reveal their path.
+        if traveler_state.invited {
+            if let Some(offer) = traveler_state.current_offer.take() {
+                if traveler::can_afford_traveler(&offer, &station_totals, &preview.player_gains) {
+                    let new_path = traveler::accept_traveler(&offer, &mut *constructed);
+                    farms.extra_paths.push(new_path);
+                }
+            }
+        }
+        traveler_state.invited = false;
+        // Roll a new offer for next month.
+        {
+            use rand::Rng as _;
+            let mut rng = rand::rng();
+            traveler::roll_traveler_offer(&mut *traveler_state, view_circle_radius.0, &mut rng);
+        }
+
         if !gains.is_empty() {
             let storage_idx = constructed.placed_stations.iter().position(|ps| {
                 constructed
