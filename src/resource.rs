@@ -165,7 +165,10 @@ impl Inventory {
         let mut count = 0;
         for entry in &self.contents {
             if let InventoryEntry::Collection(items) = entry {
-                count += items.iter().filter(|i| matches!(i, UniqueResource::Tool)).count();
+                count += items
+                    .iter()
+                    .filter(|i| matches!(i, UniqueResource::Tool))
+                    .count();
             }
         }
         count

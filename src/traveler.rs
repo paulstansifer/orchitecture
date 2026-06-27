@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::resource::{UniqueResource, UniformResource};
+use crate::resource::{UniformResource, UniqueResource};
 use crate::surroundings::generate_path_from_pos;
 use crate::world::ConstructedWorld;
 
@@ -14,7 +14,7 @@ pub struct TravelerDemand {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct TravelerConfig {
+pub struct Traveler {
     pub appear_chance: f32,
     /// Fraction of the current view-circle radius.
     pub origin_dist: std::ops::Range<f32>,
@@ -22,7 +22,7 @@ pub struct TravelerConfig {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct TravelerOffer {
+pub struct IndividualTraveler {
     pub config_index: usize,
     /// Resolved demands: one `(resource, quantity)` per `TravelerDemand`.
     pub demands: Vec<(UniformResource, u16)>,
@@ -32,14 +32,14 @@ pub struct TravelerOffer {
 
 #[derive(Resource, Serialize, Deserialize)]
 pub struct TravelerState {
-    pub configs: Vec<TravelerConfig>,
-    pub current_offer: Option<TravelerOffer>,
+    pub configs: Vec<Traveler>,
+    pub current_offer: Option<IndividualTraveler>,
     pub invited: bool,
 }
 
 pub fn setup_travelers(mut commands: Commands) {
     let ron_content = include_str!("../buildables/travelers.ron");
-    let configs: Vec<TravelerConfig> = ron::from_str(ron_content).expect("bad travelers.ron");
+    let configs: Vec<Traveler> = ron::from_str(ron_content).expect("bad travelers.ron");
     commands.insert_resource(TravelerState {
         configs,
         current_offer: None,
@@ -68,14 +68,14 @@ pub fn roll_traveler_offer(state: &mut TravelerState, view_radius: f32, rng: &mu
         }
 
         let effective_radius = if view_radius > 0.0 { view_radius } else { 30.0 };
-        let dist = effective_radius
-            * rng.random_range(config.origin_dist.start..config.origin_dist.end);
+        let dist =
+            effective_radius * rng.random_range(config.origin_dist.start..config.origin_dist.end);
         let angle: f32 = rng.random_range(0.0..TAU);
         let start = Vec2::new(angle.cos() * dist, angle.sin() * dist);
 
         let path = generate_path_from_pos(start, rng);
 
-        state.current_offer = Some(TravelerOffer {
+        state.current_offer = Some(IndividualTraveler {
             config_index: idx,
             demands,
             path,
@@ -87,7 +87,7 @@ pub fn roll_traveler_offer(state: &mut TravelerState, view_radius: f32, rng: &mu
 /// Returns true if the player can afford all of the traveler's demands after
 /// market preview gains are applied.
 pub fn can_afford_traveler(
-    offer: &TravelerOffer,
+    offer: &IndividualTraveler,
     station_totals: &[(UniformResource, u32, bool)],
     preview_gains: &[(UniformResource, u32)],
 ) -> bool {
@@ -110,7 +110,10 @@ pub fn can_afford_traveler(
 
 /// Deducts demands from the first storage station, deposits one Tool, and
 /// returns the traveler's path for appending to `FarmsResource.extra_paths`.
-pub fn accept_traveler(offer: &TravelerOffer, constructed: &mut ConstructedWorld) -> Vec<Vec2> {
+pub fn accept_traveler(
+    offer: &IndividualTraveler,
+    constructed: &mut ConstructedWorld,
+) -> Vec<Vec2> {
     let storage_idx = constructed.placed_stations.iter().position(|ps| {
         constructed
             .stations
