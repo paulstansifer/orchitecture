@@ -5,7 +5,7 @@ pub mod display;
 pub mod matcher;
 pub mod parser;
 #[cfg(autotile_matching)]
-pub mod resources;
+pub mod meshes;
 
 pub use compiler::*;
 #[cfg(autotile_matching)]
@@ -14,4 +14,4 @@ pub use display::autotile_update_system;
 pub use matcher::*;
 pub use parser::*;
 #[cfg(autotile_matching)]
-pub use resources::{load_autotile_handles, spawn_autotile_rules, AutotileHandles, AutotileRules};
+pub use meshes::{load_autotile_handles, spawn_autotile_rules, AutotileHandles, AutotileRules};

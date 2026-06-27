@@ -13,7 +13,7 @@ use crate::world::{
 };
 
 use super::parser::char_matches_name;
-use super::resources::{AutotileHandles, AutotileRules};
+use super::meshes::{AutotileHandles, AutotileRules};
 use super::{
     evaluate_autotile_rules, slot_to_unoriented, spec_stem, AutotileResult, MeshSpec,
     UnorientedSlot,
