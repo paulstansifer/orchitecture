@@ -3,8 +3,8 @@
 
 <svg
    width="48"
-   height="48"
-   viewBox="0 0 48 48"
+   height="36"
+   viewBox="0 0 48 36"
    version="1.1"
    id="svg5"
    inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
@@ -26,7 +26,7 @@
      showgrid="false"
      inkscape:zoom="20.70196"
      inkscape:cx="32.653913"
-     inkscape:cy="31.277232"
+     inkscape:cy="19.732431"
      inkscape:window-width="2560"
      inkscape:window-height="1380"
      inkscape:window-x="0"
@@ -41,7 +41,7 @@
      id="layer1">
     <path
        style="fill:#a4846f;fill-opacity:1;stroke:none;stroke-width:2;stroke-opacity:1"
-       d="M 30.165719,40.689157 4.9523129,18.876839 17.719355,7.1714748 43.089046,29.133548 Z"
+       d="M 30.165719,34.689157 4.9523129,12.876839 17.719355,1.1714748 43.089046,23.133548 Z"
        id="path22245"
        sodipodi:nodetypes="ccccc" />
     <rect
@@ -50,13 +50,13 @@
        width="12.888609"
        height="11.90054"
        x="30.258848"
-       y="28.980301" />
+       y="22.980301" />
     <rect
        style="fill:#a4846f;fill-opacity:1;stroke:none;stroke-width:2;stroke-opacity:1"
        id="rect22126"
        width="12.888609"
        height="11.90054"
        x="4.8525429"
-       y="7.1191587" />
+       y="1.1191587" />
   </g>
 </svg>
