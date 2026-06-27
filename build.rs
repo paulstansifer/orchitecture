@@ -19,6 +19,9 @@ fn main() {
     println!("cargo:rustc-cfg=autotile_matching");
 
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+
+    convert_sprites(&manifest);
+
     let buildables = manifest.join("buildables");
 
     // Re-run if any autotile file or atom scad file changes.
@@ -512,4 +515,48 @@ fn write_and_compile(scad_path: &Path, scad_src: &str, gltf_out: &Path) {
     fs::write(scad_path, scad_src)
         .unwrap_or_else(|e| panic!("Failed to write {}: {e}", scad_path.display()));
     compile_scad(scad_path, gltf_out);
+}
+
+const SPRITE_SIZES: &[(&str, u32, u32)] = &[("24x18", 24, 18), ("16x12", 16, 12)];
+
+fn convert_sprites(manifest: &Path) {
+    let sprites_dir = manifest.join("sprites");
+    println!("cargo:rerun-if-changed=sprites");
+    let entries = match fs::read_dir(&sprites_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            println!("cargo:warning=Could not read sprites/: {e}");
+            return;
+        }
+    };
+    let svgs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("svg"))
+        .collect();
+
+    for &(dir_name, w, h) in SPRITE_SIZES {
+        let out_dir = manifest.join("sprites/pngs").join(dir_name);
+        fs::create_dir_all(&out_dir)
+            .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_dir.display()));
+        for path in &svgs {
+            let stem = path.file_stem().unwrap().to_str().unwrap();
+            let out = out_dir.join(format!("{stem}.png"));
+            match Command::new("rsvg-convert")
+                .args(["-w", &w.to_string(), "-h", &h.to_string()])
+                .arg(path)
+                .arg("-o")
+                .arg(&out)
+                .status()
+            {
+                Err(e) => {
+                    println!("cargo:warning=rsvg-convert not found (skipping sprites): {e}")
+                }
+                Ok(s) if !s.success() => {
+                    println!("cargo:warning=rsvg-convert failed for {}", path.display())
+                }
+                Ok(_) => {}
+            }
+        }
+    }
 }

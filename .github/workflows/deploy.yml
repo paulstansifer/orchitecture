@@ -49,6 +49,18 @@ jobs:
       - name: Install Assimp
         run: sudo apt-get install -y assimp-utils
 
+      - name: Install librsvg2-bin
+        run: sudo apt-get install -y librsvg2-bin
+
+      - name: Convert SVG sprites to PNG
+        run: |
+          mkdir -p sprites/pngs/24x18 sprites/pngs/16x12
+          for f in sprites/*.svg; do
+            stem=$(basename "${f%.svg}")
+            rsvg-convert -w 24 -h 18 "$f" -o "sprites/pngs/24x18/${stem}.png"
+            rsvg-convert -w 16 -h 12 "$f" -o "sprites/pngs/16x12/${stem}.png"
+          done
+
       - name: Install Dart Sass
         run: |
           npm install -g sass

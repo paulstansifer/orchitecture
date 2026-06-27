@@ -9,7 +9,7 @@ use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
 use crate::world::{
     cell_transform, get_proposed_or_real, AssembledWorld, Cell, ConstructedWorld, GridCellMarker,
-    ProposedWorld, Proposal, ProposalGhostMarker,
+    Proposal, ProposalGhostMarker, ProposedWorld,
 };
 
 use super::parser::char_matches_name;

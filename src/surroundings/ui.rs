@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
+use crate::resource_icons::{LARGE_SIZE, SMALL_SIZE};
+
 use super::farmstead::{
     preview_market, run_market, update_wanted_resources, FarmsResource, GameClock,
     SurroundingsState,
@@ -138,10 +140,13 @@ pub fn surroundings_ui_system(
     mut clock: ResMut<GameClock>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
     mut constructed: ResMut<crate::world::ConstructedWorld>,
+    resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
 ) {
     use crate::game_mode::GameMode;
     use egui::{Color32, FontId, Pos2, Sense, Shape, Stroke};
 
+    let icon_textures_lg = resource_icons.texture_ids_large(&mut contexts);
+    let icon_textures_sm = resource_icons.texture_ids_small(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -203,11 +208,19 @@ pub fn surroundings_ui_system(
                 } else {
                     format!("{}{}: {}", prefix, res.label(), current)
                 };
-                ui.label(egui::RichText::new(text).color(if gain > 0 {
+                let color = if gain > 0 {
                     Color32::from_rgb(160, 220, 140)
                 } else {
                     Color32::from_gray(200)
-                }));
+                };
+                ui.horizontal(|ui| {
+                    if let Some(&tex) = icon_textures_lg.get(res) {
+                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                            tex, LARGE_SIZE,
+                        )));
+                    }
+                    ui.label(egui::RichText::new(text).color(color));
+                });
             }
 
             // Mode buttons pushed to the bottom of the panel.
@@ -341,33 +354,48 @@ pub fn surroundings_ui_system(
                         );
 
                         // Potato stockpile
-                        ui.label(
-                            egui::RichText::new(format!("Potatoes: {}", farm.potato_stockpile))
-                                .font(FontId::proportional(9.0))
-                                .color(Color32::from_rgb(220, 210, 120)),
-                        );
+                        ui.horizontal(|ui| {
+                            if let Some(&tex) =
+                                icon_textures_sm.get(&crate::resource::UniformResource::Potato)
+                            {
+                                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                    tex, SMALL_SIZE,
+                                )));
+                            }
+                            ui.label(
+                                egui::RichText::new(format!("{}", farm.potato_stockpile))
+                                    .font(FontId::proportional(9.0))
+                                    .color(Color32::from_rgb(220, 210, 120)),
+                            );
+                        });
 
                         // Inedible resource stockpile
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{}: {}",
-                                farm.resource.label(),
-                                farm.inedible_stockpile
-                            ))
-                            .font(FontId::proportional(9.0))
-                            .color(Color32::from_rgb(160, 200, 140)),
-                        );
+                        ui.horizontal(|ui| {
+                            if let Some(&tex) = icon_textures_sm.get(&farm.resource) {
+                                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                    tex, SMALL_SIZE,
+                                )));
+                            }
+                            ui.label(
+                                egui::RichText::new(format!("{}", farm.inedible_stockpile))
+                                    .font(FontId::proportional(9.0))
+                                    .color(Color32::from_rgb(160, 200, 140)),
+                            );
+                        });
 
                         // Wanted resource
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Wants {} {}",
-                                farm.want_max,
-                                farm.wanted_resource.label()
-                            ))
-                            .font(FontId::proportional(9.0))
-                            .color(Color32::from_rgb(140, 170, 220)),
-                        );
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("Wants {}", farm.want_max))
+                                    .font(FontId::proportional(9.0))
+                                    .color(Color32::from_rgb(140, 170, 220)),
+                            );
+                            if let Some(&tex) = icon_textures_sm.get(&farm.wanted_resource) {
+                                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                    tex, SMALL_SIZE,
+                                )));
+                            }
+                        });
 
                         // Current boost (non-zero means extra production this month)
                         if farm.boost > 0 {

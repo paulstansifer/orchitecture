@@ -12,8 +12,8 @@ use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
 use crate::world::{
     apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, BuildWorldParams,
-    ConstructedWorld, GridCellMarker, Material, MaterialAssets, ProposedWorld, ProposalGhostMarker,
-    ProposalOverlayAssets, ProposedCutMarker,
+    ConstructedWorld, GridCellMarker, Material, MaterialAssets, ProposalGhostMarker,
+    ProposalOverlayAssets, ProposedCutMarker, ProposedWorld,
 };
 
 #[derive(Resource)]

@@ -19,6 +19,7 @@ pub mod ortho_camera;
 pub mod paths;
 pub mod qnn;
 pub mod resource;
+pub mod resource_icons;
 pub mod road;
 pub mod scene;
 pub mod serialization;
