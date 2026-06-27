@@ -7,10 +7,10 @@ use bevy::scene::SceneInstanceReady;
 
 use crate::ortho_camera::{cam_fwd_xz_base, trimetric_camera_basis, WalkCameraState};
 
-/// Clip indices within orcs/human_1.glb.
-/// Order: Charge-Punch(0), Idle(1), Left-Punch(2), Run(3), T-Pose(4), Walk(5), Rest(6), T-pose(7).
-const IDLE_ANIMATION_INDEX: usize = 1;
-const WALK_ANIMATION_INDEX: usize = 5;
+/// Clip indices within orcs/orc1_mesh2motion.glb.
+/// Order: Idle Listening(0), Sitting_Enter(1), Sprint_Loop(2), Walk_Loop(3).
+const IDLE_ANIMATION_INDEX: usize = 0;
+const WALK_ANIMATION_INDEX: usize = 3;
 
 const BLEND_DURATION: Duration = Duration::from_millis(150);
 
@@ -37,7 +37,7 @@ pub fn spawn_orc(mut commands: Commands, asset_server: Res<AssetServer>) {
                 walk_node: None,
                 is_walking: None,
             },
-            SceneRoot(asset_server.load("orcs/human_1.glb#Scene0")),
+            SceneRoot(asset_server.load("orcs/orc1_mesh2motion.glb#Scene0")),
             Transform::from_xyz(0.0, 0.1, 0.0).with_scale(Vec3::splat(0.5)),
         ))
         .observe(on_orc_scene_ready);
@@ -48,43 +48,20 @@ fn on_orc_scene_ready(
     mut orcs: Query<&mut Orc>,
     children_q: Query<&Children>,
     players_q: Query<(), With<AnimationPlayer>>,
-    names_q: Query<(Entity, &Name)>,
     asset_server: Res<AssetServer>,
-    mut commands: Commands,
 ) {
     let orc_entity = trigger.event_target();
     let Ok(mut orc) = orcs.get_mut(orc_entity) else {
         return;
     };
 
-    // The GLB has two scene-root nodes: MaleArm and FemaleArm. Each is the parent
-    // of a mesh node and a skeleton root, and each gets an AnimationPlayer from the
-    // GLTF loader. Despawn the male root; scope the AnimationPlayer search to FemaleArm.
-    let mut male_entity = None;
-    let mut female_entity = None;
-    for desc in collect_descendants(orc_entity, &children_q) {
-        if let Ok((_entity, name)) = names_q.get(desc) {
-            match name.as_str() {
-                "MaleArm" => male_entity = Some(desc),
-                "FemaleArm" => female_entity = Some(desc),
-                _ => {}
-            }
-        }
-    }
-    if let Some(e) = female_entity {
-        commands.entity(e).despawn();
-    }
-
-    // Search for AnimationPlayer only within the kept mesh's subtree so we don't
-    // accidentally grab the male's player (which will be despawned this frame).
-    let search_root = male_entity.unwrap_or(orc_entity);
-    let Some(player_entity) = find_descendant_with_component(search_root, &children_q, &players_q)
+    let Some(player_entity) = find_descendant_with_component(orc_entity, &children_q, &players_q)
     else {
         return;
     };
 
     orc.anim_player = Some(player_entity);
-    orc.gltf_handle = Some(asset_server.load("orcs/human_1.glb"));
+    orc.gltf_handle = Some(asset_server.load("orcs/orc1_mesh2motion.glb"));
 }
 
 /// Polls each frame until the Gltf asset is loaded, then builds the AnimationGraph
@@ -125,18 +102,6 @@ pub fn setup_orc_animation(
         orc.idle_node = Some(idle_node);
         orc.walk_node = Some(walk_node);
     }
-}
-
-fn collect_descendants(root: Entity, children_q: &Query<&Children>) -> Vec<Entity> {
-    let mut result = Vec::new();
-    let mut stack = children_q.get(root).map(|c| c.to_vec()).unwrap_or_default();
-    while let Some(entity) = stack.pop() {
-        result.push(entity);
-        if let Ok(children) = children_q.get(entity) {
-            stack.extend_from_slice(children);
-        }
-    }
-    result
 }
 
 fn find_descendant_with_component(

@@ -13,3 +13,6 @@ Added COG (center of gravity), Neck and Shoulder bones,  adjusted vertex weights
 set mesh and armature coords at 0,0,0, added walk run idle, punch animations, by Francisco Athens (FreeLikeGNU)
 
 Cleaned up a bit for 3D export by Lucas Beyer (Pompei2)
+
+# Credits for "orc1"
+Based on "human_1", edited in Wings3D, animated with Mesh2Motion

@@ -41,13 +41,11 @@ const N_WALK_PHASES: u32 = 6;
 /// Maximum number of building sprites to include in the structures sheet.
 const MAX_BUILDINGS: usize = 16;
 
-/// The GLB to load for the human character, relative to the asset root.
-const MODEL_ASSET: &str = "orcs/human_1.glb";
+/// The GLB to load for the orc character, relative to the asset root.
+const MODEL_ASSET: &str = "orcs/orc1_mesh2motion.glb";
 /// Index of the "Walk" clip within the GLB's animation list.
-/// Order: Charge-Punch(0), Idle(1), Left-Punch(2), Run(3), T-Pose(4), Walk(5), Rest(6), T-pose(7).
-const WALK_ANIMATION_INDEX: usize = 5;
-/// Named entity to despawn from the human GLB (we keep HumanMale only).
-const DROP_MESH_NAME: &str = "HumanFemale";
+/// Order: Idle Listening(0), Sitting_Enter(1), Sprint_Loop(2), Walk_Loop(3).
+const WALK_ANIMATION_INDEX: usize = 3;
 
 /// Y-axis rotation angles for the four rows (radians).
 const Y_ROTATIONS: [f32; 4] = [
@@ -473,8 +471,7 @@ fn configure_when_ready(
     mut players: Query<(Entity, &mut AnimationPlayer)>,
     parents: Query<&ChildOf>,
     cells: Query<&SpriteCell>,
-    names: Query<(Entity, &Name)>,
-    mesh_nodes: Query<(Entity, &Name, &Mesh3d)>,
+    mesh_nodes: Query<(Entity, &Mesh3d)>,
     mut mesh_assets: ResMut<Assets<Mesh>>,
 ) {
     if capture.configured || capture.ready < capture.n_total_scenes {
@@ -508,19 +505,12 @@ fn configure_when_ready(
             .insert(AnimationGraphHandle(graph.clone()));
     }
 
-    // Remove the unused female model from every human scene.
-    for (entity, name) in &names {
-        if name.as_str() == DROP_MESH_NAME {
-            commands.entity(entity).despawn();
-        }
-    }
-
     // Inflate only character meshes.
     if BULK_WORLD_UNITS != 0.0 {
         let amount = BULK_WORLD_UNITS * MESH_UNITS_PER_WORLD_UNIT;
         let mut done = std::collections::HashSet::new();
-        for (mesh_entity, name, mesh3d) in &mesh_nodes {
-            if name.as_str() == DROP_MESH_NAME || !done.insert(mesh3d.0.id()) {
+        for (mesh_entity, mesh3d) in &mesh_nodes {
+            if !done.insert(mesh3d.0.id()) {
                 continue;
             }
             let Some(cell) = find_cell(mesh_entity, &parents, &cells) else {
