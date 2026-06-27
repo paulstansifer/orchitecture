@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="48"
+   height="36"
+   viewBox="0 0 48 36"
+   version="1.1"
+   id="svg5"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   sodipodi:docname="tool.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="px"
+     showgrid="false"
+     inkscape:zoom="10.35098"
+     inkscape:cx="45.454633"
+     inkscape:cy="41.493656"
+     inkscape:window-width="2560"
+     inkscape:window-height="1380"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="g8744" />
+  <defs
+     id="defs2" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <g
+       id="g8744">
+      <g
+         id="g8802"
+         transform="rotate(4.7191278,-38.741772,-1.6761187)">
+        <path
+           style="fill:#a0a0a0;fill-opacity:1;stroke-width:3"
+           d="M 12.539391,14.452211 17.693614,25.19934 43.287495,8.1061055 41.318823,2.9749968 Z"
+           id="path7397"
+           sodipodi:nodetypes="ccccc" />
+        <path
+           style="fill:none;fill-opacity:1;stroke:#907115;stroke-width:3;stroke-opacity:1"
+           d="m 12.527969,15.592531 4.513698,8.513973 c 0,0 -1.148216,6.924222 -5.298306,4.120432 -4.1500918,-2.80379 -7.382355,-6.76778 -5.4744469,-10.255851 1.9079081,-3.488071 6.2590549,-2.378554 6.2590549,-2.378554 z"
+           id="path8518"
+           sodipodi:nodetypes="ccssc" />
+      </g>
+      <g
+         id="g8810"
+         transform="rotate(3.4482958,19.863901,-17.889116)">
+        <path
+           style="fill:#a0a0a0;fill-opacity:1;stroke:none;stroke-width:3;stroke-opacity:1"
+           d="M 17.280542,3.6279872 21.095221,8.463787 17.25478,14.368618 10.461998,6.7823392 Z"
+           id="path8806" />
+        <path
+           style="fill:none;fill-opacity:1;stroke:#907115;stroke-width:3;stroke-opacity:1"
+           d="M 37.229394,27.390586 17.256761,3.6391729"
+           id="path8804" />
+      </g>
+    </g>
+  </g>
+</svg>
