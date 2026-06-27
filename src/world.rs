@@ -366,7 +366,7 @@ pub struct ViewableWorld {
     /// long enough to be recolored by material.
     pub cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
-    pub proposed_cut_entities: HashMap<SlotCoord, Vec<Entity>>,
+    pub proposed_cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
 }
 
 impl ViewableWorld {
