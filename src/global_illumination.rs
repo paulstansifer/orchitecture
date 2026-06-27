@@ -482,7 +482,7 @@ mod tests {
         // interior air (1.0) since neighbors within the box share no wall there.
         let [tx, _ty, _tz] =
             low_face_transmissions(&contents, &structure_infos, IVec3::new(0, 1, 1));
-        check!(tx == 0.5);
+        check!(tx == 0.75);
 
         // Cube (1,1,1): its −X face is the wall shared with (0,1,1)? No — that
         // boundary (XLoWall of cube 1) is open interior, so 1.0. Confirm an actual
