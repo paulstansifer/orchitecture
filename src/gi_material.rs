@@ -24,8 +24,9 @@ use bevy::render::render_resource::{
 use bevy::shader::ShaderRef;
 
 /// How strongly the GI term contributes; multiplies `albedo * illuminance` and is
-/// added to the PBR output in linear HDR space.
-pub const GI_INTENSITY: f32 = 1.0;
+/// added to the PBR output in linear HDR space. Tune to match the desired interior
+/// brightness. (Replaces the old `IRRADIANCE_VOLUME_INTENSITY`.)
+pub const GI_INTENSITY: f32 = 2.0;
 
 /// The full material used on building/furniture meshes.
 pub type GiMaterial = ExtendedMaterial<StandardMaterial, GiExtension>;
