@@ -224,14 +224,11 @@ pub fn shared_ui_system(
                     .color(Color32::from_gray(220))
                     .font(FontId::proportional(13.0)),
             );
-            // Extract offer display values before the closure to avoid borrow conflicts
-            // with &mut traveler_state.invited inside the frame closure.
-            let offer_display: Option<(u16, u16, &'static str)> =
-                traveler_state.current_offer.as_ref().map(|o| {
-                    (o.potato_demand, o.other_demand, o.other_resource.label())
-                });
+            // Clone demands before the closure to avoid borrow conflict with &mut traveler_state.invited.
+            let offer_demands: Option<Vec<(crate::resource::UniformResource, u16)>> =
+                traveler_state.current_offer.as_ref().map(|o| o.demands.clone());
 
-            if let Some((potato_demand, other_demand, other_label)) = offer_display {
+            if let Some(demands) = offer_demands {
                 egui::Frame::new()
                     .fill(Color32::from_rgba_unmultiplied(20, 20, 30, 200))
                     .inner_margin(egui::Margin::same(4))
@@ -243,16 +240,13 @@ pub fn shared_ui_system(
                                 .font(FontId::proportional(11.0))
                                 .color(Color32::from_gray(210)),
                         );
-                        ui.label(
-                            egui::RichText::new(format!("Wants {} potatoes", potato_demand))
-                                .font(FontId::proportional(10.0))
-                                .color(Color32::from_gray(190)),
-                        );
-                        ui.label(
-                            egui::RichText::new(format!("+ {} {}", other_demand, other_label))
-                                .font(FontId::proportional(10.0))
-                                .color(Color32::from_gray(190)),
-                        );
+                        for (res, qty) in &demands {
+                            ui.label(
+                                egui::RichText::new(format!("Wants {} {}", qty, res.label()))
+                                    .font(FontId::proportional(10.0))
+                                    .color(Color32::from_gray(190)),
+                            );
+                        }
                         ui.label(
                             egui::RichText::new("Brings: 1 Tool + reveals a path")
                                 .font(FontId::proportional(10.0))

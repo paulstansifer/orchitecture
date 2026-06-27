@@ -1,11 +1,16 @@
 [
     (
         appear_chance: 0.25,
-        origin_dist_min: 1.5,
-        origin_dist_max: 2.5,
-        potato_demand_min: 10,
-        potato_demand_max: 15,
-        other_demand_min: 5,
-        other_demand_max: 10,
+        origin_dist: (start: 1.5, end: 2.5),
+        demands: [
+            (options: [(Potato, (start: 10, end: 16))]),
+            (options: [
+                (Canvas, (start: 5, end: 11)),
+                (Straw, (start: 5, end: 11)),
+                (Timber, (start: 5, end: 11)),
+                (Block, (start: 5, end: 11)),
+                (Fieldstone, (start: 5, end: 11)),
+            ]),
+        ],
     ),
 ]
