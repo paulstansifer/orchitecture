@@ -358,7 +358,7 @@ pub fn shared_ui_system(
             individual.fed_this_month = false;
         }
         for individual in &mut population.individuals {
-            if crate::population::try_consume_potatoes(&mut *constructed, 5) {
+            if crate::station::consume_uniform(&mut *constructed, crate::resource::UniformResource::Potato, 5) {
                 individual.fed_this_month = true;
             }
         }
