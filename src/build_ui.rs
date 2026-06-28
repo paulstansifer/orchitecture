@@ -132,8 +132,6 @@ pub enum LeftPanel {
     Build,
     /// Station view for the furniture cube that was right-clicked.
     Station { cube: IVec3 },
-    /// Population list with individual morale and needs.
-    Population,
 }
 
 #[derive(Resource, Default)]
@@ -142,6 +140,7 @@ pub struct UiState {
     pub example_idx: String,
     pub available_files: Vec<String>,
     pub left_panel: LeftPanel,
+    pub show_population: bool,
 }
 
 /// A right-click pick on a real furniture cell, produced by `building_input_system`
@@ -549,7 +548,7 @@ pub fn build_ui_system(
                             .button(format!("Morale: {:.2}", avg_morale))
                             .clicked()
                         {
-                            next_panel = Some(LeftPanel::Population);
+                            ui_state.show_population = !ui_state.show_population;
                         }
                     }
 
@@ -574,34 +573,34 @@ pub fn build_ui_system(
                         }
                     }
                 }
-                LeftPanel::Population => {
-                    ui.heading("Population");
-                    ui.separator();
-                    if ui.button("← Back").clicked() {
-                        next_panel = Some(LeftPanel::Build);
-                    }
-                    ui.separator();
-                    if population.individuals.is_empty() {
-                        ui.label("(no individuals)");
-                    } else {
-                        let avg_morale = population.individuals.iter().map(|i| i.morale()).sum::<f32>()
-                            / population.individuals.len() as f32;
-                        ui.label(format!("Avg morale: {:.2}", avg_morale));
-                        ui.separator();
-                        for (i, individual) in population.individuals.iter().enumerate() {
-                            ui.collapsing(
-                                format!("Individual {}  {:.2}", i + 1, individual.morale()),
-                                |ui| {
-                                    need_bar(ui, "shelter", individual.shelter());
-                                    need_bar(ui, "food", individual.food());
-                                    need_bar(ui, "inspire", individual.inspiration());
-                                },
-                            );
-                        }
-                    }
-                }
             }
         });
+
+    if ui_state.show_population {
+        egui::Window::new("Population")
+            .open(&mut ui_state.show_population)
+            .resizable(false)
+            .show(ctx, |ui| {
+                if population.individuals.is_empty() {
+                    ui.label("(no individuals)");
+                } else {
+                    let avg_morale = population.individuals.iter().map(|i| i.morale()).sum::<f32>()
+                        / population.individuals.len() as f32;
+                    ui.label(format!("Avg morale: {:.2}", avg_morale));
+                    ui.separator();
+                    for (i, individual) in population.individuals.iter().enumerate() {
+                        ui.collapsing(
+                            format!("Individual {}  {:.2}", i + 1, individual.morale()),
+                            |ui| {
+                                need_bar(ui, "shelter", individual.shelter());
+                                need_bar(ui, "food", individual.food());
+                                need_bar(ui, "inspire", individual.inspiration());
+                            },
+                        );
+                    }
+                }
+            });
+    }
 
     // Apply deferred station mutations now that the panel closure has ended.
     if let Some((cube, s_idx)) = assign {
