@@ -241,6 +241,55 @@ pub fn unassign_station(cw: &mut ConstructedWorld, idx: usize) {
     }
 }
 
+fn is_storage(cw: &ConstructedWorld, ps_idx: usize) -> bool {
+    cw.stations
+        .get(cw.placed_stations[ps_idx].station)
+        .map_or(false, |info| info.storage.is_some())
+}
+
+/// Total quantity of `res` held across all storage stations.
+pub fn total_uniform(cw: &ConstructedWorld, res: UniformResource) -> u32 {
+    (0..cw.placed_stations.len())
+        .filter(|&i| is_storage(cw, i))
+        .flat_map(|i| cw.placed_stations[i].contents.uniform_totals())
+        .filter(|(r, _)| *r == res)
+        .map(|(_, q)| q as u32)
+        .sum()
+}
+
+/// Remove `qty` of `res` from storage stations, spreading the deduction across
+/// stations in order. Returns `true` and commits if the total held is ≥ `qty`;
+/// returns `false` and makes no changes otherwise.
+pub fn consume_uniform(cw: &mut ConstructedWorld, res: UniformResource, qty: u32) -> bool {
+    if total_uniform(cw, res) < qty {
+        return false;
+    }
+    let mut remaining = qty;
+    for i in 0..cw.placed_stations.len() {
+        if remaining == 0 {
+            break;
+        }
+        if !is_storage(cw, i) {
+            continue;
+        }
+        let here = cw.placed_stations[i]
+            .contents
+            .uniform_totals()
+            .into_iter()
+            .find(|(r, _)| *r == res)
+            .map(|(_, q)| q as u32)
+            .unwrap_or(0);
+        let take = here.min(remaining);
+        if take > 0 {
+            cw.placed_stations[i]
+                .contents
+                .subtract_uniform(res, take as u16);
+            remaining -= take;
+        }
+    }
+    true
+}
+
 /// The starting storage room: a 4×3 area set one cell back from the road's NE
 /// inside corner. The E-W road occupies z ∈ [0, 4); the north arm occupies
 /// x ∈ [0, 4) for z ≥ 4. Stepping one cell off both road edges puts the room at
