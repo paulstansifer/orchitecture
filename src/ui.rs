@@ -172,17 +172,25 @@ pub fn shared_ui_system(
                 ui.label("(none)");
             }
             for res in &rhs_resources {
-                let (current, rounded_down) = station_totals
+                use crate::resource::Precision;
+
+                let (current, precision) = station_totals
                     .iter()
                     .find(|(r, _, _)| r == res)
-                    .map(|(_, q, d)| (*q, *d))
-                    .unwrap_or((0, false));
+                    .map(|(_, q, p)| (*q, *p))
+                    .unwrap_or((0, Precision::Exact));
                 let gain = *gains_map.get(res).unwrap_or(&0);
-                let prefix = if rounded_down { "> " } else { "" };
+
+                let quantity_str = match precision {
+                    Precision::Exact => format!("{}", current),
+                    Precision::Approximate => format!("~{}", current),
+                    Precision::Conservative => format!(">{}", current),
+                };
+
                 let text = if gain > 0 {
-                    format!("{}{}: {} + {}", prefix, res.label(), current, gain)
+                    format!("{}: {} + {}", res.label(), quantity_str, gain)
                 } else {
-                    format!("{}{}: {}", prefix, res.label(), current)
+                    format!("{}: {}", res.label(), quantity_str)
                 };
                 let color = if gain > 0 {
                     Color32::from_rgb(160, 220, 140)

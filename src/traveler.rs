@@ -88,7 +88,7 @@ pub fn roll_traveler_offer(state: &mut TravelerState, view_radius: f32, rng: &mu
 /// market preview gains are applied.
 pub fn can_afford_traveler(
     offer: &IndividualTraveler,
-    station_totals: &[(UniformResource, u32, bool)],
+    station_totals: &[(UniformResource, u32, crate::resource::Precision)],
     preview_gains: &[(UniformResource, u32)],
 ) -> bool {
     let available = |res: UniformResource| -> u32 {

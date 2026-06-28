@@ -578,14 +578,18 @@ pub fn build_ui_system(
 }
 
 /// Totals of all resources across every storage station, sorted for display.
-/// Returns `(resource, total_quantity, was_any_amount_rounded_down)`.
+/// Returns `(resource, total_quantity, precision)`.
 pub(crate) fn station_resource_totals(
     constructed: &ConstructedWorld,
-) -> Vec<(crate::resource::UniformResource, u32, bool)> {
-    use crate::resource::{round, UniformResource};
+) -> Vec<(
+    crate::resource::UniformResource,
+    u32,
+    crate::resource::Precision,
+)> {
+    use crate::resource::{round, Precision, UniformResource};
     use std::collections::HashMap;
 
-    let mut map: HashMap<UniformResource, (u32, bool)> = HashMap::new();
+    let mut map: HashMap<UniformResource, (u32, Precision)> = HashMap::new();
     for station in &constructed.placed_stations {
         let Some(info) = constructed.stations.get(station.station) else {
             continue;
@@ -594,13 +598,15 @@ pub(crate) fn station_resource_totals(
             continue;
         };
         for (res, qty) in station.contents.uniform_totals() {
-            let (rounded, dropped) = round(qty, spec.accounting);
-            let entry = map.entry(res).or_insert((0, false));
+            let (rounded, precision) = round(qty, spec.accounting);
+            let entry = map.entry(res).or_insert((0, Precision::Exact));
             entry.0 += rounded as u32;
-            entry.1 |= dropped;
+            if precision != Precision::Exact {
+                entry.1 = precision;
+            }
         }
     }
-    let mut result: Vec<_> = map.into_iter().map(|(r, (q, d))| (r, q, d)).collect();
+    let mut result: Vec<_> = map.into_iter().map(|(r, (q, p))| (r, q, p)).collect();
     result.sort_by_key(|(r, _, _)| *r);
     result
 }

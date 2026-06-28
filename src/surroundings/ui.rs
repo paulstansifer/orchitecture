@@ -223,14 +223,53 @@ pub fn surroundings_ui_system(
                     .show(ui, |ui| {
                         ui.set_max_width(PANEL_W);
 
-                        ui.label(
-                            egui::RichText::new(format!("{:.0} ac", farm.area))
-                                .font(FontId::proportional(10.0))
-                                .color(Color32::from_gray(210)),
-                        );
-
-                        // Potato stockpile
+                        // Production information: acres + boost (+ predicted_bonus)
                         ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{:.0} ac", farm.area))
+                                    .font(FontId::proportional(10.0))
+                                    .color(Color32::from_gray(210)),
+                            );
+
+                            if farm.boost > 0 {
+                                ui.label(
+                                    egui::RichText::new(" + ")
+                                        .font(FontId::proportional(10.0))
+                                        .color(Color32::from_rgb(220, 160, 80)),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!("{}", farm.boost))
+                                        .font(FontId::proportional(10.0))
+                                        .color(Color32::from_rgb(220, 160, 80)),
+                                );
+                            }
+
+                            if farm.invited {
+                                if let Some(&t) = preview.farm_boosts.get(&i) {
+                                    if t > 0 {
+                                        ui.label(
+                                            egui::RichText::new(" (+ ")
+                                                .font(FontId::proportional(10.0))
+                                                .color(Color32::from_rgb(80, 220, 80)),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(format!("{}", t))
+                                                .font(FontId::proportional(10.0))
+                                                .color(Color32::from_rgb(80, 220, 80)),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(")")
+                                                .font(FontId::proportional(10.0))
+                                                .color(Color32::from_rgb(80, 220, 80)),
+                                        );
+                                    }
+                                }
+                            }
+                        });
+
+                        // Stockpiles on same line
+                        ui.horizontal(|ui| {
+                            // Potato stockpile
                             if let Some(&tex) =
                                 icon_textures_sm.get(&crate::resource::UniformResource::Potato)
                             {
@@ -243,10 +282,10 @@ pub fn surroundings_ui_system(
                                     .font(FontId::proportional(9.0))
                                     .color(Color32::from_rgb(220, 210, 120)),
                             );
-                        });
 
-                        // Inedible resource stockpile
-                        ui.horizontal(|ui| {
+                            ui.add_space(4.0);
+
+                            // Inedible resource stockpile
                             if let Some(&tex) = icon_textures_sm.get(&farm.resource) {
                                 ui.add(egui::Image::new(egui::load::SizedTexture::new(
                                     tex, SMALL_SIZE,
@@ -272,28 +311,6 @@ pub fn surroundings_ui_system(
                                 )));
                             }
                         });
-
-                        // Current boost (non-zero means extra production this month)
-                        if farm.boost > 0 {
-                            ui.label(
-                                egui::RichText::new(format!("+{} boost", farm.boost))
-                                    .font(FontId::proportional(9.0))
-                                    .color(Color32::from_rgb(220, 160, 80)),
-                            );
-                        }
-
-                        // Market preview: predicted boost from next market run
-                        if farm.invited {
-                            if let Some(&t) = preview.farm_boosts.get(&i) {
-                                if t > 0 {
-                                    ui.label(
-                                        egui::RichText::new(format!("+{}", t))
-                                            .font(FontId::proportional(9.0))
-                                            .color(Color32::from_rgb(80, 220, 80)),
-                                    );
-                                }
-                            }
-                        }
 
                         let can_invite = farm.invited || !invite_limit_reached;
                         ui.add_enabled(

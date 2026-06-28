@@ -193,9 +193,16 @@ pub struct Approximation {
     pub max: u16,
 }
 
-// Simulate bookkeepping limitations; returns whether we should display ">"
-pub fn round(orig: u16, approx: Approximation) -> (u16, bool) {
-    // Cap at the bookkeeping maximum we're able to record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Precision {
+    Exact,
+    Approximate,
+    Conservative,
+}
+
+// Simulate bookkeepping limitations; returns the rounded value and precision info
+pub fn round(orig: u16, approx: Approximation) -> (u16, Precision) {
+    let capped = orig > approx.max;
     let res = orig.min(approx.max);
 
     let too_long = u16::pow(10, approx.digits.into());
@@ -209,7 +216,15 @@ pub fn round(orig: u16, approx: Approximation) -> (u16, bool) {
 
     let res = res_digits * res_zeroes;
 
-    (res, res < orig)
+    let precision = if res == orig {
+        Precision::Exact
+    } else if capped {
+        Precision::Conservative
+    } else {
+        Precision::Approximate
+    };
+
+    (res, precision)
 }
 
 #[cfg(test)]
@@ -223,26 +238,26 @@ mod tests {
 
     #[test]
     fn round_small_values_unchanged() {
-        assert_eq!(round(9, ACCT), (9, false));
-        assert_eq!(round(20, ACCT), (20, false));
-        assert_eq!(round(10, ACCT), (10, false));
+        assert_eq!(round(9, ACCT), (9, Precision::Exact));
+        assert_eq!(round(20, ACCT), (20, Precision::Exact));
+        assert_eq!(round(10, ACCT), (10, Precision::Exact));
     }
 
     #[test]
     fn round_multi_digit_drops_to_one_sig_digit() {
         // 137 -> capped at 100, which is already 1 significant digit.
-        assert_eq!(round(137, ACCT), (100, true));
+        assert_eq!(round(137, ACCT), (100, Precision::Conservative));
     }
 
     #[test]
     fn round_caps_at_max() {
-        // Above max: capped to 100 and flagged as rounded down.
-        assert_eq!(round(250, ACCT), (100, true));
+        // Above max: capped to 100 and flagged as conservative.
+        assert_eq!(round(250, ACCT), (100, Precision::Conservative));
     }
 
     #[test]
     fn round_truncates_significant_digits() {
         // Under the cap but more than one significant digit: 47 -> 40.
-        assert_eq!(round(47, ACCT), (40, true));
+        assert_eq!(round(47, ACCT), (40, Precision::Approximate));
     }
 }
