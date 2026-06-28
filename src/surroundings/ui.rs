@@ -132,7 +132,6 @@ pub fn surroundings_ui_system(
                 Pos2::new(screen_centre.x + rel.x, screen_centre.y - rel.y)
             };
 
-
             let circle_pos = farms.circle_pos;
             let expanded = panel_rect.expand(300.0);
 
@@ -158,7 +157,12 @@ pub fn surroundings_ui_system(
             }
 
             // ── Fog-of-war mesh ───────────────────────────────────────────────
-            let fog_mesh = build_fog_mesh(panel_rect, screen_centre, viewport_offset, &farms.traveler_reveals);
+            let fog_mesh = build_fog_mesh(
+                panel_rect,
+                screen_centre,
+                viewport_offset,
+                &farms.traveler_reveals,
+            );
             painter.add(egui::Shape::mesh(fog_mesh));
 
             // ── Navigation circle (above fog) ─────────────────────────────────

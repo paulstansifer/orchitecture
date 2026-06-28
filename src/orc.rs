@@ -162,8 +162,14 @@ pub fn orc_input_system(
 
     let moving = move_dir != Vec3::ZERO;
     if moving {
-        transform.translation += move_dir.normalize() * speed * dt;
-        transform.look_to(-move_dir, Vec3::Y);
+        // Round movement to nearest cardinal or diagonal direction (8 directions total).
+        let angle = move_dir.z.atan2(move_dir.x);
+        let frac_pi_4 = std::f32::consts::FRAC_PI_4;
+        let rounded_angle = (angle / frac_pi_4).round() * frac_pi_4;
+        let rounded_dir = Vec3::new(rounded_angle.cos(), 0.0, rounded_angle.sin());
+
+        transform.translation += rounded_dir * speed * dt;
+        transform.look_to(-rounded_dir, Vec3::Y);
     }
 
     let (Some(player_entity), Some(idle_node), Some(walk_node)) =

@@ -296,9 +296,45 @@ pub fn spawn_initial_station(
         constructed.contents.set(loc, cell.clone());
         changes.push((loc, Some(cell)));
     }
+
+    // Place market stands opposite the stockpile (south of the E-W road at z = -1),
+    // with one space between each structure.
+    let Some(market_stand_id) = constructed.find_structure_by_name("market stand") else {
+        apply_changes(&mut commands, &mut assembled, &structure_list, changes);
+        return;
+    };
+    let Some(market_stand_station_index) = constructed
+        .stations
+        .iter()
+        .position(|s| s.name == "market stand")
+    else {
+        apply_changes(&mut commands, &mut assembled, &structure_list, changes);
+        return;
+    };
+
+    let market_stand_positions = [
+        IVec3::new(1, 0, -1),
+        IVec3::new(3, 0, -1),
+        IVec3::new(5, 0, -1),
+    ];
+    for cube in &market_stand_positions {
+        let loc = SlotCoord {
+            cube: *cube,
+            slot: Slot::Room,
+        };
+        let cell = Cell {
+            id: market_stand_id,
+            facing: Facing::default(),
+            evaluation: None,
+            material: Material::Planks,
+        };
+        constructed.contents.set(loc, cell.clone());
+        changes.push((loc, Some(cell)));
+    }
+
     apply_changes(&mut commands, &mut assembled, &structure_list, changes);
 
-    // Stock the inventory and register the station.
+    // Stock the inventory and register the storage room station.
     let mut inv = Inventory::new(8, 20.0 * NUM_BINS as f32);
     inv.add_uniform(UniformResource::Potato, 9);
     inv.add_uniform(UniformResource::Timber, 20);
@@ -309,6 +345,15 @@ pub fn spawn_initial_station(
         structure_locations: chosen,
         contents: inv,
     });
+
+    // Register each market stand as its own station.
+    for cube in &market_stand_positions {
+        constructed.placed_stations.push(ParticularStation {
+            station: market_stand_station_index,
+            structure_locations: vec![*cube],
+            contents: Inventory::new(8, 20.0),
+        });
+    }
 }
 
 #[cfg(test)]

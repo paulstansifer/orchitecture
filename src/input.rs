@@ -340,7 +340,7 @@ pub fn building_input_system(
     // }
     if mouse_button.just_released(MouseButton::Right) {
         //let pressed = right_press_pos.take();
-        let pressed =window.cursor_position();
+        let pressed = window.cursor_position();
         let moved = pressed
             .zip(window.cursor_position())
             .map(|(a, b)| a.distance(b))
