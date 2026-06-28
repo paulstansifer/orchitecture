@@ -6,6 +6,7 @@ use crate::construction::{construct, load_from_offline};
 use crate::cutaway::CutawayMode;
 use crate::input::BuildState;
 use crate::materials::MaterialList;
+use crate::population::Population;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
@@ -13,7 +14,8 @@ use crate::structure::sorted_structure_indices;
 use crate::structure::StructureList;
 use crate::world::{
     apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
-    AssembledWorld, ConstructedWorld, ProposalOverlayAssets, ProposedWorld, ViewableWorld,
+    AssembledWorld, BuildWorldParams, ConstructedWorld, ProposalOverlayAssets, ProposedWorld,
+    ViewableWorld,
 };
 
 /// Maps bundled at compile time; always available on all platforms.
@@ -130,6 +132,8 @@ pub enum LeftPanel {
     Build,
     /// Station view for the furniture cube that was right-clicked.
     Station { cube: IVec3 },
+    /// Population list with individual morale and needs.
+    Population,
 }
 
 #[derive(Resource, Default)]
@@ -223,9 +227,7 @@ pub fn build_ui_system(
     mut commands: Commands,
     mut contexts: EguiContexts,
     structure_list: Res<StructureList>,
-    mut constructed: ResMut<ConstructedWorld>,
-    mut pending: ResMut<ProposedWorld>,
-    mut assembled: ResMut<AssembledWorld>,
+    mut world: BuildWorldParams,
     mut viewable: ResMut<ViewableWorld>,
     mut build_state: ResMut<BuildState>,
     mut ui_state: ResMut<UiState>,
@@ -236,6 +238,7 @@ pub fn build_ui_system(
     mut station_highlight: ResMut<crate::world::StationHighlight>,
     resource_icons: Res<ResourceIcons>,
     material_list: Res<MaterialList>,
+    population: Res<Population>,
 ) {
     let icon_textures = resource_icons.texture_ids_large(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -262,16 +265,16 @@ pub fn build_ui_system(
             ui.checkbox(&mut sandbox.enabled, "Sandbox");
             if sandbox.enabled && !was_sandbox {
                 // Switching into sandbox commits any pending proposals immediately.
-                let real_changes = construct(&mut constructed, &mut pending);
-                clear_proposal_entities(&mut commands, &mut assembled);
+                let real_changes = construct(&mut *world.constructed, &mut *world.pending);
+                clear_proposal_entities(&mut commands, &mut *world.assembled);
                 clear_proposed_cut_entities(&mut commands, &mut viewable);
-                apply_changes(&mut commands, &mut assembled, &structure_list, real_changes);
+                apply_changes(&mut commands, &mut *world.assembled, &structure_list, real_changes);
             }
 
             ui.separator();
             if ui.button("Save").clicked() {
                 let bytes =
-                    serialization::serialize(&constructed.contents, &constructed.structures);
+                    serialization::serialize(&world.constructed.contents, &world.constructed.structures);
                 commands
                     .dialog()
                     .add_filter("Orchitecture Map", &["txt"])
@@ -337,10 +340,10 @@ pub fn build_ui_system(
                     if let Ok(idx) = ui_state.example_idx.parse::<usize>() {
                         let examples = crate::example_structures::make_structures();
                         if let Some(map) = examples.into_iter().nth(idx) {
-                            clear_proposal_entities(&mut commands, &mut assembled);
+                            clear_proposal_entities(&mut commands, &mut *world.assembled);
                             clear_proposed_cut_entities(&mut commands, &mut viewable);
-                            let changes = load_from_offline(&mut constructed, &mut pending, map);
-                            apply_changes(&mut commands, &mut assembled, &structure_list, changes);
+                            let changes = load_from_offline(&mut *world.constructed, &mut *world.pending, map);
+                            apply_changes(&mut commands, &mut *world.assembled, &structure_list, changes);
                         }
                     }
                 }
@@ -353,22 +356,22 @@ pub fn build_ui_system(
         let new_contents_opt = if let Some(content) = find_bundled(&name) {
             Some(serialization::load_from_str(
                 content,
-                &constructed.structures,
+                &world.constructed.structures,
             ))
         } else {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let path = std::path::PathBuf::from(crate::paths::USER_DIR).join(&name);
-                Some(serialization::load(&path, &constructed.structures))
+                Some(serialization::load(&path, &world.constructed.structures))
             }
             #[cfg(target_arch = "wasm32")]
             None
         };
         if let Some(new_contents) = new_contents_opt {
-            clear_proposal_entities(&mut commands, &mut assembled);
+            clear_proposal_entities(&mut commands, &mut *world.assembled);
             clear_proposed_cut_entities(&mut commands, &mut viewable);
-            let changes = load_from_offline(&mut constructed, &mut pending, new_contents);
-            apply_changes(&mut commands, &mut assembled, &structure_list, changes);
+            let changes = load_from_offline(&mut *world.constructed, &mut *world.pending, new_contents);
+            apply_changes(&mut commands, &mut *world.assembled, &structure_list, changes);
         }
     }
 
@@ -392,22 +395,22 @@ pub fn build_ui_system(
                         next_panel = Some(LeftPanel::Build);
                     }
                     ui.separator();
-                    match crate::station::station_index_at(&constructed, cube) {
+                    match crate::station::station_index_at(&world.constructed, cube) {
                         Some(idx) => {
-                            let ps = &constructed.placed_stations[idx];
-                            let def = &constructed.stations[ps.station];
+                            let ps = &world.constructed.placed_stations[idx];
+                            let def = &world.constructed.stations[ps.station];
                             ui.label(format!("Name: {}", def.name));
 
                             let mut counts: std::collections::BTreeMap<String, usize> =
                                 std::collections::BTreeMap::new();
                             for loc in &ps.structure_locations {
-                                if let Some(cell) = constructed.contents.get(SlotCoord {
+                                if let Some(cell) = world.constructed.contents.get(SlotCoord {
                                     cube: *loc,
                                     slot: Slot::Room,
                                 }) {
                                     *counts
                                         .entry(
-                                            constructed.structures[cell.id.as_usize()].name.clone(),
+                                            world.constructed.structures[cell.id.as_usize()].name.clone(),
                                         )
                                         .or_default() += 1;
                                 }
@@ -447,9 +450,9 @@ pub fn build_ui_system(
                         None => {
                             // A `Some` plan is exactly the validity test, so one pass over
                             // the stations both filters and yields the "Pulls N" count.
-                            let plans: Vec<(usize, usize)> = (0..constructed.stations.len())
+                            let plans: Vec<(usize, usize)> = (0..world.constructed.stations.len())
                                 .filter_map(|s_idx| {
-                                    crate::station::plan_assignment(&constructed, cube, s_idx)
+                                    crate::station::plan_assignment(&world.constructed, cube, s_idx)
                                         .map(|plan| (s_idx, plan.pulled))
                                 })
                                 .collect();
@@ -459,7 +462,7 @@ pub fn build_ui_system(
                                 ui.label("Create station:");
                             }
                             for (s_idx, pulled) in plans {
-                                if ui.button(&constructed.stations[s_idx].name).clicked() {
+                                if ui.button(&world.constructed.stations[s_idx].name).clicked() {
                                     assign = Some((cube, s_idx));
                                 }
                                 if pulled > 0 {
@@ -480,10 +483,10 @@ pub fn build_ui_system(
                     ui.separator();
 
                     // Structures sorted by type with group headers.
-                    let sorted = sorted_structure_indices(&constructed.structures);
+                    let sorted = sorted_structure_indices(&world.constructed.structures);
                     let mut last_stype: Option<crate::materials::StructureType> = None;
                     for (display_idx, &struct_idx) in sorted.iter().enumerate() {
-                        let info = &constructed.structures[struct_idx];
+                        let info = &world.constructed.structures[struct_idx];
                         let stype = info.structure_type;
                         if last_stype != Some(stype) {
                             if last_stype.is_some() {
@@ -508,7 +511,7 @@ pub fn build_ui_system(
                     }
 
                     // Material picker for the selected structure's type.
-                    let selected_info = &constructed.structures[build_state.selected_structure];
+                    let selected_info = &world.constructed.structures[build_state.selected_structure];
                     let stype = selected_info.structure_type;
                     let options = material_list.for_type(stype);
                     if !options.is_empty() {
@@ -538,19 +541,31 @@ pub fn build_ui_system(
                         ui.label(format!("Interest:  {:.3}", interest));
                     }
 
-                    if pending.num_changes() > 0 {
+                    if !population.individuals.is_empty() {
+                        let avg_morale = population.individuals.iter().map(|i| i.morale()).sum::<f32>()
+                            / population.individuals.len() as f32;
+                        ui.separator();
+                        if ui
+                            .button(format!("Morale: {:.2}", avg_morale))
+                            .clicked()
+                        {
+                            next_panel = Some(LeftPanel::Population);
+                        }
+                    }
+
+                    if world.pending.num_changes() > 0 {
                         ui.separator();
                         if ui.button("Reset").clicked() {
                             let locs: Vec<_> =
-                                pending.proposed_changes.iter().map(|(l, _)| l).collect();
-                            pending.reset();
+                                world.pending.proposed_changes.iter().map(|(l, _)| l).collect();
+                            world.pending.reset();
                             let deltas: Vec<_> = locs
                                 .into_iter()
                                 .map(|loc| (loc, crate::world::ProposalView::None))
                                 .collect();
                             apply_proposal_changes(
                                 &mut commands,
-                                &mut assembled,
+                                &mut *world.assembled,
                                 &structure_list,
                                 &overlay_assets,
                                 deltas,
@@ -559,15 +574,41 @@ pub fn build_ui_system(
                         }
                     }
                 }
+                LeftPanel::Population => {
+                    ui.heading("Population");
+                    ui.separator();
+                    if ui.button("← Back").clicked() {
+                        next_panel = Some(LeftPanel::Build);
+                    }
+                    ui.separator();
+                    if population.individuals.is_empty() {
+                        ui.label("(no individuals)");
+                    } else {
+                        let avg_morale = population.individuals.iter().map(|i| i.morale()).sum::<f32>()
+                            / population.individuals.len() as f32;
+                        ui.label(format!("Avg morale: {:.2}", avg_morale));
+                        ui.separator();
+                        for (i, individual) in population.individuals.iter().enumerate() {
+                            ui.collapsing(
+                                format!("Individual {}  {:.2}", i + 1, individual.morale()),
+                                |ui| {
+                                    need_bar(ui, "shelter", individual.shelter());
+                                    need_bar(ui, "food", individual.food());
+                                    need_bar(ui, "inspire", individual.inspiration());
+                                },
+                            );
+                        }
+                    }
+                }
             }
         });
 
     // Apply deferred station mutations now that the panel closure has ended.
     if let Some((cube, s_idx)) = assign {
-        crate::station::commit_assignment(&mut constructed, cube, s_idx);
+        crate::station::commit_assignment(&mut *world.constructed, cube, s_idx);
     }
     if let Some(idx) = unassign {
-        crate::station::unassign_station(&mut constructed, idx);
+        crate::station::unassign_station(&mut *world.constructed, idx);
     }
     if let Some(p) = next_panel {
         ui_state.left_panel = p;
@@ -575,6 +616,13 @@ pub fn build_ui_system(
     // Write only on change (set_if_neq), so the highlight system doesn't respawn
     // the overlay meshes every frame.
     station_highlight.set_if_neq(crate::world::StationHighlight(highlight));
+}
+
+fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.add(egui::ProgressBar::new(value / 1.2));
+    });
 }
 
 /// Totals of all resources across every storage station, sorted for display.
