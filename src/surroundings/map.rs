@@ -250,6 +250,7 @@ pub fn generate_farms(mut commands: Commands) {
             inedible_stockpile: 0,
             boost: 0,
             invited: false,
+            mode: crate::surroundings::farmstead::FarmMode::Market,
         });
     }
 
@@ -265,9 +266,11 @@ pub fn generate_farms(mut commands: Commands) {
         }
     }
 
+    let neighbors = crate::surroundings::farmstead::build_adjacency(&farms);
     commands.insert_resource(FarmsResource {
         farms,
         circle_pos,
         traveler_reveals: Vec::new(),
+        neighbors,
     });
 }

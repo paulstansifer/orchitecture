@@ -3,8 +3,12 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::resource_icons::SMALL_SIZE;
 
-use super::farmstead::{preview_market, FarmsResource, SurroundingsState};
+use super::farmstead::{
+    farm_breakdown, market_effect, preview_market, FarmMode, FarmsResource, MarketModeEffect,
+    SurroundingsState,
+};
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
+use crate::resource::ToolKind;
 
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
@@ -85,6 +89,7 @@ fn build_fog_mesh(
 pub fn enter_surroundings_mode(mut commands: Commands) {
     commands.insert_resource(SurroundingsState {
         viewport_offset: Vec2::ZERO,
+        open_farm_menu: None,
     });
 }
 
@@ -96,7 +101,7 @@ pub fn surroundings_ui_system(
     mut contexts: EguiContexts,
     mut farms: ResMut<FarmsResource>,
     mut state: ResMut<SurroundingsState>,
-    constructed: Res<crate::world::ConstructedWorld>,
+    mut constructed: ResMut<crate::world::ConstructedWorld>,
     resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {
@@ -109,7 +114,15 @@ pub fn surroundings_ui_system(
     };
 
     // Market preview for farm boost display.
+    farms.ensure_adjacency();
     let preview = preview_market(&*farms);
+    // Predicted boost for a farm, if it is invited in `Market` mode.
+    let predicted_boost = |i: usize| -> u32 {
+        match preview.farm_effects.get(&i).map(|e| e.effect) {
+            Some(MarketModeEffect::Boost(t)) => t,
+            _ => 0,
+        }
+    };
 
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_build = false;
@@ -245,24 +258,23 @@ pub fn surroundings_ui_system(
                             }
 
                             if farm.invited {
-                                if let Some(&t) = preview.farm_boosts.get(&i) {
-                                    if t > 0 {
-                                        ui.label(
-                                            egui::RichText::new(" (+ ")
-                                                .font(FontId::proportional(10.0))
-                                                .color(Color32::from_rgb(80, 220, 80)),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(format!("{}", t))
-                                                .font(FontId::proportional(10.0))
-                                                .color(Color32::from_rgb(80, 220, 80)),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(")")
-                                                .font(FontId::proportional(10.0))
-                                                .color(Color32::from_rgb(80, 220, 80)),
-                                        );
-                                    }
+                                let t = predicted_boost(i);
+                                if t > 0 {
+                                    ui.label(
+                                        egui::RichText::new(" (+ ")
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(80, 220, 80)),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", t))
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(80, 220, 80)),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(")")
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(80, 220, 80)),
+                                    );
                                 }
                             }
                         });
@@ -285,8 +297,8 @@ pub fn surroundings_ui_system(
 
                             ui.add_space(4.0);
 
-                            // Inedible resource stockpile
-                            if let Some(&tex) = icon_textures_sm.get(&farm.resource) {
+                            // Inedible resource stockpile (tool output while specialized)
+                            if let Some(&tex) = icon_textures_sm.get(&farm.produced_resource()) {
                                 ui.add(egui::Image::new(egui::load::SizedTexture::new(
                                     tex, SMALL_SIZE,
                                 )));
@@ -312,13 +324,125 @@ pub fn surroundings_ui_system(
                             }
                         });
 
-                        let can_invite = farm.invited || !invite_limit_reached;
-                        ui.add_enabled(
-                            can_invite,
-                            egui::Checkbox::new(&mut farm.invited, "Invite"),
-                        );
+                        ui.horizontal(|ui| {
+                            let can_invite = farm.invited || !invite_limit_reached;
+                            ui.add_enabled(
+                                can_invite,
+                                egui::Checkbox::new(
+                                    &mut farm.invited,
+                                    farm.mode.checkbox_label(),
+                                ),
+                            );
+                            if ui
+                                .add_enabled(farm.invited, egui::Button::new("…"))
+                                .clicked()
+                            {
+                                state.open_farm_menu = Some(i);
+                            }
+                        });
                     });
             });
+    }
+
+    // ── Farm configuration ("…") popup ────────────────────────────────────────
+    if let Some(menu_i) = state.open_farm_menu {
+        if menu_i >= farms.farms.len() || !farms.farms[menu_i].invited {
+            state.open_farm_menu = None;
+        } else {
+            let current_mode = farms.farms[menu_i].mode;
+            let spec_mode = FarmMode::Specialized {
+                tool: ToolKind::Whipsaw,
+            };
+
+            // Breakdowns and availability, all via the same shared compute path.
+            let market_lines = farm_breakdown(&mut farms, menu_i, FarmMode::Market);
+            let change_lines = farm_breakdown(&mut farms, menu_i, FarmMode::RerollResource);
+            let spec_lines = farm_breakdown(&mut farms, menu_i, spec_mode);
+
+            let can_change = matches!(
+                market_effect(&mut farms, menu_i, FarmMode::RerollResource),
+                Some(MarketModeEffect::Reroll { paid }) if paid > 0
+            );
+            let holds_whipsaw =
+                farms.farms[menu_i].specialized_tool() == Some(ToolKind::Whipsaw);
+            let whipsaw_available =
+                holds_whipsaw || crate::station::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
+            let can_specialize = whipsaw_available
+                && matches!(
+                    market_effect(&mut farms, menu_i, spec_mode),
+                    Some(MarketModeEffect::Specialize { paid }) if paid > 0
+                );
+
+            let render_option =
+                |ui: &mut egui::Ui, chosen: &mut Option<FarmMode>, mode: FarmMode, enabled: bool,
+                 title: &str, lines: &[String]| {
+                    let selected = current_mode == mode;
+                    if ui
+                        .add_enabled(enabled, egui::Button::selectable(selected, title))
+                        .clicked()
+                    {
+                        *chosen = Some(mode);
+                    }
+                    for line in lines {
+                        ui.label(
+                            egui::RichText::new(format!("    • {}", line))
+                                .font(FontId::proportional(11.0))
+                                .color(Color32::from_gray(190)),
+                        );
+                    }
+                    ui.add_space(4.0);
+                };
+
+            let mut keep_open = true;
+            let mut chosen: Option<FarmMode> = None;
+            egui::Window::new("Farm options")
+                .id(egui::Id::new(("farm_menu", menu_i)))
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut keep_open)
+                .show(ctx, |ui| {
+                    render_option(
+                        ui,
+                        &mut chosen,
+                        FarmMode::Market,
+                        true,
+                        "Participate in the market",
+                        &market_lines,
+                    );
+                    render_option(
+                        ui,
+                        &mut chosen,
+                        FarmMode::RerollResource,
+                        can_change,
+                        "Select a different secondary resource",
+                        &change_lines,
+                    );
+                    render_option(
+                        ui,
+                        &mut chosen,
+                        spec_mode,
+                        can_specialize,
+                        "Specialize",
+                        &spec_lines,
+                    );
+                });
+
+            if !keep_open {
+                state.open_farm_menu = None;
+            }
+            if let Some(new_mode) = chosen {
+                let old = farms.farms[menu_i].mode;
+                if old != new_mode {
+                    if let FarmMode::Specialized { tool } = old {
+                        crate::station::deposit_tool(&mut constructed, tool);
+                    }
+                    if let FarmMode::Specialized { tool } = new_mode {
+                        crate::station::consume_tool(&mut constructed, tool);
+                    }
+                    farms.farms[menu_i].mode = new_mode;
+                }
+            }
+        }
     }
 
     // ── Apply deferred actions ────────────────────────────────────────────────
