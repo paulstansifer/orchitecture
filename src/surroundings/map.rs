@@ -114,9 +114,9 @@ fn polygon_centroid(poly: &[Vec2]) -> Vec2 {
 
 /// Lloyd relaxation: moves each seed to the centroid of its Voronoi cell,
 /// making cell sizes more uniform across iterations.
-fn lloyd_relax(seeds: &mut Vec<Vec2>, steps: usize) {
+fn lloyd_relax(seeds: &mut [Vec2], steps: usize) {
     for _ in 0..steps {
-        let snapshot = seeds.clone();
+        let snapshot = seeds.to_vec();
         for seed in seeds.iter_mut() {
             let cell = voronoi_cell(*seed, &snapshot);
             if !cell.is_empty() {

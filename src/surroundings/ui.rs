@@ -109,7 +109,7 @@ pub fn surroundings_ui_system(
     };
 
     // Market preview for farm boost display.
-    let preview = preview_market(&*farms);
+    let preview = preview_market(&farms);
 
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_build = false;

@@ -79,7 +79,7 @@ pub fn serialize_sparse3d(
                     }
                 }
             }
-            serialized.push_str("\n");
+            serialized.push('\n');
             for x in min.x..=max.x {
                 for slot in [RelSlot::XLoWall, RelSlot::Floor] {
                     let loc = RelSlotCoord::new(x, y, z, slot);
@@ -90,7 +90,7 @@ pub fn serialize_sparse3d(
                     }
                 }
             }
-            serialized.push_str("\n");
+            serialized.push('\n');
         }
 
         serialized.push_str("~~~~~\n");

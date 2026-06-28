@@ -22,10 +22,10 @@ use orchitecture_lib::{
     materials::MaterialList,
     orc::{despawn_orc, orc_input_system, setup_orc_animation, spawn_orc},
     ortho_camera::{walk_camera_system, WalkCameraState},
+    population::spawn_population,
     qnn::ModelPlugin,
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
-    population::spawn_population,
     station::spawn_initial_station,
     structure::{spawn_structures, StructureList},
     surroundings::{

@@ -52,7 +52,7 @@ pub fn autotile_transform(loc: SlotCoord, spec: &MeshSpec) -> Transform {
             Vec3::new(0.5, 0.0, -0.5)
         };
         transform.translation += transform.rotation * (pivot - q * pivot);
-        transform.rotation = transform.rotation * q;
+        transform.rotation *= q;
     }
     transform
 }
@@ -208,7 +208,7 @@ pub fn autotile_update_system(
     let proposal_stale: Vec<SlotCoord> = vec![];
 
     {
-        let aw: &mut AssembledWorld = &mut *assembled;
+        let aw: &mut AssembledWorld = &mut assembled;
         let results = &mut aw.autotile_results;
         let entities = &mut aw.cell_entities;
         apply_autotile_updates(
@@ -224,7 +224,7 @@ pub fn autotile_update_system(
         );
     }
     {
-        let aw: &mut AssembledWorld = &mut *assembled;
+        let aw: &mut AssembledWorld = &mut assembled;
         #[cfg(autotile_matching)]
         let results = &mut aw.proposal_autotile_results;
         #[cfg(not(autotile_matching))]

@@ -152,12 +152,9 @@ fn descend_to_floor(
     z: i32,
     from_y: i32,
 ) -> Option<i32> {
-    for y in (from_y - 30..=from_y).rev() {
-        if get_real_or_proposed(cw, pe, RelSlotCoord::new(x, y, z, RelSlot::Floor)).is_some() {
-            return Some(y);
-        }
-    }
-    None
+    (from_y - 30..=from_y).rev().find(|&y| {
+        get_real_or_proposed(cw, pe, RelSlotCoord::new(x, y, z, RelSlot::Floor)).is_some()
+    })
 }
 
 /// BFS over Floor cells at `floor_y`, ignoring walls. Returns (x, z) of all reachable cells.

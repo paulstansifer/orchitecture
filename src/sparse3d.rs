@@ -420,6 +420,12 @@ impl<T: PartialEq> PartialEq for Sparse3D<T> {
     }
 }
 
+impl<T> Default for Sparse3D<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> Sparse3D<T> {
     pub fn new() -> Self {
         Sparse3D {
@@ -428,7 +434,7 @@ impl<T> Sparse3D<T> {
     }
 
     pub fn size(&self) -> usize {
-        self.chunks.iter().map(|(_, chunk)| chunk.size()).sum()
+        self.chunks.values().map(|chunk| chunk.size()).sum()
     }
 
     fn get_or_create_chunk(&mut self, chunk_coords: BigCoordinates) -> &mut Chunk<T> {

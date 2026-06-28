@@ -121,7 +121,7 @@ pub fn accept_traveler(
         constructed
             .stations
             .get(ps.station)
-            .map_or(false, |info| info.storage.is_some())
+            .is_some_and(|info| info.storage.is_some())
     });
     if let Some(idx) = storage_idx {
         constructed.placed_stations[idx]

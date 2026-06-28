@@ -198,7 +198,7 @@ pub fn rooms() -> Vec<Sparse3D<Cell>> {
 
     // Create a spiral staircase
     for i in 0..4 {
-        let height = i * 1;
+        let height = i;
         let radius = 4 - i;
         spiral_room.build_plane(
             v(-radius, height, -radius),
@@ -245,7 +245,7 @@ pub fn rooms() -> Vec<Sparse3D<Cell>> {
 
     // Create multi-level terraces
     for i in 0..4 {
-        let height = i * 1;
+        let height = i;
         let size = 5 - i;
         terrace_room.build_box(v(-size, height, -size), v(size, height, size));
     }

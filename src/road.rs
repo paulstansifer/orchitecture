@@ -10,13 +10,12 @@ pub const ROAD_WIDTH: i32 = 4;
 ///   - North arm:      x in [0, ROAD_WIDTH) for z >= ROAD_WIDTH
 ///
 /// The no-road semiplane is z < 0 (south of the E-W road).
-
 /// Returns the lowest y at which construction is permitted above this (x, z) column.
 /// y values strictly below the returned value are in the forbidden zone.
 /// Returns 0 for columns outside the road (no restriction).
 pub fn road_forbidden_height(x: i32, z: i32) -> i32 {
-    let in_ew = z >= 0 && z < ROAD_WIDTH;
-    let in_north = x >= 0 && x < ROAD_WIDTH && z >= ROAD_WIDTH;
+    let in_ew = (0..ROAD_WIDTH).contains(&z);
+    let in_north = (0..ROAD_WIDTH).contains(&x) && z >= ROAD_WIDTH;
 
     if in_ew {
         if z == 0 || z == ROAD_WIDTH - 1 {

@@ -211,7 +211,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                     if !seen.iter().any(|s| s == &rotated) {
                         seen.push(rotated.clone());
                         cases.push(OrientedCase {
-                            pattern_type: pt.clone(),
+                            pattern_type: pt,
                             checks: checks_to_conditions(&rotated),
                             result: rotate_result(&case.result, rot + 2),
                             char_annotations: rotate_annotations(base_annotations, rot),
@@ -222,7 +222,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                         if rule.slot == UnorientedSlot::Wall {
                             let rotated_plus_90 = rotate_checks(&base_checks, rot + 1);
                             cases_plus_90.push(OrientedCase {
-                                pattern_type: pt.clone(),
+                                pattern_type: pt,
                                 checks: checks_to_conditions(&rotated_plus_90),
                                 result: rotate_result(&case.result, rot),
                                 char_annotations: rotate_annotations(base_annotations, rot + 1),

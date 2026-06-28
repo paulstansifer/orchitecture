@@ -264,16 +264,23 @@ pub fn build_ui_system(
             ui.checkbox(&mut sandbox.enabled, "Sandbox");
             if sandbox.enabled && !was_sandbox {
                 // Switching into sandbox commits any pending proposals immediately.
-                let real_changes = construct(&mut *world.constructed, &mut *world.pending);
-                clear_proposal_entities(&mut commands, &mut *world.assembled);
+                let real_changes = construct(&mut world.constructed, &mut world.pending);
+                clear_proposal_entities(&mut commands, &mut world.assembled);
                 clear_proposed_cut_entities(&mut commands, &mut viewable);
-                apply_changes(&mut commands, &mut *world.assembled, &structure_list, real_changes);
+                apply_changes(
+                    &mut commands,
+                    &mut world.assembled,
+                    &structure_list,
+                    real_changes,
+                );
             }
 
             ui.separator();
             if ui.button("Save").clicked() {
-                let bytes =
-                    serialization::serialize(&world.constructed.contents, &world.constructed.structures);
+                let bytes = serialization::serialize(
+                    &world.constructed.contents,
+                    &world.constructed.structures,
+                );
                 commands
                     .dialog()
                     .add_filter("Orchitecture Map", &["txt"])
@@ -339,10 +346,16 @@ pub fn build_ui_system(
                     if let Ok(idx) = ui_state.example_idx.parse::<usize>() {
                         let examples = crate::example_structures::make_structures();
                         if let Some(map) = examples.into_iter().nth(idx) {
-                            clear_proposal_entities(&mut commands, &mut *world.assembled);
+                            clear_proposal_entities(&mut commands, &mut world.assembled);
                             clear_proposed_cut_entities(&mut commands, &mut viewable);
-                            let changes = load_from_offline(&mut *world.constructed, &mut *world.pending, map);
-                            apply_changes(&mut commands, &mut *world.assembled, &structure_list, changes);
+                            let changes =
+                                load_from_offline(&mut world.constructed, &mut world.pending, map);
+                            apply_changes(
+                                &mut commands,
+                                &mut world.assembled,
+                                &structure_list,
+                                changes,
+                            );
                         }
                     }
                 }
@@ -367,10 +380,16 @@ pub fn build_ui_system(
             None
         };
         if let Some(new_contents) = new_contents_opt {
-            clear_proposal_entities(&mut commands, &mut *world.assembled);
+            clear_proposal_entities(&mut commands, &mut world.assembled);
             clear_proposed_cut_entities(&mut commands, &mut viewable);
-            let changes = load_from_offline(&mut *world.constructed, &mut *world.pending, new_contents);
-            apply_changes(&mut commands, &mut *world.assembled, &structure_list, changes);
+            let changes =
+                load_from_offline(&mut world.constructed, &mut world.pending, new_contents);
+            apply_changes(
+                &mut commands,
+                &mut world.assembled,
+                &structure_list,
+                changes,
+            );
         }
     }
 
@@ -409,7 +428,9 @@ pub fn build_ui_system(
                                 }) {
                                     *counts
                                         .entry(
-                                            world.constructed.structures[cell.id.as_usize()].name.clone(),
+                                            world.constructed.structures[cell.id.as_usize()]
+                                                .name
+                                                .clone(),
                                         )
                                         .or_default() += 1;
                                 }
@@ -510,7 +531,8 @@ pub fn build_ui_system(
                     }
 
                     // Material picker for the selected structure's type.
-                    let selected_info = &world.constructed.structures[build_state.selected_structure];
+                    let selected_info =
+                        &world.constructed.structures[build_state.selected_structure];
                     let stype = selected_info.structure_type;
                     let options = material_list.for_type(stype);
                     if !options.is_empty() {
@@ -541,13 +563,14 @@ pub fn build_ui_system(
                     }
 
                     if !population.individuals.is_empty() {
-                        let avg_morale = population.individuals.iter().map(|i| i.morale()).sum::<f32>()
+                        let avg_morale = population
+                            .individuals
+                            .iter()
+                            .map(|i| i.morale())
+                            .sum::<f32>()
                             / population.individuals.len() as f32;
                         ui.separator();
-                        if ui
-                            .button(format!("Morale: {:.2}", avg_morale))
-                            .clicked()
-                        {
+                        if ui.button(format!("Morale: {:.2}", avg_morale)).clicked() {
                             ui_state.show_population = !ui_state.show_population;
                         }
                     }
@@ -555,8 +578,12 @@ pub fn build_ui_system(
                     if world.pending.num_changes() > 0 {
                         ui.separator();
                         if ui.button("Reset").clicked() {
-                            let locs: Vec<_> =
-                                world.pending.proposed_changes.iter().map(|(l, _)| l).collect();
+                            let locs: Vec<_> = world
+                                .pending
+                                .proposed_changes
+                                .iter()
+                                .map(|(l, _)| l)
+                                .collect();
                             world.pending.reset();
                             let deltas: Vec<_> = locs
                                 .into_iter()
@@ -564,7 +591,7 @@ pub fn build_ui_system(
                                 .collect();
                             apply_proposal_changes(
                                 &mut commands,
-                                &mut *world.assembled,
+                                &mut world.assembled,
                                 &structure_list,
                                 &overlay_assets,
                                 deltas,
@@ -584,7 +611,11 @@ pub fn build_ui_system(
                 if population.individuals.is_empty() {
                     ui.label("(no individuals)");
                 } else {
-                    let avg_morale = population.individuals.iter().map(|i| i.morale()).sum::<f32>()
+                    let avg_morale = population
+                        .individuals
+                        .iter()
+                        .map(|i| i.morale())
+                        .sum::<f32>()
                         / population.individuals.len() as f32;
                     ui.label(format!("Avg morale: {:.2}", avg_morale));
                     ui.separator();
@@ -604,10 +635,10 @@ pub fn build_ui_system(
 
     // Apply deferred station mutations now that the panel closure has ended.
     if let Some((cube, s_idx)) = assign {
-        crate::station::commit_assignment(&mut *world.constructed, cube, s_idx);
+        crate::station::commit_assignment(&mut world.constructed, cube, s_idx);
     }
     if let Some(idx) = unassign {
-        crate::station::unassign_station(&mut *world.constructed, idx);
+        crate::station::unassign_station(&mut world.constructed, idx);
     }
     if let Some(p) = next_panel {
         ui_state.left_panel = p;

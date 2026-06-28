@@ -244,7 +244,7 @@ pub fn unassign_station(cw: &mut ConstructedWorld, idx: usize) {
 fn is_storage(cw: &ConstructedWorld, ps_idx: usize) -> bool {
     cw.stations
         .get(cw.placed_stations[ps_idx].station)
-        .map_or(false, |info| info.storage.is_some())
+        .is_some_and(|info| info.storage.is_some())
 }
 
 /// Total quantity of `res` held across all storage stations.

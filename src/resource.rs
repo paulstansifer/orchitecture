@@ -144,7 +144,7 @@ impl Inventory {
                 Collection(items) => res += items.iter().map(|i| i.volume()).sum::<f32>(),
             }
         }
-        return res;
+        res
     }
 
     pub fn may_add(&self, _new_stuff: &InventoryEntry) -> bool {

@@ -54,7 +54,7 @@ where
                     if let Some((id, facing)) = cell {
                         if let Some(ann) = char_annotations.get(ch) {
                             let name_ok = name_matches_id(&ann.name, id);
-                            let orient_ok = ann.orientation.map_or(true, |o| o == facing);
+                            let orient_ok = ann.orientation.is_none_or(|o| o == facing);
                             name_ok && orient_ok
                         } else {
                             char_matches_id(*ch, id, facing)

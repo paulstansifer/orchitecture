@@ -375,7 +375,7 @@ where
 
     let shape = Shape::new([
         1_usize,
-        EMBEDDING_SIZE as usize,
+        EMBEDDING_SIZE,
         (size.x * 2) as usize + 1,
         (size.y * 2) as usize,
         (size.z * 2) as usize + 1,
@@ -408,8 +408,7 @@ where
                     for obstacle_collection in obstacles {
                         let mut any_transparent = false;
                         for obstacle in obstacle_collection {
-                            if let [tall, decorative, passable, striated] =
-                                &embedding(&obstacle)[..]
+                            if let [tall, decorative, passable, striated] = &embedding(obstacle)[..]
                             {
                                 // HACK! Identify walls and floors:
                                 let opaque = tall + decorative + passable + striated == 1.0

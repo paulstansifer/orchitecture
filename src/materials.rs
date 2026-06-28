@@ -7,20 +7,17 @@ use crate::resource::UniformResource;
 
 type Cost = Vec<(UniformResource, u16)>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default,
+)]
 pub enum StructureType {
     WallLike,
     RoofLike,
     PillarLike,
     GroundFloorLike,
     CantileverFloorLike,
+    #[default]
     Furniture,
-}
-
-impl Default for StructureType {
-    fn default() -> Self {
-        StructureType::Furniture
-    }
 }
 
 impl StructureType {

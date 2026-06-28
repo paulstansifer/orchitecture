@@ -3,6 +3,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::construction::advance_construction;
 use crate::game_mode::GameMode;
+use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::structure::StructureList;
@@ -11,7 +12,6 @@ use crate::surroundings::farmstead::{
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
-use crate::population::Population;
 use crate::world::{AssembledWorld, ConstructedWorld, ProposedWorld, ViewableWorld};
 
 pub fn shared_ui_system(
@@ -38,11 +38,11 @@ pub fn shared_ui_system(
     };
 
     // Market preview for resource gain display.
-    let preview = preview_market(&*farms);
+    let preview = preview_market(&farms);
     let gains_map: std::collections::HashMap<UniformResource, u32> =
         preview.player_gains.iter().copied().collect();
 
-    let station_totals = crate::build_ui::station_resource_totals(&*constructed);
+    let station_totals = crate::build_ui::station_resource_totals(&constructed);
     let mut rhs_resources: Vec<UniformResource> =
         station_totals.iter().map(|(r, _, _)| *r).collect();
     for (r, _) in &preview.player_gains {
@@ -79,12 +79,9 @@ pub fn shared_ui_system(
     let has_farms_invited = invited_count > 0;
     let has_traveler_invited = traveler_state.invited;
 
-    let can_afford_traveler = traveler_state
-        .current_offer
-        .as_ref()
-        .map_or(false, |offer| {
-            traveler::can_afford_traveler(offer, &station_totals, &preview.player_gains)
-        });
+    let can_afford_traveler = traveler_state.current_offer.as_ref().is_some_and(|offer| {
+        traveler::can_afford_traveler(offer, &station_totals, &preview.player_gains)
+    });
 
     let wait_id = egui::Id::new("wait_confirmation");
 
@@ -217,7 +214,7 @@ pub fn shared_ui_system(
                     constructed
                         .stations
                         .get(ps.station)
-                        .map_or(false, |info| info.storage.is_some())
+                        .is_some_and(|info| info.storage.is_some())
                 })
                 .map(|ps| ps.contents.tool_count())
                 .sum();
@@ -325,8 +322,8 @@ pub fn shared_ui_system(
         for farm in &mut farms.farms {
             farm.accumulate_monthly();
         }
-        let gains = run_market(&mut *farms);
-        update_wanted_resources(&mut *farms);
+        let gains = run_market(&mut farms);
+        update_wanted_resources(&mut farms);
         for farm in &mut farms.farms {
             farm.invited = false;
         }
@@ -335,7 +332,7 @@ pub fn shared_ui_system(
         if traveler_state.invited {
             if let Some(offer) = traveler_state.current_offer.take() {
                 if traveler::can_afford_traveler(&offer, &station_totals, &preview.player_gains) {
-                    let new_path = traveler::accept_traveler(&offer, &mut *constructed);
+                    let new_path = traveler::accept_traveler(&offer, &mut constructed);
                     farms.traveler_reveals.push(new_path);
                 }
             }
@@ -344,7 +341,7 @@ pub fn shared_ui_system(
         // Roll a new offer for next month.
         {
             let mut rng = rand::rng();
-            traveler::roll_traveler_offer(&mut *traveler_state, CIRCLE_REVEAL_RADIUS, &mut rng);
+            traveler::roll_traveler_offer(&mut traveler_state, CIRCLE_REVEAL_RADIUS, &mut rng);
         }
 
         if !gains.is_empty() {
@@ -352,7 +349,7 @@ pub fn shared_ui_system(
                 constructed
                     .stations
                     .get(ps.station)
-                    .map_or(false, |info| info.storage.is_some())
+                    .is_some_and(|info| info.storage.is_some())
             });
             if let Some(idx) = storage_idx {
                 for (res, qty) in gains {
@@ -366,17 +363,21 @@ pub fn shared_ui_system(
             individual.fed_this_month = false;
         }
         for individual in &mut population.individuals {
-            if crate::station::consume_uniform(&mut *constructed, crate::resource::UniformResource::Potato, 5) {
+            if crate::station::consume_uniform(
+                &mut constructed,
+                crate::resource::UniformResource::Potato,
+                5,
+            ) {
                 individual.fed_this_month = true;
             }
         }
 
         advance_construction(
-            &mut *pending,
-            &mut *constructed,
+            &mut pending,
+            &mut constructed,
             &mut commands,
-            &mut *assembled,
-            &mut *viewable,
+            &mut assembled,
+            &mut viewable,
             &structure_list,
         );
         ctx.data_mut(|d| d.remove::<bool>(wait_id));

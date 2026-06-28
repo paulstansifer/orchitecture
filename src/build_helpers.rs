@@ -366,7 +366,7 @@ pub fn add_noise(
             }
 
             let idx = rng.random_range(0..options.len());
-            let choice = options[idx].clone();
+            let choice = options[idx];
 
             match choice {
                 None => {

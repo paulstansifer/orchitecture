@@ -316,6 +316,12 @@ pub struct ProposedWorld {
     pub months_waited: u32,
 }
 
+impl Default for ProposedWorld {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProposedWorld {
     pub fn new() -> Self {
         ProposedWorld {
@@ -331,7 +337,7 @@ impl ProposedWorld {
     }
 
     pub fn months_for_construction(&self) -> usize {
-        (self.num_changes() + 79) / 80
+        self.num_changes().div_ceil(80)
     }
 }
 
@@ -365,6 +371,12 @@ pub struct AssembledWorld {
     pub proposal_autotile_results: HashMap<SlotCoord, Vec<AutotileResult>>,
 }
 
+impl Default for AssembledWorld {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AssembledWorld {
     pub fn new() -> Self {
         AssembledWorld {
@@ -386,6 +398,12 @@ pub struct ViewableWorld {
     pub cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
     pub proposed_cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
+}
+
+impl Default for ViewableWorld {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ViewableWorld {
