@@ -1,33 +1,47 @@
 [
     (
       name: "Thatch",
-      costs: [(RoofLike, [(Straw, 4), (Timber, 1)])],
+      costs: {RoofLike: [(Straw, 4), (Timber, 1)]},
       fanciness: 0.0,
     ),
     (
       name: "Canvas",
-      costs: [(RoofLike, [(Canvas, 4), (Timber, 1)])],
+      costs: {RoofLike: [(Canvas, 4), (Timber, 1)]},
       fanciness: 0.0,
     ),
     (
-        name: "Staves",
-        costs: [(WallLike, [(Timber, 10)]),
-            (PillarLike, [(Timber, 2)])
-        ],
-        fanciness: 0.0,
+      name: "Staves",
+      costs: {
+      WallLike: [(Timber, 10)],
+      PillarLike: [(Timber, 2)],
+      // TODO: remove these for planks, or at least beams
+      GroundFloorLike: [(Timber, 8)],
+      CantileverFloorLike: [(Timber, 10)],
+    },
+    fanciness: 0.0,
     ),
     (
-        name: "Fieldstone",
-        costs: [(WallLike, [(Fieldstone, 8), (Lime, 2)]),
-        (GroundFloorLike, [(Fieldstone, 8)])
-        ],
-        fanciness: 0.3,
+      name: "Fieldstone",
+      costs: {
+        WallLike: [(Fieldstone, 8), (Lime, 2)],
+        GroundFloorLike: [(Fieldstone, 8)],
+      },
+      fanciness: 0.3,
     ),
     (
-        name: "Ashlar",
-        costs: [(WallLike, [(Blocks, 10)])
-        (PillarLike, [(Blocks, 2)])
-        ],
-        fanciness: 0.3,
+      name: "Plaster",
+      costs: {
+        WallLike: [(Timber, 2), (Lime, 4)],
+      },
+      fanciness: 0.3,
+    ),
+    (
+      name: "Ashlar",
+      costs: {
+        WallLike: [(Block, 10)],
+        PillarLike: [(Block, 2)],
+        GroundFloorLike: [(Block, 8)]
+      },
+      fanciness: 1.0,
     )
 ]
