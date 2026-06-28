@@ -698,8 +698,8 @@ fn offset(
 /// In V narrow: only (even col, odd row) is valid; everything else is dead.
 fn is_dead_slot(pt: &PatternType, col: usize, row: usize) -> bool {
     match pt {
-        PatternType::H | PatternType::V | PatternType::HNarrow => col % 2 == 1 && row % 2 == 0,
-        PatternType::VNarrow => !(col % 2 == 0 && row % 2 == 1),
+        PatternType::H | PatternType::V | PatternType::HNarrow => col % 2 == 1 && row.is_multiple_of(2),
+        PatternType::VNarrow => !(col.is_multiple_of(2) && row % 2 == 1),
     }
 }
 
