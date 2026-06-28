@@ -108,25 +108,25 @@ pub fn can_afford_traveler(
         .all(|(res, qty)| available(*res) >= *qty as u32)
 }
 
-/// Deducts demands from the first storage station, deposits one Tool, and
-/// returns the traveler's path for appending to `FarmsResource.extra_paths`.
+/// Deducts demands from storage (spread across stations), deposits one Tool into
+/// the first storage station, and returns the traveler's path.
 pub fn accept_traveler(
     offer: &IndividualTraveler,
     constructed: &mut ConstructedWorld,
 ) -> Vec<Vec2> {
+    for (res, qty) in &offer.demands {
+        crate::station::consume_uniform(constructed, *res, *qty as u32);
+    }
     let storage_idx = constructed.placed_stations.iter().position(|ps| {
         constructed
             .stations
             .get(ps.station)
             .map_or(false, |info| info.storage.is_some())
     });
-
     if let Some(idx) = storage_idx {
-        let inv = &mut constructed.placed_stations[idx].contents;
-        for (res, qty) in &offer.demands {
-            inv.subtract_uniform(*res, *qty);
-        }
-        inv.add_unique(UniqueResource::Tool);
+        constructed.placed_stations[idx]
+            .contents
+            .add_unique(UniqueResource::Tool);
     }
 
     offer.path.clone()

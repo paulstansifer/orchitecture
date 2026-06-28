@@ -11,6 +11,7 @@ use crate::surroundings::farmstead::{
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
+use crate::population::Population;
 use crate::world::{AssembledWorld, ConstructedWorld, ProposedWorld, ViewableWorld};
 
 pub fn shared_ui_system(
@@ -27,6 +28,7 @@ pub fn shared_ui_system(
     mut viewable: ResMut<ViewableWorld>,
     structure_list: Res<StructureList>,
     mut traveler_state: ResMut<TravelerState>,
+    mut population: ResMut<Population>,
 ) {
     use egui::{Color32, FontId};
 
@@ -352,6 +354,15 @@ pub fn shared_ui_system(
                 }
             }
         }
+        for individual in &mut population.individuals {
+            individual.fed_this_month = false;
+        }
+        for individual in &mut population.individuals {
+            if crate::station::consume_uniform(&mut *constructed, crate::resource::UniformResource::Potato, 5) {
+                individual.fed_this_month = true;
+            }
+        }
+
         advance_construction(
             &mut *pending,
             &mut *constructed,

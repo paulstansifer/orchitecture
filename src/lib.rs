@@ -18,6 +18,7 @@ pub mod materials;
 pub mod orc;
 pub mod ortho_camera;
 pub mod paths;
+pub mod population;
 pub mod qnn;
 pub mod resource;
 pub mod resource_icons;

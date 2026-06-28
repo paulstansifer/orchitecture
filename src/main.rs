@@ -25,6 +25,7 @@ use orchitecture_lib::{
     qnn::ModelPlugin,
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
+    population::spawn_population,
     station::spawn_initial_station,
     structure::{spawn_structures, StructureList},
     surroundings::{
@@ -92,6 +93,7 @@ fn main() {
                 spawn_autotile_rules,
                 load_autotile_handles,
                 generate_farms,
+                spawn_population,
                 setup_travelers,
                 spawn_camera,
                 spawn_scene,
