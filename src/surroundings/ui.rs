@@ -3,8 +3,12 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::resource_icons::SMALL_SIZE;
 
-use super::farmstead::{preview_market, FarmsResource, SurroundingsState};
+use super::farmstead::{
+    farm_breakdown, market_effect, preview_market, FarmEvent, FarmProduction, FarmsResource,
+    MarketModeEffect, SurroundingsState,
+};
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
+use crate::resource::ToolKind;
 
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
@@ -85,6 +89,7 @@ fn build_fog_mesh(
 pub fn enter_surroundings_mode(mut commands: Commands) {
     commands.insert_resource(SurroundingsState {
         viewport_offset: Vec2::ZERO,
+        open_farm_menu: None,
     });
 }
 
@@ -109,7 +114,15 @@ pub fn surroundings_ui_system(
     };
 
     // Market preview for farm boost display.
+    farms.ensure_adjacency();
     let preview = preview_market(&*farms);
+    // Predicted boost for a farm, if it is invited in `Market` mode.
+    let predicted_boost = |i: usize| -> u32 {
+        match preview.farm_effects.get(&i).map(|e| e.effect) {
+            Some(MarketModeEffect::Boost(t)) => t,
+            _ => 0,
+        }
+    };
 
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_build = false;
@@ -211,6 +224,7 @@ pub fn surroundings_ui_system(
     let invite_limit_reached = invited_count >= market_stand_count;
 
     for (i, centroid) in revealed {
+        let current_event = farms.farm_event(i);
         let farm = &mut farms.farms[i];
 
         egui::Area::new(egui::Id::new(("farm_panel", i)))
@@ -245,24 +259,23 @@ pub fn surroundings_ui_system(
                             }
 
                             if farm.invited {
-                                if let Some(&t) = preview.farm_boosts.get(&i) {
-                                    if t > 0 {
-                                        ui.label(
-                                            egui::RichText::new(" (+ ")
-                                                .font(FontId::proportional(10.0))
-                                                .color(Color32::from_rgb(80, 220, 80)),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(format!("{}", t))
-                                                .font(FontId::proportional(10.0))
-                                                .color(Color32::from_rgb(80, 220, 80)),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(")")
-                                                .font(FontId::proportional(10.0))
-                                                .color(Color32::from_rgb(80, 220, 80)),
-                                        );
-                                    }
+                                let t = predicted_boost(i);
+                                if t > 0 {
+                                    ui.label(
+                                        egui::RichText::new(" (+ ")
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(80, 220, 80)),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!("{}", t))
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(80, 220, 80)),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(")")
+                                            .font(FontId::proportional(10.0))
+                                            .color(Color32::from_rgb(80, 220, 80)),
+                                    );
                                 }
                             }
                         });
@@ -285,8 +298,8 @@ pub fn surroundings_ui_system(
 
                             ui.add_space(4.0);
 
-                            // Inedible resource stockpile
-                            if let Some(&tex) = icon_textures_sm.get(&farm.resource) {
+                            // Inedible resource stockpile (tool output while specialized)
+                            if let Some(&tex) = icon_textures_sm.get(&farm.produced_resource()) {
                                 ui.add(egui::Image::new(egui::load::SizedTexture::new(
                                     tex, SMALL_SIZE,
                                 )));
@@ -312,13 +325,116 @@ pub fn surroundings_ui_system(
                             }
                         });
 
-                        let can_invite = farm.invited || !invite_limit_reached;
-                        ui.add_enabled(
-                            can_invite,
-                            egui::Checkbox::new(&mut farm.invited, "Invite"),
-                        );
+                        ui.horizontal(|ui| {
+                            let can_invite = farm.invited || !invite_limit_reached;
+                            ui.add_enabled(
+                                can_invite,
+                                egui::Checkbox::new(
+                                    &mut farm.invited,
+                                    current_event.checkbox_label(),
+                                ),
+                            );
+                            if ui
+                                .add_enabled(farm.invited, egui::Button::new("…"))
+                                .clicked()
+                            {
+                                state.open_farm_menu = Some(i);
+                            }
+                        });
                     });
             });
+    }
+
+    // ── Farm configuration ("…") popup ────────────────────────────────────────
+    if let Some(menu_i) = state.open_farm_menu {
+        if menu_i >= farms.farms.len() || !farms.farms[menu_i].invited {
+            state.open_farm_menu = None;
+        } else {
+            let current_event = farms.farm_event(menu_i);
+            let is_specialized =
+                matches!(farms.farms[menu_i].production, FarmProduction::Specialized(_));
+            let whipsaw_in_storage =
+                crate::station::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
+
+            // Breakdowns via the same shared compute path.
+            let market_lines =
+                farm_breakdown(&mut farms, menu_i, FarmEvent::Market, None);
+            let change_lines =
+                farm_breakdown(&mut farms, menu_i, FarmEvent::RerollResource, None);
+            let spec_lines = farm_breakdown(
+                &mut farms,
+                menu_i,
+                FarmEvent::Market,
+                Some(FarmProduction::Specialized(ToolKind::Whipsaw)),
+            );
+
+            let can_change = matches!(
+                market_effect(&mut farms, menu_i, FarmEvent::RerollResource),
+                Some(MarketModeEffect::Reroll { paid }) if paid > 0
+            );
+            let can_specialize = !is_specialized && whipsaw_in_storage;
+
+            let render_event_option =
+                |ui: &mut egui::Ui, chosen: &mut Option<FarmEvent>, event: FarmEvent,
+                 enabled: bool, title: &str, lines: &[String]| {
+                    let selected = current_event == event;
+                    if ui
+                        .add_enabled(enabled, egui::Button::selectable(selected, title))
+                        .clicked()
+                    {
+                        *chosen = Some(event);
+                    }
+                    for line in lines {
+                        ui.label(
+                            egui::RichText::new(format!("    • {}", line))
+                                .font(FontId::proportional(11.0))
+                                .color(Color32::from_gray(190)),
+                        );
+                    }
+                    ui.add_space(4.0);
+                };
+
+            let mut keep_open = true;
+            let mut chosen_event: Option<FarmEvent> = None;
+            egui::Window::new("Farm options")
+                .id(egui::Id::new(("farm_menu", menu_i)))
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut keep_open)
+                .show(ctx, |ui| {
+                    render_event_option(
+                        ui,
+                        &mut chosen_event,
+                        FarmEvent::Market,
+                        true,
+                        "Participate in the market",
+                        &market_lines,
+                    );
+                    render_event_option(
+                        ui,
+                        &mut chosen_event,
+                        FarmEvent::RerollResource,
+                        can_change,
+                        "Select a different secondary resource",
+                        &change_lines,
+                    );
+                    render_event_option(
+                        ui,
+                        &mut chosen_event,
+                        FarmEvent::Specialize(ToolKind::Whipsaw),
+                        can_specialize,
+                        "Process nearby timber into beams",
+                        &spec_lines,
+                    );
+                });
+
+            if !keep_open {
+                state.open_farm_menu = None;
+            }
+            if let Some(new_event) = chosen_event {
+                farms.set_farm_event(menu_i, new_event);
+            }
+        }
     }
 
     // ── Apply deferred actions ────────────────────────────────────────────────

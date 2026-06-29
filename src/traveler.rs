@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::resource::{UniformResource, UniqueResource};
+use crate::resource::{ToolKind, UniformResource, UniqueResource};
 use crate::surroundings::generate_path_from_pos;
 use crate::world::ConstructedWorld;
 
@@ -126,7 +126,7 @@ pub fn accept_traveler(
     if let Some(idx) = storage_idx {
         constructed.placed_stations[idx]
             .contents
-            .add_unique(UniqueResource::Tool);
+            .add_unique(UniqueResource::Tool(ToolKind::Whipsaw));
     }
 
     offer.path.clone()
