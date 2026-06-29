@@ -101,7 +101,7 @@ pub fn surroundings_ui_system(
     mut contexts: EguiContexts,
     mut farms: ResMut<FarmsResource>,
     mut state: ResMut<SurroundingsState>,
-    mut constructed: ResMut<crate::world::ConstructedWorld>,
+    constructed: Res<crate::world::ConstructedWorld>,
     resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {
@@ -431,16 +431,7 @@ pub fn surroundings_ui_system(
                 state.open_farm_menu = None;
             }
             if let Some(new_mode) = chosen {
-                let old = farms.farms[menu_i].mode;
-                if old != new_mode {
-                    if let FarmMode::Specialized { tool } = old {
-                        crate::station::deposit_tool(&mut constructed, tool);
-                    }
-                    if let FarmMode::Specialized { tool } = new_mode {
-                        crate::station::consume_tool(&mut constructed, tool);
-                    }
-                    farms.farms[menu_i].mode = new_mode;
-                }
+                farms.farms[menu_i].mode = new_mode;
             }
         }
     }
