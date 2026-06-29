@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::resource_icons::SMALL_SIZE;
-use crate::ui_constants::FontSizes;
+use crate::ui_util::FontSizes;
+use crate::{col_format, label};
 
 use super::farmstead::{
     farm_breakdown, market_effect, preview_market, FarmEvent, FarmProduction, FarmsResource,
@@ -240,45 +241,16 @@ pub fn surroundings_ui_system(
 
                         // Production information: acres + boost (+ predicted_bonus)
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!("{:.0} ac", farm.area))
-                                    .font(FontSizes::body())
-                                    .color(Color32::from_gray(210)),
+                            label!(
+                                ui,
+                                format!("{:.0} ac", farm.area),
+                                (farm.boost > 0).then_some(format!("+ {}", farm.boost)),
+                                (farm.invited && predicted_boost(i) > 0).then_some(col_format!(
+                                    preview,
+                                    "+ {}",
+                                    predicted_boost(i)
+                                ))
                             );
-
-                            if farm.boost > 0 {
-                                ui.label(
-                                    egui::RichText::new(" + ")
-                                        .font(FontSizes::body())
-                                        .color(Color32::from_rgb(220, 160, 80)),
-                                );
-                                ui.label(
-                                    egui::RichText::new(format!("{}", farm.boost))
-                                        .font(FontSizes::body())
-                                        .color(Color32::from_rgb(220, 160, 80)),
-                                );
-                            }
-
-                            if farm.invited {
-                                let t = predicted_boost(i);
-                                if t > 0 {
-                                    ui.label(
-                                        egui::RichText::new(" (+ ")
-                                            .font(FontSizes::body())
-                                            .color(Color32::from_rgb(80, 220, 80)),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(format!("{}", t))
-                                            .font(FontSizes::body())
-                                            .color(Color32::from_rgb(80, 220, 80)),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(")")
-                                            .font(FontSizes::body())
-                                            .color(Color32::from_rgb(80, 220, 80)),
-                                    );
-                                }
-                            }
                         });
 
                         // Stockpiles on same line
@@ -291,11 +263,7 @@ pub fn surroundings_ui_system(
                                     tex, SMALL_SIZE,
                                 )));
                             }
-                            ui.label(
-                                egui::RichText::new(format!("{}", farm.potato_stockpile))
-                                    .font(FontSizes::body())
-                                    .color(Color32::from_rgb(220, 210, 120)),
-                            );
+                            label!(ui, format!("{}", farm.potato_stockpile));
 
                             ui.add_space(4.0);
 
@@ -305,20 +273,12 @@ pub fn surroundings_ui_system(
                                     tex, SMALL_SIZE,
                                 )));
                             }
-                            ui.label(
-                                egui::RichText::new(format!("{}", farm.inedible_stockpile))
-                                    .font(FontSizes::body())
-                                    .color(Color32::from_rgb(160, 200, 140)),
-                            );
+                            label!(ui, format!("{}", farm.inedible_stockpile));
                         });
 
                         // Wanted resource
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!("Wants {}", farm.want_max))
-                                    .font(FontSizes::body())
-                                    .color(Color32::from_rgb(140, 170, 220)),
-                            );
+                            label!(ui, format!("Wants {}", farm.want_max));
                             if let Some(&tex) = icon_textures_sm.get(&farm.wanted_resource) {
                                 ui.add(egui::Image::new(egui::load::SizedTexture::new(
                                     tex, SMALL_SIZE,
@@ -389,11 +349,7 @@ pub fn surroundings_ui_system(
                     *chosen = Some(event);
                 }
                 for line in lines {
-                    ui.label(
-                        egui::RichText::new(format!("    • {}", line))
-                            .font(FontSizes::body())
-                            .color(Color32::from_gray(190)),
-                    );
+                    label!(ui, format!("    • {}", line));
                 }
                 ui.add_space(4.0);
             };

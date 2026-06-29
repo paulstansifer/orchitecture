@@ -13,8 +13,8 @@ use crate::surroundings::farmstead::{
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
-use crate::ui_constants::FontSizes;
 use crate::world::{AssembledWorld, ConstructedWorld, ProposedWorld, ViewableWorld};
+use crate::{heading_label, label, note_label, col_format};
 
 pub fn shared_ui_system(
     mut contexts: EguiContexts,
@@ -96,11 +96,7 @@ pub fn shared_ui_system(
         .min_width(130.0)
         .show(ctx, |ui| {
             let month = clock.month() + 1;
-            ui.label(
-                egui::RichText::new(format!("Month {}", month))
-                    .color(Color32::from_gray(220))
-                    .font(FontSizes::heading()),
-            );
+            heading_label!(ui, format!("Month {}", month));
             ui.add_space(2.0);
 
             if has_project || has_farms_invited || has_traveler_invited {
@@ -111,39 +107,20 @@ pub fn shared_ui_system(
                     ui.vertical(|ui| {
                         ui.set_min_width(0.0);
                         if has_project {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Construction: {} of {} months",
-                                    m, n_display
-                                ))
-                                .color(Color32::from_gray(180))
-                                .font(FontSizes::body()),
+                            label!(
+                                ui,
+                                format!("Construction: {} of {} months", m, n_display)
                             );
                         } else {
-                            ui.label(
-                                egui::RichText::new("No current project")
-                                    .color(Color32::from_gray(130))
-                                    .font(FontSizes::body()),
-                            );
+                            label!(ui, "No current project");
                         }
                     });
                     ui.vertical(|ui| {
                         ui.set_min_width(0.0);
                         if market_stand_count == 0 {
-                            ui.label(
-                                egui::RichText::new("No market stalls")
-                                    .color(Color32::from_gray(130))
-                                    .font(FontSizes::body()),
-                            );
+                            label!(ui, "No market stalls");
                         } else {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{}/{} farms invited",
-                                    invited_count, market_stand_count
-                                ))
-                                .color(Color32::from_gray(180))
-                                .font(FontSizes::body()),
-                            );
+                            label!(ui, format!("{}/{} farms invited", invited_count, market_stand_count));
                         }
                     });
                 });
@@ -153,14 +130,7 @@ pub fn shared_ui_system(
                     ctx.data_mut(|d| d.insert_temp(wait_id, true));
                 }
                 if confirmed {
-                    ui.label(
-                        egui::RichText::new(
-                            "There's no ongoing construction, and no farms are invited to the \
-                             next market. Wait anyways?",
-                        )
-                        .color(Color32::from_gray(160))
-                        .font(FontSizes::body()),
-                    );
+                    label!(ui, col_format!(problem, "There's no ongoing construction, and no farms are invited to the next market. Wait anyways?"));
                     if ui.button("Advance Month").clicked() {
                         go_advance_month = true;
                     }
@@ -193,18 +163,13 @@ pub fn shared_ui_system(
                 } else {
                     format!("{}: {}", res.label(), quantity_str)
                 };
-                let color = if gain > 0 {
-                    Color32::from_rgb(160, 220, 140)
-                } else {
-                    Color32::from_gray(200)
-                };
                 ui.horizontal(|ui| {
                     if let Some(&tex) = icon_textures_lg.get(res) {
                         ui.add(egui::Image::new(egui::load::SizedTexture::new(
                             tex, LARGE_SIZE,
                         )));
                     }
-                    ui.label(egui::RichText::new(text).color(color));
+                    label!(ui, format!("{}", text));
                 });
             }
 
@@ -222,19 +187,12 @@ pub fn shared_ui_system(
                 .sum();
             if total_tools > 0 {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!("Tools: {}", total_tools))
-                            .color(Color32::from_gray(200)),
-                    );
+                    label!(ui, format!("Tools: {}", total_tools));
                 });
             }
 
             ui.separator();
-            ui.label(
-                egui::RichText::new("Travelers")
-                    .color(Color32::from_gray(220))
-                    .font(FontSizes::heading()),
-            );
+            heading_label!(ui, "Travelers");
             // Clone demands before the closure to avoid borrow conflict with &mut traveler_state.invited.
             let offer_demands: Option<Vec<(crate::resource::UniformResource, u16)>> =
                 traveler_state
@@ -249,41 +207,21 @@ pub fn shared_ui_system(
                     .corner_radius(4.0)
                     .show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
-                        ui.label(
-                            egui::RichText::new("Traveler")
-                                .font(FontSizes::body())
-                                .color(Color32::from_gray(210)),
-                        );
+                        label!(ui, "Traveler");
                         for (res, qty) in &demands {
-                            ui.label(
-                                egui::RichText::new(format!("Wants {} {}", qty, res.label()))
-                                    .font(FontSizes::body())
-                                    .color(Color32::from_gray(190)),
-                            );
+                            label!(ui, format!("Wants {} {}", qty, res.label()));
                         }
-                        ui.label(
-                            egui::RichText::new("Brings: 1 Tool + reveals a path")
-                                .font(FontSizes::body())
-                                .color(Color32::from_rgb(180, 220, 180)),
-                        );
+                        label!(ui, "Brings: 1 Tool + reveals a path");
                         ui.add_enabled(
                             can_afford_traveler || traveler_state.invited,
                             egui::Checkbox::new(&mut traveler_state.invited, "Invite"),
                         );
                         if !can_afford_traveler {
-                            ui.label(
-                                egui::RichText::new("(insufficient resources)")
-                                    .font(FontSizes::small())
-                                    .color(Color32::from_gray(120)),
-                            );
+                            note_label!(ui, "(insufficient resources)");
                         }
                     });
             } else {
-                ui.label(
-                    egui::RichText::new("(no traveler this month)")
-                        .font(FontSizes::body())
-                        .color(Color32::from_gray(120)),
-                );
+                label!(ui, "(no traveler this month)");
             }
 
             // Mode buttons pushed to the bottom of the panel.
