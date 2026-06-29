@@ -8,7 +8,7 @@ use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::structure::StructureList;
 use crate::surroundings::farmstead::{
     apply_production, compute_production, preview_market, run_market, update_wanted_resources,
-    FarmMode, FarmsResource, GameClock,
+    FarmsResource, GameClock,
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
@@ -325,36 +325,15 @@ pub fn shared_ui_system(
         clock.advance_month();
         farms.ensure_adjacency();
         let mut rng = rand::rng();
-
-        // Consume tools for Specialized invited farms; fall back to Market if unavailable.
-        let mut tool_consumed_for: Vec<usize> = Vec::new();
-        for i in 0..farms.farms.len() {
-            if farms.farms[i].invited {
-                if let FarmMode::Specialized { tool } = farms.farms[i].mode {
-                    if crate::station::consume_tool(&mut *constructed, tool) {
-                        tool_consumed_for.push(i);
-                    } else {
-                        farms.farms[i].mode = FarmMode::Market;
-                    }
-                }
-            }
-        }
-
         let plan = compute_production(&*farms, &mut rng);
         apply_production(&mut *farms, &plan);
-        let gains = run_market(&mut *farms, &mut rng);
-
-        // Return tools borrowed for this advance.
-        for &i in &tool_consumed_for {
-            if let FarmMode::Specialized { tool } = farms.farms[i].mode {
-                crate::station::deposit_tool(&mut *constructed, tool);
-            }
+        let (gains, tools_to_return) = run_market(&mut *farms, &mut rng);
+        for tool in tools_to_return {
+            crate::station::deposit_tool(&mut *constructed, tool);
         }
-
         update_wanted_resources(&mut *farms);
         for farm in &mut farms.farms {
             farm.invited = false;
-            farm.mode = FarmMode::Market;
         }
 
         // Traveler resolution: deduct demands, deposit a Tool, reveal their path.

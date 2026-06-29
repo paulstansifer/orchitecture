@@ -4,8 +4,8 @@ use bevy_egui::{egui, EguiContexts};
 use crate::resource_icons::SMALL_SIZE;
 
 use super::farmstead::{
-    farm_breakdown, market_effect, preview_market, FarmMode, FarmsResource, MarketModeEffect,
-    SurroundingsState,
+    farm_breakdown, market_effect, preview_market, FarmEvent, FarmProduction, FarmsResource,
+    MarketModeEffect, SurroundingsState,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
 use crate::resource::ToolKind;
@@ -101,7 +101,7 @@ pub fn surroundings_ui_system(
     mut contexts: EguiContexts,
     mut farms: ResMut<FarmsResource>,
     mut state: ResMut<SurroundingsState>,
-    constructed: Res<crate::world::ConstructedWorld>,
+    mut constructed: ResMut<crate::world::ConstructedWorld>,
     resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {
@@ -224,6 +224,7 @@ pub fn surroundings_ui_system(
     let invite_limit_reached = invited_count >= market_stand_count;
 
     for (i, centroid) in revealed {
+        let current_event = farms.farm_event(i);
         let farm = &mut farms.farms[i];
 
         egui::Area::new(egui::Id::new(("farm_panel", i)))
@@ -330,7 +331,7 @@ pub fn surroundings_ui_system(
                                 can_invite,
                                 egui::Checkbox::new(
                                     &mut farm.invited,
-                                    farm.mode.checkbox_label(),
+                                    current_event.checkbox_label(),
                                 ),
                             );
                             if ui
@@ -349,39 +350,39 @@ pub fn surroundings_ui_system(
         if menu_i >= farms.farms.len() || !farms.farms[menu_i].invited {
             state.open_farm_menu = None;
         } else {
-            let current_mode = farms.farms[menu_i].mode;
-            let spec_mode = FarmMode::Specialized {
-                tool: ToolKind::Whipsaw,
-            };
+            let current_event = farms.farm_event(menu_i);
+            let is_specialized =
+                matches!(farms.farms[menu_i].production, FarmProduction::Specialized(_));
+            let whipsaw_in_storage =
+                crate::station::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
 
-            // Breakdowns and availability, all via the same shared compute path.
-            let market_lines = farm_breakdown(&mut farms, menu_i, FarmMode::Market);
-            let change_lines = farm_breakdown(&mut farms, menu_i, FarmMode::RerollResource);
-            let spec_lines = farm_breakdown(&mut farms, menu_i, spec_mode);
+            // Breakdowns via the same shared compute path.
+            let market_lines =
+                farm_breakdown(&mut farms, menu_i, FarmEvent::Market, None);
+            let change_lines =
+                farm_breakdown(&mut farms, menu_i, FarmEvent::RerollResource, None);
+            let spec_lines = farm_breakdown(
+                &mut farms,
+                menu_i,
+                FarmEvent::Market,
+                Some(FarmProduction::Specialized(ToolKind::Whipsaw)),
+            );
 
             let can_change = matches!(
-                market_effect(&mut farms, menu_i, FarmMode::RerollResource),
+                market_effect(&mut farms, menu_i, FarmEvent::RerollResource),
                 Some(MarketModeEffect::Reroll { paid }) if paid > 0
             );
-            let holds_whipsaw =
-                farms.farms[menu_i].specialized_tool() == Some(ToolKind::Whipsaw);
-            let whipsaw_available =
-                holds_whipsaw || crate::station::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
-            let can_specialize = whipsaw_available
-                && matches!(
-                    market_effect(&mut farms, menu_i, spec_mode),
-                    Some(MarketModeEffect::Specialize { paid }) if paid > 0
-                );
+            let can_specialize = !is_specialized && whipsaw_in_storage;
 
-            let render_option =
-                |ui: &mut egui::Ui, chosen: &mut Option<FarmMode>, mode: FarmMode, enabled: bool,
-                 title: &str, lines: &[String]| {
-                    let selected = current_mode == mode;
+            let render_event_option =
+                |ui: &mut egui::Ui, chosen: &mut Option<FarmEvent>, event: FarmEvent,
+                 enabled: bool, title: &str, lines: &[String]| {
+                    let selected = current_event == event;
                     if ui
                         .add_enabled(enabled, egui::Button::selectable(selected, title))
                         .clicked()
                     {
-                        *chosen = Some(mode);
+                        *chosen = Some(event);
                     }
                     for line in lines {
                         ui.label(
@@ -394,44 +395,67 @@ pub fn surroundings_ui_system(
                 };
 
             let mut keep_open = true;
-            let mut chosen: Option<FarmMode> = None;
+            let mut chosen_event: Option<FarmEvent> = None;
+            let mut do_specialize = false;
             egui::Window::new("Farm options")
                 .id(egui::Id::new(("farm_menu", menu_i)))
                 .collapsible(false)
                 .resizable(false)
                 .open(&mut keep_open)
                 .show(ctx, |ui| {
-                    render_option(
+                    render_event_option(
                         ui,
-                        &mut chosen,
-                        FarmMode::Market,
+                        &mut chosen_event,
+                        FarmEvent::Market,
                         true,
                         "Participate in the market",
                         &market_lines,
                     );
-                    render_option(
+                    render_event_option(
                         ui,
-                        &mut chosen,
-                        FarmMode::RerollResource,
+                        &mut chosen_event,
+                        FarmEvent::RerollResource,
                         can_change,
                         "Select a different secondary resource",
                         &change_lines,
                     );
-                    render_option(
-                        ui,
-                        &mut chosen,
-                        spec_mode,
-                        can_specialize,
-                        "Specialize",
-                        &spec_lines,
-                    );
+                    // Specialize is an immediate production change, not a per-cycle event.
+                    let spec_label = if is_specialized {
+                        "Specialize (already active)"
+                    } else {
+                        "Specialize (embed Whipsaw)"
+                    };
+                    if ui
+                        .add_enabled(
+                            can_specialize,
+                            egui::Button::selectable(is_specialized, spec_label),
+                        )
+                        .clicked()
+                    {
+                        do_specialize = true;
+                    }
+                    for line in &spec_lines {
+                        ui.label(
+                            egui::RichText::new(format!("    • {}", line))
+                                .font(FontId::proportional(11.0))
+                                .color(Color32::from_gray(190)),
+                        );
+                    }
                 });
 
             if !keep_open {
                 state.open_farm_menu = None;
             }
-            if let Some(new_mode) = chosen {
-                farms.farms[menu_i].mode = new_mode;
+            if let Some(new_event) = chosen_event {
+                if farms.farm_events.len() > menu_i {
+                    farms.farm_events[menu_i] = new_event;
+                }
+            }
+            // Specialize: consume Whipsaw from storage, permanently set production.
+            if do_specialize && whipsaw_in_storage {
+                crate::station::consume_tool(&mut constructed, ToolKind::Whipsaw);
+                farms.farms[menu_i].production =
+                    FarmProduction::Specialized(ToolKind::Whipsaw);
             }
         }
     }
