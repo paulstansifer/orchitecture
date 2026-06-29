@@ -8,7 +8,8 @@ use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::structure::StructureList;
 use crate::surroundings::farmstead::{
-    preview_market, run_market, update_wanted_resources, FarmsResource, GameClock,
+    apply_production, compute_production, preview_market, run_market, update_wanted_resources,
+    FarmsResource, GameClock,
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
@@ -319,11 +320,15 @@ pub fn shared_ui_system(
     // ── Apply deferred actions ────────────────────────────────────────────────
     if go_advance_month {
         clock.advance_month();
-        for farm in &mut farms.farms {
-            farm.accumulate_monthly();
+        farms.ensure_adjacency();
+        let mut rng = rand::rng();
+        let plan = compute_production(&*farms, &mut rng);
+        apply_production(&mut *farms, &plan);
+        let (gains, tools_to_return) = run_market(&mut *farms, &mut rng);
+        for tool in tools_to_return {
+            crate::station::deposit_tool(&mut *constructed, tool);
         }
-        let gains = run_market(&mut farms);
-        update_wanted_resources(&mut farms);
+        update_wanted_resources(&mut *farms);
         for farm in &mut farms.farms {
             farm.invited = false;
         }
@@ -339,10 +344,7 @@ pub fn shared_ui_system(
         }
         traveler_state.invited = false;
         // Roll a new offer for next month.
-        {
-            let mut rng = rand::rng();
-            traveler::roll_traveler_offer(&mut traveler_state, CIRCLE_REVEAL_RADIUS, &mut rng);
-        }
+        traveler::roll_traveler_offer(&mut traveler_state, CIRCLE_REVEAL_RADIUS, &mut rng);
 
         if !gains.is_empty() {
             let storage_idx = constructed.placed_stations.iter().position(|ps| {

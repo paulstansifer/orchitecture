@@ -243,7 +243,7 @@ pub fn generate_farms(mut commands: Commands) {
             polygon,
             area,
             fertility,
-            resource,
+            production: crate::surroundings::farmstead::FarmProduction::Regular(resource),
             wanted_resource,
             want_max,
             potato_stockpile: 0,
@@ -265,9 +265,13 @@ pub fn generate_farms(mut commands: Commands) {
         }
     }
 
+    let neighbors = crate::surroundings::farmstead::build_adjacency(&farms);
+    let n = farms.len();
     commands.insert_resource(FarmsResource {
         farms,
         circle_pos,
         traveler_reveals: Vec::new(),
+        neighbors,
+        farm_events: vec![crate::surroundings::farmstead::FarmEvent::Market; n],
     });
 }

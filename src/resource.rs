@@ -66,11 +66,44 @@ impl UniformResource {
     }
 }
 
+/// The kind of a tool. Tools are otherwise interchangeable, but their kind
+/// determines what a farm produces when it specializes with that tool.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+pub enum ToolKind {
+    Whipsaw,
+}
+
+/// How a tool transforms neighbouring production when a farm specializes:
+/// it converts `input` produced by adjacent farms into `output`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Specialization {
+    pub input: UniformResource,
+    pub output: UniformResource,
+}
+
+impl ToolKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            ToolKind::Whipsaw => "Whipsaw",
+        }
+    }
+
+    /// What this tool turns neighbouring production into when a farm specializes.
+    pub fn specialization(self) -> Specialization {
+        match self {
+            ToolKind::Whipsaw => Specialization {
+                input: UniformResource::Timber,
+                output: UniformResource::WoodBeam,
+            },
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum UniqueResource {
     Book { title: String },
     Rug { color: Rgb<u8> },
-    Tool,
+    Tool(ToolKind),
 }
 
 impl UniqueResource {
@@ -78,7 +111,7 @@ impl UniqueResource {
         match self {
             UniqueResource::Book { .. } => 0.05,
             UniqueResource::Rug { .. } => 1.0,
-            UniqueResource::Tool => 0.5,
+            UniqueResource::Tool(_) => 0.5,
         }
     }
 }
@@ -167,11 +200,38 @@ impl Inventory {
             if let InventoryEntry::Collection(items) = entry {
                 count += items
                     .iter()
-                    .filter(|i| matches!(i, UniqueResource::Tool))
+                    .filter(|i| matches!(i, UniqueResource::Tool(_)))
                     .count();
             }
         }
         count
+    }
+
+    /// Count tools of a specific kind held in this inventory.
+    pub fn tool_count_of(&self, kind: ToolKind) -> usize {
+        let mut count = 0;
+        for entry in &self.contents {
+            if let InventoryEntry::Collection(items) = entry {
+                count += items
+                    .iter()
+                    .filter(|i| matches!(i, UniqueResource::Tool(k) if *k == kind))
+                    .count();
+            }
+        }
+        count
+    }
+
+    /// Remove a single matching unique item. Returns `true` if one was removed.
+    pub fn remove_unique(&mut self, item: &UniqueResource) -> bool {
+        for entry in &mut self.contents {
+            if let InventoryEntry::Collection(items) = entry {
+                if let Some(pos) = items.iter().position(|i| i == item) {
+                    items.remove(pos);
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn subtract_uniform(&mut self, res: UniformResource, qty: u16) {

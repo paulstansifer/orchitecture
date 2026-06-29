@@ -1,4 +1,4 @@
-use crate::resource::{Approximation, Inventory, UniformResource};
+use crate::resource::{Approximation, Inventory, ToolKind, UniformResource, UniqueResource};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::StructureList;
 use crate::world::{apply_changes, AssembledWorld, Cell, ConstructedWorld, Material};
@@ -238,6 +238,44 @@ pub fn commit_assignment(cw: &mut ConstructedWorld, cube: IVec3, station_idx: us
 pub fn unassign_station(cw: &mut ConstructedWorld, idx: usize) {
     if idx < cw.placed_stations.len() {
         cw.placed_stations.remove(idx);
+    }
+}
+
+/// Total number of tools of `kind` held across all storage stations.
+pub fn total_tools_of(cw: &ConstructedWorld, kind: ToolKind) -> u32 {
+    (0..cw.placed_stations.len())
+        .filter(|&i| is_storage(cw, i))
+        .map(|i| cw.placed_stations[i].contents.tool_count_of(kind) as u32)
+        .sum()
+}
+
+/// Remove one tool of `kind` from the first storage station that holds one.
+/// Returns `true` if a tool was removed.
+pub fn consume_tool(cw: &mut ConstructedWorld, kind: ToolKind) -> bool {
+    for i in 0..cw.placed_stations.len() {
+        if !is_storage(cw, i) {
+            continue;
+        }
+        if cw.placed_stations[i]
+            .contents
+            .remove_unique(&UniqueResource::Tool(kind))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Deposit one tool of `kind` into the first storage station. Returns `true` on
+/// success (`false` if there is no storage station to receive it).
+pub fn deposit_tool(cw: &mut ConstructedWorld, kind: ToolKind) -> bool {
+    if let Some(i) = (0..cw.placed_stations.len()).find(|&i| is_storage(cw, i)) {
+        cw.placed_stations[i]
+            .contents
+            .add_unique(UniqueResource::Tool(kind));
+        true
+    } else {
+        false
     }
 }
 
