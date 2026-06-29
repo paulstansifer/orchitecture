@@ -70,7 +70,7 @@ impl FarmEvent {
         match self {
             FarmEvent::Market => "Invite",
             FarmEvent::RerollResource => "Change",
-            FarmEvent::Specialize{..} => "Specialize",
+            FarmEvent::Specialize { .. } => "Specialize",
         }
     }
 }
@@ -324,9 +324,10 @@ pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
                     MarketModeEffect::Boost(take_boost(farm, &mut potato_pool, &mut inedible_pool))
                 }
             }
-            FarmEvent::Specialize(tool) => {
-                MarketModeEffect::Specialize { paid: RECONFIGURE_COST, tool }
-            }
+            FarmEvent::Specialize(tool) => MarketModeEffect::Specialize {
+                paid: RECONFIGURE_COST,
+                tool,
+            },
         };
         farm_effects.insert(
             i,
@@ -400,11 +401,8 @@ pub fn run_market(
                         tools_to_return.push(prev_tool);
                     }
 
-                    let current_res = fr.farms[i].produced_resource();
-                    fr.farms[i].production =
-                        FarmProduction::Specialized(tool);
+                    fr.farms[i].production = FarmProduction::Specialized(tool);
                 }
-
             }
         }
     }
@@ -603,8 +601,11 @@ fn describe_farm_effect(fr: &FarmsResource, idx: usize) -> Vec<String> {
 pub fn update_wanted_resources(fr: &mut FarmsResource) {
     use rand::Rng as _;
     let mut rng = rand::rng();
-    let snapshot: Vec<(Vec2, UniformResource)> =
-        fr.farms.iter().map(|f| (f.seed, f.produced_resource())).collect();
+    let snapshot: Vec<(Vec2, UniformResource)> = fr
+        .farms
+        .iter()
+        .map(|f| (f.seed, f.produced_resource()))
+        .collect();
 
     let invited_indices: Vec<usize> = fr
         .farms
