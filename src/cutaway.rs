@@ -1047,6 +1047,349 @@ mod tests {
         check!(SHADOW_ONLY_LAYER == 1);
     }
 
+    // ── cutaway + shadows interaction ─────────────────────────────────────────
+
+    /// Returns a Bevy app with a 3×1×3 room loaded into `ConstructedWorld`.
+    /// The room is `build_box(0,0,0 → 2,0,2)`.  Camera is at (10, 5, 10) so
+    /// both the +X wall column (stored as XLoWall at x=3) and the +Z wall
+    /// column (ZLoWall at z=3) fall in the camera-facing hidden zone.
+    fn room_shadow_test_app() -> (App, SlotCoord, SlotCoord) {
+        let structures = load_structure_info();
+        let mut builder = Builder::new(&structures);
+        builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 0, 2));
+        let contents = builder.get();
+
+        // Representative wall locs that should be hidden.
+        let x_wall_loc = SlotCoord {
+            cube: IVec3::new(3, 0, 1),
+            slot: Slot::XLoWall,
+        };
+        let z_wall_loc = SlotCoord {
+            cube: IVec3::new(1, 0, 3),
+            slot: Slot::ZLoWall,
+        };
+
+        let mut app = App::new();
+        app.add_systems(
+            Update,
+            (
+                update_cutaway_system,
+                propagate_render_layers_system.after(update_cutaway_system),
+            ),
+        );
+
+        let mut cw = ConstructedWorld::new(structures);
+        cw.contents = contents;
+
+        // Pre-populate autotile_results with empty vecs so that get_cuts never
+        // tries to access StructureList mesh handles (which aren't loaded in tests).
+        let mut assembled = AssembledWorld::new();
+        for (loc, _) in cw.contents.iter() {
+            assembled.autotile_results.insert(loc, vec![]);
+        }
+
+        app.insert_resource(cw);
+        app.insert_resource(ProposedWorld::new());
+        app.insert_resource(assembled);
+        app.insert_resource(ViewableWorld::new());
+        app.insert_resource(StructureList::default());
+        app.insert_resource(AutotileHandles {
+            handles: std::collections::HashMap::new(),
+        });
+        app.insert_resource(BuildState::default());
+        app.insert_resource(CutawayMode::FloorEdge);
+
+        // Camera at (10, 5, 10): camera_facing_dirs → (+1, +1), so both the
+        // +X and +Z exterior walls are in the hidden zone.
+        app.world_mut().spawn((
+            Camera::default(),
+            GlobalTransform::from(Transform::from_xyz(10.0, 5.0, 10.0)),
+            GameCamera,
+        ));
+
+        (app, x_wall_loc, z_wall_loc)
+    }
+
+    /// Verifies that `compute_floor_edge` still includes the camera-facing walls
+    /// in the hidden set after a desk is proposed in the centre of the room.
+    #[test]
+    fn test_compute_floor_edge_walls_hidden_after_desk_proposal() {
+        let structures = load_structure_info();
+        let desk_id = crate::structure::find_structure_by_name(&structures, "desk").unwrap();
+
+        let mut builder = Builder::new(&structures);
+        builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 0, 2));
+        let contents = builder.get();
+
+        let mut cw = ConstructedWorld::new(structures);
+        cw.contents = contents;
+
+        // Camera at (10,5,10), no PrimaryWindow → focus defaults to (0,0,0).
+        let camera_pos = Vec3::new(10.0, 5.0, 10.0);
+        let focus_pos = Vec3::new(0.0, 0.0, 0.0);
+
+        let x_wall_loc = SlotCoord {
+            cube: IVec3::new(3, 0, 1),
+            slot: Slot::XLoWall,
+        };
+
+        // Without any proposal.
+        let pe_empty = ProposedWorld::new();
+        let (hidden_before, _) =
+            compute_floor_edge(&cw, &pe_empty, (focus_pos, false), camera_pos, 0);
+        let set_before: HashSet<SlotCoord> = hidden_before.into_iter().collect();
+        check!(
+            set_before.contains(&x_wall_loc),
+            "wall should be in hidden set before any proposal"
+        );
+
+        // With a desk proposed at the centre of the room.
+        let mut pe_with_desk = ProposedWorld::new();
+        pe_with_desk.proposed_changes.set(
+            SlotCoord {
+                cube: IVec3::new(1, 0, 1),
+                slot: Slot::Room,
+            },
+            crate::world::Proposal::Place(Cell {
+                id: desk_id,
+                facing: Facing::NegX,
+                evaluation: None,
+                material: crate::world::Material::default(),
+            }),
+        );
+
+        let (hidden_after, _) =
+            compute_floor_edge(&cw, &pe_with_desk, (focus_pos, false), camera_pos, 0);
+        let set_after: HashSet<SlotCoord> = hidden_after.into_iter().collect();
+
+        // The wall should still be hidden — the bug is that it falls out of the
+        // hidden set when a desk proposal is present.
+        check!(
+            set_after.contains(&x_wall_loc),
+            "wall should still be in hidden set after desk proposal"
+        );
+    }
+
+    /// Verifies that ECS entities for hidden walls keep `SHADOW_ONLY_LAYER` after
+    /// a desk is proposed in the cut zone.  The bug: `update_cutaway_system`
+    /// removes the shadow layer from previously-hidden walls on the frame after
+    /// the proposal is added.
+    #[test]
+    fn test_hidden_wall_keeps_shadow_layer_after_desk_proposal() {
+        let (mut app, x_wall_loc, _z_wall_loc) = room_shadow_test_app();
+
+        let desk_id = {
+            let structures = load_structure_info();
+            crate::structure::find_structure_by_name(&structures, "desk").unwrap()
+        };
+
+        // Spawn a GridCellMarker entity for the +X wall that should be hidden.
+        let wall_entity = app
+            .world_mut()
+            .spawn((GridCellMarker { loc: x_wall_loc }, Visibility::default()))
+            .id();
+
+        // Frame 1: cutaway runs; the wall should receive SHADOW_ONLY_LAYER.
+        app.update();
+
+        let desired = RenderLayers::layer(SHADOW_ONLY_LAYER);
+        check!(
+            app.world().get::<RenderLayers>(wall_entity).cloned() == Some(desired.clone()),
+            "wall should have SHADOW_ONLY_LAYER after first frame"
+        );
+
+        // Now propose a desk in the middle of the room.
+        {
+            let mut pe = app.world_mut().resource_mut::<ProposedWorld>();
+            pe.proposed_changes.set(
+                SlotCoord {
+                    cube: IVec3::new(1, 0, 1),
+                    slot: Slot::Room,
+                },
+                crate::world::Proposal::Place(Cell {
+                    id: desk_id,
+                    facing: Facing::NegX,
+                    evaluation: None,
+                    material: crate::world::Material::default(),
+                }),
+            );
+        }
+
+        // Frame 2: cutaway runs again after the proposal.
+        app.update();
+
+        // The wall is still in the cut zone, so it must still have SHADOW_ONLY_LAYER.
+        // The bug manifests here: the shadow layer is incorrectly removed.
+        check!(
+            app.world().get::<RenderLayers>(wall_entity).cloned() == Some(desired),
+            "wall should still have SHADOW_ONLY_LAYER after desk proposal is added"
+        );
+    }
+
+    /// Demonstrates that a proposal ghost in the hidden zone loses `SHADOW_ONLY_LAYER`
+    /// when `autotile_update_system` respawns it after `update_cutaway_system` has
+    /// already set the layer.
+    ///
+    /// Real-world trigger: `apply_proposal_changes` clears `proposal_autotile_results`
+    /// for a location whenever the proposal view changes (cursor move, proposal edit).
+    /// On the next frame the execution order is:
+    ///
+    ///   1. `update_cutaway_system`  – sets `SHADOW_ONLY_LAYER` on the *old* ghost
+    ///                                 (command queued, not yet applied)
+    ///   2. `autotile_update_system` – sees a cache miss, despawns the old ghost and
+    ///                                 spawns a fresh one without any `RenderLayers`
+    ///   3. end-of-frame deferred flush – SHADOW_ONLY applied to old ghost; old ghost
+    ///                                 despawned; new ghost emerges on layer 0
+    ///
+    /// Expected: the respawned ghost should have `SHADOW_ONLY_LAYER`.
+    /// Actual (bug): the new ghost has no `RenderLayers`, so it is visible to the
+    /// camera and does not cast shadows correctly.
+    ///
+    /// This test is expected to FAIL until the bug is fixed.
+    #[test]
+    fn test_ghost_loses_shadow_layer_after_proposal_cache_clear() {
+        use crate::autotile::{autotile_update_system, compile, parse, AutotileRules};
+        use crate::structure::Structure;
+
+        let structures = load_structure_info();
+        let desk_id = crate::structure::find_structure_by_name(&structures, "desk").unwrap();
+
+        let mut builder = Builder::new(&structures);
+        builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 0, 2));
+        let contents = builder.get();
+
+        let autotile_src = include_str!("../buildables/structures.autotile");
+        let autotile_file = parse(autotile_src).expect("structures.autotile parse error");
+        let autotile_rules = AutotileRules(compile(&autotile_file));
+
+        let structure_list = StructureList {
+            structures: structures
+                .iter()
+                .map(|info| Structure {
+                    info: info.clone(),
+                    mesh_handle: Handle::default(),
+                    cut_handle: None,
+                })
+                .collect(),
+        };
+
+        let mut app = App::new();
+        // Fixed ordering: autotile runs first (spawning/respawning entities), then
+        // Bevy's auto-apply_deferred flushes those commands so the new entities exist
+        // in the ECS, then cutaway assigns SHADOW_ONLY_LAYER to hidden entities.
+        app.add_systems(
+            Update,
+            (
+                autotile_update_system,
+                update_cutaway_system.after(autotile_update_system),
+                propagate_render_layers_system.after(update_cutaway_system),
+            ),
+        );
+
+        let mut cw = ConstructedWorld::new(structures);
+        cw.contents = contents;
+        app.insert_resource(cw);
+
+        // Propose a desk at Room(1,0,1). With SimpleOctant (focus=(0,0,0),
+        // camera=(10,5,10)), octant_hidden returns true for x≥0 and z≥0,
+        // so the ghost lands in the hidden zone.
+        let desk_loc = SlotCoord {
+            cube: IVec3::new(1, 0, 1),
+            slot: Slot::Room,
+        };
+        let mut pe = ProposedWorld::new();
+        pe.proposed_changes.set(
+            desk_loc,
+            crate::world::Proposal::Place(crate::world::Cell {
+                id: desk_id,
+                facing: Facing::NegX,
+                evaluation: None,
+                material: crate::world::Material::default(),
+            }),
+        );
+        app.insert_resource(pe);
+        app.insert_resource(AssembledWorld::new());
+        app.insert_resource(ViewableWorld::new());
+        app.insert_resource(structure_list);
+        app.insert_resource(AutotileHandles {
+            handles: std::collections::HashMap::new(),
+        });
+        app.insert_resource(autotile_rules);
+        app.insert_resource(BuildState::default());
+        app.insert_resource(CutawayMode::SimpleOctant);
+
+        app.world_mut().spawn((
+            Camera::default(),
+            GlobalTransform::from(Transform::from_xyz(10.0, 5.0, 10.0)),
+            GameCamera,
+        ));
+
+        // Frame 1: autotile spawns the ghost; cutaway has no ghost to act on yet.
+        app.update();
+
+        // Frame 2: cutaway finds the ghost and sets SHADOW_ONLY_LAYER; autotile
+        // sees a cache hit and leaves the ghost alone.
+        app.update();
+
+        // Verify the ghost correctly has SHADOW_ONLY_LAYER after frame 2.
+        let shadow_layer = RenderLayers::layer(SHADOW_ONLY_LAYER);
+        let ghost_after_frame2 = app
+            .world()
+            .resource::<AssembledWorld>()
+            .proposal_entities
+            .get(&desk_loc)
+            .and_then(|v| v.first().copied());
+        check!(
+            ghost_after_frame2.is_some(),
+            "ghost entity for desk should exist after frame 2"
+        );
+        check!(
+            app.world()
+                .get::<RenderLayers>(ghost_after_frame2.unwrap())
+                .cloned()
+                == Some(shadow_layer.clone()),
+            "ghost should have SHADOW_ONLY_LAYER after frame 2 cutaway"
+        );
+
+        // Simulate what `apply_proposal_changes` does when the proposal view changes
+        // (e.g. user moves cursor): clear the cached autotile result for this location.
+        // On the next frame, autotile will despawn the old ghost and spawn a new one.
+        #[cfg(autotile_matching)]
+        {
+            app.world_mut()
+                .resource_mut::<AssembledWorld>()
+                .proposal_autotile_results
+                .remove(&desk_loc);
+        }
+
+        // Frame 3: execution order:
+        //   cutaway  → queues SHADOW_ONLY on *old* ghost
+        //   autotile → cache miss → despawns old ghost, spawns new ghost (no RenderLayers)
+        //   flush    → old ghost gets SHADOW_ONLY then is despawned;
+        //              new ghost exists on layer 0
+        app.update();
+
+        let ghost_entities_after = app
+            .world()
+            .resource::<AssembledWorld>()
+            .proposal_entities
+            .get(&desk_loc)
+            .cloned()
+            .unwrap_or_default();
+        check!(
+            !ghost_entities_after.is_empty(),
+            "a new ghost entity should have been spawned after the cache clear"
+        );
+        for entity in ghost_entities_after {
+            check!(
+                app.world().get::<RenderLayers>(entity).cloned() == Some(shadow_layer.clone()),
+                "the respawned ghost in the hidden zone should have SHADOW_ONLY_LAYER, \
+                 but autotile_update_system respawns it without RenderLayers after \
+                 update_cutaway_system already set the layer (bug)"
+            );
+        }
+    }
+
     fn shadow_layer_test_app() -> (App, SlotCoord) {
         let loc = SlotCoord {
             cube: IVec3::new(0, 1, 0),
