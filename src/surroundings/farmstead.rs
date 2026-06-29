@@ -274,11 +274,9 @@ pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
         let farm = &fr.farms[i];
         let wanted = farm.wanted_resource;
         let effect = match farm.mode {
-            FarmMode::Market => MarketModeEffect::Boost(take_boost(
-                farm,
-                &mut potato_pool,
-                &mut inedible_pool,
-            )),
+            FarmMode::Market => {
+                MarketModeEffect::Boost(take_boost(farm, &mut potato_pool, &mut inedible_pool))
+            }
             FarmMode::RerollResource => {
                 if *inedible_pool.get(&wanted).unwrap_or(&0) >= RECONFIGURE_COST {
                     *inedible_pool.get_mut(&wanted).unwrap() -= RECONFIGURE_COST;
@@ -446,7 +444,11 @@ pub fn farm_breakdown(fr: &mut FarmsResource, idx: usize, mode: FarmMode) -> Vec
 
 /// The market effect farm `idx` would produce under a hypothetical `mode`, computed
 /// with the shared `compute_market`. `None` if the farm is not currently invited.
-pub fn market_effect(fr: &mut FarmsResource, idx: usize, mode: FarmMode) -> Option<MarketModeEffect> {
+pub fn market_effect(
+    fr: &mut FarmsResource,
+    idx: usize,
+    mode: FarmMode,
+) -> Option<MarketModeEffect> {
     let saved = fr.farms[idx].mode;
     fr.farms[idx].mode = mode;
     let effect = compute_market(fr).farm_effects.get(&idx).map(|e| e.effect);
@@ -463,23 +465,26 @@ fn describe_farm_effect(fr: &FarmsResource, idx: usize) -> Vec<String> {
     if let Some(eff) = outcome.farm_effects.get(&idx) {
         let (res, qty) = eff.inedible_contributed;
         lines.push(format!(
-            "Contributes {} potatoes ({} travel cost) and {} {} to the pool",
-            eff.potato_contributed,
+            "After {} travel cost, contributes {} potatoes and {} {} to the pool",
             eff.travel_cost,
+            eff.potato_contributed,
             qty,
             res.label()
         ));
         match eff.effect {
             MarketModeEffect::Boost(t) => {
                 if t > 0 {
-                    lines.push(format!("Receives {} {} → +{} production next month", t, wanted, t));
+                    lines.push(format!(
+                        "Receives {} {}: +{} production next month",
+                        t, wanted, t
+                    ));
                 } else {
-                    lines.push(format!("No {} in the pool → no boost", wanted));
+                    lines.push(format!("No {} in the marketplace", wanted));
                 }
             }
             MarketModeEffect::Reroll { paid } => {
                 lines.push(format!(
-                    "Spends {} {} to switch its resource to a random one (decided when time advances)",
+                    "Spends {} {} to switch its resource to a different one",
                     paid, wanted
                 ));
             }
@@ -487,7 +492,10 @@ fn describe_farm_effect(fr: &FarmsResource, idx: usize) -> Vec<String> {
                 if paid > 0 {
                     lines.push(format!("Spends {} {} upkeep", paid, wanted));
                 } else {
-                    lines.push(format!("No upkeep paid (needs {} {} in the pool)", RECONFIGURE_COST, wanted));
+                    lines.push(format!(
+                        "No upkeep paid (needs {} {} in the pool)",
+                        RECONFIGURE_COST, wanted
+                    ));
                 }
             }
         }
@@ -510,7 +518,7 @@ fn describe_farm_effect(fr: &FarmsResource, idx: usize) -> Vec<String> {
             ));
         } else {
             lines.push(format!(
-                "No adjacent {} production available → 0 {}",
+                "No adjacent {} production available: 0 {}",
                 spec.input.label(),
                 spec.output.label()
             ));
