@@ -432,9 +432,7 @@ pub fn surroundings_ui_system(
                 state.open_farm_menu = None;
             }
             if let Some(new_event) = chosen_event {
-                if farms.farm_events.len() > menu_i {
-                    farms.farm_events[menu_i] = new_event;
-                }
+                farms.set_farm_event(menu_i, new_event);
             }
         }
     }

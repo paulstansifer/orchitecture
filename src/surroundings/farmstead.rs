@@ -175,7 +175,11 @@ impl FarmsResource {
     }
 
     pub fn farm_event(&self, i: usize) -> FarmEvent {
-        self.farm_events.get(i).copied().unwrap_or(FarmEvent::Market)
+        self.farm_events[i]
+    }
+
+    pub fn set_farm_event(&mut self, i: usize, event: FarmEvent) {
+        self.farm_events[i] = event;
     }
 }
 
@@ -495,16 +499,12 @@ pub fn farm_breakdown(
     fr.ensure_adjacency();
     let saved_event = fr.farm_event(idx);
     let saved_prod = fr.farms[idx].production;
-    if fr.farm_events.len() > idx {
-        fr.farm_events[idx] = event;
-    }
+    fr.set_farm_event(idx, event);
     if let Some(prod) = temp_production {
         fr.farms[idx].production = prod;
     }
     let lines = describe_farm_effect(fr, idx);
-    if fr.farm_events.len() > idx {
-        fr.farm_events[idx] = saved_event;
-    }
+    fr.set_farm_event(idx, saved_event);
     fr.farms[idx].production = saved_prod;
     lines
 }
@@ -516,14 +516,11 @@ pub fn market_effect(
     idx: usize,
     event: FarmEvent,
 ) -> Option<MarketModeEffect> {
+    fr.ensure_adjacency();
     let saved = fr.farm_event(idx);
-    if fr.farm_events.len() > idx {
-        fr.farm_events[idx] = event;
-    }
+    fr.set_farm_event(idx, event);
     let effect = compute_market(fr).farm_effects.get(&idx).map(|e| e.effect);
-    if fr.farm_events.len() > idx {
-        fr.farm_events[idx] = saved;
-    }
+    fr.set_farm_event(idx, saved);
     effect
 }
 
