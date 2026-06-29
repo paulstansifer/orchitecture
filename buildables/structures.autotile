@@ -47,8 +47,16 @@ V:
 --> wall * u_shorten_under_roof # get out of the way of the roofline; the eave will cover it up.
 --> wall
 ==window:wall==
+V:
+ O .
+  @
+--> window * u_shorten_under_roof # get out of the way of the roofline; the eave will cover it up.
 --> window
 ==doorway:wall==
+V:
+ O .
+  @
+--> doorway * u_shorten_under_roof # get out of the way of the roofline; the eave will cover it up.
 --> doorway
 
 ==wall:wall==
