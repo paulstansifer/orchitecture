@@ -101,7 +101,7 @@ pub fn surroundings_ui_system(
     mut contexts: EguiContexts,
     mut farms: ResMut<FarmsResource>,
     mut state: ResMut<SurroundingsState>,
-    mut constructed: ResMut<crate::world::ConstructedWorld>,
+    constructed: Res<crate::world::ConstructedWorld>,
     resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {
@@ -396,7 +396,6 @@ pub fn surroundings_ui_system(
 
             let mut keep_open = true;
             let mut chosen_event: Option<FarmEvent> = None;
-            let mut do_specialize = false;
             egui::Window::new("Farm options")
                 .id(egui::Id::new(("farm_menu", menu_i)))
                 .collapsible(false)
@@ -419,28 +418,14 @@ pub fn surroundings_ui_system(
                         "Select a different secondary resource",
                         &change_lines,
                     );
-                    // Specialize is an immediate production change, not a per-cycle event.
-                    let spec_label = if is_specialized {
-                        "Specialize (already active)"
-                    } else {
-                        "Specialize (embed Whipsaw)"
-                    };
-                    if ui
-                        .add_enabled(
-                            can_specialize,
-                            egui::Button::selectable(is_specialized, spec_label),
-                        )
-                        .clicked()
-                    {
-                        do_specialize = true;
-                    }
-                    for line in &spec_lines {
-                        ui.label(
-                            egui::RichText::new(format!("    • {}", line))
-                                .font(FontId::proportional(11.0))
-                                .color(Color32::from_gray(190)),
-                        );
-                    }
+                    render_event_option(
+                        ui,
+                        &mut chosen_event,
+                        FarmEvent::Specialize(ToolKind::Whipsaw),
+                        can_specialize,
+                        "Process nearby timber into beams",
+                        &spec_lines,
+                    );
                 });
 
             if !keep_open {
@@ -450,12 +435,6 @@ pub fn surroundings_ui_system(
                 if farms.farm_events.len() > menu_i {
                     farms.farm_events[menu_i] = new_event;
                 }
-            }
-            // Specialize: consume Whipsaw from storage, permanently set production.
-            if do_specialize && whipsaw_in_storage {
-                crate::station::consume_tool(&mut constructed, ToolKind::Whipsaw);
-                farms.farms[menu_i].production =
-                    FarmProduction::Specialized(ToolKind::Whipsaw);
             }
         }
     }

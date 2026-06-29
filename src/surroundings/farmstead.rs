@@ -61,6 +61,8 @@ pub enum FarmEvent {
     /// Spend `RECONFIGURE_COST` of the wanted resource from the pool to permanently
     /// switch the farm's produced resource to a random one (decided when time advances).
     RerollResource,
+    /// Spend `RECONFIGURE_COST` to permanently switch to using the given tool for production
+    Specialize(ToolKind),
 }
 
 impl FarmEvent {
@@ -68,6 +70,7 @@ impl FarmEvent {
         match self {
             FarmEvent::Market => "Invite",
             FarmEvent::RerollResource => "Change",
+            FarmEvent::Specialize{..} => "Specialize",
         }
     }
 }
@@ -79,7 +82,6 @@ pub struct FarmData {
     pub area: f32,
     pub fertility: f32,
     /// What this farm produces every month (Regular resource or Specialized beam output).
-    #[serde(default)]
     pub production: FarmProduction,
     pub wanted_resource: UniformResource,
     pub want_max: u32,
@@ -217,6 +219,8 @@ pub enum MarketModeEffect {
     Boost(u32),
     /// `RerollResource` event: paid this much of the wanted resource to re-roll.
     Reroll { paid: u32 },
+    /// `Specialize` event: switch production to use the given tool
+    Specialize { paid: u32, tool: ToolKind },
 }
 
 /// Read-only snapshot of what `run_market` would do given the current state.
@@ -293,6 +297,7 @@ fn gains_from_pool(
 /// Shared by the preview UI, the "…" breakdown, and the executor `run_market`.
 pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
     let invited = invited_with_costs(&fr.farms, fr.circle_pos);
+    // TODO: copy-and-mutate inside a simulation
     let (mut potato_pool, mut inedible_pool) = pool_totals(&fr.farms, &invited);
 
     let mut farm_effects = HashMap::new();
@@ -314,6 +319,9 @@ pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
                     // Can't afford the re-roll: fall back to a normal boost.
                     MarketModeEffect::Boost(take_boost(farm, &mut potato_pool, &mut inedible_pool))
                 }
+            }
+            FarmEvent::Specialize(tool) => {
+                MarketModeEffect::Specialize { paid: RECONFIGURE_COST, tool }
             }
         };
         farm_effects.insert(
@@ -367,8 +375,8 @@ pub fn run_market(
                 fr.farms[i].boost = 0;
                 if paid > 0 {
                     // If this farm was Specialized, its tool is freed when it reverts.
-                    if let FarmProduction::Specialized(tool) = fr.farms[i].production {
-                        tools_to_return.push(tool);
+                    if let FarmProduction::Specialized(prev_tool) = fr.farms[i].production {
+                        tools_to_return.push(prev_tool);
                     }
                     let current_res = fr.farms[i].produced_resource();
                     let options: Vec<UniformResource> = UniformResource::inedible_farmables()
@@ -379,6 +387,20 @@ pub fn run_market(
                     fr.farms[i].production =
                         FarmProduction::Regular(options[rng.random_range(0..options.len())]);
                 }
+            }
+            MarketModeEffect::Specialize { paid, tool } => {
+                fr.farms[i].boost = 0;
+                if paid > 0 {
+                    // If this farm was Specialized, its tool is freed when it reverts.
+                    if let FarmProduction::Specialized(prev_tool) = fr.farms[i].production {
+                        tools_to_return.push(prev_tool);
+                    }
+
+                    let current_res = fr.farms[i].produced_resource();
+                    fr.farms[i].production =
+                        FarmProduction::Specialized(tool);
+                }
+
             }
         }
     }
@@ -533,11 +555,19 @@ fn describe_farm_effect(fr: &FarmsResource, idx: usize) -> Vec<String> {
             }
             MarketModeEffect::Reroll { paid } => {
                 lines.push(format!(
-                    "Spends {} {} to switch its resource to a different one",
-                    paid, wanted
+                    "Spends {paid} {wanted} to switch its resource to a different one"
                 ));
-                if matches!(farm.production, FarmProduction::Specialized(_)) {
-                    lines.push("Returns the embedded tool to storage".to_string());
+                if let FarmProduction::Specialized(tool) = farm.production {
+                    lines.push(format!("Returns the {} to storage", tool.label()));
+                }
+            }
+            MarketModeEffect::Specialize { paid, tool } => {
+                lines.push(format!(
+                    "Spends {paid} {wanted} to switch to using a {} on nearby resources",
+                    tool.label()
+                ));
+                if let FarmProduction::Specialized(old_tool) = farm.production {
+                    lines.push(format!("Returns the {} to storage", old_tool.label()));
                 }
             }
         }
