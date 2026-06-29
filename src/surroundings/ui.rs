@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::resource_icons::SMALL_SIZE;
+use crate::ui_constants::FontSizes;
 
 use super::farmstead::{
     farm_breakdown, market_effect, preview_market, FarmEvent, FarmProduction, FarmsResource,
@@ -106,7 +107,7 @@ pub fn surroundings_ui_system(
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {
     use crate::game_mode::GameMode;
-    use egui::{Color32, FontId, Pos2, Sense, Shape, Stroke};
+    use egui::{Color32, Pos2, Sense, Shape, Stroke};
 
     let icon_textures_sm = resource_icons.texture_ids_small(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -186,7 +187,7 @@ pub fn surroundings_ui_system(
                 Pos2::new(cs.x, cs.y + CIRCLE_RADIUS + 9.0),
                 egui::Align2::CENTER_CENTER,
                 "Build",
-                FontId::proportional(11.0),
+                FontSizes::body(),
                 Color32::from_gray(20),
             );
 
@@ -241,19 +242,19 @@ pub fn surroundings_ui_system(
                         ui.horizontal(|ui| {
                             ui.label(
                                 egui::RichText::new(format!("{:.0} ac", farm.area))
-                                    .font(FontId::proportional(10.0))
+                                    .font(FontSizes::body())
                                     .color(Color32::from_gray(210)),
                             );
 
                             if farm.boost > 0 {
                                 ui.label(
                                     egui::RichText::new(" + ")
-                                        .font(FontId::proportional(10.0))
+                                        .font(FontSizes::body())
                                         .color(Color32::from_rgb(220, 160, 80)),
                                 );
                                 ui.label(
                                     egui::RichText::new(format!("{}", farm.boost))
-                                        .font(FontId::proportional(10.0))
+                                        .font(FontSizes::body())
                                         .color(Color32::from_rgb(220, 160, 80)),
                                 );
                             }
@@ -263,17 +264,17 @@ pub fn surroundings_ui_system(
                                 if t > 0 {
                                     ui.label(
                                         egui::RichText::new(" (+ ")
-                                            .font(FontId::proportional(10.0))
+                                            .font(FontSizes::body())
                                             .color(Color32::from_rgb(80, 220, 80)),
                                     );
                                     ui.label(
                                         egui::RichText::new(format!("{}", t))
-                                            .font(FontId::proportional(10.0))
+                                            .font(FontSizes::body())
                                             .color(Color32::from_rgb(80, 220, 80)),
                                     );
                                     ui.label(
                                         egui::RichText::new(")")
-                                            .font(FontId::proportional(10.0))
+                                            .font(FontSizes::body())
                                             .color(Color32::from_rgb(80, 220, 80)),
                                     );
                                 }
@@ -292,7 +293,7 @@ pub fn surroundings_ui_system(
                             }
                             ui.label(
                                 egui::RichText::new(format!("{}", farm.potato_stockpile))
-                                    .font(FontId::proportional(9.0))
+                                    .font(FontSizes::body())
                                     .color(Color32::from_rgb(220, 210, 120)),
                             );
 
@@ -306,7 +307,7 @@ pub fn surroundings_ui_system(
                             }
                             ui.label(
                                 egui::RichText::new(format!("{}", farm.inedible_stockpile))
-                                    .font(FontId::proportional(9.0))
+                                    .font(FontSizes::body())
                                     .color(Color32::from_rgb(160, 200, 140)),
                             );
                         });
@@ -315,7 +316,7 @@ pub fn surroundings_ui_system(
                         ui.horizontal(|ui| {
                             ui.label(
                                 egui::RichText::new(format!("Wants {}", farm.want_max))
-                                    .font(FontId::proportional(9.0))
+                                    .font(FontSizes::body())
                                     .color(Color32::from_rgb(140, 170, 220)),
                             );
                             if let Some(&tex) = icon_textures_sm.get(&farm.wanted_resource) {
@@ -351,16 +352,16 @@ pub fn surroundings_ui_system(
             state.open_farm_menu = None;
         } else {
             let current_event = farms.farm_event(menu_i);
-            let is_specialized =
-                matches!(farms.farms[menu_i].production, FarmProduction::Specialized(_));
+            let is_specialized = matches!(
+                farms.farms[menu_i].production,
+                FarmProduction::Specialized(_)
+            );
             let whipsaw_in_storage =
                 crate::station::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
 
             // Breakdowns via the same shared compute path.
-            let market_lines =
-                farm_breakdown(&mut farms, menu_i, FarmEvent::Market, None);
-            let change_lines =
-                farm_breakdown(&mut farms, menu_i, FarmEvent::RerollResource, None);
+            let market_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::Market, None);
+            let change_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::RerollResource, None);
             let spec_lines = farm_breakdown(
                 &mut farms,
                 menu_i,
@@ -374,25 +375,28 @@ pub fn surroundings_ui_system(
             );
             let can_specialize = !is_specialized && whipsaw_in_storage;
 
-            let render_event_option =
-                |ui: &mut egui::Ui, chosen: &mut Option<FarmEvent>, event: FarmEvent,
-                 enabled: bool, title: &str, lines: &[String]| {
-                    let selected = current_event == event;
-                    if ui
-                        .add_enabled(enabled, egui::Button::selectable(selected, title))
-                        .clicked()
-                    {
-                        *chosen = Some(event);
-                    }
-                    for line in lines {
-                        ui.label(
-                            egui::RichText::new(format!("    • {}", line))
-                                .font(FontId::proportional(11.0))
-                                .color(Color32::from_gray(190)),
-                        );
-                    }
-                    ui.add_space(4.0);
-                };
+            let render_event_option = |ui: &mut egui::Ui,
+                                       chosen: &mut Option<FarmEvent>,
+                                       event: FarmEvent,
+                                       enabled: bool,
+                                       title: &str,
+                                       lines: &[String]| {
+                let selected = current_event == event;
+                if ui
+                    .add_enabled(enabled, egui::Button::selectable(selected, title))
+                    .clicked()
+                {
+                    *chosen = Some(event);
+                }
+                for line in lines {
+                    ui.label(
+                        egui::RichText::new(format!("    • {}", line))
+                            .font(FontSizes::body())
+                            .color(Color32::from_gray(190)),
+                    );
+                }
+                ui.add_space(4.0);
+            };
 
             let mut keep_open = true;
             let mut chosen_event: Option<FarmEvent> = None;
