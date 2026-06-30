@@ -238,6 +238,10 @@ pub fn generate_farms(mut commands: Commands) {
         let wanted_resource = farmable[(res_idx + wanted_offset) % farmable.len()];
         let want_max = (area.round() as u32).max(3);
 
+        let base_production = area.round() as u32;
+        let startup_months = rng.random_range(1..=3);
+        let initial_stockpiles = base_production * startup_months;
+
         farms.push(FarmData {
             seed,
             polygon,
@@ -246,8 +250,8 @@ pub fn generate_farms(mut commands: Commands) {
             production: crate::surroundings::farmstead::FarmProduction::Regular(resource),
             wanted_resource,
             want_max,
-            potato_stockpile: 0,
-            inedible_stockpile: 0,
+            potato_stockpile: initial_stockpiles,
+            inedible_stockpile: initial_stockpiles,
             boost: 0,
             invited: false,
         });
