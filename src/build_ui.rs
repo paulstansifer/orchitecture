@@ -688,3 +688,45 @@ pub(crate) fn station_resource_totals(
     result.sort_by_key(|(r, _, _)| *r);
     result
 }
+
+/// Total resource cost to complete the current proposed construction.
+/// Only counts `Proposal::Place` entries; removals and furniture are free.
+/// Returns sorted `(resource, quantity)` pairs; empty when cost is zero.
+pub(crate) fn construction_cost(
+    proposed: &crate::sparse3d::Sparse3D<crate::world::Proposal>,
+    structure_list: &crate::structure::StructureList,
+    material_list: &crate::materials::MaterialList,
+) -> Vec<(crate::resource::UniformResource, u32)> {
+    use crate::resource::UniformResource;
+    use crate::world::Proposal;
+    use std::collections::HashMap;
+
+    let mut totals: HashMap<UniformResource, u32> = HashMap::new();
+
+    for (_, proposal) in proposed.iter() {
+        let Proposal::Place(cell) = proposal else {
+            continue;
+        };
+        let info = &structure_list.structures[cell.id.as_usize()].info;
+        if info.furniture {
+            continue;
+        }
+        let Some(build_mat) = material_list
+            .materials
+            .iter()
+            .find(|bm| bm.world_material() == cell.material)
+        else {
+            continue;
+        };
+        let Some(cost) = build_mat.costs.get(&info.structure_type) else {
+            continue;
+        };
+        for (res, qty) in cost {
+            *totals.entry(*res).or_insert(0) += *qty as u32;
+        }
+    }
+
+    let mut result: Vec<_> = totals.into_iter().collect();
+    result.sort_by_key(|(r, _)| *r);
+    result
+}

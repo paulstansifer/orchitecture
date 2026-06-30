@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
+use crate::build_ui::SandboxMode;
 use crate::construction::advance_construction;
 use crate::game_mode::GameMode;
+use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
@@ -31,6 +33,8 @@ pub fn shared_ui_system(
     structure_list: Res<StructureList>,
     mut traveler_state: ResMut<TravelerState>,
     mut population: ResMut<Population>,
+    sandbox: Res<SandboxMode>,
+    material_list: Res<MaterialList>,
 ) {
     use egui::Color32;
 
@@ -45,9 +49,35 @@ pub fn shared_ui_system(
         preview.player_gains.iter().copied().collect();
 
     let station_totals = crate::build_ui::station_resource_totals(&constructed);
+
+    // Construction cost (non-sandbox only).
+    let construction_cost = if pending.num_changes() > 0 && !sandbox.enabled {
+        crate::build_ui::construction_cost(
+            &pending.proposed_changes,
+            &structure_list,
+            &material_list,
+        )
+    } else {
+        vec![]
+    };
+    let cost_map: std::collections::HashMap<UniformResource, u32> =
+        construction_cost.iter().copied().collect();
+    let can_afford_construction = construction_cost.iter().all(|(res, qty)| {
+        station_totals
+            .iter()
+            .find(|(r, _, _)| r == res)
+            .map(|(_, q, _)| *q >= *qty)
+            .unwrap_or(*qty == 0)
+    });
+
     let mut rhs_resources: Vec<UniformResource> =
         station_totals.iter().map(|(r, _, _)| *r).collect();
     for (r, _) in &preview.player_gains {
+        if !rhs_resources.contains(r) {
+            rhs_resources.push(*r);
+        }
+    }
+    for (r, _) in &construction_cost {
         if !rhs_resources.contains(r) {
             rhs_resources.push(*r);
         }
@@ -100,8 +130,13 @@ pub fn shared_ui_system(
             ui.add_space(2.0);
 
             if has_project || has_farms_invited || has_traveler_invited {
-                if ui.button("Advance Month").clicked() {
-                    go_advance_month = true;
+                ui.add_enabled_ui(can_afford_construction, |ui| {
+                    if ui.button("Advance Month").clicked() {
+                        go_advance_month = true;
+                    }
+                });
+                if has_project && !can_afford_construction {
+                    note_label!(ui, col_format!(problem, "Insufficient resources for construction"));
                 }
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
@@ -158,10 +193,12 @@ pub fn shared_ui_system(
                     Precision::Conservative => format!(">{}", current),
                 };
 
-                let text = if gain > 0 {
-                    format!("{}: {} + {}", res.label(), quantity_str, gain)
-                } else {
-                    format!("{}: {}", res.label(), quantity_str)
+                let cost = *cost_map.get(res).unwrap_or(&0);
+                let text = match (gain > 0, cost > 0) {
+                    (true, true) => format!("{}: {} +{} -{}", res.label(), quantity_str, gain, cost),
+                    (true, false) => format!("{}: {} +{}", res.label(), quantity_str, gain),
+                    (false, true) => format!("{}: {} -{}", res.label(), quantity_str, cost),
+                    (false, false) => format!("{}: {}", res.label(), quantity_str),
                 };
                 ui.horizontal(|ui| {
                     if let Some(&tex) = icon_textures_lg.get(res) {
@@ -313,7 +350,7 @@ pub fn shared_ui_system(
             }
         }
 
-        advance_construction(
+        let construction_completed = advance_construction(
             &mut pending,
             &mut constructed,
             &mut commands,
@@ -321,6 +358,11 @@ pub fn shared_ui_system(
             &mut viewable,
             &structure_list,
         );
+        if construction_completed && !sandbox.enabled {
+            for (res, qty) in &construction_cost {
+                crate::station::consume_uniform(&mut constructed, *res, *qty);
+            }
+        }
         ctx.data_mut(|d| d.remove::<bool>(wait_id));
     }
     if go_walk {

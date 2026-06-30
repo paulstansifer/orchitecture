@@ -353,6 +353,7 @@ pub fn construct(
 /// Advances one month of construction progress. If enough months have elapsed,
 /// commits all proposals and resets the counter. Should be called once per
 /// "Advance Month" action when proposals are present.
+/// Returns `true` if construction completed this month (proposals were committed).
 pub fn advance_construction(
     pending: &mut ProposedWorld,
     constructed: &mut ConstructedWorld,
@@ -360,7 +361,7 @@ pub fn advance_construction(
     assembled: &mut AssembledWorld,
     viewable: &mut ViewableWorld,
     structure_list: &StructureList,
-) {
+) -> bool {
     if pending.num_changes() > 0 {
         pending.months_waited += 1;
         if pending.months_waited as usize >= pending.months_for_construction() {
@@ -369,10 +370,12 @@ pub fn advance_construction(
             clear_proposed_cut_entities(commands, viewable);
             apply_changes(commands, assembled, structure_list, real_changes);
             pending.months_waited = 0;
+            return true;
         }
     } else {
         pending.months_waited = 0;
     }
+    false
 }
 
 /// Loads a new building, replacing contents and clearing all history.
