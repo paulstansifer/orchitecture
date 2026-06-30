@@ -14,7 +14,7 @@ use crate::surroundings::farmstead::{
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
 use crate::world::{AssembledWorld, ConstructedWorld, ProposedWorld, ViewableWorld};
-use crate::{heading_label, label, note_label, col_format};
+use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
     mut contexts: EguiContexts,
@@ -261,12 +261,12 @@ pub fn shared_ui_system(
         clock.advance_month();
         farms.ensure_adjacency();
         let mut rng = rand::rng();
-        let plan = compute_production(&*farms, &mut rng);
-        apply_production(&mut *farms, &plan);
         let (gains, tools_to_return) = run_market(&mut *farms, &mut rng);
         for tool in tools_to_return {
             crate::station::deposit_tool(&mut *constructed, tool);
         }
+        let plan = compute_production(&*farms, &mut rng);
+        apply_production(&mut *farms, &plan);
         update_wanted_resources(&mut *farms);
         for farm in &mut farms.farms {
             farm.invited = false;
