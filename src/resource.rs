@@ -42,7 +42,7 @@ impl UniformResource {
     }
 
     pub fn farmable(self) -> bool {
-        // TODO: add quarries; Blocks should not be farmable
+        // TODO: add quarries; Lime should not be farmable, and blocks should be getable
         // TODO: add ground-clearing; Fieldstone should not be farmable
         matches!(
             self,
@@ -50,7 +50,7 @@ impl UniformResource {
                 | UniformResource::Canvas
                 | UniformResource::Straw
                 | UniformResource::Timber
-                | UniformResource::Block
+                | UniformResource::Lime
                 | UniformResource::Fieldstone
         )
     }
@@ -60,7 +60,7 @@ impl UniformResource {
             UniformResource::Canvas,
             UniformResource::Straw,
             UniformResource::Timber,
-            UniformResource::Block,
+            UniformResource::Lime,
             UniformResource::Fieldstone,
         ]
     }
