@@ -28,22 +28,22 @@ pub fn spawn_scene(
         light_layers.clone(),
     ));
 
-    // Two fill lights equally spaced around the sun (120° apart, same elevation).
-    for y_angle in [
-        FRAC_PI_3 + 2.0 * std::f32::consts::PI / 3.0,
-        FRAC_PI_3 - 2.0 * std::f32::consts::PI / 3.0,
-    ] {
-        commands.spawn((
-            DirectionalLight {
-                illuminance: FILL_ILLUMINANCE,
-                shadows_enabled: false,
-                ..default()
-            },
-            Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, y_angle, -FRAC_PI_4, 0.0)),
-        ));
-    }
+    // // Two fill lights equally spaced around the sun (120° apart, same elevation).
+    // for y_angle in [
+    //     FRAC_PI_3 + 2.0 * std::f32::consts::PI / 3.0,
+    //     FRAC_PI_3 - 2.0 * std::f32::consts::PI / 3.0,
+    // ] {
+    //     commands.spawn((
+    //         DirectionalLight {
+    //             illuminance: FILL_ILLUMINANCE,
+    //             shadows_enabled: false,
+    //             ..default()
+    //         },
+    //         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, y_angle, -FRAC_PI_4, 0.0)),
+    //     ));
+    // }
 
-    ambient_light.brightness = 10.0;
+    ambient_light.brightness = 100.0;
 
     // Ground plane (grass).
     commands.spawn((
