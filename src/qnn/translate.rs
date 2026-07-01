@@ -5,9 +5,9 @@ use burn::tensor::Float;
 use std::error::Error;
 
 #[cfg(feature = "training")]
-use crate::structure::{self, StructureInfo};
-#[cfg(feature = "training")]
 use crate::city::Cell;
+#[cfg(feature = "training")]
+use crate::structure::{self, StructureInfo};
 #[cfg(feature = "training")]
 use burn::backend::Autodiff;
 #[cfg(feature = "training")]

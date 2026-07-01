@@ -208,9 +208,9 @@ pub fn evaluate_autotile_rules(
 mod tests {
     use super::*;
     use crate::autotile::test_helpers::*;
+    use crate::city::Cell;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
     use crate::structure::StructureId;
-    use crate::city::Cell;
     use assert2::check;
 
     // Test-local ID convention: 0=wall, 1=floor, 2=stairs, 3=railing

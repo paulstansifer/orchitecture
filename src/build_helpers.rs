@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use bevy::math::IVec3;
 use enum_derived::Rand;
 
+use crate::city::{ConstrainedScoreExt, Material, VantageEvaluation};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::{StructureId, StructureInfo};
-use crate::city::{ConstrainedScoreExt, Material, VantageEvaluation};
 use crate::{
-    sparse3d::{RelSlotCoord, SlotCoord, Sparse3D},
     city::Cell,
+    sparse3d::{RelSlotCoord, SlotCoord, Sparse3D},
 };
 use rand::{prelude::SliceRandom, rngs::StdRng, Rng};
 
@@ -265,8 +265,8 @@ pub fn add_noise(
     structure_info: &[StructureInfo],
     rng: &mut StdRng,
 ) -> Vec<Sparse3D<Cell>> {
-    use crate::sparse3d::RelSlot::{Floor, Room, XLoWall, ZLoWall};
     use crate::city::VantageEvaluation;
+    use crate::sparse3d::RelSlot::{Floor, Room, XLoWall, ZLoWall};
 
     let mut results: Vec<Sparse3D<Cell>> = Vec::new();
 

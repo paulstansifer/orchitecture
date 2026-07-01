@@ -5,17 +5,17 @@ use bevy::window::PrimaryWindow;
 use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
 use crate::build_ui::SandboxMode;
 use crate::camera::GameCamera;
+use crate::city::{
+    apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
+    ConstructedCity, GridCellMarker, Material, MaterialAssets, ProposalGhostMarker,
+    ProposalOverlayAssets, ProposedCutMarker,
+};
 use crate::construction::{construct, Materials};
 use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
-use crate::city::{
-    apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
-    ConstructedCity, GridCellMarker, Material, MaterialAssets, ProposalGhostMarker,
-    ProposalOverlayAssets, ProposedCutMarker,
-};
 
 #[derive(Resource)]
 pub struct CursorEntities {

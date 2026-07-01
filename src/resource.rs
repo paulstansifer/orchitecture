@@ -88,7 +88,7 @@ impl ToolKind {
         }
     }
 
-    /// What this tool turns neighbouring production into when a farm specializes.
+    /// What this tool turns neighboring production into when a farm specializes.
     pub fn specialization(self) -> Specialization {
         match self {
             ToolKind::Whipsaw => Specialization {

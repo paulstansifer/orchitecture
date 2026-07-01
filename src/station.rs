@@ -1,8 +1,8 @@
+use crate::city::{apply_changes, AssembledCity, Cell, ConstructedCity, Material};
 use crate::materials::BuildMaterialId;
 use crate::resource::{Approximation, Inventory, ToolKind, UniformResource, UniqueResource};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::StructureList;
-use crate::city::{apply_changes, AssembledCity, Cell, ConstructedCity, Material};
 use bevy::math::IVec3;
 use bevy::prelude::{Commands, Res, ResMut};
 use serde::{Deserialize, Serialize};

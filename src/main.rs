@@ -10,6 +10,10 @@ use orchitecture_lib::{
         handle_file_save, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
     },
     camera::{camera_input_system, spawn_camera, CameraState, GameCamera},
+    city::{
+        spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
+        update_station_highlight, ConstructedCity, StationHighlight,
+    },
     cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
     game_mode::GameMode,
     gi_material::GiPlugin,
@@ -36,10 +40,6 @@ use orchitecture_lib::{
     ui::shared_ui_system,
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
-    city::{
-        spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
-        update_station_highlight, ConstructedCity, StationHighlight,
-    },
 };
 
 fn main() {

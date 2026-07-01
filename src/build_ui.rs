@@ -2,6 +2,10 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 use bevy_file_dialog::prelude::*;
 
+use crate::city::{
+    apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
+    AssembledCity, CityMut, ConstructedCity, ProposalOverlayAssets, ProposedCity, ViewableWorld,
+};
 use crate::construction::{construct, load_from_offline};
 use crate::cutaway::CutawayMode;
 use crate::input::BuildState;
@@ -12,10 +16,6 @@ use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
 use crate::structure::sorted_structure_indices;
 use crate::structure::StructureList;
-use crate::city::{
-    apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
-    AssembledCity, CityMut, ConstructedCity, ProposalOverlayAssets, ProposedCity, ViewableWorld,
-};
 
 /// Maps bundled at compile time; always available on all platforms.
 const BUNDLED_MAPS: &[(&str, &str)] = &[
@@ -692,8 +692,8 @@ pub(crate) fn construction_cost(
     structure_list: &crate::structure::StructureList,
     material_list: &crate::materials::MaterialList,
 ) -> Vec<(crate::resource::UniformResource, u32)> {
-    use crate::resource::UniformResource;
     use crate::city::Proposal;
+    use crate::resource::UniformResource;
     use std::collections::HashMap;
 
     let mut totals: HashMap<UniformResource, u32> = HashMap::new();

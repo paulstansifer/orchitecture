@@ -4,13 +4,13 @@ use bevy::ecs::entity::Entity;
 use bevy::math::{Quat, Vec3};
 use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 
-use crate::sparse3d::{Facing, SlotCoord};
-use crate::structure::{StructureId, StructureList};
-use crate::util::zup_scene_transform;
 use crate::city::{
     cell_transform, get_proposed_or_real, AssembledCity, Cell, ConstructedCity, GridCellMarker,
     Proposal, ProposalGhostMarker, ProposedCity,
 };
+use crate::sparse3d::{Facing, SlotCoord};
+use crate::structure::{StructureId, StructureList};
+use crate::util::zup_scene_transform;
 
 use super::meshes::{AutotileHandles, AutotileRules};
 use super::parser::char_matches_name;

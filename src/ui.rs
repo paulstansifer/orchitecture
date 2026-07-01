@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::build_ui::SandboxMode;
+use crate::city::{CityMut, ViewableWorld};
 use crate::construction::advance_construction;
 use crate::game_mode::GameMode;
 use crate::materials::MaterialList;
@@ -15,7 +16,6 @@ use crate::surroundings::farmstead::{
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
-use crate::city::{CityMut, ViewableWorld};
 use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(

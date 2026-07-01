@@ -2,10 +2,10 @@ use bevy::math::IVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::city::Cell;
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, Sparse3D};
 use crate::structure::{StructureId, StructureInfo};
-use crate::city::Cell;
 
 pub fn serialize_slot(
     id: StructureId,
@@ -239,9 +239,9 @@ mod tests {
     use assert2::check;
     use std::collections::HashMap;
 
+    use crate::city::{Cell, Material};
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord};
     use crate::structure::{PlacementStyle, StructureEmbedding, StructureId, StructureInfo};
-    use crate::city::{Cell, Material};
 
     use super::{deserialize, load_from_str, serialize};
 

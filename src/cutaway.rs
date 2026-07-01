@@ -8,15 +8,15 @@ use bevy::window::PrimaryWindow;
 use crate::autotile::display::autotile_transform;
 use crate::autotile::{slot_to_unoriented, spec_stem, AutotileHandles, AutotileResult};
 use crate::camera::GameCamera;
-use crate::input::{cursor_world_pos, BuildState};
-use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
-use crate::structure::{StructureId, StructureList};
-use crate::util::zup_scene_transform;
 use crate::city::{
     cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledCity, City,
     ConstructedCity, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
     ProposedCity, ProposedCutMarker, ViewableWorld,
 };
+use crate::input::{cursor_world_pos, BuildState};
+use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
+use crate::structure::{StructureId, StructureList};
+use crate::util::zup_scene_transform;
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
 /// with. Returns one `(handle, transform)` pair per autotile mesh that has a cut variant,
@@ -870,9 +870,9 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::build_helpers::Builder;
+    use crate::city::{AssembledCity, Cell, ConstructedCity, ProposedCity, ViewableWorld};
     use crate::sparse3d::Facing;
     use crate::structure::load_structure_info;
-    use crate::city::{AssembledCity, Cell, ConstructedCity, ProposedCity, ViewableWorld};
 
     /// Builds a 3×1×3-cube room and returns the contents plus the loaded structures.
     fn two_level_room() -> (

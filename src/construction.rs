@@ -1,14 +1,14 @@
 use bevy::math::{IVec3, Vec3};
 use bevy::prelude::Commands;
 
-use crate::materials::BuildMaterialId;
-use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
-use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::city::{
     apply_changes, clear_proposal_entities, clear_proposed_cut_entities, desired, AssembledCity,
     Cell, ConstructedCity, Material, Proposal, ProposalView, ProposedCity, UndoRecord,
     VantageEvaluation, ViewableWorld,
 };
+use crate::materials::BuildMaterialId;
+use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
+use crate::structure::{PlacementStyle, StructureId, StructureList};
 
 /// A material and build-material to apply to a placement. Always passed together.
 #[derive(Clone, Copy)]
@@ -425,10 +425,10 @@ mod tests {
 
     use bevy::math::IVec3;
 
+    use crate::city::{Cell, ConstructedCity, Material, Proposal, ProposalView, ProposedCity};
     use crate::materials::BuildMaterialId;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
     use crate::structure::{PlacementStyle, StructureId, StructureInfo};
-    use crate::city::{Cell, ConstructedCity, Material, Proposal, ProposalView, ProposedCity};
 
     use super::{construct, load_from_offline, Materials};
 

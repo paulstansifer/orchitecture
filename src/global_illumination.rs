@@ -6,10 +6,10 @@ use bevy::render::render_resource::{
     Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
 };
 
+use crate::city::{Cell, ConstructedCity, MaterialAssets};
 use crate::gi_material::{GiMaterial, GI_INTENSITY};
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
-use crate::city::{Cell, ConstructedCity, MaterialAssets};
 
 const FALLOFF: f32 = 0.30;
 // Not sure this works, so not using it yet.

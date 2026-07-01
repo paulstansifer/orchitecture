@@ -1,9 +1,9 @@
 #![cfg(test)]
 
 use super::{AutotileResult, MeshSpec};
+use crate::city::Cell;
 use crate::sparse3d::Facing;
 use crate::structure::StructureId;
-use crate::city::Cell;
 
 // ── MeshSpec helpers ─────────────────────────────────────────────────────────
 

@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::city::ConstructedCity;
 use crate::resource::{ToolKind, UniformResource, UniqueResource};
 use crate::surroundings::generate_path_from_pos;
-use crate::city::ConstructedCity;
 
 pub const TRAVELER_CAPACITY: usize = 1;
 
@@ -110,10 +110,7 @@ pub fn can_afford_traveler(
 
 /// Deducts demands from storage (spread across stations), deposits one Tool into
 /// the first storage station, and returns the traveler's path.
-pub fn accept_traveler(
-    offer: &IndividualTraveler,
-    constructed: &mut ConstructedCity,
-) -> Vec<Vec2> {
+pub fn accept_traveler(offer: &IndividualTraveler, constructed: &mut ConstructedCity) -> Vec<Vec2> {
     for (res, qty) in &offer.demands {
         crate::station::consume_uniform(constructed, *res, *qty as u32);
     }

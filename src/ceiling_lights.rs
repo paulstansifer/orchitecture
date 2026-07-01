@@ -5,9 +5,9 @@ use std::f32::consts::FRAC_PI_2;
 use bevy::math::IVec3;
 use bevy::prelude::*;
 
+use crate::city::{Cell, ConstructedCity};
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{Structure, StructureList};
-use crate::city::{Cell, ConstructedCity};
 
 #[allow(dead_code)]
 const GRID_PERIOD: i32 = 5;
