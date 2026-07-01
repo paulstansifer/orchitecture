@@ -2,7 +2,8 @@
 //!
 //! Replaces Bevy's built-in `IrradianceVolume` with an `ExtendedMaterial` over
 //! `StandardMaterial`: the base material provides ordinary PBR (sun, fill lights,
-//! shadows), and the extension's fragment shader ([shaders/gi.wgsl]) adds an
+//! shadows), and the extension's fragment shader ([assets/static/shaders/gi.wgsl])
+//! adds an
 //! adjacency-aware trilinear blend of the per-cube sky illuminance computed in
 //! [`crate::global_illumination`].
 //!

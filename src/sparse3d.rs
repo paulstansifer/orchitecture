@@ -672,13 +672,8 @@ impl<T> Sparse3D<T> {
             }
         }
 
-        // Dedup items if necessary?
-        // Logic might add same item multiple times?
-        // e.g. Room check is distinct. Wall checks are distinct.
-        // But do Wall checks overlap with Room checks? No, different RelSlot.
-        // Result is Vec<&T>. Pointers.
-        // We shouldn't have duplicates because the slots are distinct keys in the map.
-
+        // No dedup needed: each check above queries a distinct `RelSlot`, so the same
+        // map entry can never be pushed twice.
         items
     }
 }

@@ -12,7 +12,7 @@ use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
 
 const FALLOFF: f32 = 0.30;
-// Not sure this works, so not using it yet.
+// Not sure this works, but we should try setting this lower to make high windows nice.
 const FALLOFF_DOWNWARD: f32 = 0.30;
 /// Half-width of the per-hop falloff noise: effective falloff ∈ [FALLOFF − R, FALLOFF + R].
 const FALLOFF_NOISE_RADIUS: f32 = 0.10;

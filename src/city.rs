@@ -169,7 +169,8 @@ pub struct Cell {
     /// What the structure is made from. Not serialized (see `Material`).
     #[serde(skip)]
     pub material: Material,
-    /// Index into the MaterialList. Not serialized (see `Material`).
+    /// Index into the MaterialList. Serialized with a default fallback (unlike `material`,
+    /// which is derived from it and skipped entirely).
     #[serde(default)]
     pub build_material: crate::materials::BuildMaterialId,
 }
@@ -285,10 +286,7 @@ impl ConstructedCity {
     }
 
     pub fn find_structure_by_name(&self, name: &str) -> Option<StructureId> {
-        self.structures
-            .iter()
-            .position(|s| s.name == name)
-            .map(|idx| StructureId(idx as u32))
+        crate::structure::find_structure_by_name(&self.structures, name)
     }
 
     pub fn replace_contents(
@@ -691,26 +689,20 @@ pub fn apply_proposal_changes(
                 commands.entity(entity).despawn();
             }
         }
+        #[cfg(autotile_matching)]
+        assembled.proposal_autotile_results.remove(&loc);
         match view {
-            ProposalView::None => {
-                #[cfg(autotile_matching)]
-                assembled.proposal_autotile_results.remove(&loc);
-            }
+            ProposalView::None => {}
             ProposalView::Add(_) => {
                 // Ghost entities for additions are managed by `proposal_autotile_update_system`.
-                // Clear the cached results so that system re-evaluates this location next frame.
-                #[cfg(autotile_matching)]
-                assembled.proposal_autotile_results.remove(&loc);
+                // The cached results were already cleared above, so that system re-evaluates
+                // this location next frame.
             }
             ProposalView::Remove => {
-                #[cfg(autotile_matching)]
-                assembled.proposal_autotile_results.remove(&loc);
                 let entities = spawn_x_overlay(commands, overlay_assets, loc);
                 assembled.proposal_entities.insert(loc, entities);
             }
             ProposalView::Replace => {
-                #[cfg(autotile_matching)]
-                assembled.proposal_autotile_results.remove(&loc);
                 let entities = spawn_ring_overlay(commands, overlay_assets, loc);
                 assembled.proposal_entities.insert(loc, entities);
             }

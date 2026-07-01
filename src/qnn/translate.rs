@@ -279,15 +279,6 @@ pub fn load_training_data<B: Backend>(
     //     panic!()
     // }
 
-    if metric == Metric::Interest {
-        for _ in 0..25 {
-            all_sparse_data.push(crate::build_helpers::make_boring_room(
-                &structures,
-                &mut rng,
-            ))
-        }
-    }
-
     use rand::seq::SliceRandom;
     all_sparse_data.shuffle(&mut rng);
 

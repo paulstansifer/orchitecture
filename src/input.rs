@@ -17,6 +17,16 @@ use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
 
+/// Bundles read-only resources used by `building_input_system` so its
+/// parameter count stays under Bevy's system-function arity limit (16).
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct BuildAssets<'w> {
+    pub structure_list: Res<'w, StructureList>,
+    pub overlay_assets: Res<'w, ProposalOverlayAssets>,
+    pub model_state: Res<'w, crate::qnn::ModelState>,
+    pub material_list: Res<'w, crate::materials::MaterialList>,
+}
+
 #[derive(Resource)]
 pub struct CursorEntities {
     pub wall: Entity,
@@ -157,18 +167,21 @@ pub fn building_input_system(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     mut world: CityMut,
-    structure_list: Res<StructureList>,
+    assets: BuildAssets,
     mut build_state: ResMut<BuildState>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     egui_wants_input: Res<bevy_egui::input::EguiWantsInput>,
-    model_state: Res<crate::qnn::ModelState>,
-    overlay_assets: Res<ProposalOverlayAssets>,
     mut cutaway_mode: ResMut<CutawayMode>,
     sandbox: Res<SandboxMode>,
     mut furniture_right_click: ResMut<crate::build_ui::FurnitureRightClick>,
-    // mut right_press_pos: Local<Option<Vec2>>,
-    material_list: Res<crate::materials::MaterialList>,
+    mut right_press_pos: Local<Option<Vec2>>,
 ) {
+    let BuildAssets {
+        structure_list,
+        overlay_assets,
+        model_state,
+        material_list,
+    } = assets;
     let (mut constructed, mut pending, mut assembled) = (
         &mut world.constructed,
         &mut world.pending,
@@ -337,13 +350,11 @@ pub fn building_input_system(
     }
 
     // --- Right-click: pick a real furniture cell (vs. right-drag = camera rotate) ---
-    // TODO: the Local<> for right_pres_pos makes the signature too long. TEMPORARY FIX!
-    // if mouse_button.just_pressed(MouseButton::Right) {
-    //     *right_press_pos = window.cursor_position();
-    // }
+    if mouse_button.just_pressed(MouseButton::Right) {
+        *right_press_pos = window.cursor_position();
+    }
     if mouse_button.just_released(MouseButton::Right) {
-        //let pressed = right_press_pos.take();
-        let pressed = window.cursor_position();
+        let pressed = right_press_pos.take();
         let moved = pressed
             .zip(window.cursor_position())
             .map(|(a, b)| a.distance(b))
@@ -364,8 +375,6 @@ pub fn building_input_system(
             }
         }
     }
-
-    let _ = window;
 }
 
 /// Keeps the room cursor's SceneRoot in sync with the selected structure.
