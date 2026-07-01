@@ -7,6 +7,13 @@ use bevy::math::IVec3;
 use bevy::prelude::{Commands, Res, ResMut};
 use serde::{Deserialize, Serialize};
 
+#[allow(unused)]
+enum QualityFactor {
+    FloorArea{area_max: u16},
+    Spaciousness{sightline_max: u8},
+    Quiet{min: f32}
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StationReq {
     /// Name of the required structure, resolved to a `StructureId` when needed.
