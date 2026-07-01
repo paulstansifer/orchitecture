@@ -169,6 +169,9 @@ pub struct Cell {
     /// What the structure is made from. Not serialized (see `Material`).
     #[serde(skip)]
     pub material: Material,
+    /// Index into the MaterialList. Not serialized (see `Material`).
+    #[serde(default)]
+    pub build_material: crate::materials::BuildMaterialId,
 }
 
 impl crate::sparse3d::Rotateable for Cell {

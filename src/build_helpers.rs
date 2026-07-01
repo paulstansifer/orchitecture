@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use bevy::math::IVec3;
 use enum_derived::Rand;
 
+use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
 use crate::structure::{StructureId, StructureInfo};
 use crate::world::{ConstrainedScoreExt, Material, VantageEvaluation};
@@ -40,6 +41,7 @@ impl Builder {
             facing: Facing::arbitrary(),
             evaluation: None,
             material: Material::default(),
+            build_material: BuildMaterialId::default(),
         }
     }
     fn flat(&self) -> Cell {
@@ -48,6 +50,7 @@ impl Builder {
             facing: Facing::arbitrary(),
             evaluation: None,
             material: Material::default(),
+            build_material: BuildMaterialId::default(),
         }
     }
 
@@ -184,6 +187,7 @@ impl Builder {
             facing: Facing::arbitrary(),
             evaluation: None,
             material: Material::default(),
+            build_material: BuildMaterialId::default(),
         };
 
         for x in min.x..=max.x {
@@ -227,6 +231,7 @@ impl Builder {
                     coherence: Some(coherence.into()),
                 }),
                 material: Material::default(),
+                build_material: BuildMaterialId::default(),
             },
         );
     }
@@ -378,6 +383,7 @@ pub fn add_noise(
                         facing: crate::sparse3d::Facing::default(),
                         evaluation: None,
                         material: Material::default(),
+                        build_material: BuildMaterialId::default(),
                     };
                     new_s.set(dest_loc, new_cell);
                 }
@@ -431,6 +437,7 @@ fn test_add_noise() {
                 interest: Some(ConstrainedScore::Exact(0.5)),
             }),
             material: Material::default(),
+            build_material: BuildMaterialId::default(),
         },
     );
 
@@ -442,6 +449,7 @@ fn test_add_noise() {
             facing: crate::sparse3d::Facing::NegX,
             evaluation: None,
             material: Material::default(),
+            build_material: BuildMaterialId::default(),
         },
     );
 

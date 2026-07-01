@@ -33,6 +33,9 @@ impl StructureType {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct BuildMaterialId(pub u32);
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct BuildMaterial {
     pub name: String,
@@ -47,6 +50,7 @@ impl BuildMaterial {
             "Canvas" => crate::world::Material::Canvas,
             "Staves" => crate::world::Material::Timbers,
             "Fieldstone" => crate::world::Material::Fieldstone,
+            "Plaster" => crate::world::Material::Stucco,
             "Ashlar" => crate::world::Material::MarbleBlocks,
             _ => crate::world::Material::default(),
         }
@@ -66,11 +70,14 @@ impl MaterialList {
         }
     }
 
-    /// Returns materials that have a cost entry for `stype`, in definition order.
-    pub fn for_type(&self, stype: StructureType) -> Vec<&BuildMaterial> {
+    /// Returns materials that have a cost entry for `stype`, in definition order,
+    /// paired with their `BuildMaterialId` in the full materials list.
+    pub fn for_type(&self, stype: StructureType) -> Vec<(BuildMaterialId, &BuildMaterial)> {
         self.materials
             .iter()
-            .filter(|m| m.costs.contains_key(&stype))
+            .enumerate()
+            .filter(|(_, m)| m.costs.contains_key(&stype))
+            .map(|(idx, m)| (BuildMaterialId(idx as u32), m))
             .collect()
     }
 }

@@ -1155,6 +1155,7 @@ mod tests {
                 facing: Facing::NegX,
                 evaluation: None,
                 material: crate::world::Material::default(),
+                build_material: crate::materials::BuildMaterialId::default(),
             }),
         );
 
@@ -1211,6 +1212,7 @@ mod tests {
                     facing: Facing::NegX,
                     evaluation: None,
                     material: crate::world::Material::default(),
+                    build_material: crate::materials::BuildMaterialId::default(),
                 }),
             );
         }
@@ -1305,6 +1307,7 @@ mod tests {
                 facing: Facing::NegX,
                 evaluation: None,
                 material: crate::world::Material::default(),
+                build_material: crate::materials::BuildMaterialId::default(),
             }),
         );
         app.insert_resource(pe);
@@ -1414,6 +1417,7 @@ mod tests {
                 facing: Facing::NegX,
                 evaluation: None,
                 material: crate::world::Material::default(),
+                build_material: crate::materials::BuildMaterialId::default(),
             },
         );
         app.insert_resource(cw);

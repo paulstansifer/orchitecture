@@ -7,6 +7,7 @@ use crate::build_ui::SandboxMode;
 use crate::camera::GameCamera;
 use crate::construction::construct;
 use crate::cutaway::{CutCellMarker, CutawayMode};
+use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
@@ -144,8 +145,9 @@ pub struct BuildState {
     pub drag_start: Option<Vec3>,
     /// Latest evaluation results (coherence, interest).
     pub evaluation: Option<(f32, f32)>,
-    /// Selected material (by position in `MaterialList::for_type`) per structure type.
-    pub material_per_type: std::collections::HashMap<crate::materials::StructureType, usize>,
+    /// Selected material (`BuildMaterialId`, index into `MaterialList::materials`) per structure type.
+    pub material_per_type:
+        std::collections::HashMap<crate::materials::StructureType, BuildMaterialId>,
 }
 
 pub fn building_input_system(
@@ -289,31 +291,45 @@ pub fn building_input_system(
         ) {
             let id = StructureId(build_state.selected_structure as u32);
             let dir = build_state.cur_dir as i32;
-            let material = {
+            let (material, build_material) = {
                 let info = &constructed.structures[id.as_usize()];
                 if info.furniture {
-                    Material::Planks
+                    (Material::Planks, BuildMaterialId(0))
                 } else {
                     let stype = info.structure_type;
-                    let options = material_list.for_type(stype);
-                    let local_idx = build_state
-                        .material_per_type
-                        .get(&stype)
-                        .copied()
-                        .unwrap_or(0);
-                    options
-                        .get(local_idx)
-                        .map(|m| m.world_material())
-                        .unwrap_or_default()
+                    let build_mat_id = build_state.material_per_type.get(&stype).copied().unwrap();
+                    if let Some(mat) = material_list.materials.get(build_mat_id.0 as usize) {
+                        let world_mat = mat.world_material();
+                        (world_mat, build_mat_id)
+                    } else {
+                        (Material::default(), build_mat_id)
+                    }
                 }
             };
 
             let dist_sq = (end - start).length_squared();
 
             let changes = if dist_sq < 0.25 {
-                pending.click(&constructed, start, id, dir, remove, material)
+                pending.click(
+                    &constructed,
+                    start,
+                    id,
+                    dir,
+                    remove,
+                    material,
+                    build_material,
+                )
             } else {
-                pending.drag(&constructed, start, end, dir, id, remove, material)
+                pending.drag(
+                    &constructed,
+                    start,
+                    end,
+                    dir,
+                    id,
+                    remove,
+                    material,
+                    build_material,
+                )
             };
 
             if !changes.is_empty() {

@@ -227,6 +227,7 @@ mod tests {
             facing: Default::default(),
             evaluation: None,
             material: Default::default(),
+            build_material: Default::default(),
         }
     }
 
@@ -403,6 +404,7 @@ H:
                 facing: Default::default(),
                 evaluation: None,
                 material: Default::default(),
+                build_material: Default::default(),
             }
         }
         fn is_desk(ch: char, id: StructureId, _facing: Facing) -> bool {
@@ -507,6 +509,7 @@ H:
             facing: Default::default(),
             evaluation: None,
             material: Default::default(),
+            build_material: Default::default(),
         }
     }
     fn is_desk(ch: char, id: StructureId, _facing: Facing) -> bool {
@@ -650,6 +653,7 @@ H:
             facing: Default::default(),
             evaluation: None,
             material: Default::default(),
+            build_material: Default::default(),
         }
     }
 
@@ -810,6 +814,7 @@ H:
                 facing: Default::default(),
                 evaluation: None,
                 material: Default::default(),
+                build_material: Default::default(),
             }
         }
         fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
@@ -904,6 +909,7 @@ H narrow:
                 facing: Default::default(),
                 evaluation: None,
                 material: Default::default(),
+                build_material: Default::default(),
             }
         }
         fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
@@ -985,6 +991,7 @@ H: 1=stairs:90
                 facing,
                 evaluation: None,
                 material: Default::default(),
+                build_material: Default::default(),
             }
         }
         fn name_is_stairs(name: &str, id: StructureId) -> bool {

@@ -2,6 +2,7 @@ use bevy::math::IVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, Sparse3D};
 use crate::structure::{StructureId, StructureInfo};
 use crate::world::Cell;
@@ -220,6 +221,7 @@ pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Ce
                 facing: Facing::NegX,
                 evaluation: None,
                 material: crate::world::Material::default(),
+                build_material: BuildMaterialId::default(),
             })
         },
         &structures_by_char,
@@ -282,6 +284,7 @@ mod tests {
             facing: Facing::NegX,
             evaluation: None,
             material: Material::default(),
+            build_material: crate::materials::BuildMaterialId::default(),
         }
     }
 

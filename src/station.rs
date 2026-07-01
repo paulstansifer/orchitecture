@@ -1,3 +1,4 @@
+use crate::materials::BuildMaterialId;
 use crate::resource::{Approximation, Inventory, ToolKind, UniformResource, UniqueResource};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::StructureList;
@@ -379,6 +380,7 @@ pub fn spawn_initial_station(
             facing: Facing::default(),
             evaluation: None,
             material: Material::Planks,
+            build_material: BuildMaterialId::default(),
         };
         constructed.contents.set(loc, cell.clone());
         changes.push((loc, Some(cell)));
@@ -414,6 +416,7 @@ pub fn spawn_initial_station(
             facing: Facing::default(),
             evaluation: None,
             material: Material::Planks,
+            build_material: BuildMaterialId::default(),
         };
         constructed.contents.set(loc, cell.clone());
         changes.push((loc, Some(cell)));
@@ -495,6 +498,7 @@ mod tests {
                     facing: Facing::default(),
                     evaluation: None,
                     material: Material::Planks,
+                    build_material: BuildMaterialId::default(),
                 },
             );
         }
