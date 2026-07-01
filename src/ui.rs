@@ -15,20 +15,18 @@ use crate::surroundings::farmstead::{
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
-use crate::world::{AssembledWorld, ConstructedWorld, ProposedWorld, ViewableWorld};
+use crate::world::{ViewableWorld, WorldMut};
 use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
     mut contexts: EguiContexts,
     mut clock: ResMut<GameClock>,
     mut farms: ResMut<FarmsResource>,
-    mut pending: ResMut<ProposedWorld>,
-    mut constructed: ResMut<ConstructedWorld>,
+    world: WorldMut,
     resource_icons: Res<ResourceIcons>,
     mut next_game_mode: ResMut<NextState<GameMode>>,
     current_mode: Res<State<GameMode>>,
     mut commands: Commands,
-    mut assembled: ResMut<AssembledWorld>,
     mut viewable: ResMut<ViewableWorld>,
     structure_list: Res<StructureList>,
     mut traveler_state: ResMut<TravelerState>,
@@ -37,6 +35,11 @@ pub fn shared_ui_system(
     material_list: Res<MaterialList>,
 ) {
     use egui::Color32;
+    let WorldMut {
+        mut constructed,
+        mut pending,
+        mut assembled,
+    } = world;
 
     let icon_textures_lg = resource_icons.texture_ids_large(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {

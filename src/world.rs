@@ -421,10 +421,19 @@ impl ViewableWorld {
 /// Groups the three mutable world resources into a single `SystemParam` so that
 /// systems with many other parameters don't exceed Bevy's 16-parameter limit.
 #[derive(SystemParam)]
-pub struct BuildWorldParams<'w> {
+pub struct WorldMut<'w> {
     pub constructed: ResMut<'w, ConstructedWorld>,
     pub pending: ResMut<'w, ProposedWorld>,
     pub assembled: ResMut<'w, AssembledWorld>,
+}
+
+/// Read-only counterpart to `WorldMut`, for systems that only need to
+/// inspect the world resources.
+#[derive(SystemParam)]
+pub struct World<'w> {
+    pub constructed: Res<'w, ConstructedWorld>,
+    pub pending: Res<'w, ProposedWorld>,
+    pub assembled: Res<'w, AssembledWorld>,
 }
 
 /// Returns `(real, proposed_add)`:

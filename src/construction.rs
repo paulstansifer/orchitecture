@@ -10,6 +10,13 @@ use crate::world::{
     VantageEvaluation, ViewableWorld,
 };
 
+/// A material and build-material to apply to a placement. Always passed together.
+#[derive(Clone, Copy)]
+pub struct Materials {
+    pub material: Material,
+    pub build_material: BuildMaterialId,
+}
+
 fn proposal_view(proposal: &Option<Proposal>, has_real_cell: bool) -> ProposalView {
     match proposal {
         None => ProposalView::None,
@@ -33,13 +40,15 @@ impl ProposedWorld {
         &mut self,
         cw: &ConstructedWorld,
         dir: i32,
-        position1: IVec3,
-        position2: IVec3,
+        (position1, position2): (IVec3, IVec3),
         slot: Slot,
         item: Option<StructureId>,
-        material: Material,
-        build_material: BuildMaterialId,
+        materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
+        let Materials {
+            material,
+            build_material,
+        } = materials;
         let start = position1.min(position2);
         let end = position1.max(position2);
         let mut changes: Vec<(SlotCoord, ProposalView)> = Vec::new();
@@ -127,8 +136,7 @@ impl ProposedWorld {
         from: Vec3,
         to: Vec3,
         selected_mesh_id: Option<StructureId>,
-        material: Material,
-        build_material: BuildMaterialId,
+        materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let along_x = (to.x - from.x).abs() > (to.z - from.z).abs();
 
@@ -153,16 +161,7 @@ impl ProposedWorld {
             Slot::XLoWall
         };
 
-        self.propose(
-            cw,
-            0,
-            start,
-            end,
-            slot,
-            selected_mesh_id,
-            material,
-            build_material,
-        )
+        self.propose(cw, 0, (start, end), slot, selected_mesh_id, materials)
     }
 
     pub fn floor_drag(
@@ -171,8 +170,7 @@ impl ProposedWorld {
         from: Vec3,
         to: Vec3,
         selected_mesh_id: Option<StructureId>,
-        material: Material,
-        build_material: BuildMaterialId,
+        materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let from_i = from.round().as_ivec3();
         let to_i = to.round().as_ivec3();
@@ -181,12 +179,10 @@ impl ProposedWorld {
         self.propose(
             cw,
             0,
-            start,
-            end,
+            (start, end),
             Slot::Floor,
             selected_mesh_id,
-            material,
-            build_material,
+            materials,
         )
     }
 
@@ -197,8 +193,7 @@ impl ProposedWorld {
         to: Vec3,
         dir: i32,
         selected_mesh_id: Option<StructureId>,
-        material: Material,
-        build_material: BuildMaterialId,
+        materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let from_i = from.round().as_ivec3();
         let to_i = to.round().as_ivec3();
@@ -207,12 +202,10 @@ impl ProposedWorld {
         self.propose(
             cw,
             dir,
-            start,
-            end,
+            (start, end),
             Slot::Room,
             selected_mesh_id,
-            material,
-            build_material,
+            materials,
         )
     }
 
@@ -222,20 +215,10 @@ impl ProposedWorld {
         location: Vec3,
         dir: i32,
         selected_mesh_id: Option<StructureId>,
-        material: Material,
-        build_material: BuildMaterialId,
+        materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let pos = location.round().as_ivec3();
-        let changes = self.propose(
-            cw,
-            dir,
-            pos,
-            pos,
-            Slot::Room,
-            selected_mesh_id,
-            material,
-            build_material,
-        );
+        let changes = self.propose(cw, dir, (pos, pos), Slot::Room, selected_mesh_id, materials);
         if selected_mesh_id == cw.find_structure_by_name("desk") {
             let loc = SlotCoord {
                 cube: pos,
@@ -254,23 +237,17 @@ impl ProposedWorld {
     pub fn drag(
         &mut self,
         cw: &ConstructedWorld,
-        from: Vec3,
-        to: Vec3,
+        (from, to): (Vec3, Vec3),
         dir: i32,
         selected_mesh_id: StructureId,
         remove: bool,
-        material: Material,
-        build_material: BuildMaterialId,
+        materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let id = (!remove).then_some(selected_mesh_id);
         match cw.structures[selected_mesh_id.as_usize()].placement_style {
-            PlacementStyle::WallDrag => self.wall_drag(cw, from, to, id, material, build_material),
-            PlacementStyle::FloorDrag => {
-                self.floor_drag(cw, from, to, id, material, build_material)
-            }
-            PlacementStyle::RoomDrag => {
-                self.room_drag(cw, from, to, dir, id, material, build_material)
-            }
+            PlacementStyle::WallDrag => self.wall_drag(cw, from, to, id, materials),
+            PlacementStyle::FloorDrag => self.floor_drag(cw, from, to, id, materials),
+            PlacementStyle::RoomDrag => self.room_drag(cw, from, to, dir, id, materials),
             _ => vec![],
         }
     }
@@ -282,8 +259,7 @@ impl ProposedWorld {
         selected_mesh_id: StructureId,
         dir: i32,
         remove: bool,
-        material: Material,
-        build_material: BuildMaterialId,
+        materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         match cw.structures[selected_mesh_id.as_usize()].placement_style {
             PlacementStyle::RoomPlop => self.room_plop(
@@ -291,8 +267,7 @@ impl ProposedWorld {
                 position,
                 dir,
                 (!remove).then_some(selected_mesh_id),
-                material,
-                build_material,
+                materials,
             ),
             _ => vec![],
         }
@@ -455,7 +430,7 @@ mod tests {
     use crate::structure::{PlacementStyle, StructureId, StructureInfo};
     use crate::world::{Cell, ConstructedWorld, Material, Proposal, ProposalView, ProposedWorld};
 
-    use super::{construct, load_from_offline};
+    use super::{construct, load_from_offline, Materials};
 
     fn make_world() -> (ConstructedWorld, ProposedWorld) {
         use crate::structure::StructureEmbedding;
@@ -506,12 +481,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
 
         check!(cw.contents.get(loc).is_none());
@@ -527,12 +503,13 @@ mod tests {
         let deltas = pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(deltas.len() == 1);
         check!(matches!(deltas[0].1, ProposalView::Add(_)));
@@ -549,12 +526,13 @@ mod tests {
         let deltas = pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             None,
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(deltas.len() == 1);
         check!(matches!(deltas[0].1, ProposalView::Remove));
@@ -571,12 +549,13 @@ mod tests {
         let deltas = pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
 
         check!(deltas.is_empty(), "identical proposal should be a no-op");
@@ -589,12 +568,13 @@ mod tests {
         let deltas = pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             None,
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(deltas.is_empty());
         check!(pw.proposed_changes.iter().count() == 0);
@@ -610,12 +590,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(pw.proposed_changes.get(loc).is_some());
 
@@ -638,12 +619,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(pw.undo_record.len() == 1);
         pw.undo(&cw);
@@ -660,12 +642,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::new(1, 0, 0),
-            IVec3::new(1, 0, 0),
+            (IVec3::new(1, 0, 0), IVec3::new(1, 0, 0)),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(cw.contents.get(loc).is_none());
 
@@ -686,12 +669,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             None,
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         let real_changes = construct(&mut cw, &mut pw);
 
@@ -706,12 +690,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         construct(&mut cw, &mut pw);
         // Undo history survives construct so committed changes remain undoable.
@@ -725,12 +710,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::new(1, 0, 0),
-            IVec3::new(1, 0, 0),
+            (IVec3::new(1, 0, 0), IVec3::new(1, 0, 0)),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         construct(&mut cw, &mut pw);
         check!(cw.contents.get(loc).is_some());
@@ -754,12 +740,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(!pw.undo_record.is_empty());
 
@@ -782,12 +769,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         pw.undo(&cw);
         check!(pw.proposed_changes.get(loc).is_none());
@@ -813,12 +801,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         pw.undo(&cw);
         check!(!pw.redo_record.is_empty());
@@ -827,12 +816,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::new(1, 0, 0),
-            IVec3::new(1, 0, 0),
+            (IVec3::new(1, 0, 0), IVec3::new(1, 0, 0)),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(pw.redo_record.is_empty());
         check!(pw.redo(&cw).is_empty());
@@ -871,12 +861,13 @@ mod tests {
         pw.propose(
             &cw,
             0,
-            IVec3::ZERO,
-            IVec3::ZERO,
+            (IVec3::ZERO, IVec3::ZERO),
             Slot::XLoWall,
             thing(&cw),
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
 
         use crate::sparse3d::Sparse3D;
@@ -914,13 +905,14 @@ mod tests {
         // 2. Propose two z-walls via drag (x=1..=2, z=0).
         let drag_deltas = pe.drag(
             &cw,
-            Vec3::new(1.0, 0.0, 0.0),
-            Vec3::new(3.0, 0.0, 0.0),
+            (Vec3::new(1.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 0.0)),
             0,
             wall_id,
             false,
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(drag_deltas.len() == 2);
         check!(pe.proposed_changes.iter().count() == 2);
@@ -932,8 +924,10 @@ mod tests {
             desk_id,
             0,
             false,
-            Material::default(),
-            BuildMaterialId::default(),
+            Materials {
+                material: Material::default(),
+                build_material: BuildMaterialId::default(),
+            },
         );
         check!(click_deltas.len() == 1);
         check!(matches!(click_deltas[0].1, ProposalView::Add(_)));

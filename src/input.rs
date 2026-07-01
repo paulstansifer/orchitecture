@@ -5,16 +5,16 @@ use bevy::window::PrimaryWindow;
 use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
 use crate::build_ui::SandboxMode;
 use crate::camera::GameCamera;
-use crate::construction::construct;
+use crate::construction::{construct, Materials};
 use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
 use crate::world::{
-    apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, BuildWorldParams,
-    ConstructedWorld, GridCellMarker, Material, MaterialAssets, ProposalGhostMarker,
-    ProposalOverlayAssets, ProposedCutMarker, ProposedWorld,
+    apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, ConstructedWorld,
+    GridCellMarker, Material, MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets,
+    ProposedCutMarker, World, WorldMut,
 };
 
 #[derive(Resource)]
@@ -156,7 +156,7 @@ pub fn building_input_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
-    mut world: BuildWorldParams,
+    mut world: WorldMut,
     structure_list: Res<StructureList>,
     mut build_state: ResMut<BuildState>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
@@ -309,27 +309,14 @@ pub fn building_input_system(
 
             let dist_sq = (end - start).length_squared();
 
+            let materials = Materials {
+                material,
+                build_material,
+            };
             let changes = if dist_sq < 0.25 {
-                pending.click(
-                    &constructed,
-                    start,
-                    id,
-                    dir,
-                    remove,
-                    material,
-                    build_material,
-                )
+                pending.click(&constructed, start, id, dir, remove, materials)
             } else {
-                pending.drag(
-                    &constructed,
-                    start,
-                    end,
-                    dir,
-                    id,
-                    remove,
-                    material,
-                    build_material,
-                )
+                pending.drag(&constructed, (start, end), dir, id, remove, materials)
             };
 
             if !changes.is_empty() {
@@ -444,8 +431,7 @@ pub fn recolor_new_mesh_children(
     cursor_entities: Res<CursorEntities>,
     overlay_assets: Res<ProposalOverlayAssets>,
     material_assets: Res<MaterialAssets>,
-    constructed: Res<ConstructedWorld>,
-    pending: Res<ProposedWorld>,
+    world: World,
     ghost_markers_q: Query<(), With<ProposalGhostMarker>>,
     proposed_cut_q: Query<(), With<ProposedCutMarker>>,
     cell_markers_q: Query<&GridCellMarker>,
@@ -457,6 +443,11 @@ pub fn recolor_new_mesh_children(
         Query<&mut MeshMaterial3d<StandardMaterial>>,
     )>,
 ) {
+    let World {
+        constructed,
+        pending,
+        ..
+    } = world;
     let new_entities: Vec<Entity> = param_set.p0().iter().collect();
     for entity in new_entities {
         // Walk up the scene tree to find the entity that owns this mesh child.
@@ -501,7 +492,7 @@ pub fn recolor_new_mesh_children(
                     .map(|c| c.material)
                     .unwrap_or_default();
                 let handle = material_assets.get(material);
-                commands.queue(move |world: &mut World| {
+                commands.queue(move |world: &mut bevy::prelude::World| {
                     if let Ok(mut e) = world.get_entity_mut(entity) {
                         e.remove::<MeshMaterial3d<StandardMaterial>>();
                         e.insert(MeshMaterial3d(handle));

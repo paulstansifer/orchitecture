@@ -15,7 +15,7 @@ use crate::util::zup_scene_transform;
 use crate::world::{
     cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledWorld, ConstructedWorld,
     GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker, ProposedCutMarker,
-    ProposedWorld, ViewableWorld,
+    ProposedWorld, ViewableWorld, World,
 };
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
@@ -312,19 +312,30 @@ fn find_wall_seeds(
     walls
 }
 
+/// Where `climb_wall_column` records what it found, all gathered by the caller's loop
+/// across many wall columns.
+struct ClimbOutputs<'a> {
+    visited_walls: &'a mut HashSet<(i32, i32, i32, bool)>,
+    hidden: &'a mut Vec<SlotCoord>,
+    cut: Option<&'a mut Vec<(SlotCoord, StructureId, bool)>>,
+    floor_seeds: &'a mut Vec<(i32, i32, i32, bool)>,
+}
+
 /// Climbs a wall column upward from `bottom_loc`, hiding all walls in it.
 fn climb_wall_column(
     cw: &ConstructedWorld,
     pe: &ProposedWorld,
     bottom_loc: SlotCoord,
-    x_dir: i32,
-    z_dir: i32,
-    visited_walls: &mut HashSet<(i32, i32, i32, bool)>,
-    hidden: &mut Vec<SlotCoord>,
-    mut cut: Option<&mut Vec<(SlotCoord, StructureId, bool)>>,
-    floor_seeds: &mut Vec<(i32, i32, i32, bool)>,
+    (x_dir, z_dir): (i32, i32),
+    out: ClimbOutputs,
 ) {
     use bevy::math::IVec3;
+    let ClimbOutputs {
+        visited_walls,
+        hidden,
+        mut cut,
+        floor_seeds,
+    } = out;
     let is_x = bottom_loc.slot == Slot::XLoWall;
     let mut y = bottom_loc.cube.y;
     let mut first = true;
@@ -412,16 +423,17 @@ pub fn compute_floor_edge(
                 cw,
                 pe,
                 wall_loc,
-                x_dir,
-                z_dir,
-                &mut visited_walls,
-                &mut hidden,
-                if wall_loc.cube.y == floor_y {
-                    Some(&mut cut)
-                } else {
-                    None // Cuts are only at the bottom level
+                (x_dir, z_dir),
+                ClimbOutputs {
+                    visited_walls: &mut visited_walls,
+                    hidden: &mut hidden,
+                    cut: if wall_loc.cube.y == floor_y {
+                        Some(&mut cut)
+                    } else {
+                        None // Cuts are only at the bottom level
+                    },
+                    floor_seeds: &mut floor_seeds,
                 },
-                &mut floor_seeds,
             );
             for seed in floor_seeds {
                 pending_floors.push_back(seed);
@@ -631,9 +643,7 @@ pub fn propagate_render_layers_system(
 
 pub fn update_cutaway_system(
     mut commands: Commands,
-    constructed: Res<ConstructedWorld>,
-    pending: Res<ProposedWorld>,
-    assembled: Res<AssembledWorld>,
+    world: World,
     mut viewable: ResMut<ViewableWorld>,
     structure_list: Res<StructureList>,
     autotile_handles: Res<AutotileHandles>,
@@ -646,6 +656,11 @@ pub fn update_cutaway_system(
     overlay_q: Query<(Entity, &ProposalOverlayMarker, Option<&RenderLayers>)>,
     children_q: Query<&Children>,
 ) {
+    let World {
+        constructed,
+        pending,
+        assembled,
+    } = world;
     let Ok((_, cam_gt)) = camera_q.single() else {
         return;
     };

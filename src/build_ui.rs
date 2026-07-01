@@ -14,8 +14,8 @@ use crate::structure::sorted_structure_indices;
 use crate::structure::StructureList;
 use crate::world::{
     apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
-    AssembledWorld, BuildWorldParams, ConstructedWorld, ProposalOverlayAssets, ProposedWorld,
-    ViewableWorld,
+    AssembledWorld, ConstructedWorld, ProposalOverlayAssets, ProposedWorld, ViewableWorld,
+    WorldMut,
 };
 
 /// Maps bundled at compile time; always available on all platforms.
@@ -226,7 +226,7 @@ pub fn build_ui_system(
     mut commands: Commands,
     mut contexts: EguiContexts,
     structure_list: Res<StructureList>,
-    mut world: BuildWorldParams,
+    mut world: WorldMut,
     mut viewable: ResMut<ViewableWorld>,
     mut build_state: ResMut<BuildState>,
     mut ui_state: ResMut<UiState>,
