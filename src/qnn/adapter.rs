@@ -80,13 +80,13 @@ impl ModelHolder {
 
 pub fn compute_metrics(
     holder: &ModelHolder,
-    contents: &crate::sparse3d::Sparse3D<crate::world::Cell>,
+    contents: &crate::sparse3d::Sparse3D<crate::city::Cell>,
     structures: &[crate::structure::StructureInfo],
     location: Vec3,
 ) -> Vec<f32> {
     let pos = location.round().as_ivec3();
     let tensor: burn::tensor::Tensor<AppBackend, 5> =
-        super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::world::Cell| {
+        super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::city::Cell| {
             let semb = &structures[cell.id.as_usize()].embedding;
             vec![semb.tall, semb.decorative, semb.passable, semb.striated]
         })

@@ -12,10 +12,10 @@ use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
 use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
-use crate::world::{
-    cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledWorld, ConstructedWorld,
-    GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker, ProposedCutMarker,
-    ProposedWorld, ViewableWorld, World,
+use crate::city::{
+    cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledCity, City,
+    ConstructedCity, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
+    ProposedCity, ProposedCutMarker, ViewableWorld,
 };
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
@@ -24,7 +24,7 @@ use crate::world::{
 fn get_cuts(
     loc: SlotCoord,
     id: StructureId,
-    assembled: &AssembledWorld,
+    assembled: &AssembledCity,
     structure_list: &StructureList,
     autotile_handles: &AutotileHandles,
 ) -> Vec<(Handle<Scene>, Transform)> {
@@ -146,8 +146,8 @@ fn cursor_cube(focus: Vec3, camera: Vec3, is_room_plop: bool) -> (i32, i32) {
 
 /// Searches downward from `from_y` for the first Floor cell at (x, z).
 fn descend_to_floor(
-    cw: &ConstructedWorld,
-    pe: &ProposedWorld,
+    cw: &ConstructedCity,
+    pe: &ProposedCity,
     x: i32,
     z: i32,
     from_y: i32,
@@ -159,8 +159,8 @@ fn descend_to_floor(
 
 /// BFS over Floor cells at `floor_y`, ignoring walls. Returns (x, z) of all reachable cells.
 fn ground_floor_fill(
-    cw: &ConstructedWorld,
-    pe: &ProposedWorld,
+    cw: &ConstructedCity,
+    pe: &ProposedCity,
     sx: i32,
     floor_y: i32,
     sz: i32,
@@ -189,8 +189,8 @@ fn ground_floor_fill(
 /// BFS over Floor cells at `sy` starting from `(sx, sz)`, stopping at walls.
 /// Marks all found cells as visited, pushes them to `hidden`, returns their (x, z).
 fn upper_floor_fill(
-    cw: &ConstructedWorld,
-    pe: &ProposedWorld,
+    cw: &ConstructedCity,
+    pe: &ProposedCity,
     sx: i32,
     sy: i32,
     sz: i32,
@@ -272,8 +272,8 @@ fn upper_floor_fill(
 
 /// For each cell in `floor_cells` (at `floor_y`), finds camera-facing exterior walls.
 fn find_wall_seeds(
-    cw: &ConstructedWorld,
-    pe: &ProposedWorld,
+    cw: &ConstructedCity,
+    pe: &ProposedCity,
     floor_cells: &HashSet<(i32, i32)>,
     floor_y: i32,
     x_dir: i32,
@@ -323,8 +323,8 @@ struct ClimbOutputs<'a> {
 
 /// Climbs a wall column upward from `bottom_loc`, hiding all walls in it.
 fn climb_wall_column(
-    cw: &ConstructedWorld,
-    pe: &ProposedWorld,
+    cw: &ConstructedCity,
+    pe: &ProposedCity,
     bottom_loc: SlotCoord,
     (x_dir, z_dir): (i32, i32),
     out: ClimbOutputs,
@@ -386,8 +386,8 @@ fn climb_wall_column(
 }
 
 pub fn compute_floor_edge(
-    cw: &ConstructedWorld,
-    pe: &ProposedWorld,
+    cw: &ConstructedCity,
+    pe: &ProposedCity,
     (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
     cur_y: i32,
@@ -534,8 +534,8 @@ fn octant_hidden(loc: SlotCoord, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_ne
 
 /// Collects cut-face entries for the SimpleOctant algorithm.
 fn simple_octant_cuts(
-    cw: &ConstructedWorld,
-    pe: &ProposedWorld,
+    cw: &ConstructedCity,
+    pe: &ProposedCity,
     sx: i32,
     sz: i32,
     cut_y: i32,
@@ -643,7 +643,7 @@ pub fn propagate_render_layers_system(
 
 pub fn update_cutaway_system(
     mut commands: Commands,
-    world: World,
+    world: City,
     mut viewable: ResMut<ViewableWorld>,
     structure_list: Res<StructureList>,
     autotile_handles: Res<AutotileHandles>,
@@ -656,7 +656,7 @@ pub fn update_cutaway_system(
     overlay_q: Query<(Entity, &ProposalOverlayMarker, Option<&RenderLayers>)>,
     children_q: Query<&Children>,
 ) {
-    let World {
+    let City {
         constructed,
         pending,
         assembled,
@@ -872,11 +872,11 @@ mod tests {
     use crate::build_helpers::Builder;
     use crate::sparse3d::Facing;
     use crate::structure::load_structure_info;
-    use crate::world::{AssembledWorld, Cell, ConstructedWorld, ProposedWorld, ViewableWorld};
+    use crate::city::{AssembledCity, Cell, ConstructedCity, ProposedCity, ViewableWorld};
 
     /// Builds a 3×1×3-cube room and returns the contents plus the loaded structures.
     fn two_level_room() -> (
-        crate::sparse3d::Sparse3D<crate::world::Cell>,
+        crate::sparse3d::Sparse3D<crate::city::Cell>,
         Vec<crate::structure::StructureInfo>,
     ) {
         let structures = load_structure_info();
@@ -990,8 +990,8 @@ mod tests {
     #[test]
     fn test_visibility_camera_from_z_hides_front_zwall() {
         let (contents, structures) = two_level_room();
-        let mut cw = ConstructedWorld::new(structures);
-        let pe = ProposedWorld::new();
+        let mut cw = ConstructedCity::new(structures);
+        let pe = ProposedCity::new();
         cw.contents = contents;
 
         // Camera from +Z side, cursor inside the room
@@ -1016,8 +1016,8 @@ mod tests {
     #[test]
     fn test_floor_edge_empty_world_hides_nothing() {
         let structures = load_structure_info();
-        let cw = ConstructedWorld::new(structures);
-        let pe = ProposedWorld::new();
+        let cw = ConstructedCity::new(structures);
+        let pe = ProposedCity::new();
 
         let (hidden, cut) = compute_floor_edge(
             &cw,
@@ -1033,8 +1033,8 @@ mod tests {
     #[test]
     fn test_visibility_cursor_inside_hides_right_wall_and_roof() {
         let (contents, structures) = two_level_room();
-        let mut cw = ConstructedWorld::new(structures);
-        let pe = ProposedWorld::new();
+        let mut cw = ConstructedCity::new(structures);
+        let pe = ProposedCity::new();
         cw.contents = contents;
 
         let camera_pos = Vec3::new(10.0, 5.0, 1.5);
@@ -1093,18 +1093,18 @@ mod tests {
             ),
         );
 
-        let mut cw = ConstructedWorld::new(structures);
+        let mut cw = ConstructedCity::new(structures);
         cw.contents = contents;
 
         // Pre-populate autotile_results with empty vecs so that get_cuts never
         // tries to access StructureList mesh handles (which aren't loaded in tests).
-        let mut assembled = AssembledWorld::new();
+        let mut assembled = AssembledCity::new();
         for (loc, _) in cw.contents.iter() {
             assembled.autotile_results.insert(loc, vec![]);
         }
 
         app.insert_resource(cw);
-        app.insert_resource(ProposedWorld::new());
+        app.insert_resource(ProposedCity::new());
         app.insert_resource(assembled);
         app.insert_resource(ViewableWorld::new());
         app.insert_resource(StructureList::default());
@@ -1136,7 +1136,7 @@ mod tests {
         builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 0, 2));
         let contents = builder.get();
 
-        let mut cw = ConstructedWorld::new(structures);
+        let mut cw = ConstructedCity::new(structures);
         cw.contents = contents;
 
         // Camera at (10,5,10), no PrimaryWindow → focus defaults to (0,0,0).
@@ -1149,7 +1149,7 @@ mod tests {
         };
 
         // Without any proposal.
-        let pe_empty = ProposedWorld::new();
+        let pe_empty = ProposedCity::new();
         let (hidden_before, _) =
             compute_floor_edge(&cw, &pe_empty, (focus_pos, false), camera_pos, 0);
         let set_before: HashSet<SlotCoord> = hidden_before.into_iter().collect();
@@ -1159,17 +1159,17 @@ mod tests {
         );
 
         // With a desk proposed at the centre of the room.
-        let mut pe_with_desk = ProposedWorld::new();
+        let mut pe_with_desk = ProposedCity::new();
         pe_with_desk.proposed_changes.set(
             SlotCoord {
                 cube: IVec3::new(1, 0, 1),
                 slot: Slot::Room,
             },
-            crate::world::Proposal::Place(Cell {
+            crate::city::Proposal::Place(Cell {
                 id: desk_id,
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::world::Material::default(),
+                material: crate::city::Material::default(),
                 build_material: crate::materials::BuildMaterialId::default(),
             }),
         );
@@ -1216,17 +1216,17 @@ mod tests {
 
         // Now propose a desk in the middle of the room.
         {
-            let mut pe = app.world_mut().resource_mut::<ProposedWorld>();
+            let mut pe = app.world_mut().resource_mut::<ProposedCity>();
             pe.proposed_changes.set(
                 SlotCoord {
                     cube: IVec3::new(1, 0, 1),
                     slot: Slot::Room,
                 },
-                crate::world::Proposal::Place(Cell {
+                crate::city::Proposal::Place(Cell {
                     id: desk_id,
                     facing: Facing::NegX,
                     evaluation: None,
-                    material: crate::world::Material::default(),
+                    material: crate::city::Material::default(),
                     build_material: crate::materials::BuildMaterialId::default(),
                 }),
             );
@@ -1303,7 +1303,7 @@ mod tests {
             ),
         );
 
-        let mut cw = ConstructedWorld::new(structures);
+        let mut cw = ConstructedCity::new(structures);
         cw.contents = contents;
         app.insert_resource(cw);
 
@@ -1314,19 +1314,19 @@ mod tests {
             cube: IVec3::new(1, 0, 1),
             slot: Slot::Room,
         };
-        let mut pe = ProposedWorld::new();
+        let mut pe = ProposedCity::new();
         pe.proposed_changes.set(
             desk_loc,
-            crate::world::Proposal::Place(crate::world::Cell {
+            crate::city::Proposal::Place(crate::city::Cell {
                 id: desk_id,
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::world::Material::default(),
+                material: crate::city::Material::default(),
                 build_material: crate::materials::BuildMaterialId::default(),
             }),
         );
         app.insert_resource(pe);
-        app.insert_resource(AssembledWorld::new());
+        app.insert_resource(AssembledCity::new());
         app.insert_resource(ViewableWorld::new());
         app.insert_resource(structure_list);
         app.insert_resource(AutotileHandles {
@@ -1353,7 +1353,7 @@ mod tests {
         let shadow_layer = RenderLayers::layer(SHADOW_ONLY_LAYER);
         let ghost_after_frame2 = app
             .world()
-            .resource::<AssembledWorld>()
+            .resource::<AssembledCity>()
             .proposal_entities
             .get(&desk_loc)
             .and_then(|v| v.first().copied());
@@ -1375,7 +1375,7 @@ mod tests {
         #[cfg(autotile_matching)]
         {
             app.world_mut()
-                .resource_mut::<AssembledWorld>()
+                .resource_mut::<AssembledCity>()
                 .proposal_autotile_results
                 .remove(&desk_loc);
         }
@@ -1389,7 +1389,7 @@ mod tests {
 
         let ghost_entities_after = app
             .world()
-            .resource::<AssembledWorld>()
+            .resource::<AssembledCity>()
             .proposal_entities
             .get(&desk_loc)
             .cloned()
@@ -1424,20 +1424,20 @@ mod tests {
         );
 
         let structures = load_structure_info();
-        let mut cw = ConstructedWorld::new(structures);
+        let mut cw = ConstructedCity::new(structures);
         cw.contents.set(
             loc,
             Cell {
                 id: StructureId(0),
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::world::Material::default(),
+                material: crate::city::Material::default(),
                 build_material: crate::materials::BuildMaterialId::default(),
             },
         );
         app.insert_resource(cw);
-        app.insert_resource(ProposedWorld::new());
-        app.insert_resource(AssembledWorld::new());
+        app.insert_resource(ProposedCity::new());
+        app.insert_resource(AssembledCity::new());
         app.insert_resource(ViewableWorld::new());
         app.insert_resource(StructureList::default());
         app.insert_resource(AutotileHandles {

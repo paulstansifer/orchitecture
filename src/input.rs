@@ -11,10 +11,10 @@ use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
-use crate::world::{
-    apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, ConstructedWorld,
-    GridCellMarker, Material, MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets,
-    ProposedCutMarker, World, WorldMut,
+use crate::city::{
+    apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
+    ConstructedCity, GridCellMarker, Material, MaterialAssets, ProposalGhostMarker,
+    ProposalOverlayAssets, ProposedCutMarker,
 };
 
 #[derive(Resource)]
@@ -29,7 +29,7 @@ pub fn cursor_system(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     build_state: Res<BuildState>,
-    constructed: Res<ConstructedWorld>,
+    constructed: Res<ConstructedCity>,
     cursor_entities: Res<CursorEntities>,
     mut cursors: Query<(&mut Transform, &mut Visibility)>,
 ) {
@@ -156,7 +156,7 @@ pub fn building_input_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
-    mut world: WorldMut,
+    mut world: CityMut,
     structure_list: Res<StructureList>,
     mut build_state: ResMut<BuildState>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
@@ -373,7 +373,7 @@ pub fn update_room_cursor_mesh(
     build_state: Res<BuildState>,
     cursor_entities: Res<CursorEntities>,
     structure_list: Res<StructureList>,
-    constructed: Res<ConstructedWorld>,
+    constructed: Res<ConstructedCity>,
     autotile_rules: Res<AutotileRules>,
     autotile_handles: Res<AutotileHandles>,
     mut commands: Commands,
@@ -431,7 +431,7 @@ pub fn recolor_new_mesh_children(
     cursor_entities: Res<CursorEntities>,
     overlay_assets: Res<ProposalOverlayAssets>,
     material_assets: Res<MaterialAssets>,
-    world: World,
+    world: City,
     ghost_markers_q: Query<(), With<ProposalGhostMarker>>,
     proposed_cut_q: Query<(), With<ProposedCutMarker>>,
     cell_markers_q: Query<&GridCellMarker>,
@@ -443,7 +443,7 @@ pub fn recolor_new_mesh_children(
         Query<&mut MeshMaterial3d<StandardMaterial>>,
     )>,
 ) {
-    let World {
+    let City {
         constructed,
         pending,
         ..

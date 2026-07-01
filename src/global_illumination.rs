@@ -9,7 +9,7 @@ use bevy::render::render_resource::{
 use crate::gi_material::{GiMaterial, GI_INTENSITY};
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
-use crate::world::{Cell, ConstructedWorld, MaterialAssets};
+use crate::city::{Cell, ConstructedCity, MaterialAssets};
 
 const FALLOFF: f32 = 0.30;
 // Not sure this works, so not using it yet.
@@ -356,7 +356,7 @@ pub fn gi_to_image(
 /// Bevy system: recomputes the GI volume texture and rebinds it (along with the
 /// volume bounds) on every building material, run whenever `ConstructedWorld` changes.
 pub fn update_global_illumination(
-    constructed: Res<ConstructedWorld>,
+    constructed: Res<ConstructedCity>,
     structure_list: Res<StructureList>,
     material_assets: Res<MaterialAssets>,
     mut images: ResMut<Assets<Image>>,

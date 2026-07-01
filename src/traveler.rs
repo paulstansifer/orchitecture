@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::resource::{ToolKind, UniformResource, UniqueResource};
 use crate::surroundings::generate_path_from_pos;
-use crate::world::ConstructedWorld;
+use crate::city::ConstructedCity;
 
 pub const TRAVELER_CAPACITY: usize = 1;
 
@@ -112,7 +112,7 @@ pub fn can_afford_traveler(
 /// the first storage station, and returns the traveler's path.
 pub fn accept_traveler(
     offer: &IndividualTraveler,
-    constructed: &mut ConstructedWorld,
+    constructed: &mut ConstructedCity,
 ) -> Vec<Vec2> {
     for (res, qty) in &offer.demands {
         crate::station::consume_uniform(constructed, *res, *qty as u32);

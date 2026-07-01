@@ -36,9 +36,9 @@ use orchitecture_lib::{
     ui::shared_ui_system,
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
-    world::{
+    city::{
         spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
-        update_station_highlight, ConstructedWorld, StationHighlight,
+        update_station_highlight, ConstructedCity, StationHighlight,
     },
 };
 
@@ -121,7 +121,7 @@ fn main() {
                 update_cutaway_system.after(autotile_update_system),
                 propagate_render_layers_system.after(update_cutaway_system),
                 //update_window_lights.run_if(resource_changed::<ConstructedWorld>),
-                update_global_illumination.run_if(resource_changed::<ConstructedWorld>),
+                update_global_illumination.run_if(resource_changed::<ConstructedCity>),
                 update_station_highlight,
             ),
         )

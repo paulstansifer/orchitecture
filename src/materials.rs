@@ -44,15 +44,15 @@ pub struct BuildMaterial {
 }
 
 impl BuildMaterial {
-    pub fn world_material(&self) -> crate::world::Material {
+    pub fn world_material(&self) -> crate::city::Material {
         match self.name.as_str() {
-            "Thatch" => crate::world::Material::Shingles,
-            "Canvas" => crate::world::Material::Canvas,
-            "Staves" => crate::world::Material::Timbers,
-            "Fieldstone" => crate::world::Material::Fieldstone,
-            "Plaster" => crate::world::Material::Stucco,
-            "Ashlar" => crate::world::Material::MarbleBlocks,
-            _ => crate::world::Material::default(),
+            "Thatch" => crate::city::Material::Shingles,
+            "Canvas" => crate::city::Material::Canvas,
+            "Staves" => crate::city::Material::Timbers,
+            "Fieldstone" => crate::city::Material::Fieldstone,
+            "Plaster" => crate::city::Material::Stucco,
+            "Ashlar" => crate::city::Material::MarbleBlocks,
+            _ => crate::city::Material::default(),
         }
     }
 }

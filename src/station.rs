@@ -2,7 +2,7 @@ use crate::materials::BuildMaterialId;
 use crate::resource::{Approximation, Inventory, ToolKind, UniformResource, UniqueResource};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::structure::StructureList;
-use crate::world::{apply_changes, AssembledWorld, Cell, ConstructedWorld, Material};
+use crate::city::{apply_changes, AssembledCity, Cell, ConstructedCity, Material};
 use bevy::math::IVec3;
 use bevy::prelude::{Commands, Res, ResMut};
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ fn manhattan2d(a: IVec3, b: IVec3) -> i32 {
 
 /// All furniture cubes named `name` within `STATION_DIST` (2D Manhattan, same
 /// y-layer) of `origin`. Includes `origin` itself when it qualifies.
-fn furniture_of_name_near(cw: &ConstructedWorld, origin: IVec3, name: &str) -> Vec<IVec3> {
+fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<IVec3> {
     let mut found = Vec::new();
     for dx in -STATION_DIST..=STATION_DIST {
         let zspan = STATION_DIST - dx.abs();
@@ -82,7 +82,7 @@ fn furniture_of_name_near(cw: &ConstructedWorld, origin: IVec3, name: &str) -> V
 }
 
 /// True if `core` has at least `min` of every required structure within range.
-fn requirements_met(cw: &ConstructedWorld, core: IVec3, station: &StationInfo) -> bool {
+fn requirements_met(cw: &ConstructedCity, core: IVec3, station: &StationInfo) -> bool {
     station
         .requirements
         .iter()
@@ -91,7 +91,7 @@ fn requirements_met(cw: &ConstructedWorld, core: IVec3, station: &StationInfo) -
 
 /// Choose the core structure for `station_idx` nearest to the clicked `cube`
 /// (the cube itself preferred) whose surroundings satisfy every requirement.
-fn choose_core(cw: &ConstructedWorld, cube: IVec3, station_idx: usize) -> Option<IVec3> {
+fn choose_core(cw: &ConstructedCity, cube: IVec3, station_idx: usize) -> Option<IVec3> {
     let station = &cw.stations[station_idx];
     let core_name = &station.requirements[0].structure;
     let mut cores = furniture_of_name_near(cw, cube, core_name);
@@ -103,7 +103,7 @@ fn choose_core(cw: &ConstructedWorld, cube: IVec3, station_idx: usize) -> Option
 
 /// Stations (indices into `cw.stations`) that could be formed around the
 /// furniture at `cube`.
-pub fn valid_stations_for(cw: &ConstructedWorld, cube: IVec3) -> Vec<usize> {
+pub fn valid_stations_for(cw: &ConstructedCity, cube: IVec3) -> Vec<usize> {
     (0..cw.stations.len())
         .filter(|&idx| choose_core(cw, cube, idx).is_some())
         .collect()
@@ -111,7 +111,7 @@ pub fn valid_stations_for(cw: &ConstructedWorld, cube: IVec3) -> Vec<usize> {
 
 /// The placed-station index (into `cw.placed_stations`) that owns the
 /// furniture at `cube`, if any.
-pub fn station_index_at(cw: &ConstructedWorld, cube: IVec3) -> Option<usize> {
+pub fn station_index_at(cw: &ConstructedCity, cube: IVec3) -> Option<usize> {
     cw.placed_stations
         .iter()
         .position(|ps| ps.structure_locations.contains(&cube))
@@ -131,7 +131,7 @@ pub struct AssignmentPlan {
 /// Plan assigning structures to a new instance of `station_idx` around `cube`.
 /// Prefers unassigned structures; only pulls from other stations to reach `min`.
 pub fn plan_assignment(
-    cw: &ConstructedWorld,
+    cw: &ConstructedCity,
     cube: IVec3,
     station_idx: usize,
 ) -> Option<AssignmentPlan> {
@@ -211,7 +211,7 @@ pub fn plan_assignment(
 }
 
 /// Commit an assignment: create the station, pulling/destroying as planned.
-pub fn commit_assignment(cw: &mut ConstructedWorld, cube: IVec3, station_idx: usize) {
+pub fn commit_assignment(cw: &mut ConstructedCity, cube: IVec3, station_idx: usize) {
     let Some(plan) = plan_assignment(cw, cube, station_idx) else {
         return;
     };
@@ -236,14 +236,14 @@ pub fn commit_assignment(cw: &mut ConstructedWorld, cube: IVec3, station_idx: us
 }
 
 /// Remove a placed station, discarding its inventory contents.
-pub fn unassign_station(cw: &mut ConstructedWorld, idx: usize) {
+pub fn unassign_station(cw: &mut ConstructedCity, idx: usize) {
     if idx < cw.placed_stations.len() {
         cw.placed_stations.remove(idx);
     }
 }
 
 /// Total number of tools of `kind` held across all storage stations.
-pub fn total_tools_of(cw: &ConstructedWorld, kind: ToolKind) -> u32 {
+pub fn total_tools_of(cw: &ConstructedCity, kind: ToolKind) -> u32 {
     (0..cw.placed_stations.len())
         .filter(|&i| is_storage(cw, i))
         .map(|i| cw.placed_stations[i].contents.tool_count_of(kind) as u32)
@@ -252,7 +252,7 @@ pub fn total_tools_of(cw: &ConstructedWorld, kind: ToolKind) -> u32 {
 
 /// Remove one tool of `kind` from the first storage station that holds one.
 /// Returns `true` if a tool was removed.
-pub fn consume_tool(cw: &mut ConstructedWorld, kind: ToolKind) -> bool {
+pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
     for i in 0..cw.placed_stations.len() {
         if !is_storage(cw, i) {
             continue;
@@ -269,7 +269,7 @@ pub fn consume_tool(cw: &mut ConstructedWorld, kind: ToolKind) -> bool {
 
 /// Deposit one tool of `kind` into the first storage station. Returns `true` on
 /// success (`false` if there is no storage station to receive it).
-pub fn deposit_tool(cw: &mut ConstructedWorld, kind: ToolKind) -> bool {
+pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
     if let Some(i) = (0..cw.placed_stations.len()).find(|&i| is_storage(cw, i)) {
         cw.placed_stations[i]
             .contents
@@ -280,14 +280,14 @@ pub fn deposit_tool(cw: &mut ConstructedWorld, kind: ToolKind) -> bool {
     }
 }
 
-fn is_storage(cw: &ConstructedWorld, ps_idx: usize) -> bool {
+fn is_storage(cw: &ConstructedCity, ps_idx: usize) -> bool {
     cw.stations
         .get(cw.placed_stations[ps_idx].station)
         .is_some_and(|info| info.storage.is_some())
 }
 
 /// Total quantity of `res` held across all storage stations.
-pub fn total_uniform(cw: &ConstructedWorld, res: UniformResource) -> u32 {
+pub fn total_uniform(cw: &ConstructedCity, res: UniformResource) -> u32 {
     (0..cw.placed_stations.len())
         .filter(|&i| is_storage(cw, i))
         .flat_map(|i| cw.placed_stations[i].contents.uniform_totals())
@@ -299,7 +299,7 @@ pub fn total_uniform(cw: &ConstructedWorld, res: UniformResource) -> u32 {
 /// Remove `qty` of `res` from storage stations, spreading the deduction across
 /// stations in order. Returns `true` and commits if the total held is ≥ `qty`;
 /// returns `false` and makes no changes otherwise.
-pub fn consume_uniform(cw: &mut ConstructedWorld, res: UniformResource, qty: u32) -> bool {
+pub fn consume_uniform(cw: &mut ConstructedCity, res: UniformResource, qty: u32) -> bool {
     if total_uniform(cw, res) < qty {
         return false;
     }
@@ -342,8 +342,8 @@ const NUM_BINS: usize = 5;
 pub fn spawn_initial_station(
     mut commands: Commands,
     structure_list: Res<StructureList>,
-    mut constructed: ResMut<ConstructedWorld>,
-    mut assembled: ResMut<AssembledWorld>,
+    mut constructed: ResMut<ConstructedCity>,
+    mut assembled: ResMut<AssembledCity>,
 ) {
     let Some(bin_id) = constructed.find_structure_by_name("bin") else {
         return;
@@ -482,8 +482,8 @@ mod tests {
         }
     }
 
-    fn grid_with_bins(def: StationInfo, bins: &[IVec3]) -> ConstructedWorld {
-        let mut cw = ConstructedWorld::new(bin_structures());
+    fn grid_with_bins(def: StationInfo, bins: &[IVec3]) -> ConstructedCity {
+        let mut cw = ConstructedCity::new(bin_structures());
         cw.road_forbidden_zone = false;
         cw.stations = vec![def];
         let bin_id = cw.find_structure_by_name("bin").unwrap();

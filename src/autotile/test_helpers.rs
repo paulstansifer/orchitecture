@@ -3,7 +3,7 @@
 use super::{AutotileResult, MeshSpec};
 use crate::sparse3d::Facing;
 use crate::structure::StructureId;
-use crate::world::Cell;
+use crate::city::Cell;
 
 // ── MeshSpec helpers ─────────────────────────────────────────────────────────
 

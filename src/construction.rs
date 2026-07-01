@@ -4,9 +4,9 @@ use bevy::prelude::Commands;
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 use crate::structure::{PlacementStyle, StructureId, StructureList};
-use crate::world::{
-    apply_changes, clear_proposal_entities, clear_proposed_cut_entities, desired, AssembledWorld,
-    Cell, ConstructedWorld, Material, Proposal, ProposalView, ProposedWorld, UndoRecord,
+use crate::city::{
+    apply_changes, clear_proposal_entities, clear_proposed_cut_entities, desired, AssembledCity,
+    Cell, ConstructedCity, Material, Proposal, ProposalView, ProposedCity, UndoRecord,
     VantageEvaluation, ViewableWorld,
 };
 
@@ -31,14 +31,14 @@ fn proposal_view(proposal: &Option<Proposal>, has_real_cell: bool) -> ProposalVi
     }
 }
 
-impl ProposedWorld {
+impl ProposedCity {
     /// Propose placing or clearing cells in a rectangular range.
     ///
     /// Writes to `proposed_changes` (not `contents`). Returns `(loc, view)` deltas
     /// describing the visual treatment each location now needs.
     fn propose(
         &mut self,
-        cw: &ConstructedWorld,
+        cw: &ConstructedCity,
         dir: i32,
         (position1, position2): (IVec3, IVec3),
         slot: Slot,
@@ -132,7 +132,7 @@ impl ProposedWorld {
 
     pub fn wall_drag(
         &mut self,
-        cw: &ConstructedWorld,
+        cw: &ConstructedCity,
         from: Vec3,
         to: Vec3,
         selected_mesh_id: Option<StructureId>,
@@ -166,7 +166,7 @@ impl ProposedWorld {
 
     pub fn floor_drag(
         &mut self,
-        cw: &ConstructedWorld,
+        cw: &ConstructedCity,
         from: Vec3,
         to: Vec3,
         selected_mesh_id: Option<StructureId>,
@@ -188,7 +188,7 @@ impl ProposedWorld {
 
     pub fn room_drag(
         &mut self,
-        cw: &ConstructedWorld,
+        cw: &ConstructedCity,
         from: Vec3,
         to: Vec3,
         dir: i32,
@@ -211,7 +211,7 @@ impl ProposedWorld {
 
     pub fn room_plop(
         &mut self,
-        cw: &ConstructedWorld,
+        cw: &ConstructedCity,
         location: Vec3,
         dir: i32,
         selected_mesh_id: Option<StructureId>,
@@ -236,7 +236,7 @@ impl ProposedWorld {
 
     pub fn drag(
         &mut self,
-        cw: &ConstructedWorld,
+        cw: &ConstructedCity,
         (from, to): (Vec3, Vec3),
         dir: i32,
         selected_mesh_id: StructureId,
@@ -254,7 +254,7 @@ impl ProposedWorld {
 
     pub fn click(
         &mut self,
-        cw: &ConstructedWorld,
+        cw: &ConstructedCity,
         position: Vec3,
         selected_mesh_id: StructureId,
         dir: i32,
@@ -279,7 +279,7 @@ impl ProposedWorld {
     /// so undo/redo can be reversed.
     fn restore_desired(
         &mut self,
-        cw: &ConstructedWorld,
+        cw: &ConstructedCity,
         targets: Vec<(SlotCoord, Option<Cell>)>,
     ) -> (
         Vec<(SlotCoord, ProposalView)>,
@@ -313,7 +313,7 @@ impl ProposedWorld {
     /// Undo the last action by restoring the desired state each location had
     /// before it. Pushes the inverse onto the redo stack. Returns view deltas
     /// so proposal rendering can be updated.
-    pub fn undo(&mut self, cw: &ConstructedWorld) -> Vec<(SlotCoord, ProposalView)> {
+    pub fn undo(&mut self, cw: &ConstructedCity) -> Vec<(SlotCoord, ProposalView)> {
         let Some(record) = self.undo_record.pop() else {
             return vec![];
         };
@@ -323,7 +323,7 @@ impl ProposedWorld {
     }
 
     /// Redo the last undone action. Pushes the inverse back onto the undo stack.
-    pub fn redo(&mut self, cw: &ConstructedWorld) -> Vec<(SlotCoord, ProposalView)> {
+    pub fn redo(&mut self, cw: &ConstructedCity) -> Vec<(SlotCoord, ProposalView)> {
         let Some(record) = self.redo_record.pop() else {
             return vec![];
         };
@@ -348,8 +348,8 @@ impl ProposedWorld {
 /// The undo record is *preserved*: because it stores absolute prior cell states,
 /// undo can still revert committed changes by proposing their inverse.
 pub fn construct(
-    cw: &mut ConstructedWorld,
-    pe: &mut ProposedWorld,
+    cw: &mut ConstructedCity,
+    pe: &mut ProposedCity,
 ) -> Vec<(SlotCoord, Option<Cell>)> {
     let proposals: Vec<(SlotCoord, Proposal)> = pe
         .proposed_changes
@@ -380,10 +380,10 @@ pub fn construct(
 /// "Advance Month" action when proposals are present.
 /// Returns `true` if construction completed this month (proposals were committed).
 pub fn advance_construction(
-    pending: &mut ProposedWorld,
-    constructed: &mut ConstructedWorld,
+    pending: &mut ProposedCity,
+    constructed: &mut ConstructedCity,
     commands: &mut Commands,
-    assembled: &mut AssembledWorld,
+    assembled: &mut AssembledCity,
     viewable: &mut ViewableWorld,
     structure_list: &StructureList,
 ) -> bool {
@@ -406,8 +406,8 @@ pub fn advance_construction(
 /// Loads a new building, replacing contents and clearing all history.
 /// Entity cleanup is the caller's responsibility.
 pub fn load_from_offline(
-    cw: &mut ConstructedWorld,
-    pw: &mut ProposedWorld,
+    cw: &mut ConstructedCity,
+    pw: &mut ProposedCity,
     new_contents: Sparse3D<Cell>,
 ) -> Vec<(SlotCoord, Option<Cell>)> {
     pw.proposed_changes = Sparse3D::new();
@@ -428,11 +428,11 @@ mod tests {
     use crate::materials::BuildMaterialId;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
     use crate::structure::{PlacementStyle, StructureId, StructureInfo};
-    use crate::world::{Cell, ConstructedWorld, Material, Proposal, ProposalView, ProposedWorld};
+    use crate::city::{Cell, ConstructedCity, Material, Proposal, ProposalView, ProposedCity};
 
     use super::{construct, load_from_offline, Materials};
 
-    fn make_world() -> (ConstructedWorld, ProposedWorld) {
+    fn make_world() -> (ConstructedCity, ProposedCity) {
         use crate::structure::StructureEmbedding;
         let structs = vec![StructureInfo {
             name: "test_wall".to_string(),
@@ -448,12 +448,12 @@ mod tests {
             },
             furniture: false,
         }];
-        let mut cw = ConstructedWorld::new(structs);
+        let mut cw = ConstructedCity::new(structs);
         cw.road_forbidden_zone = false;
-        (cw, ProposedWorld::new())
+        (cw, ProposedCity::new())
     }
 
-    fn thing(cw: &ConstructedWorld) -> Option<StructureId> {
+    fn thing(cw: &ConstructedCity) -> Option<StructureId> {
         cw.find_structure_by_name("test_wall")
     }
 
@@ -832,7 +832,7 @@ mod tests {
 
     #[test]
     fn get_real_or_proposed_removal() {
-        use crate::world::get_real_or_proposed;
+        use crate::city::get_real_or_proposed;
         let (mut cw, mut pw) = make_world();
         let loc = xlowall(0, 0, 0);
         // Real cell with id=0
@@ -845,7 +845,7 @@ mod tests {
 
     #[test]
     fn get_real_or_proposed_falls_back_to_real() {
-        use crate::world::get_real_or_proposed;
+        use crate::city::get_real_or_proposed;
         let (mut cw, pw) = make_world();
         let loc = xlowall(0, 0, 0);
         cw.contents.set(loc, wall_cell(thing(&cw).unwrap()));
@@ -889,9 +889,9 @@ mod tests {
         let desk_id = find_structure_by_name(&structures, "desk").unwrap();
         let wall_id = find_structure_by_name(&structures, "wall").unwrap();
 
-        let mut cw = ConstructedWorld::new(structures.clone());
+        let mut cw = ConstructedCity::new(structures.clone());
         cw.road_forbidden_zone = false;
-        let mut pe = ProposedWorld::new();
+        let mut pe = ProposedCity::new();
 
         // 1. Load a saved building: one z-wall ('-') at (0,0,0).
         let saved = " -\n  \n~~~~~\n~*~*~\n";

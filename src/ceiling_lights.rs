@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
 use crate::structure::{Structure, StructureList};
-use crate::world::{Cell, ConstructedWorld};
+use crate::city::{Cell, ConstructedCity};
 
 #[allow(dead_code)]
 const GRID_PERIOD: i32 = 5;
@@ -114,7 +114,7 @@ fn compute_window_lights(contents: &Sparse3D<Cell>, structures: &[Structure]) ->
 /// Runs when ConstructedWorld changes.
 pub fn update_window_lights(
     mut commands: Commands,
-    constructed: Res<ConstructedWorld>,
+    constructed: Res<ConstructedCity>,
     structure_list: Res<StructureList>,
     existing: Query<Entity, With<WindowLight>>,
 ) {
@@ -317,7 +317,7 @@ fn bbox(tiles: &HashSet<(i32, i32)>) -> (i32, i32, i32, i32) {
 #[allow(dead_code)]
 pub fn update_ceiling_lights(
     mut commands: Commands,
-    constructed: Res<ConstructedWorld>,
+    constructed: Res<ConstructedCity>,
     existing: Query<Entity, With<CeilingLight>>,
 ) {
     for entity in &existing {

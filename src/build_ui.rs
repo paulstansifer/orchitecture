@@ -12,10 +12,9 @@ use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
 use crate::structure::sorted_structure_indices;
 use crate::structure::StructureList;
-use crate::world::{
+use crate::city::{
     apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
-    AssembledWorld, ConstructedWorld, ProposalOverlayAssets, ProposedWorld, ViewableWorld,
-    WorldMut,
+    AssembledCity, CityMut, ConstructedCity, ProposalOverlayAssets, ProposedCity, ViewableWorld,
 };
 
 /// Maps bundled at compile time; always available on all platforms.
@@ -206,9 +205,9 @@ pub fn handle_file_load(
     mut ev_loaded: MessageReader<DialogFileLoaded<LoadDialog>>,
     mut commands: Commands,
     structure_list: Res<StructureList>,
-    mut constructed: ResMut<ConstructedWorld>,
-    mut pending: ResMut<ProposedWorld>,
-    mut assembled: ResMut<AssembledWorld>,
+    mut constructed: ResMut<ConstructedCity>,
+    mut pending: ResMut<ProposedCity>,
+    mut assembled: ResMut<AssembledCity>,
     mut viewable: ResMut<ViewableWorld>,
 ) {
     for ev in ev_loaded.read() {
@@ -226,7 +225,7 @@ pub fn build_ui_system(
     mut commands: Commands,
     mut contexts: EguiContexts,
     structure_list: Res<StructureList>,
-    mut world: WorldMut,
+    mut world: CityMut,
     mut viewable: ResMut<ViewableWorld>,
     mut build_state: ResMut<BuildState>,
     mut ui_state: ResMut<UiState>,
@@ -234,7 +233,7 @@ pub fn build_ui_system(
     mut cutaway_mode: ResMut<CutawayMode>,
     mut sandbox: ResMut<SandboxMode>,
     mut furniture_right_click: ResMut<FurnitureRightClick>,
-    mut station_highlight: ResMut<crate::world::StationHighlight>,
+    mut station_highlight: ResMut<crate::city::StationHighlight>,
     resource_icons: Res<ResourceIcons>,
     material_list: Res<MaterialList>,
     population: Res<Population>,
@@ -583,7 +582,7 @@ pub fn build_ui_system(
                             world.pending.reset();
                             let deltas: Vec<_> = locs
                                 .into_iter()
-                                .map(|loc| (loc, crate::world::ProposalView::None))
+                                .map(|loc| (loc, crate::city::ProposalView::None))
                                 .collect();
                             apply_proposal_changes(
                                 &mut commands,
@@ -641,7 +640,7 @@ pub fn build_ui_system(
     }
     // Write only on change (set_if_neq), so the highlight system doesn't respawn
     // the overlay meshes every frame.
-    station_highlight.set_if_neq(crate::world::StationHighlight(highlight));
+    station_highlight.set_if_neq(crate::city::StationHighlight(highlight));
 }
 
 fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {
@@ -654,7 +653,7 @@ fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {
 /// Totals of all resources across every storage station, sorted for display.
 /// Returns `(resource, total_quantity, precision)`.
 pub(crate) fn station_resource_totals(
-    constructed: &ConstructedWorld,
+    constructed: &ConstructedCity,
 ) -> Vec<(
     crate::resource::UniformResource,
     u32,
@@ -689,12 +688,12 @@ pub(crate) fn station_resource_totals(
 /// Only counts `Proposal::Place` entries; removals and furniture are free.
 /// Returns sorted `(resource, quantity)` pairs; empty when cost is zero.
 pub(crate) fn construction_cost(
-    proposed: &crate::sparse3d::Sparse3D<crate::world::Proposal>,
+    proposed: &crate::sparse3d::Sparse3D<crate::city::Proposal>,
     structure_list: &crate::structure::StructureList,
     material_list: &crate::materials::MaterialList,
 ) -> Vec<(crate::resource::UniformResource, u32)> {
     use crate::resource::UniformResource;
-    use crate::world::Proposal;
+    use crate::city::Proposal;
     use std::collections::HashMap;
 
     let mut totals: HashMap<UniformResource, u32> = HashMap::new();

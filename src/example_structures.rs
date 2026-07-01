@@ -1,4 +1,4 @@
-use crate::world::Cell;
+use crate::city::Cell;
 use crate::{build_helpers::*, llm_rooms};
 use bevy::math::IVec3;
 

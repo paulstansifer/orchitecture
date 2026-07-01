@@ -103,7 +103,7 @@ pub fn surroundings_ui_system(
     mut contexts: EguiContexts,
     mut farms: ResMut<FarmsResource>,
     mut state: ResMut<SurroundingsState>,
-    constructed: Res<crate::world::ConstructedWorld>,
+    constructed: Res<crate::city::ConstructedCity>,
     resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {

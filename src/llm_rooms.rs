@@ -32,7 +32,7 @@ fn wall_off_drops(&mut self, corner_a: IVec3, corner_b: IVec3, obj_name: &str)
 fn set_vantage(&mut self, loc: IVec3, coherence: f32, interest: f32)
 */
 use crate::build_helpers::*;
-use crate::world::Cell;
+use crate::city::Cell;
 use bevy::math::IVec3;
 
 use crate::sparse3d::{RelSlot, Sparse3D};

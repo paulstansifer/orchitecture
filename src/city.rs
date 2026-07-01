@@ -254,7 +254,7 @@ use bevy::asset::Handle;
 /// Committed, authoritative world state. Change detection on this resource
 /// triggers GI recomputation.
 #[derive(Resource)]
-pub struct ConstructedWorld {
+pub struct ConstructedCity {
     pub contents: Sparse3D<Cell>,
     /// Stations placed in the world.
     pub placed_stations: Vec<crate::station::ParticularStation>,
@@ -265,9 +265,9 @@ pub struct ConstructedWorld {
     pub stations: Vec<crate::station::StationInfo>,
 }
 
-impl ConstructedWorld {
+impl ConstructedCity {
     pub fn new(structures: Vec<StructureInfo>) -> Self {
-        ConstructedWorld {
+        ConstructedCity {
             structures,
             contents: Sparse3D::new(),
             stations: Vec::new(),
@@ -310,7 +310,7 @@ impl ConstructedWorld {
 /// Proposed edits not yet committed via Construct!. Mutating this does NOT
 /// trigger GI recomputation.
 #[derive(Resource)]
-pub struct ProposedWorld {
+pub struct ProposedCity {
     pub proposed_changes: Sparse3D<Proposal>,
     pub(crate) undo_record: Vec<UndoRecord>,
     /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
@@ -319,15 +319,15 @@ pub struct ProposedWorld {
     pub months_waited: u32,
 }
 
-impl Default for ProposedWorld {
+impl Default for ProposedCity {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ProposedWorld {
+impl ProposedCity {
     pub fn new() -> Self {
-        ProposedWorld {
+        ProposedCity {
             proposed_changes: Sparse3D::new(),
             undo_record: Vec::new(),
             redo_record: Vec::new(),
@@ -344,7 +344,7 @@ impl ProposedWorld {
     }
 }
 
-pub fn clear_proposal_entities(commands: &mut Commands, assembled: &mut AssembledWorld) {
+pub fn clear_proposal_entities(commands: &mut Commands, assembled: &mut AssembledCity) {
     for (_, entities) in assembled.proposal_entities.drain() {
         for entity in entities {
             commands.entity(entity).despawn();
@@ -362,7 +362,7 @@ pub fn clear_proposed_cut_entities(commands: &mut Commands, viewable: &mut Viewa
 
 /// Autotile-generated ECS entities for both real and proposed cells.
 #[derive(Resource)]
-pub struct AssembledWorld {
+pub struct AssembledCity {
     /// Entities spawned for each placed (real) cell (may be multiple for autotile cells).
     pub cell_entities: HashMap<SlotCoord, Vec<Entity>>,
     /// Last-rendered autotile results per location (one per matching rule), for change detection.
@@ -374,15 +374,15 @@ pub struct AssembledWorld {
     pub proposal_autotile_results: HashMap<SlotCoord, Vec<AutotileResult>>,
 }
 
-impl Default for AssembledWorld {
+impl Default for AssembledCity {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl AssembledWorld {
+impl AssembledCity {
     pub fn new() -> Self {
-        AssembledWorld {
+        AssembledCity {
             cell_entities: HashMap::new(),
             autotile_results: HashMap::new(),
             proposal_entities: HashMap::new(),
@@ -421,27 +421,27 @@ impl ViewableWorld {
 /// Groups the three mutable world resources into a single `SystemParam` so that
 /// systems with many other parameters don't exceed Bevy's 16-parameter limit.
 #[derive(SystemParam)]
-pub struct WorldMut<'w> {
-    pub constructed: ResMut<'w, ConstructedWorld>,
-    pub pending: ResMut<'w, ProposedWorld>,
-    pub assembled: ResMut<'w, AssembledWorld>,
+pub struct CityMut<'w> {
+    pub constructed: ResMut<'w, ConstructedCity>,
+    pub pending: ResMut<'w, ProposedCity>,
+    pub assembled: ResMut<'w, AssembledCity>,
 }
 
 /// Read-only counterpart to `WorldMut`, for systems that only need to
 /// inspect the world resources.
 #[derive(SystemParam)]
-pub struct World<'w> {
-    pub constructed: Res<'w, ConstructedWorld>,
-    pub pending: Res<'w, ProposedWorld>,
-    pub assembled: Res<'w, AssembledWorld>,
+pub struct City<'w> {
+    pub constructed: Res<'w, ConstructedCity>,
+    pub pending: Res<'w, ProposedCity>,
+    pub assembled: Res<'w, AssembledCity>,
 }
 
 /// Returns `(real, proposed_add)`:
 /// - `real`: the cell in `contents`, if any (present even under a `Proposal::Remove`).
 /// - `proposed_add`: the proposed cell only when it is an addition with no real cell beneath it.
 pub fn get_real_and_proposed<'a>(
-    cw: &'a ConstructedWorld,
-    pw: &'a ProposedWorld,
+    cw: &'a ConstructedCity,
+    pw: &'a ProposedCity,
     loc: impl Into<SlotCoord>,
 ) -> (Option<&'a Cell>, Option<&'a Cell>) {
     let loc: SlotCoord = loc.into();
@@ -456,8 +456,8 @@ pub fn get_real_and_proposed<'a>(
 /// Returns real cell if present, otherwise the proposed addition if present.
 /// If both, returns `real`.
 pub fn get_real_or_proposed<'a>(
-    cw: &'a ConstructedWorld,
-    pw: &'a ProposedWorld,
+    cw: &'a ConstructedCity,
+    pw: &'a ProposedCity,
     loc: impl Into<SlotCoord>,
 ) -> Option<&'a Cell> {
     let (real, proposed) = get_real_and_proposed(cw, pw, loc);
@@ -467,8 +467,8 @@ pub fn get_real_or_proposed<'a>(
 /// Returns proposed addition if present, otherwise the real cell.
 /// If both, returns `real`.
 pub fn get_proposed_or_real<'a>(
-    cw: &'a ConstructedWorld,
-    pw: &'a ProposedWorld,
+    cw: &'a ConstructedCity,
+    pw: &'a ProposedCity,
     loc: impl Into<SlotCoord>,
 ) -> Option<&'a Cell> {
     let (real, proposed) = get_real_and_proposed(cw, pw, loc);
@@ -477,11 +477,7 @@ pub fn get_proposed_or_real<'a>(
 
 /// The cell the user currently wants at `loc`: the proposed state if one
 /// exists (`Place` → that cell, `Remove` → empty), otherwise the real cell.
-pub fn desired(
-    cw: &ConstructedWorld,
-    pw: &ProposedWorld,
-    loc: impl Into<SlotCoord>,
-) -> Option<Cell> {
+pub fn desired(cw: &ConstructedCity, pw: &ProposedCity, loc: impl Into<SlotCoord>) -> Option<Cell> {
     let loc: SlotCoord = loc.into();
     match pw.proposed_changes.get(loc) {
         Some(Proposal::Place(cell)) => Some(cell.clone()),
@@ -519,7 +515,7 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
 /// Applies a list of real cell changes: despawns old entities, spawns new ones.
 pub fn apply_changes(
     commands: &mut Commands,
-    assembled: &mut AssembledWorld,
+    assembled: &mut AssembledCity,
     structure_list: &StructureList,
     changes: Vec<(SlotCoord, Option<Cell>)>,
 ) {
@@ -684,7 +680,7 @@ fn spawn_ring_overlay(
 /// Applies a list of proposal view changes: despawns old overlays/ghosts, spawns new ones.
 pub fn apply_proposal_changes(
     commands: &mut Commands,
-    assembled: &mut AssembledWorld,
+    assembled: &mut AssembledCity,
     _structure_list: &StructureList,
     overlay_assets: &ProposalOverlayAssets,
     changes: Vec<(SlotCoord, ProposalView)>,
@@ -889,11 +885,11 @@ pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<Str
         .iter()
         .map(|s| s.info.clone())
         .collect();
-    let mut constructed = ConstructedWorld::new(infos);
+    let mut constructed = ConstructedCity::new(infos);
     constructed.stations = crate::station::load_station_info();
     commands.insert_resource(constructed);
-    commands.insert_resource(ProposedWorld::new());
-    commands.insert_resource(AssembledWorld::new());
+    commands.insert_resource(ProposedCity::new());
+    commands.insert_resource(AssembledCity::new());
     commands.insert_resource(ViewableWorld::new());
 }
 

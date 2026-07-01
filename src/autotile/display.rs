@@ -7,9 +7,9 @@ use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 use crate::sparse3d::{Facing, SlotCoord};
 use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
-use crate::world::{
-    cell_transform, get_proposed_or_real, AssembledWorld, Cell, ConstructedWorld, GridCellMarker,
-    Proposal, ProposalGhostMarker, ProposedWorld,
+use crate::city::{
+    cell_transform, get_proposed_or_real, AssembledCity, Cell, ConstructedCity, GridCellMarker,
+    Proposal, ProposalGhostMarker, ProposedCity,
 };
 
 use super::meshes::{AutotileHandles, AutotileRules};
@@ -127,9 +127,9 @@ fn apply_autotile_updates(
 
 pub fn autotile_update_system(
     mut commands: Commands,
-    constructed: Res<ConstructedWorld>,
-    pending: Res<ProposedWorld>,
-    mut assembled: ResMut<AssembledWorld>,
+    constructed: Res<ConstructedCity>,
+    pending: Res<ProposedCity>,
+    mut assembled: ResMut<AssembledCity>,
     autotile_rules: Res<AutotileRules>,
     autotile_handles: Res<AutotileHandles>,
     structure_list: Res<StructureList>,
@@ -208,7 +208,7 @@ pub fn autotile_update_system(
     let proposal_stale: Vec<SlotCoord> = vec![];
 
     {
-        let aw: &mut AssembledWorld = &mut assembled;
+        let aw: &mut AssembledCity = &mut assembled;
         let results = &mut aw.autotile_results;
         let entities = &mut aw.cell_entities;
         apply_autotile_updates(
@@ -224,7 +224,7 @@ pub fn autotile_update_system(
         );
     }
     {
-        let aw: &mut AssembledWorld = &mut assembled;
+        let aw: &mut AssembledCity = &mut assembled;
         #[cfg(autotile_matching)]
         let results = &mut aw.proposal_autotile_results;
         #[cfg(not(autotile_matching))]

@@ -15,14 +15,14 @@ use crate::surroundings::farmstead::{
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{self, TravelerState};
-use crate::world::{ViewableWorld, WorldMut};
+use crate::city::{CityMut, ViewableWorld};
 use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
     mut contexts: EguiContexts,
     mut clock: ResMut<GameClock>,
     mut farms: ResMut<FarmsResource>,
-    world: WorldMut,
+    world: CityMut,
     resource_icons: Res<ResourceIcons>,
     mut next_game_mode: ResMut<NextState<GameMode>>,
     current_mode: Res<State<GameMode>>,
@@ -35,7 +35,7 @@ pub fn shared_ui_system(
     material_list: Res<MaterialList>,
 ) {
     use egui::Color32;
-    let WorldMut {
+    let CityMut {
         mut constructed,
         mut pending,
         mut assembled,
