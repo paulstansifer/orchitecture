@@ -16,6 +16,19 @@
         )),
     ),
     (
+        name: "bedroom",
+        requirements: [
+            (
+                structure: "pallet",
+                min: 1,
+                max: Some(1),
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+        ],
+        storage: None,
+    ),
+    (
         name: "market stand",
         requirements: [
             (

@@ -26,7 +26,7 @@ use orchitecture_lib::{
     materials::MaterialList,
     orc::{despawn_orc, orc_input_system, setup_orc_animation, spawn_orc},
     ortho_camera::{walk_camera_system, WalkCameraState},
-    population::spawn_population,
+    population::{spawn_population, sync_homes, Population},
     qnn::ModelPlugin,
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
@@ -123,6 +123,8 @@ fn main() {
                 //update_window_lights.run_if(resource_changed::<ConstructedWorld>),
                 update_global_illumination.run_if(resource_changed::<ConstructedCity>),
                 update_station_highlight,
+                sync_homes
+                    .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))

@@ -159,4 +159,18 @@
         furniture: true,
         structure_type: Furniture,
     ),
+    (
+        name: "pallet",
+        placement_style: RoomPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.1,
+            passable: 0.5,
+            decorative: 0.0,
+            striated: 0.0,
+        ),
+        furniture: true,
+        structure_type: Furniture,
+    )
 ]
