@@ -45,7 +45,7 @@ fn register_all(
 }
 
 fn load_png(bytes: &[u8], images: &mut Assets<Image>) -> Handle<Image> {
-    let image = Image::from_buffer(
+    let mut image = Image::from_buffer(
         bytes,
         ImageType::Extension("png"),
         CompressedImageFormats::NONE,
@@ -54,7 +54,43 @@ fn load_png(bytes: &[u8], images: &mut Assets<Image>) -> Handle<Image> {
         RenderAssetUsages::RENDER_WORLD,
     )
     .expect("failed to decode resource icon PNG");
+    premultiply_alpha_srgb(&mut image);
     images.add(image)
+}
+
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(c: f32) -> f32 {
+    if c <= 0.0031308 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// bevy_egui blends with premultiplied alpha, but PNGs decode to straight
+/// alpha. Without this, semi-transparent edge pixels keep their full color
+/// intensity and get over-blended, making anti-aliased edges look jagged.
+/// The premultiply itself is done in linear space, matching the sRGB decode
+/// the GPU performs when sampling this (Rgba8UnormSrgb) texture.
+fn premultiply_alpha_srgb(image: &mut Image) {
+    let Some(data) = image.data.as_mut() else {
+        return;
+    };
+    for pixel in data.chunks_exact_mut(4) {
+        let alpha = pixel[3] as f32 / 255.0;
+        for channel in &mut pixel[0..3] {
+            let linear = srgb_to_linear(*channel as f32 / 255.0);
+            let premultiplied = linear_to_srgb(linear * alpha);
+            *channel = (premultiplied * 255.0).round().clamp(0.0, 255.0) as u8;
+        }
+    }
 }
 
 macro_rules! icon_map {
