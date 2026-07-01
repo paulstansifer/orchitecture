@@ -6,6 +6,8 @@ pub mod matcher;
 #[cfg(autotile_matching)]
 pub mod meshes;
 pub mod parser;
+#[cfg(test)]
+pub mod test_helpers;
 
 pub use compiler::*;
 #[cfg(autotile_matching)]

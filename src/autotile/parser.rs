@@ -925,36 +925,8 @@ pub fn spec_stem(spec: &MeshSpec, slot: UnorientedSlot) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::autotile::test_helpers::*;
     use assert2::check;
-
-    fn atom(name: &str) -> MeshSpec {
-        MeshSpec::Atom {
-            name: name.to_owned(),
-            rotation: 0,
-            translation: None,
-        }
-    }
-    fn atom_r(name: &str, r: i32) -> MeshSpec {
-        MeshSpec::Atom {
-            name: name.to_owned(),
-            rotation: r,
-            translation: None,
-        }
-    }
-    fn atom_t(name: &str, t: (i32, i32, i32)) -> MeshSpec {
-        MeshSpec::Atom {
-            name: name.to_owned(),
-            rotation: 0,
-            translation: Some(t),
-        }
-    }
-    fn atom_rt(name: &str, r: i32, t: (i32, i32, i32)) -> MeshSpec {
-        MeshSpec::Atom {
-            name: name.to_owned(),
-            rotation: r,
-            translation: Some(t),
-        }
-    }
 
     // ── Parsing ──────────────────────────────────────────────────────────────
 

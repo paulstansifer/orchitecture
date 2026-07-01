@@ -207,29 +207,13 @@ pub fn evaluate_autotile_rules(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::autotile::test_helpers::*;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
     use crate::structure::StructureId;
     use crate::world::Cell;
     use assert2::check;
 
-    fn atom(name: &str) -> MeshSpec {
-        MeshSpec::Atom {
-            name: name.to_owned(),
-            rotation: 0,
-            translation: None,
-        }
-    }
-
     // Test-local ID convention: 0=wall, 1=floor, 2=stairs, 3=railing
-    fn wall_cell() -> Cell {
-        Cell {
-            id: StructureId(0),
-            facing: Default::default(),
-            evaluation: None,
-            material: Default::default(),
-            build_material: Default::default(),
-        }
-    }
 
     fn test_char_matches(ch: char, id: StructureId, _facing: Facing) -> bool {
         const NAMES: [&str; 4] = ["wall", "floor", "stairs", "railing"];
@@ -398,23 +382,8 @@ H:
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
-        fn desk_cell() -> Cell {
-            Cell {
-                id: StructureId(1),
-                facing: Default::default(),
-                evaluation: None,
-                material: Default::default(),
-                build_material: Default::default(),
-            }
-        }
         fn is_desk(ch: char, id: StructureId, _facing: Facing) -> bool {
             ch == '=' && id.0 == 1
-        }
-        fn mesh_rotation(r: &AutotileResult) -> i32 {
-            match r {
-                AutotileResult::Mesh { spec, .. } => spec.outer_rotation(),
-                other => panic!("expected mesh, got {other:?}"),
-            }
         }
 
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
@@ -503,28 +472,8 @@ H:
 
     // ── (multi) tests ─────────────────────────────────────────────────────────
 
-    fn desk_cell() -> Cell {
-        Cell {
-            id: StructureId(1),
-            facing: Default::default(),
-            evaluation: None,
-            material: Default::default(),
-            build_material: Default::default(),
-        }
-    }
     fn is_desk(ch: char, id: StructureId, _facing: Facing) -> bool {
         ch == '=' && id.0 == 1
-    }
-    fn mesh_rotations(results: &[&AutotileResult]) -> Vec<i32> {
-        let mut rs: Vec<i32> = results
-            .iter()
-            .map(|r| match r {
-                AutotileResult::Mesh { spec } => spec.outer_rotation(),
-                other => panic!("expected mesh, got {other:?}"),
-            })
-            .collect();
-        rs.sort();
-        rs
     }
 
     /// A `(multi)` case with neighbours on two sides (+X and −X) matches in two orientations,
@@ -647,16 +596,6 @@ H:
     }
 
     // IDs used in column tests: 0 = floor, 1 = column
-    fn col_cell() -> Cell {
-        Cell {
-            id: StructureId(1),
-            facing: Default::default(),
-            evaluation: None,
-            material: Default::default(),
-            build_material: Default::default(),
-        }
-    }
-
     fn col_char_matches(ch: char, id: StructureId, _facing: Facing) -> bool {
         const NAMES: [&str; 2] = ["floor", "column"];
         match ch {
@@ -808,15 +747,6 @@ H:
         let near_floor = RelSlotCoord::new(-1, 0, 0, RelSlot::Floor);
 
         // StructureId 0 = wall, 1 = roof (local convention)
-        fn make_cell(id: u32) -> Cell {
-            Cell {
-                id: StructureId(id),
-                facing: Default::default(),
-                evaluation: None,
-                material: Default::default(),
-                build_material: Default::default(),
-            }
-        }
         fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
             const NAMES: [&str; 2] = ["wall", "roof"];
             char_matches_name(ch, NAMES[id.0 as usize])
@@ -903,15 +833,6 @@ H narrow:
         let far_floor = RelSlotCoord::new(-1, 0, 0, RelSlot::Floor);
 
         // StructureId 0 = wall, 1 = roof (local convention)
-        fn make_cell(id: u32) -> Cell {
-            Cell {
-                id: StructureId(id),
-                facing: Default::default(),
-                evaluation: None,
-                material: Default::default(),
-                build_material: Default::default(),
-            }
-        }
         fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
             const NAMES: [&str; 2] = ["wall", "roof"];
             char_matches_name(ch, NAMES[id.0 as usize])
@@ -985,15 +906,6 @@ H: 1=stairs:90
         let room_loc = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
         // ID 2 = stairs in this test
-        fn stairs_cell(facing: Facing) -> Cell {
-            Cell {
-                id: StructureId(2),
-                facing,
-                evaluation: None,
-                material: Default::default(),
-                build_material: Default::default(),
-            }
-        }
         fn name_is_stairs(name: &str, id: StructureId) -> bool {
             name == "stairs" && id.0 == 2
         }
