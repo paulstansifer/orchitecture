@@ -18,6 +18,7 @@ pub mod llm_rooms;
 pub mod materials;
 pub mod orc;
 pub mod ortho_camera;
+pub mod pathing;
 pub mod paths;
 pub mod population;
 pub mod qnn;

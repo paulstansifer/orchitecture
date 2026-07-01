@@ -47,6 +47,7 @@ bevy_file_dialog = "0.9.1"
 # Used by the `sprite_sheet` binary to save captured frames (kept in lockstep with
 # the version Bevy already pulls in).
 image = { version = "0.25", default-features = false, features = ["png"] }
+bevy_northstar = "0.6.2"
 
 [build-dependencies]
 anyhow = "1"

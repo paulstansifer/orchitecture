@@ -1436,6 +1436,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ef8e4b7e61dfe7719bb03c884dc270cd46a82efb40f93e9933b990c5c190c59"
 
 [[package]]
+name = "bevy_northstar"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddb8060e1e52a57f92d958b58c757ff8f419ccf1cbe2cfadf1e73ce76fc91"
+dependencies = [
+ "bevy",
+ "indexmap",
+ "ndarray 0.17.2",
+ "rayon",
+ "rustc-hash 2.1.1",
+ "slab",
+ "smallvec",
+]
+
+[[package]]
 name = "bevy_pbr"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7641,6 +7656,7 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "bevy_file_dialog",
+ "bevy_northstar",
  "burn",
  "burn-import",
  "clap",
