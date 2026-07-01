@@ -9,19 +9,20 @@ Game parts:
   * main.rs: initialization
   * camera.rs: 3rd-person camera
   * ui.rs: UI
-  * world.rs: ground and exterior lighting
-  * ceiling_lights.rs: Adds lighting inside a `WallGrid`
+  * scene.rs: ground, roads, and exterior lighting
+  * ceiling_lights.rs: Adds lighting inside the city grid
 
-`WallGrid` and related concepts:
-  * wall_grid.rs: `WallGrid` represents the world as `Sparse3d<Cell>`.
+City grid and related concepts:
+  * city.rs: `ConstructedCity`/`ProposedCity` represent the world as `Sparse3D<Cell>`.
     Core types (`Cell`, `VantageEvaluation`), `apply_changes` (syncs ECS entities to grid state),
     and `cell_transform`.
-  * construction.rs: grid-mutation methods on `WallGrid` — `wall_drag`, `floor_drag`,
+  * construction.rs: grid-mutation methods on `ProposedCity` — `wall_drag`, `floor_drag`,
     `room_plop`, `drag`, `click`, `undo`, and `load_from_offline`.
-  * cutaway.rs: hides parts of the `WallGrid` so we can see inside.
+  * cutaway.rs: hides parts of the city grid so we can see inside.
   * sparse3d.rs: storage for walls, ceilings and "room objects" on a sparse cubic grid
   * structure.rs: `Structure`s are the walls, doors, desks, etc. that occupy `Cell`s.
   * serialization.rs: text format for `Sparse3D<Cell>`
+  * pathing.rs: route-finding and connectedness over the city grid, via `bevy_northstar`
 
 3D autotile system (makes meshes responsive to nearby structures):
   * autotile/parser.rs: Parse the "structures.autotile" file...
