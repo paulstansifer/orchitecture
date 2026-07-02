@@ -29,10 +29,18 @@ use orchitecture_lib::paths::MANIFEST_DIR;
 use std::sync::{mpsc, Mutex};
 
 // --- Configuration knobs -------------------------------------------------
+/// Pixels-per-world-unit used when rendering sprite-sheet frames: half of
+/// the game's normal `PIXELS_PER_UNIT`, so the output sheets are half
+/// resolution. Kept separate from `PIXELS_PER_UNIT` (which also governs
+/// unrelated walk-mode canvas rendering) so it can be tuned independently.
+const SPRITE_PIXELS_PER_UNIT: f32 = PIXELS_PER_UNIT as f32 / 2.0;
+/// World-space size of one cell. Fixed in world-space terms (independent of
+/// `SPRITE_PIXELS_PER_UNIT`) so frame composition/margins stay the same
+/// regardless of output resolution.
 /// TODO: this is ad-hoc.
-const CELL_TOTAL_PX: u32 = 2 * PIXELS_PER_UNIT - 16;
-/// World-space size of one cell.
-const CELL_WORLD: f32 = CELL_TOTAL_PX as f32 / PIXELS_PER_UNIT as f32;
+const CELL_WORLD: f32 = (2 * PIXELS_PER_UNIT - 16) as f32 / PIXELS_PER_UNIT as f32;
+/// Pixel size of one cell in the output image.
+const CELL_TOTAL_PX: u32 = (CELL_WORLD * SPRITE_PIXELS_PER_UNIT) as u32;
 
 /// Number of Y-rotation rows in each sprite sheet (0°, 90°, 180°, 270°).
 const N_ROTATIONS: u32 = 4;
@@ -389,7 +397,7 @@ fn spawn_camera_and_lights(
     let look_at = Vec3::Y * LOOK_HEIGHT;
     // ad-hoc: bumping by 0.5 pixels X lines up the bars better.
     let cam_pos =
-        look_at - cam_forward * CAMERA_DISTANCE + Vec3::new(0.5 / PIXELS_PER_UNIT as f32, 0.0, 0.0);
+        look_at - cam_forward * CAMERA_DISTANCE + Vec3::new(0.5 / SPRITE_PIXELS_PER_UNIT, 0.0, 0.0);
     let rotation = Quat::from_mat3(&Mat3::from_cols(cam_r, cam_u, cam_r.cross(cam_u)));
     commands.spawn((
         Camera3d::default(),
@@ -537,7 +545,7 @@ fn spawn_wireframe_cube(
     materials: &mut Assets<StandardMaterial>,
     base: Vec3,
 ) {
-    let radius = 0.5 / PIXELS_PER_UNIT as f32;
+    let radius = 0.5 / SPRITE_PIXELS_PER_UNIT;
     let material = materials.add(StandardMaterial {
         base_color: Color::BLACK,
         emissive: Color::srgb(0.0, 0.0, 1.0).into(),

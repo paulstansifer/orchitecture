@@ -37,6 +37,10 @@ bevy = { version = "0.18.1", default-features = false, features = [
     "default_platform",
     "bevy_gltf",
     "experimental_pbr_pcss",
+    # Needed for the walk-mode pixel-perfect canvas (Sprite/Camera2d used to
+    # upscale the low-resolution render target).
+    "bevy_sprite",
+    "bevy_sprite_render",
 ] }
 bevy_egui = "0.39"
 # Force naga 26's stderr feature on to fix a compile bug in naga 26.0.0 (used by burn's wgpu backend)

@@ -4,6 +4,7 @@ use bevy::input::mouse::{AccumulatedMouseScroll, MouseButton, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
+use bevy_egui::{EguiGlobalSettings, PrimaryEguiContext};
 
 #[derive(Resource)]
 pub struct CameraState {
@@ -27,12 +28,27 @@ impl Default for CameraState {
 #[derive(Component)]
 pub struct GameCamera;
 
-/// Startup system: spawns the main 3D camera.
+/// Startup system: disables Egui's automatic primary-context creation, which would
+/// otherwise race with `spawn_camera`/`spawn_pixel_canvas` to decide which camera hosts
+/// it. `spawn_camera` attaches it explicitly instead, and `main.rs` hands it off to the
+/// walk-mode pixel-canvas camera whenever that's the one actually facing the window.
+///
+/// Note: WebGL (used on wasm) can only have one *active* camera targeting the real
+/// window at a time — a second one, even with `ClearColorConfig::None`, breaks the
+/// whole frame. So the Egui context always lives on whichever camera currently targets
+/// the window, rather than on a separate always-on-top UI camera.
+pub fn disable_auto_egui_primary_context(mut settings: ResMut<EguiGlobalSettings>) {
+    settings.auto_create_primary_context = false;
+}
+
+/// Startup system: spawns the main 3D camera. Hosts the primary Egui context until/
+/// unless walk mode hands it off to the pixel-canvas camera (see `ortho_camera.rs`).
 pub fn spawn_camera(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
         Transform::from_xyz(55.0, 55.0, 25.0).looking_at(Vec3::ZERO, Vec3::Y),
         GameCamera,
+        PrimaryEguiContext,
     ));
 }
 

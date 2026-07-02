@@ -1,7 +1,8 @@
 #![recursion_limit = "256"]
 
+use bevy::camera::RenderTarget;
 use bevy::prelude::*;
-use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
+use bevy_egui::{EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
@@ -9,7 +10,10 @@ use orchitecture_lib::{
         build_ui_system, discover_user_files, enable_ui_input_absorption, handle_file_load,
         handle_file_save, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
     },
-    camera::{camera_input_system, spawn_camera, CameraState, GameCamera},
+    camera::{
+        camera_input_system, disable_auto_egui_primary_context, spawn_camera, CameraState,
+        GameCamera,
+    },
     city::{
         spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
         update_station_highlight, ConstructedCity, StationHighlight,
@@ -25,7 +29,10 @@ use orchitecture_lib::{
     },
     materials::MaterialList,
     orc::{despawn_orc, orc_input_system, setup_orc_animation, spawn_orc},
-    ortho_camera::{walk_camera_system, WalkCameraState},
+    ortho_camera::{
+        resize_pixel_canvas_system, spawn_pixel_canvas, walk_camera_system, PixelCanvas,
+        WalkCameraState,
+    },
     pathing::rebuild_navigation_grid,
     population::{spawn_population, sync_homes, Population},
     qnn::ModelPlugin,
@@ -88,6 +95,9 @@ fn main() {
             Startup,
             (
                 enable_ui_input_absorption,
+                // Must run before any camera is spawned, so the automatic Egui setup
+                // system never gets a chance to race with `spawn_camera` for the context.
+                disable_auto_egui_primary_context,
                 // spawn_structures must run before spawn_grid (grid reads StructureList),
                 // and spawn_initial_station after spawn_grid (it needs the WallGrid resource).
                 (spawn_structures, spawn_grid, spawn_initial_station).chain(),
@@ -97,6 +107,7 @@ fn main() {
                 spawn_population,
                 setup_travelers,
                 spawn_camera,
+                spawn_pixel_canvas,
                 spawn_scene,
                 spawn_cursors,
                 spawn_proposal_overlay_assets,
@@ -117,6 +128,7 @@ fn main() {
                 walk_camera_system.run_if(in_state(GameMode::Walk)),
                 setup_orc_animation.run_if(in_state(GameMode::Walk)),
                 orc_input_system.run_if(in_state(GameMode::Walk)),
+                resize_pixel_canvas_system,
                 recolor_new_mesh_children,
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system.after(autotile_update_system),
@@ -143,11 +155,16 @@ fn main() {
 }
 
 fn enter_walk_mode(
+    mut commands: Commands,
     camera_state: Res<CameraState>,
     mut walk_state: ResMut<WalkCameraState>,
     cursor_entities: Res<CursorEntities>,
+    pixel_canvas: Option<Res<PixelCanvas>>,
     mut visibility_q: Query<&mut Visibility>,
-    mut camera_q: Query<&mut Msaa, With<GameCamera>>,
+    mut camera_q: Query<&mut Camera>,
+    game_camera_q: Query<Entity, With<GameCamera>>,
+    mut msaa_q: Query<&mut Msaa, With<GameCamera>>,
+    mut target_q: Query<&mut RenderTarget, With<GameCamera>>,
 ) {
     walk_state.target_position = camera_state.target_position;
     walk_state.camera_direction = 0;
@@ -156,8 +173,33 @@ fn enter_walk_mode(
     walk_state.is_right_dragging = false;
     walk_state.drag_delta = Vec2::ZERO;
 
-    if let Ok(mut msaa) = camera_q.single_mut() {
+    if let Ok(mut msaa) = msaa_q.single_mut() {
         *msaa = Msaa::Off;
+    }
+    // Render GameCamera to the low-resolution canvas instead of the window, and turn
+    // on the camera/sprite that upscale that canvas back onto the window.
+    // `pixel_canvas` doesn't exist yet the very first time this runs, since the initial
+    // state's OnEnter fires before Startup's `spawn_pixel_canvas`.
+    if let Some(pixel_canvas) = pixel_canvas {
+        if let Ok(mut target) = target_q.single_mut() {
+            *target = RenderTarget::Image(pixel_canvas.image.clone().into());
+        }
+        if let Ok(mut cam) = camera_q.get_mut(pixel_canvas.camera) {
+            cam.is_active = true;
+        }
+        if let Ok(mut vis) = visibility_q.get_mut(pixel_canvas.sprite) {
+            *vis = Visibility::Visible;
+        }
+        // WebGL can only have one *active* camera targeting the real window at a
+        // time, so the Egui context has to move from GameCamera (now off-screen) to
+        // the pixel-canvas camera (now the one facing the window) rather than living
+        // on a separate always-on UI camera.
+        if let Ok(game_camera) = game_camera_q.single() {
+            commands.entity(game_camera).remove::<PrimaryEguiContext>();
+        }
+        commands
+            .entity(pixel_canvas.camera)
+            .insert(PrimaryEguiContext);
     }
 
     for entity in [
@@ -172,12 +214,40 @@ fn enter_walk_mode(
 }
 
 fn enter_build_mode(
+    mut commands: Commands,
     walk_state: Res<WalkCameraState>,
     mut camera_state: ResMut<CameraState>,
-    mut camera_q: Query<(&mut Projection, &mut Msaa), With<GameCamera>>,
+    pixel_canvas: Option<Res<PixelCanvas>>,
+    mut visibility_q: Query<&mut Visibility>,
+    mut camera_q: Query<&mut Camera>,
+    game_camera_q: Query<Entity, With<GameCamera>>,
+    mut projection_q: Query<(&mut Projection, &mut Msaa), With<GameCamera>>,
+    mut target_q: Query<&mut RenderTarget, With<GameCamera>>,
 ) {
     camera_state.target_position = walk_state.target_position;
-    if let Ok((mut projection, mut msaa)) = camera_q.single_mut() {
+    // Render GameCamera directly to the window again, and turn off the pixel canvas.
+    // `pixel_canvas` doesn't exist yet the very first time this runs, since the initial
+    // state's OnEnter fires before Startup's `spawn_pixel_canvas`.
+    if let Some(pixel_canvas) = pixel_canvas {
+        if let Ok(mut target) = target_q.single_mut() {
+            *target = RenderTarget::default();
+        }
+        if let Ok(mut cam) = camera_q.get_mut(pixel_canvas.camera) {
+            cam.is_active = false;
+        }
+        if let Ok(mut vis) = visibility_q.get_mut(pixel_canvas.sprite) {
+            *vis = Visibility::Hidden;
+        }
+        // Hand the Egui context back to GameCamera now that it's the one facing the
+        // window again (see the matching comment in `enter_walk_mode`).
+        commands
+            .entity(pixel_canvas.camera)
+            .remove::<PrimaryEguiContext>();
+        if let Ok(game_camera) = game_camera_q.single() {
+            commands.entity(game_camera).insert(PrimaryEguiContext);
+        }
+    }
+    if let Ok((mut projection, mut msaa)) = projection_q.single_mut() {
         *projection = Projection::Perspective(PerspectiveProjection::default());
         *msaa = Msaa::default();
     }

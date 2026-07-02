@@ -1,13 +1,108 @@
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
-use bevy::camera::ScalingMode;
+use bevy::camera::visibility::RenderLayers;
+use bevy::camera::{ClearColorConfig, ScalingMode};
+use bevy::image::ImageSampler;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureFormat};
 use bevy::window::PrimaryWindow;
+use bevy_egui::EguiContext;
 
 use crate::camera::GameCamera;
 
 pub const PIXELS_PER_UNIT: u32 = 60;
 pub const CAMERA_DISTANCE: f32 = 30.0;
+
+/// Render layer used exclusively by the pixel-perfect canvas sprite, so it doesn't get
+/// drawn twice (once by itself, once by whichever other camera is active).
+const PIXEL_CANVAS_LAYER: usize = 2;
+
+/// Handle to the low-resolution render target that `GameCamera` draws into while in
+/// walk mode, plus the entities that upscale it back onto the window with nearest-
+/// neighbor sampling (2x2 blocks). See `pixel_grid_snap.rs` in the Bevy examples for
+/// the technique this is based on.
+#[derive(Resource)]
+pub struct PixelCanvas {
+    pub image: Handle<Image>,
+    pub camera: Entity,
+    pub sprite: Entity,
+}
+
+/// Startup system: creates the low-resolution canvas image and the camera/sprite pair
+/// that upscale it. Both start inactive/hidden; `main.rs` activates them on entering
+/// walk mode and deactivates them on leaving it, so build mode is unaffected.
+///
+/// The camera also gets its own (initially non-primary) `EguiContext`: WebGL can only
+/// have one *active* camera targeting the real window at a time, so `main.rs` hands the
+/// `PrimaryEguiContext` marker off to this camera whenever it (rather than `GameCamera`)
+/// is the one facing the window, instead of using a separate always-on UI camera.
+pub fn spawn_pixel_canvas(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    // Rgba8, not Bgra8: WebGL (used on wasm) can't unpack BGRA textures, and a failed
+    // upload there was tainting the whole frame (dark gray view, stale UI artifacts).
+    let mut canvas = Image::new_target_texture(1, 1, TextureFormat::Rgba8UnormSrgb, None);
+    canvas.sampler = ImageSampler::nearest();
+    let image = images.add(canvas);
+
+    let sprite = commands
+        .spawn((
+            Sprite::from_image(image.clone()),
+            Visibility::Hidden,
+            RenderLayers::layer(PIXEL_CANVAS_LAYER),
+        ))
+        .id();
+
+    let camera = commands
+        .spawn((
+            Camera2d,
+            Camera {
+                is_active: false,
+                clear_color: ClearColorConfig::Custom(Color::BLACK),
+                ..default()
+            },
+            Msaa::Off,
+            RenderLayers::layer(PIXEL_CANVAS_LAYER),
+            EguiContext::default(),
+        ))
+        .id();
+
+    commands.insert_resource(PixelCanvas {
+        image,
+        camera,
+        sprite,
+    });
+}
+
+/// Keeps the canvas image sized at half the window's resolution (rounding down), and
+/// the sprite that displays it scaled back up 2x, so each canvas texel covers a 2x2
+/// block of screen pixels. Runs every frame regardless of game mode; cheap when the
+/// window size hasn't changed.
+pub fn resize_pixel_canvas_system(
+    windows: Query<&Window, With<PrimaryWindow>>,
+    pixel_canvas: Res<PixelCanvas>,
+    mut images: ResMut<Assets<Image>>,
+    mut sprite_q: Query<&mut Sprite>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let width = ((window.width() as u32) / 2).max(1);
+    let height = ((window.height() as u32) / 2).max(1);
+
+    if let Some(image) = images.get_mut(&pixel_canvas.image) {
+        let size = image.texture_descriptor.size;
+        if size.width != width || size.height != height {
+            image.resize(Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            });
+        }
+    }
+
+    if let Ok(mut sprite) = sprite_q.get_mut(pixel_canvas.sprite) {
+        sprite.custom_size = Some(Vec2::new((width * 2) as f32, (height * 2) as f32));
+    }
+}
 
 /// Trimetric camera basis vectors.
 ///   +X world → upper-left at 45° (1:1), +Z world → upper-right at 1:2, +Y → straight up.
