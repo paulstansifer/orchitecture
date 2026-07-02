@@ -1,4 +1,4 @@
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -7,8 +7,9 @@ use bevy::render::render_resource::{
 };
 
 use crate::city::{Cell, ConstructedCity, MaterialAssets};
+use crate::flood_fill::{coord_hash, flood_fill, has_sky_above};
 use crate::gi_material::{GiMaterial, GI_INTENSITY};
-use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
+use crate::sparse3d::{SlotCoord, Sparse3D};
 use crate::structure::{StructureInfo, StructureList};
 
 const FALLOFF: f32 = 0.30;
@@ -22,51 +23,6 @@ const FALLOFF_NOISE_RADIUS: f32 = 0.10;
 /// are definitionally the strongest ones, which is what we want.
 const MAX_SOURCES: usize = 4;
 
-/// Heap entry ordered by light level (higher = higher priority), with cube
-/// and source coordinates as tiebreakers so that `Ord` and `PartialEq` are
-/// consistent.
-#[derive(PartialEq, Eq)]
-struct HeapEntry {
-    level_bits: u32,
-    cube: IVec3,
-    source: IVec3,
-}
-
-impl Ord for HeapEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.level_bits
-            .cmp(&other.level_bits)
-            .then_with(|| self.cube.x.cmp(&other.cube.x))
-            .then_with(|| self.cube.y.cmp(&other.cube.y))
-            .then_with(|| self.cube.z.cmp(&other.cube.z))
-            .then_with(|| self.source.x.cmp(&other.source.x))
-            .then_with(|| self.source.y.cmp(&other.source.y))
-            .then_with(|| self.source.z.cmp(&other.source.z))
-    }
-}
-
-impl PartialOrd for HeapEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Returns true if no Floor cell exists above `cube` within the grid's bounding box.
-fn has_sky_above(contents: &Sparse3D<Cell>, cube: IVec3, top_y: i32) -> bool {
-    for y in (cube.y + 1)..=top_y {
-        if contents
-            .get(SlotCoord {
-                cube: IVec3::new(cube.x, y, cube.z),
-                slot: Slot::Floor,
-            })
-            .is_some()
-        {
-            return false;
-        }
-    }
-    true
-}
-
 /// Returns how much light passes through the boundary between adjacent cubes `from` and `to`.
 /// 0.0 = fully blocked, 0.5 = window/doorway, 1.0 = open air or transparent structure.
 fn boundary_transmission(
@@ -75,40 +31,7 @@ fn boundary_transmission(
     from: IVec3,
     to: IVec3,
 ) -> f32 {
-    let delta = to - from;
-    let boundary_loc = if delta == IVec3::X {
-        SlotCoord {
-            cube: to,
-            slot: Slot::XLoWall,
-        }
-    } else if delta == IVec3::NEG_X {
-        SlotCoord {
-            cube: from,
-            slot: Slot::XLoWall,
-        }
-    } else if delta == IVec3::Y {
-        SlotCoord {
-            cube: to,
-            slot: Slot::Floor,
-        }
-    } else if delta == IVec3::NEG_Y {
-        SlotCoord {
-            cube: from,
-            slot: Slot::Floor,
-        }
-    } else if delta == IVec3::Z {
-        SlotCoord {
-            cube: to,
-            slot: Slot::ZLoWall,
-        }
-    } else {
-        SlotCoord {
-            cube: from,
-            slot: Slot::ZLoWall,
-        }
-    };
-
-    match contents.get(boundary_loc) {
+    match contents.get(SlotCoord::boundary(from, to)) {
         None => 1.0,
         Some(cell) => match structures[cell.id.as_usize()].name.as_str() {
             "wall" | "floor" => 0.0,
@@ -116,17 +39,6 @@ fn boundary_transmission(
             _ => 1.0,
         },
     }
-}
-
-/// Maps a voxel coordinate to a stable value in [0.0, 1.0) via bit-mixing.
-fn coord_hash(v: IVec3) -> f32 {
-    let mut h = (v.x as u32).wrapping_mul(0x9e3779b9)
-        ^ (v.y as u32).wrapping_mul(0x6c62272e)
-        ^ (v.z as u32).wrapping_mul(0x517cc1b7);
-    h ^= h >> 16;
-    h = h.wrapping_mul(0x45d9f3b);
-    h ^= h >> 16;
-    h as f32 * (1.0 / u32::MAX as f32)
 }
 
 /// Flood-fills sky illuminance from sky-visible cube voxels.
@@ -162,119 +74,33 @@ pub fn compute_sky_illuminance(
     let search_max = max_cube + IVec3::ONE;
     let top_y = search_max.y;
 
-    // Per cell: the settled contributions from the strongest MAX_SOURCES sky sources.
-    // Key: cube coordinate → (source position → contribution level).
-    let mut contributions: HashMap<IVec3, HashMap<IVec3, f32>> = HashMap::new();
-    // BinaryHeap is a max-heap. f32::to_bits() preserves order for non-negative floats.
-    let mut heap: BinaryHeap<HeapEntry> = BinaryHeap::new();
-
     // Seed: each sky-visible cube is its own source at full brightness.
+    let mut seeds = Vec::new();
     for z in search_min.z..=search_max.z {
         for y in search_min.y..=search_max.y {
             for x in search_min.x..=search_max.x {
                 let cube = IVec3::new(x, y, z);
                 if has_sky_above(contents, cube, top_y) {
-                    contributions.entry(cube).or_default().insert(cube, 1.0);
-                    heap.push(HeapEntry {
-                        level_bits: 1.0f32.to_bits(),
-                        cube,
-                        source: cube,
-                    });
+                    seeds.push(cube);
                 }
             }
         }
     }
 
-    const DIRS: [IVec3; 6] = [
-        IVec3::X,
-        IVec3::NEG_X,
-        IVec3::Y,
-        IVec3::NEG_Y,
-        IVec3::Z,
-        IVec3::NEG_Z,
-    ];
-
-    while let Some(HeapEntry {
-        level_bits,
-        cube,
-        source,
-    }) = heap.pop()
-    {
-        let level = f32::from_bits(level_bits);
-
-        // Discard stale entries: a better path for this (source, cube) pair was
-        // already settled if the stored level is strictly higher than what we popped.
-        let settled = contributions
-            .get(&cube)
-            .and_then(|m| m.get(&source))
-            .copied()
-            .unwrap_or(0.0);
-        if settled > level {
-            continue;
+    flood_fill(seeds, search_min, search_max, MAX_SOURCES, |from, to| {
+        let transmission = boundary_transmission(contents, structures, from, to);
+        if transmission == 0.0 {
+            return 0.0;
         }
-
-        for dir in DIRS {
-            let neighbor = cube + dir;
-            if neighbor.x < search_min.x
-                || neighbor.x > search_max.x
-                || neighbor.y < search_min.y
-                || neighbor.y > search_max.y
-                || neighbor.z < search_min.z
-                || neighbor.z > search_max.z
-            {
-                continue;
-            }
-
-            let transmission = boundary_transmission(contents, structures, cube, neighbor);
-            if transmission == 0.0 {
-                continue;
-            }
-            let falloff = if dir == IVec3::NEG_Y {
-                FALLOFF_DOWNWARD
-            } else {
-                FALLOFF
-            };
-
-            let falloff = falloff + FALLOFF_NOISE_RADIUS * (coord_hash(neighbor) * 2.0 - 1.0);
-            let new_level = level * (1.0 - falloff) * transmission;
-
-            // Decide whether to update (source, neighbor): either improve an existing
-            // contribution or add a new one if the cell still has room.
-            let current_for_source = contributions
-                .get(&neighbor)
-                .and_then(|m| m.get(&source))
-                .copied();
-
-            let should_update = match current_for_source {
-                Some(c) => new_level > c,
-                None => {
-                    let count = contributions.get(&neighbor).map_or(0, |m| m.len());
-                    count < MAX_SOURCES
-                }
-            };
-
-            if should_update {
-                contributions
-                    .entry(neighbor)
-                    .or_default()
-                    .insert(source, new_level);
-                heap.push(HeapEntry {
-                    level_bits: new_level.to_bits(),
-                    cube: neighbor,
-                    source,
-                });
-            }
-        }
-    }
-
-    // Combine per-cell contributions with the screen blend: 1 − ∏(1 − cᵢ).
-    contributions
-        .into_iter()
-        .map(|(cube, source_map)| {
-            let screen = 1.0 - source_map.values().fold(1.0_f32, |acc, &v| acc * (1.0 - v));
-            (cube, screen)
-        })
-        .collect()
+        let dir = to - from;
+        let falloff = if dir == IVec3::NEG_Y {
+            FALLOFF_DOWNWARD
+        } else {
+            FALLOFF
+        };
+        let falloff = falloff + FALLOFF_NOISE_RADIUS * (coord_hash(to) * 2.0 - 1.0);
+        transmission * (1.0 - falloff)
+    })
 }
 
 /// Boundary transmission on a cube's three low faces (−X, −Y, −Z), i.e. the

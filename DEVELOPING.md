@@ -23,6 +23,12 @@ City grid and related concepts:
   * structure.rs: `Structure`s are the walls, doors, desks, etc. that occupy `Cell`s.
   * serialization.rs: text format for `Sparse3D<Cell>`
   * pathing.rs: route-finding and connectedness over the city grid, via `bevy_northstar`
+  * flood_fill.rs: generic multi-source flood fill over a cubic grid, plus
+    `has_sky_above` (shared sky-visibility seed predicate); falloff/transmission
+    are supplied by the caller
+  * evaluation.rs: `compute_outdoorsness` — flood-fills how "outdoors" each cell
+    is, from sky-visible cells (see global_illumination.rs for the analogous
+    light computation)
 
 3D autotile system (makes meshes responsive to nearby structures):
   * autotile/parser.rs: Parse the "structures.autotile" file...

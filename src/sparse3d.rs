@@ -63,6 +63,45 @@ impl SlotCoord {
         (big_coords, small_coords)
     }
 
+    /// The canonical `SlotCoord` of the wall/floor boundary shared by two
+    /// orthogonally-adjacent cubes `from` and `to`.
+    pub fn boundary(from: IVec3, to: IVec3) -> SlotCoord {
+        let delta = to - from;
+        if delta == IVec3::X {
+            SlotCoord {
+                cube: to,
+                slot: Slot::XLoWall,
+            }
+        } else if delta == IVec3::NEG_X {
+            SlotCoord {
+                cube: from,
+                slot: Slot::XLoWall,
+            }
+        } else if delta == IVec3::Y {
+            SlotCoord {
+                cube: to,
+                slot: Slot::Floor,
+            }
+        } else if delta == IVec3::NEG_Y {
+            SlotCoord {
+                cube: from,
+                slot: Slot::Floor,
+            }
+        } else if delta == IVec3::Z {
+            SlotCoord {
+                cube: to,
+                slot: Slot::ZLoWall,
+            }
+        } else if delta == IVec3::NEG_Z {
+            SlotCoord {
+                cube: from,
+                slot: Slot::ZLoWall,
+            }
+        } else {
+            panic!("SlotCoord::boundary: {from} and {to} are not orthogonally adjacent");
+        }
+    }
+
     pub fn apply_offset(self, by: SlotCoordOffset) -> Self {
         SlotCoord {
             cube: self.cube + by.cube_offset,
