@@ -1,11 +1,17 @@
+use std::collections::{HashSet, VecDeque};
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
 
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::scene::SceneInstanceReady;
+use bevy::window::PrimaryWindow;
+use bevy_egui::input::EguiWantsInput;
+use bevy_picking::prelude::{MeshRayCast, MeshRayCastSettings};
 
+use crate::camera::GameCamera;
 use crate::ortho_camera::{cam_fwd_xz_base, trimetric_camera_basis, WalkCameraState};
+use crate::pathing::NavigationGrid;
 
 /// Clip indices within assets/static/orcs/orc1_mesh2motion.glb.
 /// Order: Idle Listening(0), Sitting_Enter(1), Sprint_Loop(2), Walk_Loop(3).
@@ -25,6 +31,10 @@ pub struct Orc {
     walk_node: Option<AnimationNodeIndex>,
     /// None = not yet started; Some(false) = idle; Some(true) = walking.
     is_walking: Option<bool>,
+    /// Remaining waypoints (room cubes, including floor/`y`) toward a
+    /// click-to-move destination; drained front-to-back as the orc arrives at
+    /// each one. Cleared by manual (IJKL) movement.
+    nav_path: VecDeque<IVec3>,
 }
 
 pub fn spawn_orc(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -36,6 +46,7 @@ pub fn spawn_orc(mut commands: Commands, asset_server: Res<AssetServer>) {
                 idle_node: None,
                 walk_node: None,
                 is_walking: None,
+                nav_path: VecDeque::new(),
             },
             SceneRoot(asset_server.load("assets/static/orcs/orc1_mesh2motion.glb#Scene0")),
             Transform::from_xyz(0.0, 0.1, 0.0).with_scale(Vec3::splat(0.5)),
@@ -126,6 +137,76 @@ pub fn despawn_orc(mut commands: Commands, orcs: Query<Entity, With<Orc>>) {
     }
 }
 
+/// Collects `entity` and every descendant into `out`, so a ray-cast filter
+/// can exclude an entire scene-spawned hierarchy (e.g. the orc's own GLTF
+/// model) rather than just its root.
+fn collect_with_descendants(
+    entity: Entity,
+    children_q: &Query<&Children>,
+    out: &mut HashSet<Entity>,
+) {
+    out.insert(entity);
+    let Ok(children) = children_q.get(entity) else {
+        return;
+    };
+    for &child in children {
+        collect_with_descendants(child, children_q, out);
+    }
+}
+
+/// Left-click in walk mode: ray-casts from the cursor into the scene and, if
+/// it hits something, paths the orc there via the navigation grid. Ignores
+/// hits on the orc's own model, and defers to egui when it wants the click.
+pub fn orc_click_to_move_system(
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+    egui_wants_input: Res<EguiWantsInput>,
+    children_q: Query<&Children>,
+    nav_grid: Option<Res<NavigationGrid>>,
+    mut ray_cast: MeshRayCast,
+    mut orcs: Query<(Entity, &Transform, &mut Orc)>,
+) {
+    if !mouse_button.just_pressed(MouseButton::Left) || egui_wants_input.wants_any_pointer_input() {
+        return;
+    }
+    let Some(nav_grid) = nav_grid else {
+        return;
+    };
+    let Ok((orc_entity, transform, mut orc)) = orcs.single_mut() else {
+        return;
+    };
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok((camera, camera_transform)) = camera_q.single() else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else {
+        return;
+    };
+
+    let mut excluded = HashSet::new();
+    collect_with_descendants(orc_entity, &children_q, &mut excluded);
+    let filter = |e: Entity| !excluded.contains(&e);
+    let settings = MeshRayCastSettings::default().with_filter(&filter);
+    let Some((_, hit)) = ray_cast.cast_ray(ray, &settings).first() else {
+        return;
+    };
+
+    // `cell_transform` places every slot's mesh origin at exactly `cube.y`,
+    // so rounding a hit's world position recovers its cube uniformly whether
+    // it's the ground, a floor, or a room interior.
+    let to = hit.point.round().as_ivec3();
+    let from = transform.translation.round().as_ivec3();
+    if let Some(path) = nav_grid.find_path(from, to) {
+        orc.nav_path = path.into();
+    }
+}
+
 pub fn orc_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
@@ -160,8 +241,10 @@ pub fn orc_input_system(
         move_dir += cam_r;
     }
 
-    let moving = move_dir != Vec3::ZERO;
-    if moving {
+    let key_moving = move_dir != Vec3::ZERO;
+    if key_moving {
+        orc.nav_path.clear(); // Manual input cancels a pending click-to-move destination.
+
         // Round movement to nearest cardinal or diagonal direction (8 directions total).
         let angle = move_dir.z.atan2(move_dir.x);
         let frac_pi_4 = std::f32::consts::FRAC_PI_4;
@@ -170,7 +253,24 @@ pub fn orc_input_system(
 
         transform.translation += rounded_dir * speed * dt;
         transform.look_to(-rounded_dir, Vec3::Y);
+    } else if let Some(&next) = orc.nav_path.front() {
+        // `Orc` walks at `floor_y + 0.1` (see `spawn_orc`), so waypoints keep that offset.
+        let target = Vec3::new(next.x as f32, next.y as f32 + 0.1, next.z as f32);
+        let to_target = target - transform.translation;
+        let dist = to_target.length();
+        const ARRIVE_EPS: f32 = 0.05;
+        if dist < ARRIVE_EPS {
+            orc.nav_path.pop_front();
+        } else {
+            let dir = to_target / dist;
+            transform.translation += dir * (speed * dt).min(dist);
+            let horizontal = Vec3::new(dir.x, 0.0, dir.z);
+            if horizontal.length_squared() > 1e-6 {
+                transform.look_to(-horizontal.normalize(), Vec3::Y);
+            }
+        }
     }
+    let moving = key_moving || !orc.nav_path.is_empty();
 
     let (Some(player_entity), Some(idle_node), Some(walk_node)) =
         (orc.anim_player, orc.idle_node, orc.walk_node)

@@ -7657,6 +7657,7 @@ dependencies = [
  "bevy_egui",
  "bevy_file_dialog",
  "bevy_northstar",
+ "bevy_picking",
  "burn",
  "burn-import",
  "clap",

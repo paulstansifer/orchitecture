@@ -28,7 +28,9 @@ use orchitecture_lib::{
         update_room_cursor_mesh, BuildState, CursorEntities,
     },
     materials::MaterialList,
-    orc::{despawn_orc, orc_input_system, setup_orc_animation, spawn_orc},
+    orc::{
+        despawn_orc, orc_click_to_move_system, orc_input_system, setup_orc_animation, spawn_orc,
+    },
     ortho_camera::{
         resize_pixel_canvas_system, spawn_pixel_canvas, walk_camera_system, PixelCanvas,
         WalkCameraState,
@@ -127,7 +129,10 @@ fn main() {
                 walk_input_system.run_if(in_state(GameMode::Walk)),
                 walk_camera_system.run_if(in_state(GameMode::Walk)),
                 setup_orc_animation.run_if(in_state(GameMode::Walk)),
-                orc_input_system.run_if(in_state(GameMode::Walk)),
+                orc_click_to_move_system.run_if(in_state(GameMode::Walk)),
+                orc_input_system
+                    .run_if(in_state(GameMode::Walk))
+                    .after(orc_click_to_move_system),
                 resize_pixel_canvas_system,
                 recolor_new_mesh_children,
                 autotile_update_system.after(building_input_system),

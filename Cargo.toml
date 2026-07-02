@@ -52,6 +52,7 @@ bevy_file_dialog = "0.9.1"
 # the version Bevy already pulls in).
 image = { version = "0.25", default-features = false, features = ["png"] }
 bevy_northstar = "0.6.2"
+bevy_picking = { version = "0.18.0", features = ["mesh_picking"] }
 
 [build-dependencies]
 anyhow = "1"
