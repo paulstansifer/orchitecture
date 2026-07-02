@@ -57,6 +57,13 @@ pub fn spawn_pixel_canvas(mut commands: Commands, mut images: ResMut<Assets<Imag
             Camera {
                 is_active: false,
                 clear_color: ClearColorConfig::Custom(Color::BLACK),
+                // Bevy sorts same-order cameras only by `(order, target)`, with no
+                // awareness that this camera's sprite samples GameCamera's Image
+                // target — so without an explicit higher order than GameCamera's
+                // (0), the two could be submitted in either order and this camera
+                // would sometimes render before GameCamera has refreshed the canvas
+                // for the frame, showing a stale (initially black) texture.
+                order: 1,
                 ..default()
             },
             Msaa::Off,

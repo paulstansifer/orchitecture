@@ -2,7 +2,7 @@
 
 use bevy::camera::RenderTarget;
 use bevy::prelude::*;
-use bevy_egui::{EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
+use bevy_egui::{EguiMultipassSchedule, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
@@ -199,8 +199,14 @@ fn enter_walk_mode(
         // time, so the Egui context has to move from GameCamera (now off-screen) to
         // the pixel-canvas camera (now the one facing the window) rather than living
         // on a separate always-on UI camera.
+        // Also strip `EguiMultipassSchedule`: bevy_egui's insert hook on `PrimaryEguiContext`
+        // adds it automatically, but removing the marker doesn't remove it, so it'd be left
+        // stale on this camera and collide with the one about to be added to the other camera
+        // (bevy_egui panics if two entities share the same multi-pass schedule).
         if let Ok(game_camera) = game_camera_q.single() {
-            commands.entity(game_camera).remove::<PrimaryEguiContext>();
+            commands
+                .entity(game_camera)
+                .remove::<(PrimaryEguiContext, EguiMultipassSchedule)>();
         }
         commands
             .entity(pixel_canvas.camera)
@@ -245,9 +251,11 @@ fn enter_build_mode(
         }
         // Hand the Egui context back to GameCamera now that it's the one facing the
         // window again (see the matching comment in `enter_walk_mode`).
+        // See the matching comment in `enter_walk_mode` for why `EguiMultipassSchedule`
+        // needs to be stripped here too.
         commands
             .entity(pixel_canvas.camera)
-            .remove::<PrimaryEguiContext>();
+            .remove::<(PrimaryEguiContext, EguiMultipassSchedule)>();
         if let Ok(game_camera) = game_camera_q.single() {
             commands.entity(game_camera).insert(PrimaryEguiContext);
         }
