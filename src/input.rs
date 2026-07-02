@@ -4,7 +4,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
 use crate::build_ui::SandboxMode;
-use crate::camera::GameCamera;
+use crate::camera::{cursor_to_viewport, GameCamera};
 use crate::city::{
     apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
     ConstructedCity, GridCellMarker, Material, MaterialAssets, ProposalGhostMarker,
@@ -522,7 +522,9 @@ pub(crate) fn cursor_world_pos(
     let window = windows.single().ok()?;
     let cursor = window.cursor_position()?;
     let (camera, camera_transform) = camera_q.single().ok()?;
-    let ray = camera.viewport_to_world(camera_transform, cursor).ok()?;
+    let ray = camera
+        .viewport_to_world(camera_transform, cursor_to_viewport(window, camera, cursor))
+        .ok()?;
 
     let denom = ray.direction.y;
     if denom.abs() < 1e-6 {

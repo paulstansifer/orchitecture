@@ -28,6 +28,22 @@ impl Default for CameraState {
 #[derive(Component)]
 pub struct GameCamera;
 
+/// Converts a window-space cursor position (as returned by `Window::cursor_position`)
+/// into the coordinate space `Camera::viewport_to_world` expects. These normally
+/// coincide, but in walk mode `GameCamera` renders into the pixel canvas image at
+/// half the window's resolution (see `resize_pixel_canvas_system`), so its viewport
+/// is smaller than the window and the cursor position must be rescaled to match.
+pub fn cursor_to_viewport(window: &Window, camera: &Camera, cursor: Vec2) -> Vec2 {
+    let Some(viewport_size) = camera.logical_viewport_size() else {
+        return cursor;
+    };
+    let window_size = Vec2::new(window.width(), window.height());
+    if window_size.x <= 0.0 || window_size.y <= 0.0 {
+        return cursor;
+    }
+    cursor * viewport_size / window_size
+}
+
 /// Startup system: disables Egui's automatic primary-context creation, which would
 /// otherwise race with `spawn_camera`/`spawn_pixel_canvas` to decide which camera hosts
 /// it. `spawn_camera` attaches it explicitly instead, and `main.rs` hands it off to the

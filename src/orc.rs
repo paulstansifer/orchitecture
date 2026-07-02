@@ -9,7 +9,7 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
 use bevy_picking::prelude::{MeshRayCast, MeshRayCastSettings};
 
-use crate::camera::GameCamera;
+use crate::camera::{cursor_to_viewport, GameCamera};
 use crate::ortho_camera::{cam_fwd_xz_base, trimetric_camera_basis, WalkCameraState};
 use crate::pathing::NavigationGrid;
 
@@ -185,7 +185,9 @@ pub fn orc_click_to_move_system(
     let Ok((camera, camera_transform)) = camera_q.single() else {
         return;
     };
-    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor) else {
+    let Ok(ray) =
+        camera.viewport_to_world(camera_transform, cursor_to_viewport(window, camera, cursor))
+    else {
         return;
     };
 
