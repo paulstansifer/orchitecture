@@ -106,3 +106,5 @@ Mutating commands only mutate resources; they don't advance the schedule. Call
 actually react, and `query changed` reports which resources changed as observed by
 a persistent system (so it reflects genuine Bevy change tracking, not a same-frame
 snapshot). See `src/headless.rs` for the implementation and protocol details.
+
+Headless commands can also be used for testing; see `src/station.rs` for an example.

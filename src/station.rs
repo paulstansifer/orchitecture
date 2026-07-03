@@ -596,4 +596,84 @@ mod tests {
         assert_eq!(station_index_at(&grid, b(0, 0)), None);
         assert_eq!(valid_stations_for(&grid, b(0, 0)), vec![0]);
     }
+
+    // ── station form/unassign through the headless REPL ────────────────────────
+
+    use crate::headless::HeadlessSession;
+
+    /// Dispatches `cmd`, panicking with the session's error on failure -- test
+    /// bodies read as the command script they are.
+    fn dispatch_ok(session: &mut HeadlessSession, cmd: &str) -> Vec<String> {
+        session
+            .dispatch(cmd)
+            .unwrap_or_else(|e| panic!("{cmd}: {e}"))
+    }
+
+    fn bedroom_station_idx(session: &mut HeadlessSession) -> usize {
+        dispatch_ok(session, "query stations")
+            .iter()
+            .find_map(|line| {
+                let mut parts = line.split_whitespace();
+                let idx: usize = parts.next()?.parse().ok()?;
+                (parts.next()? == "bedroom").then_some(idx)
+            })
+            .expect("bedroom station type not found")
+    }
+
+    /// Exercises the full station-formation flow through the real Bevy
+    /// schedule -- `place` -> `tick` -> `station form` -> `tick` -- and checks
+    /// that `sync_homes` actually reacts, then that `station unassign` evicts
+    /// the individual again. `plan_assignment`/`commit_assignment` above and
+    /// `assign_homes` (population.rs) each have direct unit tests against bare
+    /// fixtures; this test instead covers the change-detection wiring between
+    /// them that only exists once they're run inside a live `App`.
+    #[test]
+    fn station_form_and_unassign_drives_home_assignment() {
+        let mut session = HeadlessSession::new(1);
+        let bedroom_idx = bedroom_station_idx(&mut session);
+
+        // Place a pallet far from the initial storage room / market stands so
+        // it can't be swept into an existing station.
+        dispatch_ok(&mut session, "place 100 0 100 room pallet");
+        dispatch_ok(&mut session, "tick");
+
+        let valid = dispatch_ok(&mut session, "query valid_stations 100 0 100");
+        assert!(
+            valid.iter().any(|l| l.contains("bedroom")),
+            "expected bedroom to be formable: {valid:?}"
+        );
+
+        let plan = dispatch_ok(
+            &mut session,
+            &format!("query station_plan 100 0 100 {bedroom_idx}"),
+        );
+        assert_eq!(plan, vec!["chosen=1 pulled=0 destroy=[]".to_string()]);
+
+        let form = dispatch_ok(
+            &mut session,
+            &format!("station form 100 0 100 {bedroom_idx}"),
+        );
+        // The 4 stations from `place_initial_station` (storage room + 3 market
+        // stands) plus this new bedroom.
+        assert_eq!(
+            form,
+            vec!["formed pulled=0 destroyed=0 total_stations=5".to_string()]
+        );
+
+        dispatch_ok(&mut session, "tick");
+        let population = dispatch_ok(&mut session, "query population");
+        assert_eq!(population.len(), 1);
+        assert!(
+            population[0].contains("home=4"),
+            "expected the individual to move into the new bedroom: {population:?}"
+        );
+
+        dispatch_ok(&mut session, "station unassign 4");
+        dispatch_ok(&mut session, "tick");
+        let population = dispatch_ok(&mut session, "query population");
+        assert!(
+            population[0].contains("home=none"),
+            "expected the individual to be evicted: {population:?}"
+        );
+    }
 }

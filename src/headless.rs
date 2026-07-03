@@ -62,10 +62,15 @@ Commands (space-separated tokens, one per line):
   tick                                              run one Bevy Update pass (change detection!)
   invite <farm_idx> / uninvite <farm_idx>          toggle a farm's market invitation
   farm_event <farm_idx> market|reroll|specialize   set a farm's next market action
+  station form <x> <y> <z> <station_idx>           form a station of that type around a cube
+  station unassign <idx>                           destroy a placed station (index into query stations)
   query cell <x> <y> <z> <slot>                    inspect a grid location
   query structures                                 list placeable structures
   query stations                                   list station types
   query station <x> <y> <z>                        inspect the station owning a cube
+  query valid_stations <x> <y> <z>                 station types formable around a cube
+  query station_plan <x> <y> <z> <station_idx>     preview a `station form` without committing
+  query population                                 each individual's home/fed/morale
   query farms                                       list all farms
   query farm <idx>                                  detailed farm info + market/production preview
   query outdoorness <x> <y> <z>                    outdoorsness (0.0-1.0) at a cube
@@ -365,6 +370,41 @@ impl HeadlessSession {
                 Ok(vec!["ok".to_string()])
             }
 
+            "station" => {
+                let Some((&sub, args)) = args.split_first() else {
+                    return Err(
+                        "usage: station form <x> <y> <z> <station_idx> | station unassign <idx>"
+                            .to_string(),
+                    );
+                };
+                match sub {
+                    "form" => {
+                        if args.len() < 4 {
+                            return Err("usage: station form <x> <y> <z> <station_idx>".to_string());
+                        }
+                        let cube = parse_ivec3(&args[0..3])?;
+                        let idx = parse_usize(args[3])?;
+                        let (pulled, destroyed, total) = self
+                            .world()
+                            .run_system_once_with(station_form_system, (cube, idx))
+                            .map_err(|e| e.to_string())??;
+                        Ok(vec![format!(
+                            "formed pulled={pulled} destroyed={destroyed} total_stations={total}"
+                        )])
+                    }
+                    "unassign" => {
+                        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
+                        self.world()
+                            .run_system_once_with(station_unassign_system, idx)
+                            .map_err(|e| e.to_string())??;
+                        Ok(vec!["ok".to_string()])
+                    }
+                    other => Err(format!(
+                        "unknown station command: {other} (try form|unassign)"
+                    )),
+                }
+            }
+
             "query" => self.query(args),
 
             "dump" => {
@@ -417,8 +457,9 @@ impl HeadlessSession {
     fn query(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
         let Some((&sub, args)) = args.split_first() else {
             return Err(
-                "usage: query <cell|structures|stations|station|farms|farm|outdoorness|month|\
-                 inventory|proposals|changed|path|connected> ..."
+                "usage: query <cell|structures|stations|station|valid_stations|station_plan|\
+                 population|farms|farm|outdoorness|month|inventory|proposals|changed|path|\
+                 connected> ..."
                     .to_string(),
             );
         };
@@ -518,6 +559,64 @@ impl HeadlessSession {
                         }
                         Ok(lines)
                     }
+                }
+            }
+
+            "valid_stations" => {
+                if args.len() < 3 {
+                    return Err("usage: query valid_stations <x> <y> <z>".to_string());
+                }
+                let cube = parse_ivec3(&args[0..3])?;
+                let cw = self.world().resource::<ConstructedCity>();
+                let ids = station::valid_stations_for(cw, cube);
+                if ids.is_empty() {
+                    Ok(vec!["(none)".to_string()])
+                } else {
+                    Ok(ids
+                        .into_iter()
+                        .map(|i| format!("{i} {}", cw.stations[i].name.replace(' ', "_")))
+                        .collect())
+                }
+            }
+
+            "station_plan" => {
+                if args.len() < 4 {
+                    return Err("usage: query station_plan <x> <y> <z> <station_idx>".to_string());
+                }
+                let cube = parse_ivec3(&args[0..3])?;
+                let idx = parse_usize(args[3])?;
+                let cw = self.world().resource::<ConstructedCity>();
+                match station::plan_assignment(cw, cube, idx) {
+                    None => Ok(vec!["no valid plan".to_string()]),
+                    Some(plan) => Ok(vec![format!(
+                        "chosen={} pulled={} destroy={:?}",
+                        plan.chosen.len(),
+                        plan.pulled,
+                        plan.destroy
+                    )]),
+                }
+            }
+
+            "population" => {
+                let population = self.world().resource::<Population>();
+                if population.individuals.is_empty() {
+                    Ok(vec!["(none)".to_string()])
+                } else {
+                    Ok(population
+                        .individuals
+                        .iter()
+                        .enumerate()
+                        .map(|(i, ind)| {
+                            format!(
+                                "{i} home={} fed={} morale={:.3}",
+                                ind.home
+                                    .map(|h| h.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                                ind.fed_this_month,
+                                ind.morale()
+                            )
+                        })
+                        .collect())
                 }
             }
 
@@ -705,6 +804,30 @@ fn load_system(
     mut pending: ResMut<ProposedCity>,
 ) {
     construction::load_from_offline(&mut cw, &mut pending, new_contents);
+}
+
+fn station_form_system(
+    In((cube, idx)): In<(IVec3, usize)>,
+    mut cw: ResMut<ConstructedCity>,
+) -> Result<(usize, usize, usize), String> {
+    let Some(plan) = station::plan_assignment(&cw, cube, idx) else {
+        return Err("no valid station of that type can be formed here".to_string());
+    };
+    let pulled = plan.pulled;
+    let destroyed = plan.destroy.len();
+    station::commit_assignment(&mut cw, cube, idx);
+    Ok((pulled, destroyed, cw.placed_stations.len()))
+}
+
+fn station_unassign_system(
+    In(idx): In<usize>,
+    mut cw: ResMut<ConstructedCity>,
+) -> Result<(), String> {
+    if idx >= cw.placed_stations.len() {
+        return Err(format!("no such station: {idx}"));
+    }
+    station::unassign_station(&mut cw, idx);
+    Ok(())
 }
 
 fn query_farm_system(
