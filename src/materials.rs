@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::resource::UniformResource;
 
-type Cost = Vec<(UniformResource, u16)>;
+pub type Cost = Vec<(UniformResource, u16)>;
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default,

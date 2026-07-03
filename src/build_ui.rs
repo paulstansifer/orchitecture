@@ -685,7 +685,8 @@ pub(crate) fn station_resource_totals(
 }
 
 /// Total resource cost to complete the current proposed construction.
-/// Only counts `Proposal::Place` entries; removals and furniture are free.
+/// Only counts `Proposal::Place` entries; removals are free. Furniture has a
+/// fixed cost independent of the selected build material.
 /// Returns sorted `(resource, quantity)` pairs; empty when cost is zero.
 pub(crate) fn construction_cost(
     proposed: &crate::sparse3d::Sparse3D<crate::city::Proposal>,
@@ -703,17 +704,20 @@ pub(crate) fn construction_cost(
             continue;
         };
         let info = &structure_infos[cell.id.as_usize()];
-        if info.furniture {
-            continue;
-        }
-        let Some(build_mat) = material_list.materials.get(cell.build_material.0 as usize) else {
-            continue;
-        };
-        let Some(cost) = build_mat.costs.get(&info.structure_type) else {
-            continue;
+        let cost = if let Some(furniture_cost) = &info.furniture {
+            furniture_cost.clone()
+        } else {
+            let Some(build_mat) = material_list.materials.get(cell.build_material.0 as usize)
+            else {
+                continue;
+            };
+            let Some(cost) = build_mat.costs.get(&info.structure_type) else {
+                continue;
+            };
+            cost.clone()
         };
         for (res, qty) in cost {
-            *totals.entry(*res).or_insert(0) += *qty as u32;
+            *totals.entry(res).or_insert(0) += qty as u32;
         }
     }
 

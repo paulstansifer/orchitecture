@@ -79,7 +79,7 @@ fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Ve
             };
             if let Some(cell) = cw.contents.get(loc) {
                 let info = &cw.structures[cell.id.as_usize()];
-                if info.furniture && info.name == name {
+                if info.furniture.is_some() && info.name == name {
                     found.push(cube);
                 }
             }
@@ -482,7 +482,7 @@ mod tests {
                 decorative: 0.0,
                 striated: 0.0,
             },
-            furniture: true,
+            furniture: Some(vec![(crate::resource::UniformResource::Plank, 1)]),
         }]
     }
 

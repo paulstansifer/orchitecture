@@ -12,6 +12,7 @@ pub enum UniformResource {
     Fieldstone,
     Block,
     Lime,
+    Plank,
 }
 
 impl UniformResource {
@@ -24,6 +25,7 @@ impl UniformResource {
         UniformResource::Fieldstone,
         UniformResource::Block,
         UniformResource::Lime,
+        UniformResource::Plank,
     ];
 }
 
@@ -38,6 +40,7 @@ impl UniformResource {
             UniformResource::Fieldstone => "Fieldstone",
             UniformResource::Block => "Blocks",
             UniformResource::Lime => "Lime",
+            UniformResource::Plank => "Planks",
         }
     }
 

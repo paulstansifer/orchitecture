@@ -259,7 +259,7 @@ mod tests {
                     decorative: 0.0,
                     striated: 0.0,
                 },
-                furniture: false,
+                furniture: None,
             },
             StructureInfo {
                 name: "floor".to_string(),
@@ -273,7 +273,7 @@ mod tests {
                     decorative: 0.0,
                     striated: 0.0,
                 },
-                furniture: false,
+                furniture: None,
             },
         ]
     }

@@ -463,7 +463,7 @@ impl HeadlessSession {
                             s.name.replace(' ', "_"),
                             s.placement_style,
                             s.structure_type,
-                            s.furniture
+                            s.furniture.is_some()
                         )
                     })
                     .collect())

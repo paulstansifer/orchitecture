@@ -116,6 +116,7 @@ pub fn spawn_resource_icons(mut commands: Commands, mut images: ResMut<Assets<Im
         Fieldstone => "fieldstone",
         Block     => "block",
         Lime      => "lime",
+        Plank     => "plank",
     });
     let small = icon_map!(&mut images, "16x12", {
         Potato    => "potato",
@@ -126,6 +127,7 @@ pub fn spawn_resource_icons(mut commands: Commands, mut images: ResMut<Assets<Im
         Fieldstone => "fieldstone",
         Block     => "block",
         Lime      => "lime",
+        Plank     => "plank",
     });
     commands.insert_resource(ResourceIcons { large, small });
 }

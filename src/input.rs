@@ -306,7 +306,7 @@ pub fn building_input_system(
             let dir = build_state.cur_dir as i32;
             let (material, build_material) = {
                 let info = &constructed.structures[id.as_usize()];
-                if info.furniture {
+                if info.furniture.is_some() {
                     (Material::Planks, BuildMaterialId(0))
                 } else {
                     let stype = info.structure_type;
@@ -368,7 +368,10 @@ pub fn building_input_system(
                     slot: Slot::Room,
                 };
                 if let Some(cell) = constructed.contents.get(loc) {
-                    if constructed.structures[cell.id.as_usize()].furniture {
+                    if constructed.structures[cell.id.as_usize()]
+                        .furniture
+                        .is_some()
+                    {
                         furniture_right_click.0 = Some(cube);
                     }
                 }

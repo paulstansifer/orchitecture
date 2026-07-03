@@ -36,9 +36,11 @@ pub struct StructureInfo {
     pub x_char: Option<char>,
     pub z_char: Option<char>,
     pub embedding: StructureEmbedding,
-    /// Furniture is always made of planks, regardless of the selected material.
+    /// Furniture has a fixed cost, independent of the selected build material
+    /// (most furniture is made of planks, but e.g. pallets cost straw and canvas).
+    /// `None` means this is not furniture.
     #[serde(default)]
-    pub furniture: bool,
+    pub furniture: Option<crate::materials::Cost>,
     pub structure_type: crate::materials::StructureType,
 }
 

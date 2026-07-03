@@ -10,5 +10,19 @@
                 (Timber, (start: 5, end: 10)),
             ]),
         ],
+        reward: Tool(Whipsaw),
+    ),
+    (
+        appear_chance: 0.4,
+        origin_dist: (start: 1.5, end: 2.5),
+        demands: [
+            (options: [(Potato, (start: 10, end: 15))]),
+            (options: [
+                (Canvas, (start: 5, end: 10)),
+                (Straw, (start: 5, end: 10)),
+                (Timber, (start: 5, end: 10)),
+            ]),
+        ],
+        reward: Resource(Plank, (start: 4, end: 9)),
     ),
 ]

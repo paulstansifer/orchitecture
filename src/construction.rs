@@ -76,7 +76,7 @@ impl ProposedCity {
                     let new_proposal: Option<Proposal> = if let Some(id) = item {
                         let facing = Facing::from_number(dir as u8);
                         // Furniture is always planks, regardless of the selected material.
-                        let material = if cw.structures[id.as_usize()].furniture {
+                        let material = if cw.structures[id.as_usize()].furniture.is_some() {
                             Material::Planks
                         } else {
                             material
@@ -462,7 +462,7 @@ mod tests {
                 decorative: 0.0,
                 striated: 0.0,
             },
-            furniture: false,
+            furniture: None,
         }];
         let mut cw = ConstructedCity::new(structs);
         cw.road_forbidden_zone = false;

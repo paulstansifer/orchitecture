@@ -13,12 +13,27 @@ pub struct TravelerDemand {
     pub options: Vec<(UniformResource, std::ops::Range<u16>)>,
 }
 
+/// What a traveler gives in exchange for their demands being met.
+#[derive(Serialize, Deserialize, Clone)]
+pub enum TravelerReward {
+    Tool(ToolKind),
+    Resource(UniformResource, std::ops::Range<u16>),
+}
+
+/// A resolved `TravelerReward`, with any quantity range rolled to a concrete value.
+#[derive(Serialize, Deserialize, Clone)]
+pub enum ResolvedReward {
+    Tool(ToolKind),
+    Resource(UniformResource, u16),
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Traveler {
     pub appear_chance: f32,
     /// Fraction of the view-circle radius.
     pub origin_dist: std::ops::Range<f32>,
     pub demands: Vec<TravelerDemand>,
+    pub reward: TravelerReward,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -26,6 +41,7 @@ pub struct IndividualTraveler {
     pub config_index: usize,
     /// Resolved demands: one `(resource, quantity)` per `TravelerDemand`.
     pub demands: Vec<(UniformResource, u16)>,
+    pub reward: ResolvedReward,
     /// Path from the traveler's starting position toward the map origin.
     pub path: Vec<Vec2>,
 }
@@ -75,9 +91,17 @@ pub fn roll_traveler_offer(state: &mut TravelerState, view_radius: f32, rng: &mu
 
         let path = generate_path_from_pos(start, rng);
 
+        let reward = match &config.reward {
+            TravelerReward::Tool(kind) => ResolvedReward::Tool(*kind),
+            TravelerReward::Resource(res, range) => {
+                ResolvedReward::Resource(*res, rng.random_range(range.start..range.end))
+            }
+        };
+
         state.current_offer = Some(IndividualTraveler {
             config_index: idx,
             demands,
+            reward,
             path,
         });
         break;
@@ -108,8 +132,8 @@ pub fn can_afford_traveler(
         .all(|(res, qty)| available(*res) >= *qty as u32)
 }
 
-/// Deducts demands from storage (spread across stations), deposits one Tool into
-/// the first storage station, and returns the traveler's path.
+/// Deducts demands from storage (spread across stations), deposits the traveler's
+/// reward into the first storage station, and returns the traveler's path.
 pub fn accept_traveler(offer: &IndividualTraveler, constructed: &mut ConstructedCity) -> Vec<Vec2> {
     for (res, qty) in &offer.demands {
         crate::station::consume_uniform(constructed, *res, *qty as u32);
@@ -121,9 +145,11 @@ pub fn accept_traveler(offer: &IndividualTraveler, constructed: &mut Constructed
             .is_some_and(|info| info.storage.is_some())
     });
     if let Some(idx) = storage_idx {
-        constructed.placed_stations[idx]
-            .contents
-            .add_unique(UniqueResource::Tool(ToolKind::Whipsaw));
+        let contents = &mut constructed.placed_stations[idx].contents;
+        match &offer.reward {
+            ResolvedReward::Tool(kind) => contents.add_unique(UniqueResource::Tool(*kind)),
+            ResolvedReward::Resource(res, qty) => contents.add_uniform(*res, *qty),
+        }
     }
 
     offer.path.clone()

@@ -10,7 +10,6 @@
   * Split `WallGrid` into multiple things to make change-detection meaningful
   * Shadow-only rendering seems to be path-dependent in some way.
   * Maybe refactor material assignment; seems like GI has added a bit of a mess.
-  * Icons seems to not be antialiased?
   * Don't derive `Clone` or `Copy` on resources; define conserving operations, and a `.clone_for_simulation()` to use when imagining outcomes 
 # Zoomed-out mode:
   * May recruit wayfarers as builders/specialists if a free station is available

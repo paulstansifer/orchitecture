@@ -10,7 +10,7 @@
             decorative: 0.5,
             striated: 0.0,
         ),
-        furniture: true,
+        furniture: Some([(Plank, 4)]),
         structure_type: Furniture,
     ),
     (
@@ -128,7 +128,7 @@
             decorative: 0.3,
             striated: 0.3,
         ),
-        furniture: true,
+        furniture: Some([(Plank, 6)]),
         structure_type: Furniture,
     ),
     (
@@ -142,7 +142,7 @@
             decorative: 0.0,
             striated: 0.5,
         ),
-        furniture: true,
+        furniture: Some([(Plank, 5)]),
         structure_type: Furniture,
     ),
     (
@@ -156,7 +156,7 @@
             decorative: 0.0,
             striated: 0.0,
         ),
-        furniture: true,
+        furniture: Some([(Plank, 3)]),
         structure_type: Furniture,
     ),
     (
@@ -170,7 +170,7 @@
             decorative: 0.0,
             striated: 0.0,
         ),
-        furniture: true,
+        furniture: Some([(Straw, 2), (Canvas, 2)]),
         structure_type: Furniture,
     )
 ]
