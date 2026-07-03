@@ -15,6 +15,7 @@ pub mod game_mode;
 pub mod gi_material;
 pub mod global_illumination;
 pub mod grid_preview;
+pub mod headless;
 pub mod input;
 pub mod llm_rooms;
 pub mod materials;

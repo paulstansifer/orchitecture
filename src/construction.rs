@@ -252,6 +252,22 @@ impl ProposedCity {
         }
     }
 
+    /// Propose placing (or, with `item: None`, removing) a single structure at an
+    /// absolute grid location. Unlike `click`/`drag`, which infer the slot from a
+    /// mouse position in world space, this takes the slot directly -- meant for
+    /// callers (e.g. the headless testing harness) that already know exactly
+    /// where they want to build.
+    pub fn place_at(
+        &mut self,
+        cw: &ConstructedCity,
+        loc: SlotCoord,
+        item: Option<StructureId>,
+        dir: i32,
+        materials: Materials,
+    ) -> Vec<(SlotCoord, ProposalView)> {
+        self.propose(cw, dir, (loc.cube, loc.cube), loc.slot, item, materials)
+    }
+
     pub fn click(
         &mut self,
         cw: &ConstructedCity,

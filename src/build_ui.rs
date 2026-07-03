@@ -689,7 +689,7 @@ pub(crate) fn station_resource_totals(
 /// Returns sorted `(resource, quantity)` pairs; empty when cost is zero.
 pub(crate) fn construction_cost(
     proposed: &crate::sparse3d::Sparse3D<crate::city::Proposal>,
-    structure_list: &crate::structure::StructureList,
+    structure_infos: &[crate::structure::StructureInfo],
     material_list: &crate::materials::MaterialList,
 ) -> Vec<(crate::resource::UniformResource, u32)> {
     use crate::city::Proposal;
@@ -702,7 +702,7 @@ pub(crate) fn construction_cost(
         let Proposal::Place(cell) = proposal else {
             continue;
         };
-        let info = &structure_list.structures[cell.id.as_usize()].info;
+        let info = &structure_infos[cell.id.as_usize()];
         if info.furniture {
             continue;
         }

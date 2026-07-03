@@ -56,7 +56,11 @@ pub fn spawn_population(mut commands: Commands) {
 /// pairings stable: an individual only loses its home if that station is no
 /// longer a bedroom (destroyed, or reused for something else), and homeless
 /// individuals only take bedrooms nobody else already holds.
-pub fn assign_homes(individuals: &mut [Individual], cw: &ConstructedCity) {
+///
+/// Returns `true` if any individual's home assignment actually changed, so
+/// callers driven by change detection (see `sync_homes`) don't mark their
+/// resource dirty on a no-op run.
+pub fn assign_homes(individuals: &mut [Individual], cw: &ConstructedCity) -> bool {
     use std::collections::HashSet;
 
     let bedrooms: HashSet<usize> = (0..cw.placed_stations.len())
@@ -82,17 +86,29 @@ pub fn assign_homes(individuals: &mut [Individual], cw: &ConstructedCity) {
         }
     }
 
+    let mut changed = false;
     for (individual, new_home) in individuals.iter_mut().zip(new_homes) {
         if individual.home != new_home {
             individual.home = new_home;
+            changed = true;
         }
     }
+    changed
 }
 
 /// Re-runs `assign_homes` whenever the world (bedroom count) or the
 /// population (individual count) changes.
+///
+/// Mutates through `bypass_change_detection` and only calls `set_changed`
+/// when an assignment actually changed: `ResMut::deref_mut` marks a resource
+/// changed unconditionally, and this system's own run condition includes
+/// `resource_changed::<Population>`, so an unconditional mark would make it
+/// re-trigger itself on every frame forever after the first real change.
 pub fn sync_homes(mut population: ResMut<Population>, cw: Res<ConstructedCity>) {
-    assign_homes(&mut population.individuals, &cw);
+    let changed = assign_homes(&mut population.bypass_change_detection().individuals, &cw);
+    if changed {
+        population.set_changed();
+    }
 }
 
 #[cfg(test)]

@@ -344,23 +344,25 @@ const ROOM_X: std::ops::Range<i32> = 5..9;
 const ROOM_Z: std::ops::Range<i32> = 5..8;
 const NUM_BINS: usize = 5;
 
-/// Startup system: places the starting storage room with randomly-positioned bins,
-/// pre-stocked with potatoes, timber, and canvas. Must run after `spawn_grid`.
-pub fn spawn_initial_station(
-    mut commands: Commands,
-    structure_list: Res<StructureList>,
-    mut constructed: ResMut<ConstructedCity>,
-    mut assembled: ResMut<AssembledCity>,
-) {
+/// Places the starting storage room with randomly-positioned bins and market
+/// stands, pre-stocked with potatoes, timber, and canvas, directly into
+/// `constructed` (real cells, no proposal step) and registers their stations.
+/// Returns the real-cell deltas for the caller to pass to `apply_changes`.
+/// Pure aside from `rng`, so it can be driven deterministically (e.g. by the
+/// headless testing harness) as well as by the `spawn_initial_station` startup system.
+pub fn place_initial_station(
+    constructed: &mut ConstructedCity,
+    rng: &mut impl rand::Rng,
+) -> Vec<(SlotCoord, Option<Cell>)> {
     let Some(bin_id) = constructed.find_structure_by_name("bin") else {
-        return;
+        return Vec::new();
     };
     let Some(storage_room_index) = constructed
         .stations
         .iter()
         .position(|s| s.name == "storage room")
     else {
-        return;
+        return Vec::new();
     };
 
     // Pick NUM_BINS distinct cells from the 4×3 footprint.
@@ -371,8 +373,7 @@ pub fn spawn_initial_station(
         }
     }
     use rand::seq::SliceRandom;
-    let mut rng = rand::rng();
-    candidates.shuffle(&mut rng);
+    candidates.shuffle(rng);
     let chosen: Vec<IVec3> = candidates.into_iter().take(NUM_BINS).collect();
 
     // Place the bins as real cells and spawn their meshes.
@@ -393,19 +394,29 @@ pub fn spawn_initial_station(
         changes.push((loc, Some(cell)));
     }
 
+    // Stock the inventory and register the storage room station.
+    let mut inv = Inventory::new(8, 20.0 * NUM_BINS as f32);
+    inv.add_uniform(UniformResource::Potato, 9);
+    inv.add_uniform(UniformResource::Timber, 20);
+    inv.add_uniform(UniformResource::Canvas, 10);
+
+    constructed.placed_stations.push(ParticularStation {
+        station: storage_room_index,
+        structure_locations: chosen,
+        contents: inv,
+    });
+
     // Place market stands opposite the stockpile (south of the E-W road at z = -1),
     // with one space between each structure.
     let Some(market_stand_id) = constructed.find_structure_by_name("market stand") else {
-        apply_changes(&mut commands, &mut assembled, &structure_list, changes);
-        return;
+        return changes;
     };
     let Some(market_stand_station_index) = constructed
         .stations
         .iter()
         .position(|s| s.name == "market stand")
     else {
-        apply_changes(&mut commands, &mut assembled, &structure_list, changes);
-        return;
+        return changes;
     };
 
     let market_stand_positions = [
@@ -429,20 +440,6 @@ pub fn spawn_initial_station(
         changes.push((loc, Some(cell)));
     }
 
-    apply_changes(&mut commands, &mut assembled, &structure_list, changes);
-
-    // Stock the inventory and register the storage room station.
-    let mut inv = Inventory::new(8, 20.0 * NUM_BINS as f32);
-    inv.add_uniform(UniformResource::Potato, 9);
-    inv.add_uniform(UniformResource::Timber, 20);
-    inv.add_uniform(UniformResource::Canvas, 10);
-
-    constructed.placed_stations.push(ParticularStation {
-        station: storage_room_index,
-        structure_locations: chosen,
-        contents: inv,
-    });
-
     // Register each market stand as its own station.
     for cube in &market_stand_positions {
         constructed.placed_stations.push(ParticularStation {
@@ -451,6 +448,20 @@ pub fn spawn_initial_station(
             contents: Inventory::new(8, 20.0),
         });
     }
+
+    changes
+}
+
+/// Startup system: places the initial station using thread-local randomness
+/// and spawns its meshes. Must run after `spawn_grid`.
+pub fn spawn_initial_station(
+    mut commands: Commands,
+    structure_list: Res<StructureList>,
+    mut constructed: ResMut<ConstructedCity>,
+    mut assembled: ResMut<AssembledCity>,
+) {
+    let changes = place_initial_station(&mut constructed, &mut rand::rng());
+    apply_changes(&mut commands, &mut assembled, &structure_list, changes);
 }
 
 #[cfg(test)]

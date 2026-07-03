@@ -87,3 +87,22 @@ run normally:
 ```
 sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev librsvg2-bin
 ```
+
+# Headless testing mode
+
+`cargo run --bin headless [-- --seed <n>]` starts a line-oriented stdin/stdout REPL
+over a real Bevy `App` (via `MinimalPlugins` — no window, renderer, or GPU), driving
+the game's actual resources (city grid, farms, stations, population, clock) and its
+real change-detection-gated systems (`rebuild_navigation_grid`, `sync_homes`) — meant
+for scripted (e.g. LLM-driven) verification of non-graphical changes, including
+change-detection behavior itself. Send `help` as the first command for the full list:
+placing/removing structures and boxes, propose-then-construct with sandbox on/off,
+undo/redo, advancing time, inviting/configuring farms, querying cells, structures,
+stations, farms, outdoorsness, inventory, pathfinding, and the raw serialized city
+(`dump`).
+
+Mutating commands only mutate resources; they don't advance the schedule. Call
+`tick` to run one `Update` pass — that's when `resource_changed`-gated systems
+actually react, and `query changed` reports which resources changed as observed by
+a persistent system (so it reflects genuine Bevy change tracking, not a same-frame
+snapshot). See `src/headless.rs` for the implementation and protocol details.

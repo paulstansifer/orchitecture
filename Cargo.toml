@@ -70,6 +70,10 @@ path = "src/main.rs"
 name = "sprite_sheet"
 path = "src/bin/sprite_sheet.rs"
 
+[[bin]]
+name = "headless"
+path = "src/bin/headless.rs"
+
 [lib]
 name = "orchitecture_lib"
 

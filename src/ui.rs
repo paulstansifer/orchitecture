@@ -57,7 +57,7 @@ pub fn shared_ui_system(
     let construction_cost = if pending.num_changes() > 0 && !sandbox.enabled {
         crate::build_ui::construction_cost(
             &pending.proposed_changes,
-            &structure_list,
+            &constructed.structures,
             &material_list,
         )
     } else {
