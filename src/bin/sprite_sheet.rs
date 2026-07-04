@@ -39,7 +39,7 @@ const SPRITE_PIXELS_PER_UNIT: f32 = PIXELS_PER_UNIT as f32 / 2.0;
 /// `SPRITE_PIXELS_PER_UNIT`) so frame composition/margins stay the same
 /// regardless of output resolution.
 /// TODO: this is ad-hoc.
-const CELL_WORLD: f32 = (2 * PIXELS_PER_UNIT - 16) as f32 / PIXELS_PER_UNIT as f32;
+const CELL_WORLD: f32 = (2 * PIXELS_PER_UNIT - 2) as f32 / PIXELS_PER_UNIT as f32;
 /// Pixel size of one cell in the output image.
 const CELL_TOTAL_PX: u32 = (CELL_WORLD * SPRITE_PIXELS_PER_UNIT) as u32;
 
