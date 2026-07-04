@@ -138,7 +138,6 @@ fn main() {
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system.after(autotile_update_system),
                 propagate_render_layers_system.after(update_cutaway_system),
-                //update_window_lights.run_if(resource_changed::<ConstructedWorld>),
                 update_global_illumination.run_if(resource_changed::<ConstructedCity>),
                 (
                     sync_places_system.run_if(resource_changed::<ConstructedCity>),

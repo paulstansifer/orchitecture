@@ -90,26 +90,6 @@ impl<B: Backend> Cnn<B> {
     }
 
     pub fn forward(&self, mut x: Tensor<B, 5>) -> Tensor<B, 2> {
-        // let x = self.conv[0].forward(x);
-        // let x = self.relu.forward(x);
-        // let x = self.dropout.forward(x);
-        // let x = self.conv[1].forward(x);
-        // let x = self.relu.forward(x);
-        // let x = self.dropout.forward(x);
-        // let dims_left = x.dims().len() - 1;
-
-        // let x: Tensor<B, 2> = x.flatten(1, dims_left); // Flatten from the channel dimension onwards
-        // let x = self.fc[0].forward(x);
-        // let x = self.relu.forward(x);
-        // let x = self.dropout.forward(x);
-
-        // let x = self.fc[1].forward(x);
-        // let x = self.relu.forward(x);
-        // let x = self.dropout.forward(x);
-
-        // let x = self.fc[2].forward(x);
-        // self.sigmoid.forward(x)
-
         for conv in &self.conv {
             x = conv.forward(x);
             x = self.relu.forward(x);

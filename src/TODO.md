@@ -22,23 +22,10 @@
 
 # LLM-suggested cleanups
 
-
-## Likely bugs (worth fixing, not just cleanup)
-  * `src/qnn/translate.rs:216-221` — `TODO!!!` hardcodes `Facing::NegX` for all training
-    cells instead of reading the real facing — a known training-data fidelity gap.
-  * `src/sparse3d.rs:128` — `Facing` enum discriminants have `TODO: verify that these are
-    right; I picked them arbitrarily!`, affecting door/facing behavior.
-  * `src/llm_rooms.rs:353` — `rooms()` unconditionally `return vec![]`, making the ~300
-    lines of room-design code before it entirely dead output (called from
-    `example_structures.rs:90` but contributes nothing).
-
 ## Dead / unwired code
   * `src/ceiling_lights.rs` — `update_ceiling_lights` (`#[allow(dead_code)]`) and
     `update_window_lights` (commented out in `src/main.rs:124`) are both unwired; the whole
     file's four consts only serve this unused path.
-  * `src/station.rs:10-15` — `QualityFactor` enum, `#[allow(unused)]`, zero references anywhere
-    (stub from the "beginnings of QualityFactor" commit).
-  * `src/qnn/model.rs:92-111` — ~20 commented-out lines duplicating `forward()`'s real logic.
   * `src/qnn/translate.rs` — several large commented-out blocks (debug prints, a disabled test
     at 499-516, alternate augmentation code at 143-147).
   * `src/resource.rs:44` `UniformResource::farmable()` and `:183-185` `Inventory::may_add`
@@ -48,8 +35,6 @@
   * `src/bin/sprite_sheet.rs:59` `BULK_WORLD_UNITS = 0.0` permanently disables ~30 lines of
     mesh-inflation code (508-526, 597-623).
   * `src/scene.rs:9,31-44` — commented-out fill-light constant and spawn loop.
-  * `src/main.rs:124` — dead reference to `ConstructedWorld`, a type renamed to
-    `ConstructedCity` long ago.
   * `src/build_ui.rs:655-723` — `station_resource_totals`/`construction_cost` look unreferenced
     in this file; worth a crate-wide check.
 

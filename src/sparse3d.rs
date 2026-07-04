@@ -164,7 +164,7 @@ pub trait Rotateable {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Facing {
     #[default]
-    NegX = 0, // TODO: verify that these are right; I picked them arbitrarily!
+    NegX = 0,
     NegZ = 1,
     PosX = 2,
     PosZ = 3,
