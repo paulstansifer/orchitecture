@@ -512,8 +512,7 @@ pub fn build_ui_system(
                         if !options.is_empty() {
                             ui.separator();
                             ui.label("Material:");
-                            let current =
-                                build_state.material_per_type.get(&stype).copied().unwrap();
+                            let current = build_state.material_for_type(stype, &material_list);
                             let mut chosen = current;
                             for &(material_id, mat) in options.iter() {
                                 ui.radio_value(&mut chosen, material_id, &mat.name);

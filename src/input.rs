@@ -160,6 +160,24 @@ pub struct BuildState {
         std::collections::HashMap<crate::materials::ElementType, BuildMaterialId>,
 }
 
+impl BuildState {
+    /// The selected material for `stype`, defaulting to (and recording) its
+    /// first available material if none has been chosen yet.
+    pub fn material_for_type(
+        &mut self,
+        stype: crate::materials::ElementType,
+        material_list: &crate::materials::MaterialList,
+    ) -> BuildMaterialId {
+        *self.material_per_type.entry(stype).or_insert_with(|| {
+            material_list
+                .for_type(stype)
+                .first()
+                .map(|&(id, _)| id)
+                .unwrap_or_default()
+        })
+    }
+}
+
 pub fn building_input_system(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -310,7 +328,7 @@ pub fn building_input_system(
                     (Material::Planks, BuildMaterialId(0))
                 } else {
                     let stype = info.element_type().unwrap_or_default();
-                    let build_mat_id = build_state.material_per_type.get(&stype).copied().unwrap();
+                    let build_mat_id = build_state.material_for_type(stype, &material_list);
                     if let Some(mat) = material_list.materials.get(build_mat_id.0 as usize) {
                         let world_mat = mat.world_material();
                         (world_mat, build_mat_id)
