@@ -68,57 +68,43 @@ fn main() {
         generate_if_needed(name, spec, *slot, &buildables, &out_dir, &all_inputs, true);
     }
 
-    // Generate the fallback meshes for the structures in structures.ron.
+    // Generate the fallback meshes for the structures in elements.ron/furniture.ron.
     generate_structure_meshes(&buildables, &out_dir, &spec_map, &mut referenced_scad);
 
     // Now that we know every referenced .scad, warn about the ones nothing uses.
     warn_unreferenced_scad(&buildables, &referenced_scad);
 }
 
-// ─── Structure fallback meshes ──────────────────────────────────────────────────
+// ─── Eorf fallback meshes ──────────────────────────────────────────────────
 
-/// A structure's mesh-relevant fields, hand-parsed from structures.ron (we only
-/// need two of them, and the RON enum/Option fields don't survive `IgnoredAny`).
+/// A structure's mesh-relevant fields, hand-parsed from elements.ron/furniture.ron
+/// (we only need the name, and the RON enum/Option fields don't survive `IgnoredAny`).
 struct StructureMeshInfo {
     name: String,
     furniture: bool,
 }
 
-/// Minimal extractor for the `name` and `furniture` fields of each entry in
-/// structures.ron. The file is a list of `( name: "...", ..., furniture: true )`
-/// records; `furniture` is absent (false) for most entries.
-fn parse_structure_infos(src: &str) -> Vec<StructureMeshInfo> {
+/// Minimal extractor for the `name` field of each entry in a `( name: "...", ... )`
+/// list file (elements.ron or furniture.ron). `furniture` is set uniformly per
+/// call, since the file itself (not a per-entry field) now determines it.
+fn parse_structure_infos(src: &str, furniture: bool) -> Vec<StructureMeshInfo> {
     let mut out = Vec::new();
-    let mut current: Option<StructureMeshInfo> = None;
     for line in src.lines() {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("name:") {
-            if let Some(prev) = current.take() {
-                out.push(prev);
-            }
             // rest looks like `"desk",` — take the contents of the first "..." .
             let after_quote = rest.trim().trim_start_matches('"');
             let name = after_quote[..after_quote.find('"').unwrap_or(after_quote.len())].to_owned();
-            current = Some(StructureMeshInfo {
-                name,
-                furniture: false,
-            });
-        } else if line.starts_with("furniture:") && line.contains("true") {
-            if let Some(cur) = current.as_mut() {
-                cur.furniture = true;
-            }
+            out.push(StructureMeshInfo { name, furniture });
         }
-    }
-    if let Some(prev) = current.take() {
-        out.push(prev);
     }
     out
 }
 
 /// Generate `buildables/autotile/{stem}.gltf` (and a `-cut-y-pos` variant for
-/// non-furniture) for every structure in structures.ron, where `stem` is the
-/// structure name with spaces turned into underscores. Furniture vanishes in
-/// cutaway, so it gets no cut mesh; everything else is cut. Structures with no
+/// non-furniture) for every structure in elements.ron/furniture.ron, where `stem`
+/// is the structure name with spaces turned into underscores. Furniture vanishes
+/// in cutaway, so it gets no cut mesh; everything else is cut. Structures with no
 /// `{stem}.scad` (roof, column) are drawn entirely by the autotile rules and need
 /// no standalone mesh.
 fn generate_structure_meshes(
@@ -127,17 +113,20 @@ fn generate_structure_meshes(
     spec_map: &HashMap<String, (MeshSpec, UnorientedSlot)>,
     referenced_scad: &mut HashSet<PathBuf>,
 ) {
-    let ron_path = buildables.join("structures.ron");
-    println!("cargo:rerun-if-changed={}", ron_path.display());
-    let src = match fs::read_to_string(&ron_path) {
-        Ok(s) => s,
-        Err(e) => {
-            println!("cargo:warning=Failed to read {}: {e}", ron_path.display());
-            return;
-        }
-    };
+    let elements_path = buildables.join("elements.ron");
+    let furniture_path = buildables.join("furniture.ron");
+    println!("cargo:rerun-if-changed={}", elements_path.display());
+    println!("cargo:rerun-if-changed={}", furniture_path.display());
 
-    for info in parse_structure_infos(&src) {
+    let mut infos = Vec::new();
+    for (path, furniture) in [(&elements_path, false), (&furniture_path, true)] {
+        match fs::read_to_string(path) {
+            Ok(src) => infos.extend(parse_structure_infos(&src, furniture)),
+            Err(e) => println!("cargo:warning=Failed to read {}: {e}", path.display()),
+        }
+    }
+
+    for info in infos {
         let stem = info.name.replace(' ', "_");
         let scad = buildables.join(format!("{stem}.scad"));
         if !scad.exists() {
@@ -158,7 +147,11 @@ fn generate_structure_meshes(
             rotation: 0,
             translation: None,
         };
-        let inputs: Vec<&Path> = vec![ron_path.as_path(), scad.as_path()];
+        let inputs: Vec<&Path> = vec![
+            elements_path.as_path(),
+            furniture_path.as_path(),
+            scad.as_path(),
+        ];
         generate_if_needed(
             &stem,
             &spec,
@@ -222,7 +215,7 @@ fn warn_unreferenced_scad(buildables: &Path, referenced: &HashSet<PathBuf>) {
     orphans.sort();
     for path in orphans {
         println!(
-            "cargo:warning={} is not referenced by structures.autotile or structures.ron",
+            "cargo:warning={} is not referenced by structures.autotile, elements.ron, or furniture.ron",
             path.display()
         );
     }

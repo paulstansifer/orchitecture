@@ -4,12 +4,12 @@ use bevy_egui::{egui, EguiContexts};
 use crate::build_ui::SandboxMode;
 use crate::city::{CityMut, ViewableWorld};
 use crate::construction::advance_construction;
+use crate::eorf::EorfList;
 use crate::game_mode::GameMode;
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
-use crate::structure::StructureList;
 use crate::surroundings::farmstead::{
     apply_production, compute_production, preview_market, run_market, update_wanted_resources,
     FarmsResource, GameClock,
@@ -28,7 +28,7 @@ pub fn shared_ui_system(
     current_mode: Res<State<GameMode>>,
     mut commands: Commands,
     mut viewable: ResMut<ViewableWorld>,
-    structure_list: Res<StructureList>,
+    structure_list: Res<EorfList>,
     mut traveler_state: ResMut<TravelerState>,
     mut population: ResMut<Population>,
     sandbox: Res<SandboxMode>,
@@ -51,13 +51,13 @@ pub fn shared_ui_system(
     let gains_map: std::collections::HashMap<UniformResource, u32> =
         preview.player_gains.iter().copied().collect();
 
-    let station_totals = crate::build_ui::station_resource_totals(&constructed);
+    let station_totals = crate::build_ui::place_resource_totals(&constructed);
 
     // Construction cost (non-sandbox only).
     let construction_cost = if pending.num_changes() > 0 && !sandbox.enabled {
         crate::build_ui::construction_cost(
             &pending.proposed_changes,
-            &constructed.structures,
+            &constructed.eorfs,
             &material_list,
         )
     } else {
@@ -100,14 +100,14 @@ pub fn shared_ui_system(
 
     // Farm/market status.
     let market_stand_count = constructed
-        .stations
+        .places
         .iter()
         .position(|s| s.name == "market stand")
         .map_or(0, |idx| {
             constructed
-                .placed_stations
+                .placed_places
                 .iter()
-                .filter(|ps| ps.station == idx)
+                .filter(|ps| ps.place == idx)
                 .count()
         });
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
@@ -215,12 +215,12 @@ pub fn shared_ui_system(
 
             // Tools count (UniqueResource — tracked separately from uniform resources).
             let total_tools: usize = constructed
-                .placed_stations
+                .placed_places
                 .iter()
                 .filter(|ps| {
                     constructed
-                        .stations
-                        .get(ps.station)
+                        .places
+                        .get(ps.place)
                         .is_some_and(|info| info.storage.is_some())
                 })
                 .map(|ps| ps.contents.tool_count())
@@ -303,7 +303,7 @@ pub fn shared_ui_system(
         let mut rng = rand::rng();
         let (gains, tools_to_return) = run_market(&mut *farms, &mut rng);
         for tool in tools_to_return {
-            crate::station::deposit_tool(&mut *constructed, tool);
+            crate::place::deposit_tool(&mut *constructed, tool);
         }
         let plan = compute_production(&*farms, &mut rng);
         apply_production(&mut *farms, &plan);
@@ -326,15 +326,15 @@ pub fn shared_ui_system(
         traveler::roll_traveler_offer(&mut traveler_state, CIRCLE_REVEAL_RADIUS, &mut rng);
 
         if !gains.is_empty() {
-            let storage_idx = constructed.placed_stations.iter().position(|ps| {
+            let storage_idx = constructed.placed_places.iter().position(|ps| {
                 constructed
-                    .stations
-                    .get(ps.station)
+                    .places
+                    .get(ps.place)
                     .is_some_and(|info| info.storage.is_some())
             });
             if let Some(idx) = storage_idx {
                 for (res, qty) in gains {
-                    constructed.placed_stations[idx]
+                    constructed.placed_places[idx]
                         .contents
                         .add_uniform(res, qty as u16);
                 }
@@ -344,7 +344,7 @@ pub fn shared_ui_system(
             individual.fed_this_month = false;
         }
         for individual in &mut population.individuals {
-            if crate::station::consume_uniform(
+            if crate::place::consume_uniform(
                 &mut constructed,
                 crate::resource::UniformResource::Potato,
                 5,
@@ -363,7 +363,7 @@ pub fn shared_ui_system(
         );
         if construction_completed && !sandbox.enabled {
             for (res, qty) in &construction_cost {
-                crate::station::consume_uniform(&mut constructed, *res, *qty);
+                crate::place::consume_uniform(&mut constructed, *res, *qty);
             }
         }
         ctx.data_mut(|d| d.remove::<bool>(wait_id));

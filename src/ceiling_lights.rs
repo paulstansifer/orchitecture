@@ -6,8 +6,8 @@ use bevy::math::IVec3;
 use bevy::prelude::*;
 
 use crate::city::{Cell, ConstructedCity};
+use crate::eorf::{Eorf, EorfList};
 use crate::sparse3d::{Slot, SlotCoord, Sparse3D};
-use crate::structure::{Structure, StructureList};
 
 #[allow(dead_code)]
 const GRID_PERIOD: i32 = 5;
@@ -44,7 +44,7 @@ fn has_sky_above(contents: &Sparse3D<Cell>, cx: i32, cy: i32, cz: i32) -> bool {
 /// Returns (position, look_direction) for each exterior window: exactly the side
 /// with a clear path to the sky is the exterior; the light is placed just inside,
 /// facing inward.
-fn compute_window_lights(contents: &Sparse3D<Cell>, structures: &[Structure]) -> Vec<(Vec3, Vec3)> {
+fn compute_window_lights(contents: &Sparse3D<Cell>, structures: &[Eorf]) -> Vec<(Vec3, Vec3)> {
     let mut results = Vec::new();
 
     for (loc, cell) in contents.iter() {
@@ -115,7 +115,7 @@ fn compute_window_lights(contents: &Sparse3D<Cell>, structures: &[Structure]) ->
 pub fn update_window_lights(
     mut commands: Commands,
     constructed: Res<ConstructedCity>,
-    structure_list: Res<StructureList>,
+    structure_list: Res<EorfList>,
     existing: Query<Entity, With<WindowLight>>,
 ) {
     for entity in &existing {
@@ -354,8 +354,8 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::build_helpers::Builder;
+    use crate::eorf::load_structure_info;
     use crate::sparse3d::RelSlot;
-    use crate::structure::load_structure_info;
 
     /// Three floor planes — Y=1 (ground, excluded by min-y rule), Y=2 (interior
     /// ceiling), Y=3 (roof).  Lights should appear only at Y=2 and Y=3 levels.

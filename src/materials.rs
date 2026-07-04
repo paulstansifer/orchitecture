@@ -10,25 +10,23 @@ pub type Cost = Vec<(UniformResource, u16)>;
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default,
 )]
-pub enum StructureType {
+pub enum ElementType {
+    #[default]
     WallLike,
     RoofLike,
     PillarLike,
     GroundFloorLike,
     CantileverFloorLike,
-    #[default]
-    Furniture,
 }
 
-impl StructureType {
+impl ElementType {
     pub fn label(self) -> &'static str {
         match self {
-            StructureType::WallLike => "Walls",
-            StructureType::RoofLike => "Roof",
-            StructureType::PillarLike => "Pillars",
-            StructureType::GroundFloorLike => "Ground floor",
-            StructureType::CantileverFloorLike => "Upper floor",
-            StructureType::Furniture => "Furniture",
+            ElementType::WallLike => "Walls",
+            ElementType::RoofLike => "Roof",
+            ElementType::PillarLike => "Pillars",
+            ElementType::GroundFloorLike => "Ground floor",
+            ElementType::CantileverFloorLike => "Upper floor",
         }
     }
 }
@@ -39,7 +37,7 @@ pub struct BuildMaterialId(pub u32);
 #[derive(Clone, Debug, Deserialize)]
 pub struct BuildMaterial {
     pub name: String,
-    pub costs: BTreeMap<StructureType, Cost>,
+    pub costs: BTreeMap<ElementType, Cost>,
     pub fanciness: f32,
 }
 
@@ -72,7 +70,7 @@ impl MaterialList {
 
     /// Returns materials that have a cost entry for `stype`, in definition order,
     /// paired with their `BuildMaterialId` in the full materials list.
-    pub fn for_type(&self, stype: StructureType) -> Vec<(BuildMaterialId, &BuildMaterial)> {
+    pub fn for_type(&self, stype: ElementType) -> Vec<(BuildMaterialId, &BuildMaterial)> {
         self.materials
             .iter()
             .enumerate()

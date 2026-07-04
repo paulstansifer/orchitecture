@@ -3,7 +3,7 @@
         name: "storage room",
         requirements: [
             (
-                structure: "bin",
+                requirement: Furniture("bin"),
                 min: 1,
                 max: None,
                 worker_visit_weight: 1.0,
@@ -19,7 +19,7 @@
         name: "bedroom",
         requirements: [
             (
-                structure: "pallet",
+                requirement: Furniture("pallet"),
                 min: 1,
                 max: Some(1),
                 worker_visit_weight: 1.0,
@@ -32,7 +32,7 @@
         name: "market stand",
         requirements: [
             (
-                structure: "market stand",
+                requirement: Furniture("market stand"),
                 min: 1,
                 max: Some(1),
                 worker_visit_weight: 1.0,

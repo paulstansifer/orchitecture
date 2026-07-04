@@ -19,8 +19,8 @@ use bevy::prelude::{Commands, Res, Resource};
 use bevy_northstar::prelude::{CardinalGrid3d, GridSettingsBuilder, Nav, PathfindArgs, Portal};
 
 use crate::city::{Cell, ConstructedCity};
+use crate::eorf::EorfInfo;
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
-use crate::structure::StructureInfo;
 
 /// Extra cubes of padding added around the built city's bounding box (and
 /// always covering `y == 0`, the assumed infinite ground plane) when sizing
@@ -87,12 +87,7 @@ fn horizontal_boundary_loc(from: IVec3, to: IVec3) -> SlotCoord {
 /// `Nav` for the boundary between two horizontally-adjacent cubes: the
 /// `passable` weight of whatever structure occupies that wall face, or fully
 /// open if unoccupied.
-fn boundary_nav(
-    contents: &Sparse3D<Cell>,
-    structures: &[StructureInfo],
-    from: IVec3,
-    to: IVec3,
-) -> Nav {
+fn boundary_nav(contents: &Sparse3D<Cell>, structures: &[EorfInfo], from: IVec3, to: IVec3) -> Nav {
     match contents.get(horizontal_boundary_loc(from, to)) {
         None => Nav::Passable(1),
         Some(cell) => passable_to_nav(structures[cell.id.as_usize()].embedding.passable),
@@ -103,7 +98,7 @@ fn boundary_nav(
 /// Room slot (or fully open if empty), gated by whether there's anything to
 /// stand on -- ground level (`y == 0`, the assumed infinite flat plane) or an
 /// explicit `Floor` cell.
-fn room_nav(contents: &Sparse3D<Cell>, structures: &[StructureInfo], cube: IVec3) -> Nav {
+fn room_nav(contents: &Sparse3D<Cell>, structures: &[EorfInfo], cube: IVec3) -> Nav {
     let grounded = cube.y == 0
         || contents
             .get(SlotCoord {
@@ -230,7 +225,7 @@ fn grid_bounds(contents: &Sparse3D<Cell>) -> (IVec3, IVec3) {
 
 fn build_navigation_grid(city: &ConstructedCity) -> NavigationGrid {
     let contents = &city.contents;
-    let structures = &city.structures;
+    let structures = &city.eorfs;
     let (min, max) = grid_bounds(contents);
     let space = GridSpace {
         origin: min,
@@ -349,9 +344,9 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::city::{Cell, ConstructedCity, Material};
+    use crate::eorf::{find_structure_by_name, load_structure_info};
     use crate::materials::BuildMaterialId;
     use crate::sparse3d::{Facing, Slot, SlotCoord};
-    use crate::structure::{find_structure_by_name, load_structure_info};
 
     use super::*;
 
@@ -378,7 +373,7 @@ mod tests {
     }
 
     fn place(city: &mut ConstructedCity, cube: IVec3, slot: Slot, name: &str, facing: Facing) {
-        let id = find_structure_by_name(&city.structures, name).unwrap();
+        let id = find_structure_by_name(&city.eorfs, name).unwrap();
         city.contents.set(
             SlotCoord { cube, slot },
             Cell {

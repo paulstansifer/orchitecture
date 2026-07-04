@@ -20,7 +20,14 @@ City grid and related concepts:
     `room_plop`, `drag`, `click`, `undo`, and `load_from_offline`.
   * cutaway.rs: hides parts of the city grid so we can see inside.
   * sparse3d.rs: storage for walls, ceilings and "room objects" on a sparse cubic grid
-  * structure.rs: `Structure`s are the walls, doors, desks, etc. that occupy `Cell`s.
+  * eorf.rs: `Eorf`s (`EorfInfo`/`FurnitureOrElement`) are the walls, doors, desks,
+    etc. that occupy `Cell`s — either an `Element` (structural, priced by build
+    material) or `Furniture` (fixed cost, no cutaway mesh).
+  * place.rs: `Place`s (formerly "stations") are automatically, deterministically
+    formed from nearby Furniture/nested-`Place` requirements (see `sync_places`,
+    run after every edit) — e.g. a bedroom formed around a pallet. A `Place`'s
+    location is its core (first) requirement's location, resolved recursively
+    through `Porf` (Place-or-Furniture) requirements.
   * serialization.rs: text format for `Sparse3D<Cell>`
   * pathing.rs: route-finding and connectedness over the city grid, via `bevy_northstar`
   * flood_fill.rs: generic multi-source flood fill over a cubic grid, plus
@@ -51,7 +58,7 @@ Not very important, for non-user-constructed buildings:
 
 `build.rs` generates the meshes used at runtime into `assets/generated/autotile/`:
   * For every mesh spec referenced by a `structures.autotile` rule.
-  * For every structure in `structures.ron`: its fallback mesh is
+  * For every structure in `elements.ron`/`furniture.ron`: its fallback mesh is
     `assets/generated/autotile/{name}.gltf`, compiled from `buildables/{name}.scad`
     (where `{name}` is the structure name with spaces turned into underscores, so
     `"market stand"` → `market_stand`). Furniture has no cutaway mesh (it vanishes
@@ -92,13 +99,13 @@ sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev librsvg2-bin
 
 `cargo run --bin headless [-- --seed <n>]` starts a line-oriented stdin/stdout REPL
 over a real Bevy `App` (via `MinimalPlugins` — no window, renderer, or GPU), driving
-the game's actual resources (city grid, farms, stations, population, clock) and its
+the game's actual resources (city grid, farms, places, population, clock) and its
 real change-detection-gated systems (`rebuild_navigation_grid`, `sync_homes`) — meant
 for scripted (e.g. LLM-driven) verification of non-graphical changes, including
 change-detection behavior itself. Send `help` as the first command for the full list:
 placing/removing structures and boxes, propose-then-construct with sandbox on/off,
 undo/redo, advancing time, inviting/configuring farms, querying cells, structures,
-stations, farms, outdoorsness, inventory, pathfinding, and the raw serialized city
+places, farms, outdoorsness, inventory, pathfinding, and the raw serialized city
 (`dump`).
 
 Mutating commands only mutate resources; they don't advance the schedule. Call
@@ -107,4 +114,4 @@ actually react, and `query changed` reports which resources changed as observed 
 a persistent system (so it reflects genuine Bevy change tracking, not a same-frame
 snapshot). See `src/headless.rs` for the implementation and protocol details.
 
-Headless commands can also be used for testing; see `src/station.rs` for an example.
+Headless commands can also be used for testing; see `src/place.rs` for an example.

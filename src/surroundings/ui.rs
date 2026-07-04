@@ -212,14 +212,14 @@ pub fn surroundings_ui_system(
 
     // Maximum invitees = number of placed market stand stations.
     let market_stand_count = constructed
-        .stations
+        .places
         .iter()
         .position(|s| s.name == "market stand")
         .map_or(0, |idx| {
             constructed
-                .placed_stations
+                .placed_places
                 .iter()
-                .filter(|ps| ps.station == idx)
+                .filter(|ps| ps.place == idx)
                 .count()
         });
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
@@ -317,7 +317,7 @@ pub fn surroundings_ui_system(
                 FarmProduction::Specialized(_)
             );
             let whipsaw_in_storage =
-                crate::station::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
+                crate::place::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
 
             // Breakdowns via the same shared compute path.
             let market_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::Market, None);

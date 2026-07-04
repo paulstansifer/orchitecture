@@ -81,7 +81,7 @@ impl ModelHolder {
 pub fn compute_metrics(
     holder: &ModelHolder,
     contents: &crate::sparse3d::Sparse3D<crate::city::Cell>,
-    structures: &[crate::structure::StructureInfo],
+    structures: &[crate::eorf::EorfInfo],
     location: Vec3,
 ) -> Vec<f32> {
     let pos = location.round().as_ivec3();

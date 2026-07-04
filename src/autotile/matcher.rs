@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use super::compiler::*;
 use super::parser::*;
 
+use crate::eorf::EorfId;
 use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
-use crate::structure::StructureId;
 use bevy::math::IVec3;
 
 // ─── RelSlot conversion ───────────────────────────────────────────────────────
@@ -34,9 +34,9 @@ fn check_condition<F1, F2, F3>(
     char_annotations: &HashMap<char, AnnotatedMatcher>,
 ) -> bool
 where
-    F1: Fn(RelSlotCoord) -> Option<(StructureId, Facing)>,
-    F2: Fn(char, StructureId, Facing) -> bool,
-    F3: Fn(&str, StructureId) -> bool,
+    F1: Fn(RelSlotCoord) -> Option<(EorfId, Facing)>,
+    F2: Fn(char, EorfId, Facing) -> bool,
+    F3: Fn(&str, EorfId) -> bool,
 {
     match cond {
         Condition::Atom(offset, ch) => {
@@ -86,20 +86,20 @@ where
 /// for a `(multi)` group every matching orientation is returned (so the same structure can emit
 /// a mesh at several orientations at once). Returns an empty vec if no group matches.
 ///
-/// `get_cell` maps a slot location to the `(StructureId, Facing)` occupying it (None = empty).
+/// `get_cell` maps a slot location to the `(EorfId, Facing)` occupying it (None = empty).
 /// `char_matches_id` answers "does this neighbor satisfy this pattern character?"
 /// for any character other than `' '` (wildcard), `'.'` (empty slot), and labeled annotation
 /// characters (handled internally via `name_matches_id`).
-/// `name_matches_id` answers "does this StructureId represent a structure named `name`?"
+/// `name_matches_id` answers "does this EorfId represent a structure named `name`?"
 /// (used for annotation-style labeled matchers like `1=stairs:90`).
 /// This does not match the anchor itself! It's expected that we will look at every structure, see
 /// which rules use that structure as the anchor, and then call `match_pattern` on them.
 pub fn match_pattern<'a>(
     oriented: &'a AutotileOriented,
-    get_cell: impl Fn(RelSlotCoord) -> Option<(StructureId, Facing)>,
+    get_cell: impl Fn(RelSlotCoord) -> Option<(EorfId, Facing)>,
     anchor: RelSlotCoord,
-    char_matches_id: impl Fn(char, StructureId, Facing) -> bool,
-    name_matches_id: impl Fn(&str, StructureId) -> bool,
+    char_matches_id: impl Fn(char, EorfId, Facing) -> bool,
+    name_matches_id: impl Fn(&str, EorfId) -> bool,
 ) -> Vec<&'a AutotileResult> {
     let turn_90 = matches!(anchor.rel_slot, RelSlot::ZLoWall | RelSlot::ZHiWall);
     let cases = if turn_90 {
@@ -163,7 +163,7 @@ pub fn slot_to_unoriented(slot: Slot) -> UnorientedSlot {
 /// Apply every autotile rule that matches `cell_name` and the slot implied by `loc`,
 /// returning one `AutotileResult` per rule (first-match-wins within each rule).
 ///
-/// `get_cell` maps a slot location to `(StructureId, Facing)`; pass
+/// `get_cell` maps a slot location to `(EorfId, Facing)`; pass
 /// `|loc| grid.get(loc).map(|c| (c.id, c.facing))` for real cells, or a closure over
 /// `WallGrid::get_proposed_or_real` to include proposed additions.
 ///
@@ -173,9 +173,9 @@ pub fn evaluate_autotile_rules(
     loc: RelSlotCoord,
     cell_name: &str,
     rules: &[AutotileOriented],
-    get_cell: impl Fn(RelSlotCoord) -> Option<(StructureId, Facing)>,
-    char_matches: impl Fn(char, StructureId, Facing) -> bool,
-    name_matches: impl Fn(&str, StructureId) -> bool,
+    get_cell: impl Fn(RelSlotCoord) -> Option<(EorfId, Facing)>,
+    char_matches: impl Fn(char, EorfId, Facing) -> bool,
+    name_matches: impl Fn(&str, EorfId) -> bool,
 ) -> Option<Vec<AutotileResult>> {
     let unoriented = rel_slot_to_unoriented(loc.rel_slot);
     let matching: Vec<_> = rules
@@ -209,18 +209,18 @@ mod tests {
     use super::*;
     use crate::autotile::test_helpers::*;
     use crate::city::Cell;
+    use crate::eorf::EorfId;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
-    use crate::structure::StructureId;
     use assert2::check;
 
     // Test-local ID convention: 0=wall, 1=floor, 2=stairs, 3=railing
 
-    fn test_char_matches(ch: char, id: StructureId, _facing: Facing) -> bool {
+    fn test_char_matches(ch: char, id: EorfId, _facing: Facing) -> bool {
         const NAMES: [&str; 4] = ["wall", "floor", "stairs", "railing"];
         char_matches_name(ch, NAMES[id.0 as usize])
     }
 
-    fn no_name_match(_name: &str, _id: StructureId) -> bool {
+    fn no_name_match(_name: &str, _id: EorfId) -> bool {
         false
     }
 
@@ -382,7 +382,7 @@ H:
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
-        fn is_desk(ch: char, id: StructureId, _facing: Facing) -> bool {
+        fn is_desk(ch: char, id: EorfId, _facing: Facing) -> bool {
             ch == '=' && id.0 == 1
         }
 
@@ -472,7 +472,7 @@ H:
 
     // ── (multi) tests ─────────────────────────────────────────────────────────
 
-    fn is_desk(ch: char, id: StructureId, _facing: Facing) -> bool {
+    fn is_desk(ch: char, id: EorfId, _facing: Facing) -> bool {
         ch == '=' && id.0 == 1
     }
 
@@ -596,7 +596,7 @@ H:
     }
 
     // IDs used in column tests: 0 = floor, 1 = column
-    fn col_char_matches(ch: char, id: StructureId, _facing: Facing) -> bool {
+    fn col_char_matches(ch: char, id: EorfId, _facing: Facing) -> bool {
         const NAMES: [&str; 2] = ["floor", "column"];
         match ch {
             '=' => id.0 == 1,
@@ -746,8 +746,8 @@ H:
         let far_floor = RelSlotCoord::new(-2, 0, 0, RelSlot::Floor);
         let near_floor = RelSlotCoord::new(-1, 0, 0, RelSlot::Floor);
 
-        // StructureId 0 = wall, 1 = roof (local convention)
-        fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
+        // EorfId 0 = wall, 1 = roof (local convention)
+        fn char_matches(ch: char, id: EorfId, _: Facing) -> bool {
             const NAMES: [&str; 2] = ["wall", "roof"];
             char_matches_name(ch, NAMES[id.0 as usize])
         }
@@ -832,8 +832,8 @@ H narrow:
         let wall_loc = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
         let far_floor = RelSlotCoord::new(-1, 0, 0, RelSlot::Floor);
 
-        // StructureId 0 = wall, 1 = roof (local convention)
-        fn char_matches(ch: char, id: StructureId, _: Facing) -> bool {
+        // EorfId 0 = wall, 1 = roof (local convention)
+        fn char_matches(ch: char, id: EorfId, _: Facing) -> bool {
             const NAMES: [&str; 2] = ["wall", "roof"];
             char_matches_name(ch, NAMES[id.0 as usize])
         }
@@ -906,7 +906,7 @@ H: 1=stairs:90
         let room_loc = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
         // ID 2 = stairs in this test
-        fn name_is_stairs(name: &str, id: StructureId) -> bool {
+        fn name_is_stairs(name: &str, id: EorfId) -> bool {
             name == "stairs" && id.0 == 2
         }
 

@@ -1,19 +1,5 @@
 [
     (
-        name: "desk",
-        placement_style: RoomPlop,
-        x_char: Some('V'),
-        z_char: Some('V'),
-        embedding: (
-            tall: 0.3,
-            passable: 0.5,
-            decorative: 0.5,
-            striated: 0.0,
-        ),
-        furniture: Some([(Plank, 4)]),
-        structure_type: Furniture,
-    ),
-    (
         name: "doorway",
         placement_style: WallDrag,
         x_char: Some('D'),
@@ -24,7 +10,7 @@
             decorative: 0.0,
             striated: 0.0,
         ),
-        structure_type: WallLike,
+        element_type: WallLike,
     ),
     (
         name: "window",
@@ -37,7 +23,7 @@
             decorative: 0.75,
             striated: 0.0,
         ),
-        structure_type: WallLike,
+        element_type: WallLike,
     ),
     (
         name: "floor",
@@ -50,7 +36,7 @@
             decorative: 0.0,
             striated: 0.0,
         ),
-        structure_type: GroundFloorLike,
+        element_type: GroundFloorLike,
     ),
     (
         name: "stairs",
@@ -63,7 +49,7 @@
             decorative: 0.5,
             striated: 1.0,
         ),
-        structure_type: PillarLike,
+        element_type: PillarLike,
     ),
     (
         name: "roof",
@@ -76,7 +62,7 @@
             decorative: 0.7,
             striated: 0.0,
         ),
-        structure_type: RoofLike,
+        element_type: RoofLike,
     ),
     (
         name: "wall",
@@ -89,7 +75,7 @@
             decorative: 0.0,
             striated: 0.0,
         ),
-        structure_type: WallLike,
+        element_type: WallLike,
     ),
     (
         name: "railing",
@@ -102,7 +88,7 @@
             decorative: 0.5,
             striated: 1.0,
         ),
-        structure_type: PillarLike,
+        element_type: PillarLike,
     ),
     (
         name: "column",
@@ -115,62 +101,6 @@
             decorative: 1.0,
             striated: 0.0,
         ),
-        structure_type: PillarLike,
+        element_type: PillarLike,
     ),
-    (
-        name: "market stand",
-        placement_style: RoomPlop,
-        x_char: Some('M'),
-        z_char: Some('M'),
-        embedding: (
-            tall: 0.9,
-            passable: 0.5,
-            decorative: 0.3,
-            striated: 0.3,
-        ),
-        furniture: Some([(Plank, 6)]),
-        structure_type: Furniture,
-    ),
-    (
-        name: "rack",
-        placement_style: RoomPlop,
-        x_char: None,
-        z_char: None,
-        embedding: (
-            tall: 0.9,
-            passable: 0.5,
-            decorative: 0.0,
-            striated: 0.5,
-        ),
-        furniture: Some([(Plank, 5)]),
-        structure_type: Furniture,
-    ),
-    (
-        name: "bin",
-        placement_style: RoomPlop,
-        x_char: None,
-        z_char: None,
-        embedding: (
-            tall: 0.3,
-            passable: 0.5,
-            decorative: 0.0,
-            striated: 0.0,
-        ),
-        furniture: Some([(Plank, 3)]),
-        structure_type: Furniture,
-    ),
-    (
-        name: "pallet",
-        placement_style: RoomPlop,
-        x_char: None,
-        z_char: None,
-        embedding: (
-            tall: 0.1,
-            passable: 0.5,
-            decorative: 0.0,
-            striated: 0.0,
-        ),
-        furniture: Some([(Straw, 2), (Canvas, 2)]),
-        structure_type: Furniture,
-    )
 ]

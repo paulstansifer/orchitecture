@@ -32,5 +32,5 @@ W# # # # #|
             
 ~~~~~
 ~*~*~
-(0,0,2,"Room")={"id":0,"facing":"PosZ","evaluation":{"coherence":0.9,"interest":1.0}}
+(0,0,2,"Room")={"id":8,"facing":"PosZ","evaluation":{"coherence":0.9,"interest":1.0}}
 (1,0,3,"Room")={"id":4,"facing":"NegZ","evaluation":null}

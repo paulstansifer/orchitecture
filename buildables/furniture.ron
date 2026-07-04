@@ -1,0 +1,67 @@
+[
+    (
+        name: "desk",
+        placement_style: RoomPlop,
+        x_char: Some('V'),
+        z_char: Some('V'),
+        embedding: (
+            tall: 0.3,
+            passable: 0.5,
+            decorative: 0.5,
+            striated: 0.0,
+        ),
+        cost: [(Plank, 4)],
+    ),
+    (
+        name: "market stand",
+        placement_style: RoomPlop,
+        x_char: Some('M'),
+        z_char: Some('M'),
+        embedding: (
+            tall: 0.9,
+            passable: 0.5,
+            decorative: 0.3,
+            striated: 0.3,
+        ),
+        cost: [(Plank, 6)],
+    ),
+    (
+        name: "rack",
+        placement_style: RoomPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.9,
+            passable: 0.5,
+            decorative: 0.0,
+            striated: 0.5,
+        ),
+        cost: [(Plank, 5)],
+    ),
+    (
+        name: "bin",
+        placement_style: RoomPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.3,
+            passable: 0.5,
+            decorative: 0.0,
+            striated: 0.0,
+        ),
+        cost: [(Plank, 3)],
+    ),
+    (
+        name: "pallet",
+        placement_style: RoomPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.1,
+            passable: 0.5,
+            decorative: 0.0,
+            striated: 0.0,
+        ),
+        cost: [(Straw, 2), (Canvas, 2)],
+    ),
+]

@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use bevy::math::IVec3;
 
 use crate::city::Cell;
+use crate::eorf::EorfInfo;
 use crate::flood_fill::{flood_fill, has_sky_above};
 use crate::sparse3d::{SlotCoord, Sparse3D};
-use crate::structure::StructureInfo;
 
 /// Falloff per hop through open air (and through any structure that isn't a
 /// window or a doorway).
@@ -25,7 +25,7 @@ const FALLOFF_DOORWAY: f32 = 0.7;
 /// falloff`.
 fn boundary_multiplier(
     contents: &Sparse3D<Cell>,
-    structures: &[StructureInfo],
+    structures: &[EorfInfo],
     from: IVec3,
     to: IVec3,
 ) -> f32 {
@@ -62,7 +62,7 @@ fn default_falloff(from: IVec3, to: IVec3) -> f32 {
 /// Returns a map from cube coordinate to outdoorsness in [0.0, 1.0].
 pub fn compute_outdoorsness(
     contents: &Sparse3D<Cell>,
-    structures: &[StructureInfo],
+    structures: &[EorfInfo],
 ) -> HashMap<IVec3, f32> {
     if contents.size() == 0 {
         return HashMap::new();
@@ -100,8 +100,8 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::build_helpers::Builder;
+    use crate::eorf::load_structure_info;
     use crate::sparse3d::RelSlot;
-    use crate::structure::load_structure_info;
 
     use super::compute_outdoorsness;
 

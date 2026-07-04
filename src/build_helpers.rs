@@ -4,9 +4,9 @@ use bevy::math::IVec3;
 use enum_derived::Rand;
 
 use crate::city::{ConstrainedScoreExt, Material, VantageEvaluation};
+use crate::eorf::{EorfId, EorfInfo};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
-use crate::structure::{StructureId, StructureInfo};
 use crate::{
     city::Cell,
     sparse3d::{RelSlotCoord, SlotCoord, Sparse3D},
@@ -20,7 +20,7 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn new(structures: &Vec<StructureInfo>) -> Self {
+    pub fn new(structures: &Vec<EorfInfo>) -> Self {
         Self {
             map: Sparse3D::new(),
             structures: structures
@@ -37,7 +37,7 @@ impl Builder {
 
     fn wall(&self) -> Cell {
         Cell {
-            id: StructureId(*self.structures.get("wall").unwrap() as u32),
+            id: EorfId(*self.structures.get("wall").unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
             material: Material::default(),
@@ -46,7 +46,7 @@ impl Builder {
     }
     fn flat(&self) -> Cell {
         Cell {
-            id: StructureId(*self.structures.get("floor").unwrap() as u32),
+            id: EorfId(*self.structures.get("floor").unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
             material: Material::default(),
@@ -160,7 +160,7 @@ impl Builder {
         };
 
         if let Some(name) = obj_name {
-            obj.id = StructureId(*self.structures.get(name).unwrap() as u32);
+            obj.id = EorfId(*self.structures.get(name).unwrap() as u32);
         }
 
         let min = IVec3::min(corner_a, corner_b);
@@ -183,7 +183,7 @@ impl Builder {
         let y = min.y;
 
         let obj = Cell {
-            id: StructureId(*self.structures.get(obj_name).unwrap() as u32),
+            id: EorfId(*self.structures.get(obj_name).unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
             material: Material::default(),
@@ -224,7 +224,7 @@ impl Builder {
         self.map.set(
             RelSlotCoord::new(loc.x, loc.y, loc.z, RelSlot::Room),
             Cell {
-                id: StructureId(*self.structures.get("desk").unwrap() as u32),
+                id: EorfId(*self.structures.get("desk").unwrap() as u32),
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation {
                     interest: Some(interest.into()),
@@ -237,10 +237,7 @@ impl Builder {
     }
 }
 
-pub fn make_boring_room(
-    structures: &Vec<StructureInfo>,
-    rng: &mut StdRng,
-) -> (Sparse3D<Cell>, String) {
+pub fn make_boring_room(structures: &Vec<EorfInfo>, rng: &mut StdRng) -> (Sparse3D<Cell>, String) {
     let mut builder = Builder::new(structures);
     let x_size = rng.random_range(1..7);
     let y_height = rng.random_range(1..4);
@@ -262,7 +259,7 @@ pub fn make_boring_room(
 
 pub fn add_noise(
     s: Sparse3D<Cell>,
-    structure_info: &[StructureInfo],
+    structure_info: &[EorfInfo],
     rng: &mut StdRng,
 ) -> Vec<Sparse3D<Cell>> {
     use crate::city::VantageEvaluation;
@@ -327,25 +324,25 @@ pub fn add_noise(
         // For each selected dest, pick a replacement (or deletion if present)
         for (dest_loc, slot) in selected.into_iter() {
             // Determine candidate structure IDs matching the placement style for this slot
-            let mut candidates_ids: Vec<StructureId> = Vec::new();
+            let mut candidates_ids: Vec<EorfId> = Vec::new();
 
             for (idx, info) in structure_info.iter().enumerate() {
                 match slot {
                     Room => {
-                        if info.placement_style == crate::structure::PlacementStyle::RoomPlop {
-                            candidates_ids.push(StructureId(idx as u32));
+                        if info.placement_style == crate::eorf::PlacementStyle::RoomPlop {
+                            candidates_ids.push(EorfId(idx as u32));
                         }
                     }
                     Floor => {
-                        if info.placement_style == crate::structure::PlacementStyle::FloorDrag {
-                            candidates_ids.push(StructureId(idx as u32));
+                        if info.placement_style == crate::eorf::PlacementStyle::FloorDrag {
+                            candidates_ids.push(EorfId(idx as u32));
                         }
                     }
                     XLoWall | ZLoWall => {
-                        if info.placement_style == crate::structure::PlacementStyle::WallDrag
-                            || info.placement_style == crate::structure::PlacementStyle::WallPlop
+                        if info.placement_style == crate::eorf::PlacementStyle::WallDrag
+                            || info.placement_style == crate::eorf::PlacementStyle::WallPlop
                         {
-                            candidates_ids.push(StructureId(idx as u32));
+                            candidates_ids.push(EorfId(idx as u32));
                         }
                     }
                     _ => {}
@@ -354,7 +351,7 @@ pub fn add_noise(
 
             // If something is already present, allow deletion as one option
             let existing = new_s.get(dest_loc);
-            let mut options: Vec<Option<StructureId>> = Vec::new();
+            let mut options: Vec<Option<EorfId>> = Vec::new();
             if existing.is_some() {
                 options.push(None);
             }
@@ -420,9 +417,9 @@ fn test_add_noise() {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    let structures = crate::structure::load_structure_info();
-    let desk_id = crate::structure::find_structure_by_name(&structures, "desk").unwrap();
-    let doorway_id = crate::structure::find_structure_by_name(&structures, "doorway").unwrap();
+    let structures = crate::eorf::load_structure_info();
+    let desk_id = crate::eorf::find_structure_by_name(&structures, "desk").unwrap();
+    let doorway_id = crate::eorf::find_structure_by_name(&structures, "doorway").unwrap();
 
     let mut s: Sparse3D<Cell> = Sparse3D::new();
 

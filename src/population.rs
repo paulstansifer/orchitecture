@@ -3,7 +3,7 @@ use bevy::prelude::*;
 
 #[derive(Default)]
 pub struct Individual {
-    /// Index into `ConstructedCity::placed_stations` of the "bedroom" station
+    /// Index into `ConstructedCity::placed_places` of the "bedroom" place
     /// this individual lives in.
     pub home: Option<usize>,
     pub fed_this_month: bool,
@@ -52,8 +52,8 @@ pub fn spawn_population(mut commands: Commands) {
     commands.insert_resource(Population::default());
 }
 
-/// Assign individuals to "bedroom" stations one-to-one, keeping existing
-/// pairings stable: an individual only loses its home if that station is no
+/// Assign individuals to "bedroom" places one-to-one, keeping existing
+/// pairings stable: an individual only loses its home if that place is no
 /// longer a bedroom (destroyed, or reused for something else), and homeless
 /// individuals only take bedrooms nobody else already holds.
 ///
@@ -63,8 +63,8 @@ pub fn spawn_population(mut commands: Commands) {
 pub fn assign_homes(individuals: &mut [Individual], cw: &ConstructedCity) -> bool {
     use std::collections::HashSet;
 
-    let bedrooms: HashSet<usize> = (0..cw.placed_stations.len())
-        .filter(|&i| cw.stations[cw.placed_stations[i].station].name == "bedroom")
+    let bedrooms: HashSet<usize> = (0..cw.placed_places.len())
+        .filter(|&i| cw.places[cw.placed_places[i].place].name == "bedroom")
         .collect();
 
     let mut claimed: HashSet<usize> = HashSet::new();
@@ -114,16 +114,16 @@ pub fn sync_homes(mut population: ResMut<Population>, cw: Res<ConstructedCity>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::station::{ParticularStation, StationInfo, StationReq};
-    use crate::structure::StructureInfo;
+    use crate::eorf::EorfInfo;
+    use crate::place::{FulfilledPorf, ParticularPlace, PlaceInfo, PlaceReq, Porf};
     use bevy::math::IVec3;
     use std::collections::HashSet;
 
-    fn bedroom_station() -> StationInfo {
-        StationInfo {
+    fn bedroom_place() -> PlaceInfo {
+        PlaceInfo {
             name: "bedroom".to_string(),
-            requirements: vec![StationReq {
-                structure: "pallet".to_string(),
+            requirements: vec![PlaceReq {
+                requirement: Porf::Furniture("pallet".to_string()),
                 min: 1,
                 max: Some(1),
                 worker_visit_weight: 1.0,
@@ -133,18 +133,18 @@ mod tests {
         }
     }
 
-    fn placed(station: usize) -> ParticularStation {
-        ParticularStation {
-            station,
-            structure_locations: vec![IVec3::ZERO],
+    fn placed(place: usize) -> ParticularPlace {
+        ParticularPlace {
+            place,
+            fulfillments: vec![FulfilledPorf::Furniture(IVec3::ZERO)],
             contents: crate::resource::Inventory::new(1, 1.0),
         }
     }
 
     fn city_with_bedrooms(n: usize) -> ConstructedCity {
-        let mut cw = ConstructedCity::new(Vec::<StructureInfo>::new());
-        cw.stations = vec![bedroom_station()];
-        cw.placed_stations = (0..n).map(|_| placed(0)).collect();
+        let mut cw = ConstructedCity::new(Vec::<EorfInfo>::new());
+        cw.places = vec![bedroom_place()];
+        cw.placed_places = (0..n).map(|_| placed(0)).collect();
         cw
     }
 

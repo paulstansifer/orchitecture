@@ -7,7 +7,7 @@ use std::error::Error;
 #[cfg(feature = "training")]
 use crate::city::Cell;
 #[cfg(feature = "training")]
-use crate::structure::{self, StructureInfo};
+use crate::eorf::{self, EorfInfo};
 #[cfg(feature = "training")]
 use burn::backend::Autodiff;
 #[cfg(feature = "training")]
@@ -123,7 +123,7 @@ pub struct GroundTruthBatcher {}
 fn augment_datum(
     s: (Sparse3D<Cell>, String),
     metric: Metric,
-    structure_info: &[StructureInfo],
+    structure_info: &[EorfInfo],
     rng: &mut StdRng,
 ) -> Vec<(Sparse3D<Cell>, String)> {
     use crate::sparse3d::Rotateable;
@@ -196,10 +196,10 @@ pub fn load_training_data<B: Backend>(
     let mut structures_by_char = HashMap::new();
     for (id, structure) in structures.iter().enumerate() {
         if let Some(x_char) = structure.x_char {
-            structures_by_char.insert(x_char, crate::structure::StructureId(id as u32));
+            structures_by_char.insert(x_char, crate::eorf::EorfId(id as u32));
         }
         if let Some(z_char) = structure.z_char {
-            structures_by_char.insert(z_char, crate::structure::StructureId(id as u32));
+            structures_by_char.insert(z_char, crate::eorf::EorfId(id as u32));
         }
     }
 
@@ -318,7 +318,7 @@ pub fn load_training_data<B: Backend>(
 pub fn ground_truth_at_vantage<B: Backend>(
     data: &(Sparse3D<Cell>, String),
     metric: Metric,
-    structures: &Vec<StructureInfo>,
+    structures: &Vec<EorfInfo>,
 ) -> Option<GroundTruth<B>> {
     for (loc, cell) in data.0.iter() {
         if let Some(eval) = &cell.evaluation {

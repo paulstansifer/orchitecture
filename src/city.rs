@@ -11,9 +11,9 @@ use bevy::prelude::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::eorf::{EorfId, EorfInfo, EorfList};
 use crate::gi_material::{default_gi_image, GiExtension, GiMaterial};
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
-use crate::structure::{StructureId, StructureInfo, StructureList};
 
 /// A score that may be an exact target or a one-sided inequality constraint.
 ///
@@ -162,7 +162,7 @@ impl Material {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Cell {
-    pub id: StructureId,
+    pub id: EorfId,
     #[serde(default)]
     pub facing: Facing,
     pub evaluation: Option<VantageEvaluation>,
@@ -257,36 +257,36 @@ use bevy::asset::Handle;
 #[derive(Resource)]
 pub struct ConstructedCity {
     pub contents: Sparse3D<Cell>,
-    /// Stations placed in the world.
-    pub placed_stations: Vec<crate::station::ParticularStation>,
+    /// Places placed in the world.
+    pub placed_places: Vec<crate::place::ParticularPlace>,
     pub road_forbidden_zone: bool,
     /// Duplicated from the `Res<>` for simplicity:
-    pub structures: Vec<StructureInfo>,
+    pub eorfs: Vec<EorfInfo>,
     /// Duplicated from the `Res<>` for simplicity:
-    pub stations: Vec<crate::station::StationInfo>,
+    pub places: Vec<crate::place::PlaceInfo>,
 }
 
 impl ConstructedCity {
-    pub fn new(structures: Vec<StructureInfo>) -> Self {
+    pub fn new(eorfs: Vec<EorfInfo>) -> Self {
         ConstructedCity {
-            structures,
+            eorfs,
             contents: Sparse3D::new(),
-            stations: Vec::new(),
-            placed_stations: Vec::new(),
+            places: Vec::new(),
+            placed_places: Vec::new(),
             road_forbidden_zone: true,
         }
     }
 
     pub fn get_structure_names(&self) -> Vec<String> {
-        self.structures.iter().map(|s| s.name.clone()).collect()
+        self.eorfs.iter().map(|s| s.name.clone()).collect()
     }
 
-    pub fn structure_is_room_plop(&self, id: StructureId) -> bool {
-        self.structures[id.as_usize()].placement_style == crate::structure::PlacementStyle::RoomPlop
+    pub fn structure_is_room_plop(&self, id: EorfId) -> bool {
+        self.eorfs[id.as_usize()].placement_style == crate::eorf::PlacementStyle::RoomPlop
     }
 
-    pub fn find_structure_by_name(&self, name: &str) -> Option<StructureId> {
-        crate::structure::find_structure_by_name(&self.structures, name)
+    pub fn find_structure_by_name(&self, name: &str) -> Option<EorfId> {
+        crate::eorf::find_structure_by_name(&self.eorfs, name)
     }
 
     pub fn replace_contents(
@@ -396,9 +396,9 @@ pub struct ViewableWorld {
     /// Persistent cut entities for the y-cut cutaway layer of real cells; keyed by
     /// location with the structure they were built for, managed by diff so they live
     /// long enough to be recolored by material.
-    pub cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
+    pub cut_entities: HashMap<SlotCoord, (EorfId, Vec<Entity>)>,
     /// Persistent cut entities for proposed-only walls; keyed by location, managed by diff.
-    pub proposed_cut_entities: HashMap<SlotCoord, (StructureId, Vec<Entity>)>,
+    pub proposed_cut_entities: HashMap<SlotCoord, (EorfId, Vec<Entity>)>,
 }
 
 impl Default for ViewableWorld {
@@ -514,7 +514,7 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
 pub fn apply_changes(
     commands: &mut Commands,
     assembled: &mut AssembledCity,
-    structure_list: &StructureList,
+    structure_list: &EorfList,
     changes: Vec<(SlotCoord, Option<Cell>)>,
 ) {
     for (loc, new_cell) in changes {
@@ -679,7 +679,7 @@ fn spawn_ring_overlay(
 pub fn apply_proposal_changes(
     commands: &mut Commands,
     assembled: &mut AssembledCity,
-    _structure_list: &StructureList,
+    _structure_list: &EorfList,
     overlay_assets: &ProposalOverlayAssets,
     changes: Vec<(SlotCoord, ProposalView)>,
 ) {
@@ -805,21 +805,21 @@ pub fn spawn_material_assets(
 }
 
 /// Furniture cubes (always `Slot::Room`) to highlight in the 3D view for the
-/// currently-inspected station. Written by `ui_system`, rendered by
-/// `update_station_highlight`.
+/// currently-inspected place. Written by `ui_system`, rendered by
+/// `update_place_highlight`.
 #[derive(Resource, Default, PartialEq)]
-pub struct StationHighlight(pub Vec<IVec3>);
+pub struct PlaceHighlight(pub Vec<IVec3>);
 
-/// Mesh + translucent material for station-highlight overlay cuboids.
+/// Mesh + translucent material for place-highlight overlay cuboids.
 #[derive(Resource)]
 pub struct HighlightAssets {
     mesh: Handle<Mesh>,
     mat: Handle<StandardMaterial>,
 }
 
-/// Marks a spawned station-highlight overlay entity for despawn on the next change.
+/// Marks a spawned place-highlight overlay entity for despawn on the next change.
 #[derive(Component)]
-pub struct StationHighlightMarker;
+pub struct PlaceHighlightMarker;
 
 /// Startup system: creates the highlight cuboid mesh and material.
 pub fn spawn_highlight_assets(
@@ -841,11 +841,11 @@ pub fn spawn_highlight_assets(
 
 /// Despawns prior highlight overlays and spawns one translucent cuboid per
 /// highlighted furniture cube whenever the highlight set changes.
-pub fn update_station_highlight(
+pub fn update_place_highlight(
     mut commands: Commands,
-    highlight: Res<StationHighlight>,
+    highlight: Res<PlaceHighlight>,
     assets: Option<Res<HighlightAssets>>,
-    existing: Query<Entity, With<StationHighlightMarker>>,
+    existing: Query<Entity, With<PlaceHighlightMarker>>,
 ) {
     if !highlight.is_changed() {
         return;
@@ -865,20 +865,20 @@ pub fn update_station_highlight(
             Mesh3d(assets.mesh.clone()),
             MeshMaterial3d(assets.mat.clone()),
             Transform::from_translation(center),
-            StationHighlightMarker,
+            PlaceHighlightMarker,
         ));
     }
 }
 
-/// Startup system: creates the four world resources from the already-populated StructureList.
-pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<StructureList>) {
+/// Startup system: creates the four world resources from the already-populated EorfList.
+pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<EorfList>) {
     let infos = structure_list
         .structures
         .iter()
         .map(|s| s.info.clone())
         .collect();
     let mut constructed = ConstructedCity::new(infos);
-    constructed.stations = crate::station::load_station_info();
+    constructed.places = crate::place::load_place_info();
     commands.insert_resource(constructed);
     commands.insert_resource(ProposedCity::new());
     commands.insert_resource(AssembledCity::new());

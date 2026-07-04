@@ -12,16 +12,16 @@ use crate::city::{
 };
 use crate::construction::{construct, Materials};
 use crate::cutaway::{CutCellMarker, CutawayMode};
+use crate::eorf::{EorfId, EorfList, PlacementStyle};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::structure::{PlacementStyle, StructureId, StructureList};
 use crate::util::zup_scene_transform;
 
 /// Bundles read-only resources used by `building_input_system` so its
 /// parameter count stays under Bevy's system-function arity limit (16).
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct BuildAssets<'w> {
-    pub structure_list: Res<'w, StructureList>,
+    pub structure_list: Res<'w, EorfList>,
     pub overlay_assets: Res<'w, ProposalOverlayAssets>,
     pub model_state: Res<'w, crate::qnn::ModelState>,
     pub material_list: Res<'w, crate::materials::MaterialList>,
@@ -43,7 +43,7 @@ pub fn cursor_system(
     cursor_entities: Res<CursorEntities>,
     mut cursors: Query<(&mut Transform, &mut Visibility)>,
 ) {
-    let id = StructureId(build_state.selected_structure as u32);
+    let id = EorfId(build_state.selected_structure as u32);
     let is_room = constructed.structure_is_room_plop(id);
     let maybe_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32);
     let y = build_state.cur_y as f32;
@@ -76,7 +76,7 @@ pub fn cursor_system(
     }
 
     if let Ok((mut t, mut vis)) = cursors.get_mut(cursor_entities.preview) {
-        let style = constructed.structures[id.as_usize()].placement_style;
+        let style = constructed.eorfs[id.as_usize()].placement_style;
         let show = build_state
             .drag_start
             .zip(maybe_pos)
@@ -157,7 +157,7 @@ pub struct BuildState {
     pub evaluation: Option<(f32, f32)>,
     /// Selected material (`BuildMaterialId`, index into `MaterialList::materials`) per structure type.
     pub material_per_type:
-        std::collections::HashMap<crate::materials::StructureType, BuildMaterialId>,
+        std::collections::HashMap<crate::materials::ElementType, BuildMaterialId>,
 }
 
 pub fn building_input_system(
@@ -218,7 +218,7 @@ pub fn building_input_system(
         };
     }
 
-    // --- Structure selection by digit key (in sorted display order) ---
+    // --- Eorf selection by digit key (in sorted display order) ---
     if !egui_wants_input.wants_keyboard_input() {
         const DIGIT_KEYS: [KeyCode; 9] = [
             KeyCode::Digit1,
@@ -231,7 +231,7 @@ pub fn building_input_system(
             KeyCode::Digit8,
             KeyCode::Digit9,
         ];
-        let sorted = crate::structure::sorted_structure_indices(&constructed.structures);
+        let sorted = crate::eorf::sorted_structure_indices(&constructed.eorfs);
         for (display_idx, key) in DIGIT_KEYS.iter().enumerate() {
             if keyboard.just_pressed(*key) {
                 if let Some(&struct_idx) = sorted.get(display_idx) {
@@ -274,7 +274,7 @@ pub fn building_input_system(
                 let metrics = crate::qnn::compute_metrics(
                     &holder,
                     &constructed.contents,
-                    &constructed.structures,
+                    &constructed.eorfs,
                     world_pos,
                 );
                 if metrics.len() >= 2 {
@@ -302,14 +302,14 @@ pub fn building_input_system(
             build_state.drag_start.take(),
             cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32),
         ) {
-            let id = StructureId(build_state.selected_structure as u32);
+            let id = EorfId(build_state.selected_structure as u32);
             let dir = build_state.cur_dir as i32;
             let (material, build_material) = {
-                let info = &constructed.structures[id.as_usize()];
-                if info.furniture.is_some() {
+                let info = &constructed.eorfs[id.as_usize()];
+                if info.is_furniture() {
                     (Material::Planks, BuildMaterialId(0))
                 } else {
-                    let stype = info.structure_type;
+                    let stype = info.element_type().unwrap_or_default();
                     let build_mat_id = build_state.material_per_type.get(&stype).copied().unwrap();
                     if let Some(mat) = material_list.materials.get(build_mat_id.0 as usize) {
                         let world_mat = mat.world_material();
@@ -368,10 +368,7 @@ pub fn building_input_system(
                     slot: Slot::Room,
                 };
                 if let Some(cell) = constructed.contents.get(loc) {
-                    if constructed.structures[cell.id.as_usize()]
-                        .furniture
-                        .is_some()
-                    {
+                    if constructed.eorfs[cell.id.as_usize()].is_furniture() {
                         furniture_right_click.0 = Some(cube);
                     }
                 }
@@ -384,7 +381,7 @@ pub fn building_input_system(
 pub fn update_room_cursor_mesh(
     build_state: Res<BuildState>,
     cursor_entities: Res<CursorEntities>,
-    structure_list: Res<StructureList>,
+    structure_list: Res<EorfList>,
     constructed: Res<ConstructedCity>,
     autotile_rules: Res<AutotileRules>,
     autotile_handles: Res<AutotileHandles>,
@@ -396,7 +393,7 @@ pub fn update_room_cursor_mesh(
         return;
     }
     *last_id = Some(id);
-    let struct_id = StructureId(id as u32);
+    let struct_id = EorfId(id as u32);
     // The last case of the first rule is used as the preview
     if constructed.structure_is_room_plop(struct_id) {
         let name = &structure_list.structures[id].info.name;

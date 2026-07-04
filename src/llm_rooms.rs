@@ -35,8 +35,8 @@ use crate::build_helpers::*;
 use crate::city::Cell;
 use bevy::math::IVec3;
 
+use crate::eorf::load_structure_info;
 use crate::sparse3d::{RelSlot, Sparse3D};
-use crate::structure::load_structure_info;
 
 fn v(x: i32, y: i32, z: i32) -> IVec3 {
     IVec3::new(x, y, z)

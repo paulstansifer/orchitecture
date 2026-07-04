@@ -133,19 +133,19 @@ pub fn can_afford_traveler(
 }
 
 /// Deducts demands from storage (spread across stations), deposits the traveler's
-/// reward into the first storage station, and returns the traveler's path.
+/// reward into the first storage place, and returns the traveler's path.
 pub fn accept_traveler(offer: &IndividualTraveler, constructed: &mut ConstructedCity) -> Vec<Vec2> {
     for (res, qty) in &offer.demands {
-        crate::station::consume_uniform(constructed, *res, *qty as u32);
+        crate::place::consume_uniform(constructed, *res, *qty as u32);
     }
-    let storage_idx = constructed.placed_stations.iter().position(|ps| {
+    let storage_idx = constructed.placed_places.iter().position(|ps| {
         constructed
-            .stations
-            .get(ps.station)
+            .places
+            .get(ps.place)
             .is_some_and(|info| info.storage.is_some())
     });
     if let Some(idx) = storage_idx {
-        let contents = &mut constructed.placed_stations[idx].contents;
+        let contents = &mut constructed.placed_places[idx].contents;
         match &offer.reward {
             ResolvedReward::Tool(kind) => contents.add_unique(UniqueResource::Tool(*kind)),
             ResolvedReward::Resource(res, qty) => contents.add_uniform(*res, *qty),

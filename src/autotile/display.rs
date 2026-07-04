@@ -8,8 +8,8 @@ use crate::city::{
     cell_transform, get_proposed_or_real, AssembledCity, Cell, ConstructedCity, GridCellMarker,
     Proposal, ProposalGhostMarker, ProposedCity,
 };
+use crate::eorf::{EorfId, EorfList};
 use crate::sparse3d::{Facing, SlotCoord};
-use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
 
 use super::meshes::{AutotileHandles, AutotileRules};
@@ -23,7 +23,7 @@ use super::{
 
 fn char_matches(
     ch: char,
-    id: StructureId,
+    id: EorfId,
     _facing: Facing,
     anchor_name: &str,
     all_names: &[String],
@@ -85,7 +85,7 @@ fn spawn_entities_from_results(
 fn apply_autotile_updates(
     commands: &mut Commands,
     autotile_handles: &AutotileHandles,
-    structure_list: &StructureList,
+    structure_list: &EorfList,
     updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)>,
     stale_locs: Vec<SlotCoord>,
     results_cache: &mut HashMap<SlotCoord, Vec<AutotileResult>>,
@@ -132,7 +132,7 @@ pub fn autotile_update_system(
     mut assembled: ResMut<AssembledCity>,
     autotile_rules: Res<AutotileRules>,
     autotile_handles: Res<AutotileHandles>,
-    structure_list: Res<StructureList>,
+    structure_list: Res<EorfList>,
 ) {
     let struct_names: Vec<String> = structure_list
         .structures

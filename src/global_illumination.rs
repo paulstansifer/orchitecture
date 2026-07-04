@@ -7,10 +7,10 @@ use bevy::render::render_resource::{
 };
 
 use crate::city::{Cell, ConstructedCity, MaterialAssets};
+use crate::eorf::{EorfInfo, EorfList};
 use crate::flood_fill::{coord_hash, flood_fill, has_sky_above};
 use crate::gi_material::{GiMaterial, GI_INTENSITY};
 use crate::sparse3d::{SlotCoord, Sparse3D};
-use crate::structure::{StructureInfo, StructureList};
 
 const FALLOFF: f32 = 0.30;
 // Not sure this works, but we should try setting this lower to make high windows nice.
@@ -27,7 +27,7 @@ const MAX_SOURCES: usize = 4;
 /// 0.0 = fully blocked, 0.5 = window/doorway, 1.0 = open air or transparent structure.
 fn boundary_transmission(
     contents: &Sparse3D<Cell>,
-    structures: &[StructureInfo],
+    structures: &[EorfInfo],
     from: IVec3,
     to: IVec3,
 ) -> f32 {
@@ -62,7 +62,7 @@ fn boundary_transmission(
 /// Returns a map from cube coordinate → light level in [0.0, 1.0].
 pub fn compute_sky_illuminance(
     contents: &Sparse3D<Cell>,
-    structures: &[StructureInfo],
+    structures: &[EorfInfo],
 ) -> HashMap<IVec3, f32> {
     if contents.size() == 0 {
         return HashMap::new();
@@ -109,7 +109,7 @@ pub fn compute_sky_illuminance(
 /// per cube covers every boundary exactly once.
 fn low_face_transmissions(
     contents: &Sparse3D<Cell>,
-    structures: &[StructureInfo],
+    structures: &[EorfInfo],
     cube: IVec3,
 ) -> [f32; 3] {
     [
@@ -131,7 +131,7 @@ fn low_face_transmissions(
 pub fn gi_to_image(
     illuminance: &HashMap<IVec3, f32>,
     contents: &Sparse3D<Cell>,
-    structures: &[StructureInfo],
+    structures: &[EorfInfo],
     (min_cube, max_cube): (IVec3, IVec3),
 ) -> Image {
     let rx = (max_cube.x - min_cube.x + 1) as u32;
@@ -183,7 +183,7 @@ pub fn gi_to_image(
 /// volume bounds) on every building material, run whenever `ConstructedWorld` changes.
 pub fn update_global_illumination(
     constructed: Res<ConstructedCity>,
-    structure_list: Res<StructureList>,
+    structure_list: Res<EorfList>,
     material_assets: Res<MaterialAssets>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<GiMaterial>>,
@@ -238,8 +238,8 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::build_helpers::Builder;
+    use crate::eorf::load_structure_info;
     use crate::sparse3d::RelSlot;
-    use crate::structure::load_structure_info;
 
     use super::compute_sky_illuminance;
 

@@ -3,15 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::city::Cell;
+use crate::eorf::{EorfId, EorfInfo};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, Sparse3D};
-use crate::structure::{StructureId, StructureInfo};
 
-pub fn serialize_slot(
-    id: StructureId,
-    slot: RelSlot,
-    structures: &HashMap<StructureId, StructureInfo>,
-) -> char {
+pub fn serialize_slot(id: EorfId, slot: RelSlot, structures: &HashMap<EorfId, EorfInfo>) -> char {
     let structure_info = structures.get(&id).unwrap();
     match slot {
         RelSlot::XLoWall | RelSlot::XHiWall => structure_info.x_char.unwrap_or(' '),
@@ -21,7 +17,7 @@ pub fn serialize_slot(
     }
 }
 
-pub fn deserialize(c: char, structures: &HashMap<char, StructureId>) -> StructureId {
+pub fn deserialize(c: char, structures: &HashMap<char, EorfId>) -> EorfId {
     *structures
         .get(&c)
         .unwrap_or_else(|| panic!("Unknown character for deserialization: {}", c))
@@ -63,8 +59,8 @@ fn extended_deserialize_at<'a, T: Deserialize<'a>>(line: &'a str) -> (IVec3, Rel
 
 pub fn serialize_sparse3d(
     grid: &crate::sparse3d::Sparse3D<Cell>,
-    f: fn(&Cell, RelSlot, &HashMap<StructureId, StructureInfo>) -> char,
-    structures: &HashMap<StructureId, StructureInfo>,
+    f: fn(&Cell, RelSlot, &HashMap<EorfId, EorfInfo>) -> char,
+    structures: &HashMap<EorfId, EorfInfo>,
 ) -> String {
     let mut serialized = String::new();
     let (min, max) = grid.bounding_box();
@@ -110,10 +106,10 @@ pub fn serialize_sparse3d(
 pub fn deserialize_sparse3d<'a, T, F, E>(
     lines: &'a str,
     mut f: F,
-    structures_by_char: &HashMap<char, StructureId>,
+    structures_by_char: &HashMap<char, EorfId>,
 ) -> Result<crate::sparse3d::Sparse3D<T>, E>
 where
-    F: FnMut(char, RelSlot, &HashMap<char, StructureId>) -> Result<T, E>,
+    F: FnMut(char, RelSlot, &HashMap<char, EorfId>) -> Result<T, E>,
     T: Deserialize<'a> + Serialize,
 {
     let mut grid = crate::sparse3d::Sparse3D::new();
@@ -185,10 +181,10 @@ where
     Ok(grid)
 }
 
-pub fn serialize(contents: &Sparse3D<Cell>, structures: &[StructureInfo]) -> Vec<u8> {
+pub fn serialize(contents: &Sparse3D<Cell>, structures: &[EorfInfo]) -> Vec<u8> {
     let mut structures_by_id = HashMap::new();
     for (id, info) in structures.iter().enumerate() {
-        structures_by_id.insert(StructureId(id as u32), info.clone());
+        structures_by_id.insert(EorfId(id as u32), info.clone());
     }
     serialize_sparse3d(
         contents,
@@ -198,18 +194,18 @@ pub fn serialize(contents: &Sparse3D<Cell>, structures: &[StructureInfo]) -> Vec
     .into_bytes()
 }
 
-pub fn save(contents: &Sparse3D<Cell>, structures: &[StructureInfo], path: &std::path::PathBuf) {
+pub fn save(contents: &Sparse3D<Cell>, structures: &[EorfInfo], path: &std::path::PathBuf) {
     std::fs::write(path, serialize(contents, structures)).unwrap();
 }
 
-pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Cell> {
+pub fn load_from_str(content: &str, structures: &[EorfInfo]) -> Sparse3D<Cell> {
     let mut structures_by_char = HashMap::new();
     for (id, info) in structures.iter().enumerate() {
         if let Some(c) = info.x_char {
-            structures_by_char.insert(c, StructureId(id as u32));
+            structures_by_char.insert(c, EorfId(id as u32));
         }
         if let Some(c) = info.z_char {
-            structures_by_char.insert(c, StructureId(id as u32));
+            structures_by_char.insert(c, EorfId(id as u32));
         }
     }
     deserialize_sparse3d(
@@ -229,7 +225,7 @@ pub fn load_from_str(content: &str, structures: &[StructureInfo]) -> Sparse3D<Ce
     .unwrap()
 }
 
-pub fn load(path: &std::path::PathBuf, structures: &[StructureInfo]) -> Sparse3D<Cell> {
+pub fn load(path: &std::path::PathBuf, structures: &[EorfInfo]) -> Sparse3D<Cell> {
     let content = std::fs::read_to_string(path).unwrap();
     load_from_str(&content, structures)
 }
@@ -240,16 +236,15 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::city::{Cell, Material};
+    use crate::eorf::{EorfId, EorfInfo, PlacementStyle, StructureEmbedding};
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord};
-    use crate::structure::{PlacementStyle, StructureEmbedding, StructureId, StructureInfo};
 
     use super::{deserialize, load_from_str, serialize};
 
-    fn make_structures() -> Vec<StructureInfo> {
+    fn make_structures() -> Vec<EorfInfo> {
         vec![
-            StructureInfo {
+            EorfInfo {
                 name: "wall".to_string(),
-                structure_type: crate::materials::StructureType::WallLike,
                 placement_style: PlacementStyle::WallDrag,
                 x_char: Some('|'),
                 z_char: Some('-'),
@@ -259,11 +254,12 @@ mod tests {
                     decorative: 0.0,
                     striated: 0.0,
                 },
-                furniture: None,
+                kind: crate::eorf::FurnitureOrElement::Element(
+                    crate::materials::ElementType::WallLike,
+                ),
             },
-            StructureInfo {
+            EorfInfo {
                 name: "floor".to_string(),
-                structure_type: crate::materials::StructureType::GroundFloorLike,
                 placement_style: PlacementStyle::FloorDrag,
                 x_char: Some('/'),
                 z_char: Some('.'),
@@ -273,14 +269,16 @@ mod tests {
                     decorative: 0.0,
                     striated: 0.0,
                 },
-                furniture: None,
+                kind: crate::eorf::FurnitureOrElement::Element(
+                    crate::materials::ElementType::GroundFloorLike,
+                ),
             },
         ]
     }
 
     fn cell(id: u32) -> Cell {
         Cell {
-            id: StructureId(id),
+            id: EorfId(id),
             facing: Facing::NegX,
             evaluation: None,
             material: Material::default(),
@@ -299,7 +297,7 @@ mod tests {
         let restored = load_from_str(std::str::from_utf8(&bytes).unwrap(), &structures);
 
         check!(restored.size() == 1);
-        check!(restored.get(loc).map(|c| c.id) == Some(StructureId(0)));
+        check!(restored.get(loc).map(|c| c.id) == Some(EorfId(0)));
     }
 
     #[test]
@@ -317,9 +315,9 @@ mod tests {
         let restored = load_from_str(std::str::from_utf8(&bytes).unwrap(), &structures);
 
         check!(restored.size() == 3);
-        check!(restored.get(zwall).map(|c| c.id) == Some(StructureId(0)));
-        check!(restored.get(xwall).map(|c| c.id) == Some(StructureId(0)));
-        check!(restored.get(floor).map(|c| c.id) == Some(StructureId(1)));
+        check!(restored.get(zwall).map(|c| c.id) == Some(EorfId(0)));
+        check!(restored.get(xwall).map(|c| c.id) == Some(EorfId(0)));
+        check!(restored.get(floor).map(|c| c.id) == Some(EorfId(1)));
     }
 
     #[test]
@@ -341,14 +339,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "Unknown character for deserialization")]
     fn deserialize_panics_on_unknown_char() {
-        let map: HashMap<char, StructureId> = HashMap::new();
+        let map: HashMap<char, EorfId> = HashMap::new();
         deserialize('X', &map);
     }
 
     #[test]
     fn deserialize_returns_correct_id_for_known_char() {
         let mut map = HashMap::new();
-        map.insert('A', StructureId(7));
-        check!(deserialize('A', &map) == StructureId(7));
+        map.insert('A', EorfId(7));
+        check!(deserialize('A', &map) == EorfId(7));
     }
 }

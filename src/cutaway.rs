@@ -13,9 +13,9 @@ use crate::city::{
     ConstructedCity, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
     ProposedCity, ProposedCutMarker, ViewableWorld,
 };
+use crate::eorf::{EorfId, EorfList};
 use crate::input::{cursor_world_pos, BuildState};
 use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
-use crate::structure::{StructureId, StructureList};
 use crate::util::zup_scene_transform;
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
@@ -23,9 +23,9 @@ use crate::util::zup_scene_transform;
 /// or a single entry for non-autotile cells. Empty when no cut meshes exist.
 fn get_cuts(
     loc: SlotCoord,
-    id: StructureId,
+    id: EorfId,
     assembled: &AssembledCity,
-    structure_list: &StructureList,
+    structure_list: &EorfList,
     autotile_handles: &AutotileHandles,
 ) -> Vec<(Handle<Scene>, Transform)> {
     if let Some(results) = assembled.autotile_results.get(&loc) {
@@ -317,7 +317,7 @@ fn find_wall_seeds(
 struct ClimbOutputs<'a> {
     visited_walls: &'a mut HashSet<(i32, i32, i32, bool)>,
     hidden: &'a mut Vec<SlotCoord>,
-    cut: Option<&'a mut Vec<(SlotCoord, StructureId, bool)>>,
+    cut: Option<&'a mut Vec<(SlotCoord, EorfId, bool)>>,
     floor_seeds: &'a mut Vec<(i32, i32, i32, bool)>,
 }
 
@@ -391,10 +391,10 @@ pub fn compute_floor_edge(
     (focus_location, is_room_plop): (Vec3, bool),
     camera_location: Vec3,
     cur_y: i32,
-) -> (Vec<SlotCoord>, Vec<(SlotCoord, StructureId, bool)>) {
+) -> (Vec<SlotCoord>, Vec<(SlotCoord, EorfId, bool)>) {
     use bevy::math::IVec3;
     let mut hidden: Vec<SlotCoord> = Vec::new();
-    let mut cut: Vec<(SlotCoord, StructureId, bool)> = Vec::new();
+    let mut cut: Vec<(SlotCoord, EorfId, bool)> = Vec::new();
 
     let (x_dir, z_dir) = camera_facing_dirs(focus_location, camera_location);
     let (sx, sz) = cursor_cube(focus_location, camera_location, is_room_plop);
@@ -541,7 +541,7 @@ fn simple_octant_cuts(
     cut_y: i32,
     x_neg: bool,
     z_neg: bool,
-) -> Vec<(SlotCoord, StructureId, bool)> {
+) -> Vec<(SlotCoord, EorfId, bool)> {
     let is_cut_face = |loc: SlotCoord| {
         let x_ok = if x_neg {
             loc.cube.x < sx
@@ -645,7 +645,7 @@ pub fn update_cutaway_system(
     mut commands: Commands,
     world: City,
     mut viewable: ResMut<ViewableWorld>,
-    structure_list: Res<StructureList>,
+    structure_list: Res<EorfList>,
     autotile_handles: Res<AutotileHandles>,
     build_state: Res<BuildState>,
     cutaway_mode: Res<CutawayMode>,
@@ -668,11 +668,11 @@ pub fn update_cutaway_system(
     let focus_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32)
         .unwrap_or_else(|| Vec3::new(0.0, build_state.cur_y as f32, 0.0));
 
-    let (hidden, cut_entries): (HiddenPredicate, Vec<(SlotCoord, StructureId, bool)>) =
+    let (hidden, cut_entries): (HiddenPredicate, Vec<(SlotCoord, EorfId, bool)>) =
         match *cutaway_mode {
             CutawayMode::FloorEdge => {
                 let is_room_plop = constructed
-                    .structure_is_room_plop(StructureId(build_state.selected_structure as u32));
+                    .structure_is_room_plop(EorfId(build_state.selected_structure as u32));
                 let (locs, cuts) = compute_floor_edge(
                     &constructed,
                     &pending,
@@ -705,7 +705,7 @@ pub fn update_cutaway_system(
                 let x_neg = camera_pos.x < focus_pos.x;
                 let z_neg = camera_pos.z < focus_pos.z;
                 let is_room_plop = constructed
-                    .structure_is_room_plop(StructureId(build_state.selected_structure as u32));
+                    .structure_is_room_plop(EorfId(build_state.selected_structure as u32));
                 let (locs, mut cuts) = compute_floor_edge(
                     &constructed,
                     &pending,
@@ -714,7 +714,7 @@ pub fn update_cutaway_system(
                     build_state.cur_y,
                 );
                 // Merge cut entries, deduplicating by location (real beats proposed-only).
-                let mut cut_map: HashMap<SlotCoord, (StructureId, bool)> = cuts
+                let mut cut_map: HashMap<SlotCoord, (EorfId, bool)> = cuts
                     .drain(..)
                     .map(|(loc, id, po)| (loc, (id, po)))
                     .collect();
@@ -780,8 +780,8 @@ pub fn update_cutaway_system(
     }
 
     // Separate proposed-only cuts from regular cuts.
-    let mut desired_proposed: HashMap<SlotCoord, StructureId> = HashMap::new();
-    let mut desired_regular: HashMap<SlotCoord, StructureId> = HashMap::new();
+    let mut desired_proposed: HashMap<SlotCoord, EorfId> = HashMap::new();
+    let mut desired_regular: HashMap<SlotCoord, EorfId> = HashMap::new();
     for (loc, id, is_proposed_only) in cut_entries {
         if is_proposed_only {
             desired_proposed.insert(loc, id);
@@ -871,13 +871,13 @@ mod tests {
 
     use crate::build_helpers::Builder;
     use crate::city::{AssembledCity, Cell, ConstructedCity, ProposedCity, ViewableWorld};
+    use crate::eorf::load_structure_info;
     use crate::sparse3d::Facing;
-    use crate::structure::load_structure_info;
 
     /// Builds a 3×1×3-cube room and returns the contents plus the loaded structures.
     fn two_level_room() -> (
         crate::sparse3d::Sparse3D<crate::city::Cell>,
-        Vec<crate::structure::StructureInfo>,
+        Vec<crate::eorf::EorfInfo>,
     ) {
         let structures = load_structure_info();
         let mut builder = Builder::new(&structures);
@@ -1097,7 +1097,7 @@ mod tests {
         cw.contents = contents;
 
         // Pre-populate autotile_results with empty vecs so that get_cuts never
-        // tries to access StructureList mesh handles (which aren't loaded in tests).
+        // tries to access EorfList mesh handles (which aren't loaded in tests).
         let mut assembled = AssembledCity::new();
         for (loc, _) in cw.contents.iter() {
             assembled.autotile_results.insert(loc, vec![]);
@@ -1107,7 +1107,7 @@ mod tests {
         app.insert_resource(ProposedCity::new());
         app.insert_resource(assembled);
         app.insert_resource(ViewableWorld::new());
-        app.insert_resource(StructureList::default());
+        app.insert_resource(EorfList::default());
         app.insert_resource(AutotileHandles {
             handles: std::collections::HashMap::new(),
         });
@@ -1130,7 +1130,7 @@ mod tests {
     #[test]
     fn test_compute_floor_edge_walls_hidden_after_desk_proposal() {
         let structures = load_structure_info();
-        let desk_id = crate::structure::find_structure_by_name(&structures, "desk").unwrap();
+        let desk_id = crate::eorf::find_structure_by_name(&structures, "desk").unwrap();
 
         let mut builder = Builder::new(&structures);
         builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 0, 2));
@@ -1196,7 +1196,7 @@ mod tests {
 
         let desk_id = {
             let structures = load_structure_info();
-            crate::structure::find_structure_by_name(&structures, "desk").unwrap()
+            crate::eorf::find_structure_by_name(&structures, "desk").unwrap()
         };
 
         // Spawn a GridCellMarker entity for the +X wall that should be hidden.
@@ -1266,10 +1266,10 @@ mod tests {
     #[test]
     fn test_ghost_loses_shadow_layer_after_proposal_cache_clear() {
         use crate::autotile::{autotile_update_system, compile, parse, AutotileRules};
-        use crate::structure::Structure;
+        use crate::eorf::Eorf;
 
         let structures = load_structure_info();
-        let desk_id = crate::structure::find_structure_by_name(&structures, "desk").unwrap();
+        let desk_id = crate::eorf::find_structure_by_name(&structures, "desk").unwrap();
 
         let mut builder = Builder::new(&structures);
         builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 0, 2));
@@ -1279,10 +1279,10 @@ mod tests {
         let autotile_file = parse(autotile_src).expect("structures.autotile parse error");
         let autotile_rules = AutotileRules(compile(&autotile_file));
 
-        let structure_list = StructureList {
+        let structure_list = EorfList {
             structures: structures
                 .iter()
-                .map(|info| Structure {
+                .map(|info| Eorf {
                     info: info.clone(),
                     mesh_handle: Handle::default(),
                     cut_handle: None,
@@ -1428,7 +1428,7 @@ mod tests {
         cw.contents.set(
             loc,
             Cell {
-                id: StructureId(0),
+                id: EorfId(0),
                 facing: Facing::NegX,
                 evaluation: None,
                 material: crate::city::Material::default(),
@@ -1439,7 +1439,7 @@ mod tests {
         app.insert_resource(ProposedCity::new());
         app.insert_resource(AssembledCity::new());
         app.insert_resource(ViewableWorld::new());
-        app.insert_resource(StructureList::default());
+        app.insert_resource(EorfList::default());
         app.insert_resource(AutotileHandles {
             handles: std::collections::HashMap::new(),
         });

@@ -16,9 +16,10 @@ use orchitecture_lib::{
     },
     city::{
         spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
-        update_station_highlight, ConstructedCity, StationHighlight,
+        update_place_highlight, ConstructedCity, PlaceHighlight,
     },
     cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
+    eorf::{spawn_structures, EorfList},
     game_mode::GameMode,
     gi_material::GiPlugin,
     global_illumination::update_global_illumination,
@@ -36,12 +37,11 @@ use orchitecture_lib::{
         WalkCameraState,
     },
     pathing::rebuild_navigation_grid,
+    place::{spawn_initial_places, sync_places_system},
     population::{spawn_population, sync_homes, Population},
     qnn::ModelPlugin,
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
-    station::spawn_initial_station,
-    structure::{spawn_structures, StructureList},
     surroundings::{
         enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
         GameClock,
@@ -81,11 +81,11 @@ fn main() {
         .insert_resource(WalkCameraState::default())
         .insert_resource(BuildState::default())
         .insert_resource(UiState::default())
-        .insert_resource(StructureList::default())
+        .insert_resource(EorfList::default())
         .insert_resource(CutawayMode::default())
         .insert_resource(SandboxMode::default())
         .insert_resource(FurnitureRightClick::default())
-        .insert_resource(StationHighlight::default())
+        .insert_resource(PlaceHighlight::default())
         .insert_resource(GameClock::default())
         .insert_resource(MaterialList::load())
         .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))
@@ -100,9 +100,9 @@ fn main() {
                 // Must run before any camera is spawned, so the automatic Egui setup
                 // system never gets a chance to race with `spawn_camera` for the context.
                 disable_auto_egui_primary_context,
-                // spawn_structures must run before spawn_grid (grid reads StructureList),
-                // and spawn_initial_station after spawn_grid (it needs the WallGrid resource).
-                (spawn_structures, spawn_grid, spawn_initial_station).chain(),
+                // spawn_structures must run before spawn_grid (grid reads EorfList),
+                // and spawn_initial_places after spawn_grid (it needs the WallGrid resource).
+                (spawn_structures, spawn_grid, spawn_initial_places).chain(),
                 spawn_autotile_rules,
                 load_autotile_handles,
                 generate_farms,
@@ -140,10 +140,15 @@ fn main() {
                 propagate_render_layers_system.after(update_cutaway_system),
                 //update_window_lights.run_if(resource_changed::<ConstructedWorld>),
                 update_global_illumination.run_if(resource_changed::<ConstructedCity>),
-                rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
-                update_station_highlight,
-                sync_homes
-                    .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
+                (
+                    sync_places_system.run_if(resource_changed::<ConstructedCity>),
+                    rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
+                    sync_homes.run_if(
+                        resource_changed::<ConstructedCity>.or(resource_changed::<Population>),
+                    ),
+                )
+                    .chain(),
+                update_place_highlight,
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))

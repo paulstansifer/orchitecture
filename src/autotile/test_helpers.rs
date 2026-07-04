@@ -2,8 +2,8 @@
 
 use super::{AutotileResult, MeshSpec};
 use crate::city::Cell;
+use crate::eorf::EorfId;
 use crate::sparse3d::Facing;
-use crate::structure::StructureId;
 
 // ── MeshSpec helpers ─────────────────────────────────────────────────────────
 
@@ -43,7 +43,7 @@ pub fn atom_rt(name: &str, r: i32, t: (i32, i32, i32)) -> MeshSpec {
 
 pub fn make_cell(id: u32) -> Cell {
     Cell {
-        id: StructureId(id),
+        id: EorfId(id),
         facing: Default::default(),
         evaluation: None,
         material: Default::default(),
@@ -65,7 +65,7 @@ pub fn desk_cell() -> Cell {
 
 pub fn stairs_cell(facing: Facing) -> Cell {
     Cell {
-        id: StructureId(2),
+        id: EorfId(2),
         facing,
         evaluation: None,
         material: Default::default(),

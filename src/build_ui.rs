@@ -8,14 +8,14 @@ use crate::city::{
 };
 use crate::construction::{construct, load_from_offline};
 use crate::cutaway::CutawayMode;
+use crate::eorf::sorted_structure_indices;
+use crate::eorf::EorfList;
 use crate::input::BuildState;
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
-use crate::structure::sorted_structure_indices;
-use crate::structure::StructureList;
 
 /// Maps bundled at compile time; always available on all platforms.
 const BUNDLED_MAPS: &[(&str, &str)] = &[
@@ -129,8 +129,8 @@ pub enum LeftPanel {
     /// Normal palette / material / construct controls.
     #[default]
     Build,
-    /// Station view for the furniture cube that was right-clicked.
-    Station { cube: IVec3 },
+    /// Ancestor-chain view for the furniture cube that was right-clicked.
+    Place { cube: IVec3 },
 }
 
 #[derive(Resource, Default)]
@@ -143,7 +143,7 @@ pub struct UiState {
 }
 
 /// A right-click pick on a real furniture cell, produced by `building_input_system`
-/// and consumed by `ui_system` to open the station panel.
+/// and consumed by `ui_system` to open the place panel.
 #[derive(Resource, Default)]
 pub struct FurnitureRightClick(pub Option<IVec3>);
 
@@ -204,7 +204,7 @@ pub fn handle_file_save(mut ev_saved: MessageReader<DialogFileSaved<SaveDialog>>
 pub fn handle_file_load(
     mut ev_loaded: MessageReader<DialogFileLoaded<LoadDialog>>,
     mut commands: Commands,
-    structure_list: Res<StructureList>,
+    structure_list: Res<EorfList>,
     mut constructed: ResMut<ConstructedCity>,
     mut pending: ResMut<ProposedCity>,
     mut assembled: ResMut<AssembledCity>,
@@ -212,7 +212,7 @@ pub fn handle_file_load(
 ) {
     for ev in ev_loaded.read() {
         if let Ok(content) = std::str::from_utf8(&ev.contents) {
-            let new_contents = serialization::load_from_str(content, &constructed.structures);
+            let new_contents = serialization::load_from_str(content, &constructed.eorfs);
             clear_proposal_entities(&mut commands, &mut assembled);
             clear_proposed_cut_entities(&mut commands, &mut viewable);
             let changes = load_from_offline(&mut constructed, &mut pending, new_contents);
@@ -224,7 +224,7 @@ pub fn handle_file_load(
 pub fn build_ui_system(
     mut commands: Commands,
     mut contexts: EguiContexts,
-    structure_list: Res<StructureList>,
+    structure_list: Res<EorfList>,
     mut world: CityMut,
     mut viewable: ResMut<ViewableWorld>,
     mut build_state: ResMut<BuildState>,
@@ -233,7 +233,7 @@ pub fn build_ui_system(
     mut cutaway_mode: ResMut<CutawayMode>,
     mut sandbox: ResMut<SandboxMode>,
     mut furniture_right_click: ResMut<FurnitureRightClick>,
-    mut station_highlight: ResMut<crate::city::StationHighlight>,
+    mut place_highlight: ResMut<crate::city::PlaceHighlight>,
     resource_icons: Res<ResourceIcons>,
     material_list: Res<MaterialList>,
     population: Res<Population>,
@@ -243,9 +243,9 @@ pub fn build_ui_system(
         return;
     };
 
-    // A right-click pick (from building_input_system) opens the station panel.
+    // A right-click pick (from building_input_system) opens the place panel.
     if let Some(cube) = furniture_right_click.0.take() {
-        ui_state.left_panel = LeftPanel::Station { cube };
+        ui_state.left_panel = LeftPanel::Place { cube };
     }
 
     // Captures a map name selected via the dropdown; handled after the egui block.
@@ -276,10 +276,8 @@ pub fn build_ui_system(
 
             ui.separator();
             if ui.button("Save").clicked() {
-                let bytes = serialization::serialize(
-                    &world.constructed.contents,
-                    &world.constructed.structures,
-                );
+                let bytes =
+                    serialization::serialize(&world.constructed.contents, &world.constructed.eorfs);
                 commands
                     .dialog()
                     .add_filter("Orchitecture Map", &["txt"])
@@ -367,13 +365,13 @@ pub fn build_ui_system(
         let new_contents_opt = if let Some(content) = find_bundled(&name) {
             Some(serialization::load_from_str(
                 content,
-                &world.constructed.structures,
+                &world.constructed.eorfs,
             ))
         } else {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let path = std::path::PathBuf::from(crate::paths::USER_DIR).join(&name);
-                Some(serialization::load(&path, &world.constructed.structures))
+                Some(serialization::load(&path, &world.constructed.eorfs))
             }
             #[cfg(target_arch = "wasm32")]
             None
@@ -393,10 +391,8 @@ pub fn build_ui_system(
     }
 
     // Deferred mutations so the panel closure only borrows `wall_grid` immutably
-    // in the station arms (the build arm still mutates it directly).
+    // in the place arm (the build arm still mutates it directly).
     let mut next_panel: Option<LeftPanel> = None;
-    let mut assign: Option<(IVec3, usize)> = None;
-    let mut unassign: Option<usize> = None;
     let mut highlight: Vec<IVec3> = Vec::new();
     let panel = ui_state.left_panel.clone();
 
@@ -405,96 +401,75 @@ pub fn build_ui_system(
         .max_width(140.0)
         .show(ctx, |ui| {
             match panel {
-                LeftPanel::Station { cube } => {
-                    ui.heading("Station");
+                LeftPanel::Place { cube } => {
+                    ui.heading("Place");
                     ui.separator();
                     if ui.button("← Back").clicked() {
                         next_panel = Some(LeftPanel::Build);
                     }
                     ui.separator();
-                    match crate::station::station_index_at(&world.constructed, cube) {
-                        Some(idx) => {
-                            let ps = &world.constructed.placed_stations[idx];
-                            let def = &world.constructed.stations[ps.station];
-                            ui.label(format!("Name: {}", def.name));
-
-                            let mut counts: std::collections::BTreeMap<String, usize> =
-                                std::collections::BTreeMap::new();
-                            for loc in &ps.structure_locations {
-                                if let Some(cell) = world.constructed.contents.get(SlotCoord {
-                                    cube: *loc,
-                                    slot: Slot::Room,
-                                }) {
-                                    *counts
-                                        .entry(
-                                            world.constructed.structures[cell.id.as_usize()]
-                                                .name
-                                                .clone(),
-                                        )
-                                        .or_default() += 1;
-                                }
-                            }
-                            ui.separator();
-                            ui.label("Structures:");
-                            for (name, c) in &counts {
-                                ui.label(format!("  {}: {}", name, c));
-                            }
-
-                            ui.separator();
-                            ui.label("Contents:");
-                            let totals = ps.contents.uniform_totals();
-                            if totals.is_empty() {
-                                ui.label("  (empty)");
-                            }
-                            for (res, qty) in totals {
-                                ui.horizontal(|ui| {
-                                    if let Some(&tex) = icon_textures.get(&res) {
-                                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                                            tex, LARGE_SIZE,
-                                        )));
+                    // Places are formed automatically; show the ancestor chain of
+                    // places containing the clicked furniture, innermost first.
+                    let chain = crate::place::containing_chain(&world.constructed, cube);
+                    if chain.is_empty() {
+                        ui.label("Not part of any place.");
+                    } else {
+                        for &idx in &chain {
+                            let ps = &world.constructed.placed_places[idx];
+                            let def = &world.constructed.places[ps.place];
+                            ui.collapsing(def.name.clone(), |ui| {
+                                let mut counts: std::collections::BTreeMap<String, usize> =
+                                    std::collections::BTreeMap::new();
+                                for f in &ps.fulfillments {
+                                    if let crate::place::FulfilledPorf::Furniture(loc) = f {
+                                        if let Some(cell) =
+                                            world.constructed.contents.get(SlotCoord {
+                                                cube: *loc,
+                                                slot: Slot::Room,
+                                            })
+                                        {
+                                            *counts
+                                                .entry(
+                                                    world.constructed.eorfs[cell.id.as_usize()]
+                                                        .name
+                                                        .clone(),
+                                                )
+                                                .or_default() += 1;
+                                        }
                                     }
-                                    ui.label(format!("{}", qty));
-                                });
-                            }
-
-                            // Highlight this station's furniture in 3D.
-                            highlight = ps.structure_locations.clone();
-
-                            ui.separator();
-                            if ui.button("Unassign station").clicked() {
-                                unassign = Some(idx);
-                                next_panel = Some(LeftPanel::Build);
-                            }
-                        }
-                        None => {
-                            // A `Some` plan is exactly the validity test, so one pass over
-                            // the stations both filters and yields the "Pulls N" count.
-                            let plans: Vec<(usize, usize)> = (0..world.constructed.stations.len())
-                                .filter_map(|s_idx| {
-                                    crate::station::plan_assignment(&world.constructed, cube, s_idx)
-                                        .map(|plan| (s_idx, plan.pulled))
-                                })
-                                .collect();
-                            if plans.is_empty() {
-                                ui.label("No valid stations here.");
-                            } else {
-                                ui.label("Create station:");
-                            }
-                            for (s_idx, pulled) in plans {
-                                if ui.button(&world.constructed.stations[s_idx].name).clicked() {
-                                    assign = Some((cube, s_idx));
                                 }
-                                if pulled > 0 {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "Pulls {} already-assigned structures",
-                                            pulled
-                                        ))
-                                        .italics(),
-                                    );
+                                ui.label("Structures:");
+                                for (name, c) in &counts {
+                                    ui.label(format!("  {}: {}", name, c));
                                 }
-                            }
+
+                                ui.label("Contents:");
+                                let totals = ps.contents.uniform_totals();
+                                if totals.is_empty() {
+                                    ui.label("  (empty)");
+                                }
+                                for (res, qty) in totals {
+                                    ui.horizontal(|ui| {
+                                        if let Some(&tex) = icon_textures.get(&res) {
+                                            ui.add(egui::Image::new(
+                                                egui::load::SizedTexture::new(tex, LARGE_SIZE),
+                                            ));
+                                        }
+                                        ui.label(format!("{}", qty));
+                                    });
+                                }
+                            });
                         }
+                        // Highlight the innermost place's furniture in 3D.
+                        let innermost = &world.constructed.placed_places[chain[0]];
+                        highlight = innermost
+                            .fulfillments
+                            .iter()
+                            .filter_map(|f| match f {
+                                crate::place::FulfilledPorf::Furniture(loc) => Some(*loc),
+                                crate::place::FulfilledPorf::Place(_) => None,
+                            })
+                            .collect();
                     }
                 }
                 LeftPanel::Build => {
@@ -502,21 +477,22 @@ pub fn build_ui_system(
                     ui.separator();
 
                     // Structures sorted by type with group headers.
-                    let sorted = sorted_structure_indices(&world.constructed.structures);
-                    let mut last_stype: Option<crate::materials::StructureType> = None;
+                    let sorted = sorted_structure_indices(&world.constructed.eorfs);
+                    let mut last_group: Option<Option<crate::materials::ElementType>> = None;
                     for (display_idx, &struct_idx) in sorted.iter().enumerate() {
-                        let info = &world.constructed.structures[struct_idx];
-                        let stype = info.structure_type;
-                        if last_stype != Some(stype) {
-                            if last_stype.is_some() {
+                        let info = &world.constructed.eorfs[struct_idx];
+                        let group = info.element_type();
+                        if last_group != Some(group) {
+                            if last_group.is_some() {
                                 ui.separator();
                             }
+                            let label = group.map(|g| g.label()).unwrap_or("Furniture");
                             ui.label(
-                                egui::RichText::new(stype.label())
+                                egui::RichText::new(label)
                                     .small()
                                     .color(egui::Color32::from_gray(140)),
                             );
-                            last_stype = Some(stype);
+                            last_group = Some(group);
                         }
                         let selected = build_state.selected_structure == struct_idx;
                         let label = if display_idx < 9 {
@@ -529,21 +505,22 @@ pub fn build_ui_system(
                         }
                     }
 
-                    // Material picker for the selected structure's type.
-                    let selected_info =
-                        &world.constructed.structures[build_state.selected_structure];
-                    let stype = selected_info.structure_type;
-                    let options = material_list.for_type(stype);
-                    if !options.is_empty() {
-                        ui.separator();
-                        ui.label("Material:");
-                        let current = build_state.material_per_type.get(&stype).copied().unwrap();
-                        let mut chosen = current;
-                        for &(material_id, mat) in options.iter() {
-                            ui.radio_value(&mut chosen, material_id, &mat.name);
-                        }
-                        if chosen != current {
-                            build_state.material_per_type.insert(stype, chosen);
+                    // Material picker for the selected structure's type (Furniture has none).
+                    let selected_info = &world.constructed.eorfs[build_state.selected_structure];
+                    if let Some(stype) = selected_info.element_type() {
+                        let options = material_list.for_type(stype);
+                        if !options.is_empty() {
+                            ui.separator();
+                            ui.label("Material:");
+                            let current =
+                                build_state.material_per_type.get(&stype).copied().unwrap();
+                            let mut chosen = current;
+                            for &(material_id, mat) in options.iter() {
+                                ui.radio_value(&mut chosen, material_id, &mat.name);
+                            }
+                            if chosen != current {
+                                build_state.material_per_type.insert(stype, chosen);
+                            }
                         }
                     }
 
@@ -628,19 +605,13 @@ pub fn build_ui_system(
             });
     }
 
-    // Apply deferred station mutations now that the panel closure has ended.
-    if let Some((cube, s_idx)) = assign {
-        crate::station::commit_assignment(&mut world.constructed, cube, s_idx);
-    }
-    if let Some(idx) = unassign {
-        crate::station::unassign_station(&mut world.constructed, idx);
-    }
+    // Apply the deferred panel-navigation mutation now that the panel closure has ended.
     if let Some(p) = next_panel {
         ui_state.left_panel = p;
     }
     // Write only on change (set_if_neq), so the highlight system doesn't respawn
     // the overlay meshes every frame.
-    station_highlight.set_if_neq(crate::city::StationHighlight(highlight));
+    place_highlight.set_if_neq(crate::city::PlaceHighlight(highlight));
 }
 
 fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {
@@ -650,9 +621,9 @@ fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {
     });
 }
 
-/// Totals of all resources across every storage station, sorted for display.
+/// Totals of all resources across every storage place, sorted for display.
 /// Returns `(resource, total_quantity, precision)`.
-pub(crate) fn station_resource_totals(
+pub(crate) fn place_resource_totals(
     constructed: &ConstructedCity,
 ) -> Vec<(
     crate::resource::UniformResource,
@@ -663,14 +634,14 @@ pub(crate) fn station_resource_totals(
     use std::collections::HashMap;
 
     let mut map: HashMap<UniformResource, (u32, Precision)> = HashMap::new();
-    for station in &constructed.placed_stations {
-        let Some(info) = constructed.stations.get(station.station) else {
+    for place in &constructed.placed_places {
+        let Some(info) = constructed.places.get(place.place) else {
             continue;
         };
         let Some(spec) = &info.storage else {
             continue;
         };
-        for (res, qty) in station.contents.uniform_totals() {
+        for (res, qty) in place.contents.uniform_totals() {
             let (rounded, precision) = round(qty, spec.accounting);
             let entry = map.entry(res).or_insert((0, Precision::Exact));
             entry.0 += rounded as u32;
@@ -690,7 +661,7 @@ pub(crate) fn station_resource_totals(
 /// Returns sorted `(resource, quantity)` pairs; empty when cost is zero.
 pub(crate) fn construction_cost(
     proposed: &crate::sparse3d::Sparse3D<crate::city::Proposal>,
-    structure_infos: &[crate::structure::StructureInfo],
+    structure_infos: &[crate::eorf::EorfInfo],
     material_list: &crate::materials::MaterialList,
 ) -> Vec<(crate::resource::UniformResource, u32)> {
     use crate::city::Proposal;
@@ -704,14 +675,17 @@ pub(crate) fn construction_cost(
             continue;
         };
         let info = &structure_infos[cell.id.as_usize()];
-        let cost = if let Some(furniture_cost) = &info.furniture {
+        let cost = if let Some(furniture_cost) = info.furniture_cost() {
             furniture_cost.clone()
         } else {
             let Some(build_mat) = material_list.materials.get(cell.build_material.0 as usize)
             else {
                 continue;
             };
-            let Some(cost) = build_mat.costs.get(&info.structure_type) else {
+            let Some(element_type) = info.element_type() else {
+                continue;
+            };
+            let Some(cost) = build_mat.costs.get(&element_type) else {
                 continue;
             };
             cost.clone()

@@ -6,9 +6,9 @@ use crate::city::{
     Cell, ConstructedCity, Material, Proposal, ProposalView, ProposedCity, UndoRecord,
     VantageEvaluation, ViewableWorld,
 };
+use crate::eorf::{EorfId, EorfList, PlacementStyle};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
-use crate::structure::{PlacementStyle, StructureId, StructureList};
 
 /// A material and build-material to apply to a placement. Always passed together.
 #[derive(Clone, Copy)]
@@ -42,7 +42,7 @@ impl ProposedCity {
         dir: i32,
         (position1, position2): (IVec3, IVec3),
         slot: Slot,
-        item: Option<StructureId>,
+        item: Option<EorfId>,
         materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let Materials {
@@ -76,7 +76,7 @@ impl ProposedCity {
                     let new_proposal: Option<Proposal> = if let Some(id) = item {
                         let facing = Facing::from_number(dir as u8);
                         // Furniture is always planks, regardless of the selected material.
-                        let material = if cw.structures[id.as_usize()].furniture.is_some() {
+                        let material = if cw.eorfs[id.as_usize()].is_furniture() {
                             Material::Planks
                         } else {
                             material
@@ -135,7 +135,7 @@ impl ProposedCity {
         cw: &ConstructedCity,
         from: Vec3,
         to: Vec3,
-        selected_mesh_id: Option<StructureId>,
+        selected_mesh_id: Option<EorfId>,
         materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let along_x = (to.x - from.x).abs() > (to.z - from.z).abs();
@@ -169,7 +169,7 @@ impl ProposedCity {
         cw: &ConstructedCity,
         from: Vec3,
         to: Vec3,
-        selected_mesh_id: Option<StructureId>,
+        selected_mesh_id: Option<EorfId>,
         materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let from_i = from.round().as_ivec3();
@@ -192,7 +192,7 @@ impl ProposedCity {
         from: Vec3,
         to: Vec3,
         dir: i32,
-        selected_mesh_id: Option<StructureId>,
+        selected_mesh_id: Option<EorfId>,
         materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let from_i = from.round().as_ivec3();
@@ -214,7 +214,7 @@ impl ProposedCity {
         cw: &ConstructedCity,
         location: Vec3,
         dir: i32,
-        selected_mesh_id: Option<StructureId>,
+        selected_mesh_id: Option<EorfId>,
         materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let pos = location.round().as_ivec3();
@@ -239,12 +239,12 @@ impl ProposedCity {
         cw: &ConstructedCity,
         (from, to): (Vec3, Vec3),
         dir: i32,
-        selected_mesh_id: StructureId,
+        selected_mesh_id: EorfId,
         remove: bool,
         materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
         let id = (!remove).then_some(selected_mesh_id);
-        match cw.structures[selected_mesh_id.as_usize()].placement_style {
+        match cw.eorfs[selected_mesh_id.as_usize()].placement_style {
             PlacementStyle::WallDrag => self.wall_drag(cw, from, to, id, materials),
             PlacementStyle::FloorDrag => self.floor_drag(cw, from, to, id, materials),
             PlacementStyle::RoomDrag => self.room_drag(cw, from, to, dir, id, materials),
@@ -261,7 +261,7 @@ impl ProposedCity {
         &mut self,
         cw: &ConstructedCity,
         loc: SlotCoord,
-        item: Option<StructureId>,
+        item: Option<EorfId>,
         dir: i32,
         materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
@@ -272,12 +272,12 @@ impl ProposedCity {
         &mut self,
         cw: &ConstructedCity,
         position: Vec3,
-        selected_mesh_id: StructureId,
+        selected_mesh_id: EorfId,
         dir: i32,
         remove: bool,
         materials: Materials,
     ) -> Vec<(SlotCoord, ProposalView)> {
-        match cw.structures[selected_mesh_id.as_usize()].placement_style {
+        match cw.eorfs[selected_mesh_id.as_usize()].placement_style {
             PlacementStyle::RoomPlop => self.room_plop(
                 cw,
                 position,
@@ -401,7 +401,7 @@ pub fn advance_construction(
     commands: &mut Commands,
     assembled: &mut AssembledCity,
     viewable: &mut ViewableWorld,
-    structure_list: &StructureList,
+    structure_list: &EorfList,
 ) -> bool {
     if pending.num_changes() > 0 {
         pending.months_waited += 1;
@@ -442,17 +442,16 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::city::{Cell, ConstructedCity, Material, Proposal, ProposalView, ProposedCity};
+    use crate::eorf::{EorfId, EorfInfo, PlacementStyle};
     use crate::materials::BuildMaterialId;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
-    use crate::structure::{PlacementStyle, StructureId, StructureInfo};
 
     use super::{construct, load_from_offline, Materials};
 
     fn make_world() -> (ConstructedCity, ProposedCity) {
-        use crate::structure::StructureEmbedding;
-        let structs = vec![StructureInfo {
+        use crate::eorf::StructureEmbedding;
+        let structs = vec![EorfInfo {
             name: "test_wall".to_string(),
-            structure_type: crate::materials::StructureType::WallLike,
             placement_style: PlacementStyle::WallDrag,
             x_char: None,
             z_char: None,
@@ -462,18 +461,18 @@ mod tests {
                 decorative: 0.0,
                 striated: 0.0,
             },
-            furniture: None,
+            kind: crate::eorf::FurnitureOrElement::Element(crate::materials::ElementType::WallLike),
         }];
         let mut cw = ConstructedCity::new(structs);
         cw.road_forbidden_zone = false;
         (cw, ProposedCity::new())
     }
 
-    fn thing(cw: &ConstructedCity) -> Option<StructureId> {
+    fn thing(cw: &ConstructedCity) -> Option<EorfId> {
         cw.find_structure_by_name("test_wall")
     }
 
-    fn wall_cell(id: StructureId) -> Cell {
+    fn wall_cell(id: EorfId) -> Cell {
         Cell {
             id,
             facing: Facing::NegX,
@@ -897,8 +896,8 @@ mod tests {
 
     #[test]
     fn smoke_load_propose_undo_construct() {
+        use crate::eorf::{find_structure_by_name, load_structure_info};
         use crate::serialization::load_from_str;
-        use crate::structure::{find_structure_by_name, load_structure_info};
         use bevy::math::Vec3;
 
         let structures = load_structure_info();

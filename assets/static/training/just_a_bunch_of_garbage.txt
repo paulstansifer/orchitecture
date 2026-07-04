@@ -33,4 +33,4 @@
               
 ~~~~~
 ~*~*~
-(3,0,3,"Room")={"id":0,"facing":"NegX","evaluation":{"coherence":0.0}}
+(3,0,3,"Room")={"id":8,"facing":"NegX","evaluation":{"coherence":0.0}}
