@@ -1,8 +1,9 @@
 //! Sprite-sheet generator — headless mode.
 //!
-//! Generates two PNG files:
+//! Generates three PNG files:
 //!   `assets/static/orcs/characters_sheet.png` — columns = characters, rows = Y-rotations (0°, 90°, 180°, 270°).
-//!   `assets/static/orcs/structures_sheet.png` — columns = structures, rows = Y-rotations.
+//!   `assets/static/orcs/elements_sheet.png` — columns = elements, rows = Y-rotations.
+//!   `assets/static/orcs/furniture_sheet.png` — columns = furniture, rows = Y-rotations.
 //!
 //! Each sprite is rendered inside a wireframe unit cube.
 //!
@@ -83,8 +84,12 @@ fn characters_output_path() -> std::path::PathBuf {
     std::path::Path::new(MANIFEST_DIR).join("assets/static/orcs/characters_sheet.png")
 }
 
-fn structures_output_path() -> std::path::PathBuf {
-    std::path::Path::new(MANIFEST_DIR).join("assets/static/orcs/structures_sheet.png")
+fn elements_output_path() -> std::path::PathBuf {
+    std::path::Path::new(MANIFEST_DIR).join("assets/static/orcs/elements_sheet.png")
+}
+
+fn furniture_output_path() -> std::path::PathBuf {
+    std::path::Path::new(MANIFEST_DIR).join("assets/static/orcs/furniture_sheet.png")
 }
 
 // --- GPU readback snap infrastructure ------------------------------------
@@ -210,7 +215,8 @@ impl Plugin for SnapPlugin {
 #[derive(Clone)]
 enum SheetKind {
     Characters,
-    Structures,
+    Elements,
+    Furniture,
 }
 
 #[derive(Resource, Clone)]
@@ -326,7 +332,7 @@ fn setup(
             });
         }
 
-        SheetKind::Structures => {
+        SheetKind::Elements | SheetKind::Furniture => {
             let n_cols = config.buildings.len() as u32;
             let img_width = n_cols * CELL_TOTAL_PX;
             let img_height = N_ROTATIONS * CELL_TOTAL_PX;
@@ -343,7 +349,7 @@ fn setup(
             let image = images.add(image);
 
             for (col, name) in config.buildings.iter().enumerate() {
-                let path = format!("assets/generated/autotile/{name}.gltf");
+                let path = format!("assets/generated/autotile/atomic/{name}.gltf");
                 let scene: Handle<Scene> =
                     asset_server.load(GltfAssetLabel::Scene(0).from_asset(path));
                 for (row, &angle) in Y_ROTATIONS.iter().enumerate() {
@@ -696,29 +702,54 @@ fn save_snap(app: &mut App, path: &std::path::Path) {
 
 // --- Main ----------------------------------------------------------------
 
-fn find_matching_buildings() -> Vec<String> {
+fn load_structure_categories() -> std::collections::HashMap<String, String> {
     let base = std::path::Path::new(MANIFEST_DIR);
-    let scad_names: std::collections::HashSet<String> = std::fs::read_dir(base.join("buildables"))
-        .expect("buildables/ not found")
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let p = e.path();
-            if p.extension()?.to_str()? == "scad" {
-                Some(p.file_stem()?.to_str()?.to_string())
-            } else {
-                None
+    let path = base.join("assets/generated/autotile/structure_categories.json");
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let mut map = std::collections::HashMap::new();
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('{') || line.starts_with('}') {
+                    continue;
+                }
+                let line = line.trim_end_matches(',');
+                if let Some(colon) = line.find(':') {
+                    let name_part = line[..colon].trim();
+                    let cat_part = line[colon + 1..].trim();
+                    if let (Some(name), Some(cat)) = (
+                        name_part
+                            .strip_prefix('"')
+                            .and_then(|n| n.strip_suffix('"')),
+                        cat_part.strip_prefix('"').and_then(|c| c.strip_suffix('"')),
+                    ) {
+                        map.insert(name.to_string(), cat.to_string());
+                    }
+                }
             }
-        })
-        .collect();
+            map
+        }
+        Err(_) => std::collections::HashMap::new(),
+    }
+}
 
-    let mut matches: Vec<String> = std::fs::read_dir(base.join("assets/generated/autotile"))
-        .expect("assets/generated/autotile/ not found")
+fn find_matching_buildings(category: &str) -> Vec<String> {
+    let base = std::path::Path::new(MANIFEST_DIR);
+    let categories = load_structure_categories();
+
+    let mut matches: Vec<String> = std::fs::read_dir(base.join("assets/generated/autotile/atomic"))
+        .expect("assets/generated/autotile/atomic/ not found")
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let p = e.path();
             if p.extension()?.to_str()? == "gltf" {
                 let name = p.file_stem()?.to_str()?.to_string();
-                scad_names.contains(&name).then_some(name)
+                // Filter by category: check if the structure's base name matches this category
+                let category_match = categories
+                    .get(&name)
+                    .map(|c| c == category)
+                    .unwrap_or(false);
+                category_match.then_some(name)
             } else {
                 None
             }
@@ -733,7 +764,8 @@ fn find_matching_buildings() -> Vec<String> {
 fn run_sheet(config: SheetConfig) {
     let output_path = match config.kind {
         SheetKind::Characters => characters_output_path(),
-        SheetKind::Structures => structures_output_path(),
+        SheetKind::Elements => elements_output_path(),
+        SheetKind::Furniture => furniture_output_path(),
     };
 
     let mut app = App::new();
@@ -785,11 +817,14 @@ fn run_sheet(config: SheetConfig) {
 }
 
 fn main() {
-    let buildings = find_matching_buildings();
+    let elements_buildings = find_matching_buildings("elements");
+    let furniture_buildings = find_matching_buildings("furniture");
     println!(
-        "Building sprites: {} ({})",
-        buildings.len(),
-        buildings.join(", ")
+        "Building sprites: {} elements ({}), {} furniture ({})",
+        elements_buildings.len(),
+        elements_buildings.join(", "),
+        furniture_buildings.len(),
+        furniture_buildings.join(", ")
     );
 
     run_sheet(SheetConfig {
@@ -797,8 +832,12 @@ fn main() {
         buildings: vec![],
     });
     run_sheet(SheetConfig {
-        kind: SheetKind::Structures,
-        buildings,
+        kind: SheetKind::Elements,
+        buildings: elements_buildings,
+    });
+    run_sheet(SheetConfig {
+        kind: SheetKind::Furniture,
+        buildings: furniture_buildings,
     });
 
     std::process::exit(0);

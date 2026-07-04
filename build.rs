@@ -36,6 +36,10 @@ fn main() {
     fs::create_dir_all(&out_dir)
         .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_dir.display()));
 
+    let atomic_out_dir = out_dir.join("atomic");
+    fs::create_dir_all(&atomic_out_dir)
+        .unwrap_or_else(|e| panic!("Failed to create {}: {e}", atomic_out_dir.display()));
+
     // Every top-level .scad source that something actually uses; anything left over
     // is reported as an orphan at the end.
     let mut referenced_scad: HashSet<PathBuf> = HashSet::new();
@@ -71,8 +75,73 @@ fn main() {
     // Generate the fallback meshes for the structures in elements.ron/furniture.ron.
     generate_structure_meshes(&buildables, &out_dir, &spec_map, &mut referenced_scad);
 
+    // Generate atomic meshes in the atomic/ subdirectory.
+    generate_atomic_meshes(&buildables, &atomic_out_dir, &mut referenced_scad);
+
+    // Generate a JSON file mapping structures to their category (elements vs furniture).
+    generate_structure_categories(&buildables, &out_dir);
+
     // Now that we know every referenced .scad, warn about the ones nothing uses.
     warn_unreferenced_scad(&buildables, &referenced_scad);
+}
+
+// ─── Atomic mesh generation ────────────────────────────────────────────────
+
+/// Generate .gltf files for all atomic meshes (input .scad files to CSG operations)
+/// in the atomic/ subdirectory.
+fn generate_atomic_meshes(
+    buildables: &Path,
+    atomic_out_dir: &Path,
+    referenced_scad: &mut HashSet<PathBuf>,
+) {
+    let Ok(entries) = fs::read_dir(buildables) else {
+        return;
+    };
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let Some("scad") = path.extension().and_then(|s| s.to_str()) else {
+            continue;
+        };
+
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+
+        // Skip utility meshes (starting with u_)
+        if stem.starts_with("u_") {
+            continue;
+        }
+
+        // Skip the autotile directory
+        if path
+            .parent()
+            .map(|p| p.ends_with("autotile"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        referenced_scad.insert(path.clone());
+
+        // Generate unrotated atom
+        let spec = MeshSpec::Atom {
+            name: stem.to_string(),
+            rotation: 0,
+            translation: None,
+        };
+
+        let inputs: Vec<&Path> = vec![path.as_path()];
+        generate_if_needed(
+            stem,
+            &spec,
+            UnorientedSlot::Room,
+            buildables,
+            atomic_out_dir,
+            &inputs,
+            false, // no cut mesh for atomic
+        );
+    }
 }
 
 // ─── Eorf fallback meshes ──────────────────────────────────────────────────
@@ -99,6 +168,144 @@ fn parse_structure_infos(src: &str, furniture: bool) -> Vec<StructureMeshInfo> {
         }
     }
     out
+}
+
+/// Extract all atomic mesh names from a MeshSpec recursively.
+fn extract_atomic_meshes(spec: &MeshSpec, meshes: &mut Vec<String>) {
+    match spec {
+        MeshSpec::Atom { name, .. } => {
+            if !meshes.contains(name) {
+                meshes.push(name.clone());
+            }
+        }
+        MeshSpec::Union(a, b) | MeshSpec::Intersection(a, b) => {
+            extract_atomic_meshes(a, meshes);
+            extract_atomic_meshes(b, meshes);
+        }
+        MeshSpec::Rotation(_angle, inner) => {
+            extract_atomic_meshes(inner, meshes);
+        }
+    }
+}
+
+/// Extract atomic mesh inputs from autotile rules, organized by structure name.
+fn extract_structure_atomic_meshes(file: &autotile::AutotileFile) -> HashMap<String, Vec<String>> {
+    let mut mapping: HashMap<String, Vec<String>> = HashMap::new();
+
+    for rule in &file.rules {
+        let meshes = mapping
+            .entry(rule.structure_name.clone())
+            .or_insert_with(Vec::new);
+
+        for case in &rule.cases {
+            if let autotile::AutotileResult::Mesh { spec } = &case.result {
+                let mut atomic_names = Vec::new();
+                extract_atomic_meshes(spec, &mut atomic_names);
+                for name in atomic_names {
+                    if !meshes.contains(&name) {
+                        meshes.push(name);
+                    }
+                }
+            }
+        }
+    }
+
+    mapping
+}
+
+/// Generate a JSON file mapping structure names AND their component meshes to their
+/// category (elements or furniture). This ensures that structures like "column"
+/// which are composed of "column_caps", "column_middle", "column_floating" all get
+/// categorized together.
+fn generate_structure_categories(buildables: &Path, out_dir: &Path) {
+    let elements_path = buildables.join("elements.ron");
+    let furniture_path = buildables.join("furniture.ron");
+    let autotile_path = buildables.join("structures.autotile");
+
+    // Parse elements and furniture structure names
+    let mut element_names: Vec<String> = Vec::new();
+    let mut furniture_names: Vec<String> = Vec::new();
+
+    if let Ok(src) = fs::read_to_string(&elements_path) {
+        for info in parse_structure_infos(&src, false) {
+            element_names.push(info.name);
+        }
+    }
+
+    if let Ok(src) = fs::read_to_string(&furniture_path) {
+        for info in parse_structure_infos(&src, true) {
+            furniture_names.push(info.name);
+        }
+    }
+
+    let mut categories: HashMap<String, String> = HashMap::new();
+
+    // If we can parse the autotile file, use it to find atomic mesh inputs
+    if let Ok(src) = fs::read_to_string(&autotile_path) {
+        if let Ok(file) = autotile::parse(&src) {
+            let structure_atomic_meshes = extract_structure_atomic_meshes(&file);
+
+            // Map element structures and their atomic mesh inputs
+            for structure_name in &element_names {
+                if !structure_name.starts_with("u_") {
+                    categories.insert(structure_name.clone(), "elements".to_string());
+                }
+                // Also map any atomic meshes used by this structure
+                if let Some(meshes) = structure_atomic_meshes.get(structure_name) {
+                    for mesh in meshes {
+                        if !mesh.starts_with("u_") {
+                            categories.insert(mesh.clone(), "elements".to_string());
+                        }
+                    }
+                }
+            }
+
+            // Map furniture structures and their atomic mesh inputs
+            for structure_name in &furniture_names {
+                if !structure_name.starts_with("u_") {
+                    categories.insert(structure_name.clone(), "furniture".to_string());
+                }
+                // Also map any atomic meshes used by this structure
+                if let Some(meshes) = structure_atomic_meshes.get(structure_name) {
+                    for mesh in meshes {
+                        if !mesh.starts_with("u_") {
+                            categories.insert(mesh.clone(), "furniture".to_string());
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Fallback: just map the structure names if we can't parse autotile
+        for name in &element_names {
+            if !name.starts_with("u_") {
+                categories.insert(name.clone(), "elements".to_string());
+            }
+        }
+        for name in &furniture_names {
+            if !name.starts_with("u_") {
+                categories.insert(name.clone(), "furniture".to_string());
+            }
+        }
+    }
+
+    // Generate JSON
+    let mut json = String::from("{\n");
+    let mut first = true;
+
+    for (name, category) in &categories {
+        if !first {
+            json.push_str(",\n");
+        }
+        first = false;
+        json.push_str(&format!("  \"{}\": \"{}\"", name, category));
+    }
+
+    json.push_str("\n}\n");
+
+    // Write the file
+    let output_path = out_dir.join("structure_categories.json");
+    let _ = fs::write(&output_path, json);
 }
 
 /// Generate `buildables/autotile/{stem}.gltf` (and a `-cut-y-pos` variant for

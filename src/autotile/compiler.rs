@@ -3,6 +3,13 @@ use std::collections::HashMap;
 use super::parser::*;
 use crate::sparse3d::Facing;
 
+// ─── Structure info for category generation ──────────────────────────────────
+
+#[derive(Clone, Debug)]
+pub struct StructureInfo {
+    pub name: String,
+}
+
 // ─── Compiled / oriented representation ──────────────────────────────────────
 
 /// Compiled form of a labeled pattern character's annotation (e.g. `1=stairs:90`).
@@ -169,6 +176,83 @@ fn rotate_result(result: &AutotileResult, rot: u8) -> AutotileResult {
 
 pub fn compile(file: &AutotileFile) -> Vec<AutotileOriented> {
     file.rules.iter().map(compile_rule).collect()
+}
+
+/// Extract all mesh names (stems) from the compiled rules, organized by structure name.
+pub fn structure_to_meshes(file: &AutotileFile) -> HashMap<String, Vec<String>> {
+    let mut mapping: HashMap<String, Vec<String>> = HashMap::new();
+
+    for rule in &file.rules {
+        let structure_name = rule.structure_name.clone();
+        let meshes = mapping.entry(structure_name).or_insert_with(Vec::new);
+
+        for case in &rule.cases {
+            if let AutotileResult::Mesh { spec } = &case.result {
+                let mesh_name = spec_stem(spec, rule.slot);
+                if !meshes.contains(&mesh_name) {
+                    meshes.push(mesh_name);
+                }
+            }
+        }
+    }
+
+    mapping
+}
+
+/// Generate structure_categories.json, mapping all mesh names (both standalone and
+/// from autotile rules) to their category (elements or furniture).
+pub fn generate_structure_categories_json(
+    file: &AutotileFile,
+    elements: &[StructureInfo],
+    furniture: &[StructureInfo],
+) -> String {
+    let mut categories: HashMap<String, String> = HashMap::new();
+    let structure_meshes = structure_to_meshes(file);
+
+    // Map element structures and their meshes
+    for info in elements {
+        if !info.name.starts_with("u_") {
+            categories.insert(info.name.clone(), "elements".to_string());
+        }
+        // Also map any meshes belonging to this structure
+        if let Some(meshes) = structure_meshes.get(&info.name) {
+            for mesh in meshes {
+                if !mesh.starts_with("u_") {
+                    categories.insert(mesh.clone(), "elements".to_string());
+                }
+            }
+        }
+    }
+
+    // Map furniture structures and their meshes
+    for info in furniture {
+        if !info.name.starts_with("u_") {
+            categories.insert(info.name.clone(), "furniture".to_string());
+        }
+        // Also map any meshes belonging to this structure
+        if let Some(meshes) = structure_meshes.get(&info.name) {
+            for mesh in meshes {
+                if !mesh.starts_with("u_") {
+                    categories.insert(mesh.clone(), "furniture".to_string());
+                }
+            }
+        }
+    }
+
+    // Generate JSON
+    let mut json = String::from("{\n");
+    let mut first = true;
+
+    for (name, category) in &categories {
+        if !first {
+            json.push_str(",\n");
+        }
+        first = false;
+        json.push_str(&format!("  \"{}\": \"{}\"", name, category));
+    }
+
+    json.push_str("\n}\n");
+    json
 }
 
 pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {

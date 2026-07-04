@@ -215,6 +215,7 @@ pub fn load_training_data<B: Backend>(
                     let id = crate::serialization::deserialize(c, structures_by_char);
                     Ok(Cell {
                         id,
+                        // The voxel representation doesn't care about orientation:
                         facing: crate::sparse3d::Facing::NegX, // TODO!!!
                         evaluation: None,
                         material: crate::city::Material::default(),
