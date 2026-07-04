@@ -244,7 +244,7 @@ pub fn surroundings_ui_system(
                             label!(
                                 ui,
                                 format!("{:.0} ac", farm.area),
-                                (farm.boost > 0).then_some(format!("+ {}", farm.boost)),
+                                (farm.boost != 0).then_some(format!("{:+}", farm.boost)),
                                 (farm.invited && predicted_boost(i) > 0).then_some(col_format!(
                                     preview,
                                     "+ {}",
@@ -328,12 +328,14 @@ pub fn surroundings_ui_system(
                 FarmEvent::Market,
                 Some(FarmProduction::Specialized(ToolKind::Whipsaw)),
             );
+            let adopt_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::Adopt, None);
 
             let can_change = matches!(
                 market_effect(&mut farms, menu_i, FarmEvent::RerollResource),
                 Some(MarketModeEffect::Reroll { paid }) if paid > 0
             );
             let can_specialize = !is_specialized && whipsaw_in_storage;
+            let can_adopt = farms.farms[menu_i].can_adopt();
 
             let render_event_option = |ui: &mut egui::Ui,
                                        chosen: &mut Option<FarmEvent>,
@@ -385,6 +387,14 @@ pub fn surroundings_ui_system(
                         can_specialize,
                         "Process nearby timber into beams",
                         &spec_lines,
+                    );
+                    render_event_option(
+                        ui,
+                        &mut chosen_event,
+                        FarmEvent::Adopt,
+                        can_adopt,
+                        "Adopt a family",
+                        &adopt_lines,
                     );
                 });
 

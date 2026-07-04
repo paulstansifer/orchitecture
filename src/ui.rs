@@ -91,7 +91,7 @@ pub fn shared_ui_system(
     let has_project = pending.num_changes() > 0;
     let m = pending.months_waited as usize;
     let months_remaining = if has_project {
-        let raw_n = pending.months_for_construction();
+        let raw_n = pending.months_for_construction(population.individuals.len());
         (raw_n as isize - m as isize).max(1) as usize
     } else {
         0
@@ -301,9 +301,14 @@ pub fn shared_ui_system(
         clock.advance_month();
         farms.ensure_adjacency();
         let mut rng = rand::rng();
-        let (gains, tools_to_return) = run_market(&mut *farms, &mut rng);
+        let (gains, tools_to_return, population_growth) = run_market(&mut *farms, &mut rng);
         for tool in tools_to_return {
             crate::place::deposit_tool(&mut *constructed, tool);
+        }
+        for _ in 0..population_growth {
+            population
+                .individuals
+                .push(crate::population::Individual::default());
         }
         let plan = compute_production(&*farms, &mut rng);
         apply_production(&mut *farms, &plan);
@@ -360,6 +365,7 @@ pub fn shared_ui_system(
             &mut assembled,
             &mut viewable,
             &structure_list,
+            population.individuals.len(),
         );
         if construction_completed && !sandbox.enabled {
             for (res, qty) in &construction_cost {

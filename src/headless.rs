@@ -37,7 +37,7 @@ use crate::evaluation::compute_outdoorsness;
 use crate::materials::{BuildMaterialId, MaterialList};
 use crate::pathing::{rebuild_navigation_grid, NavigationGrid};
 use crate::place;
-use crate::population::{assign_homes, sync_homes, Population};
+use crate::population::{assign_homes, sync_homes, Individual, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
@@ -61,7 +61,7 @@ Commands (space-separated tokens, one per line):
   advance [n]                                       advance the game clock by n months (default 1)
   tick                                              run one Bevy Update pass (change detection!)
   invite <farm_idx> / uninvite <farm_idx>          toggle a farm's market invitation
-  farm_event <farm_idx> market|reroll|specialize   set a farm's next market action
+  farm_event <farm_idx> market|reroll|specialize|adopt   set a farm's next market action
   query cell <x> <y> <z> <slot>                    inspect a grid location
   query structures                                 list placeable structures
   query places                                     list place types (Places form automatically)
@@ -358,7 +358,12 @@ impl HeadlessSession {
                     Some("market") => FarmEvent::Market,
                     Some("reroll") => FarmEvent::RerollResource,
                     Some("specialize") => FarmEvent::Specialize(ToolKind::Whipsaw),
-                    _ => return Err("usage: farm_event <idx> market|reroll|specialize".to_string()),
+                    Some("adopt") => FarmEvent::Adopt,
+                    _ => {
+                        return Err(
+                            "usage: farm_event <idx> market|reroll|specialize|adopt".to_string()
+                        )
+                    }
                 };
                 let mut farms = self.world().resource_mut::<FarmsResource>();
                 if idx >= farms.farms.len() {
@@ -628,12 +633,13 @@ impl HeadlessSession {
             }
 
             "proposals" => {
+                let population_size = self.world().resource::<Population>().individuals.len();
                 let pending = self.world().resource::<ProposedCity>();
                 Ok(vec![format!(
                     "pending_changes={} months_waited={} months_for_construction={}",
                     pending.num_changes(),
                     pending.months_waited,
-                    pending.months_for_construction()
+                    pending.months_for_construction(population_size)
                 )])
             }
 
@@ -788,9 +794,12 @@ fn advance_month_system(
     // computes this once per frame, before the player's "advance" click).
     let preview = preview_market(&farms);
 
-    let (gains, tools_to_return) = run_market(&mut farms, rng);
+    let (gains, tools_to_return, population_growth) = run_market(&mut farms, rng);
     for tool in &tools_to_return {
         place::deposit_tool(&mut constructed, *tool);
+    }
+    for _ in 0..population_growth {
+        population.individuals.push(Individual::default());
     }
     let plan = compute_production(&farms, rng);
     apply_production(&mut farms, &plan);
@@ -858,7 +867,9 @@ fn advance_month_system(
     let mut construction_completed = false;
     if pending.num_changes() > 0 {
         pending.months_waited += 1;
-        if pending.months_waited as usize >= pending.months_for_construction() {
+        if pending.months_waited as usize
+            >= pending.months_for_construction(population.individuals.len())
+        {
             construction::construct(&mut constructed, &mut pending);
             pending.months_waited = 0;
             construction_completed = true;

@@ -402,10 +402,11 @@ pub fn advance_construction(
     assembled: &mut AssembledCity,
     viewable: &mut ViewableWorld,
     structure_list: &EorfList,
+    population_size: usize,
 ) -> bool {
     if pending.num_changes() > 0 {
         pending.months_waited += 1;
-        if pending.months_waited as usize >= pending.months_for_construction() {
+        if pending.months_waited as usize >= pending.months_for_construction(population_size) {
             let real_changes = construct(constructed, pending);
             clear_proposal_entities(commands, assembled);
             clear_proposed_cut_entities(commands, viewable);

@@ -337,8 +337,8 @@ impl ProposedCity {
         self.proposed_changes.iter().count()
     }
 
-    pub fn months_for_construction(&self) -> usize {
-        self.num_changes().div_ceil(80)
+    pub fn months_for_construction(&self, population_size: usize) -> usize {
+        self.num_changes().div_ceil(80 * population_size.max(1))
     }
 }
 
@@ -975,5 +975,29 @@ mod tests {
             .unbound_higher()
             .add(1.0);
         check!(result == ConstrainedScore::AtLeast { at_least: 4.0 });
+    }
+
+    #[test]
+    fn months_for_construction_scales_with_population() {
+        use crate::sparse3d::{Slot, SlotCoord};
+        use bevy::math::IVec3;
+
+        let mut pw = super::ProposedCity::new();
+        for x in 0..100 {
+            pw.proposed_changes.set(
+                SlotCoord {
+                    cube: IVec3::new(x, 0, 0),
+                    slot: Slot::Room,
+                },
+                super::Proposal::Remove,
+            );
+        }
+        check!(pw.num_changes() == 100);
+        // At population 1, the rate is 80 cells/month (today's behavior): 100 -> 2 months.
+        check!(pw.months_for_construction(1) == 2);
+        // At population 2, the rate doubles to 160 cells/month: 100 -> 1 month.
+        check!(pw.months_for_construction(2) == 1);
+        // Population 0 is treated the same as population 1 (never divide by zero).
+        check!(pw.months_for_construction(0) == 2);
     }
 }

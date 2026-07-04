@@ -63,6 +63,9 @@ pub enum FarmEvent {
     RerollResource,
     /// Spend `RECONFIGURE_COST` to permanently switch to using the given tool for production
     Specialize(ToolKind),
+    /// Take on a -10 declining production penalty in exchange for growing the
+    /// city's population by one individual.
+    Adopt,
 }
 
 impl FarmEvent {
@@ -71,6 +74,7 @@ impl FarmEvent {
             FarmEvent::Market => "Invite",
             FarmEvent::RerollResource => "Change",
             FarmEvent::Specialize { .. } => "Specialize",
+            FarmEvent::Adopt => "Adopt",
         }
     }
 }
@@ -87,7 +91,7 @@ pub struct FarmData {
     pub want_max: u32,
     pub potato_stockpile: u32,
     pub inedible_stockpile: u32,
-    pub boost: u32,
+    pub boost: i32,
     pub invited: bool,
 }
 
@@ -101,7 +105,13 @@ impl FarmData {
     }
 
     pub fn production_capacity(&self) -> u32 {
-        self.base_production() + self.boost
+        ((self.base_production() as i32) + self.boost).max(0) as u32
+    }
+
+    /// Whether this farm can absorb the "Adopt" action's -10 production penalty
+    /// without its capacity hitting zero.
+    pub fn can_adopt(&self) -> bool {
+        self.production_capacity() > 10
     }
 
     pub fn specialized_tool(&self) -> Option<ToolKind> {
@@ -225,6 +235,8 @@ pub enum MarketModeEffect {
     Reroll { paid: u32 },
     /// `Specialize` event: switch production to use the given tool
     Specialize { paid: u32, tool: ToolKind },
+    /// `Adopt` event: population grows by one, production takes a -10 declining penalty.
+    Adopt,
 }
 
 /// Read-only snapshot of what `run_market` would do given the current state.
@@ -328,6 +340,7 @@ pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
                 paid: RECONFIGURE_COST,
                 tool,
             },
+            FarmEvent::Adopt => MarketModeEffect::Adopt,
         };
         farm_effects.insert(
             i,
@@ -353,12 +366,13 @@ pub fn preview_market(fr: &FarmsResource) -> MarketOutcome {
 }
 
 /// Run the monthly market for invited farms, applying the effects computed by the
-/// shared `compute_market`. Returns the resources the player gains and the tools that
-/// must be returned to storage (Whipsaws freed when a Specialized farm re-rolls).
+/// shared `compute_market`. Returns the resources the player gains, the tools that
+/// must be returned to storage (Whipsaws freed when a Specialized farm re-rolls),
+/// and the number of new individuals gained this month (from `Adopt`).
 pub fn run_market(
     fr: &mut FarmsResource,
     rng: &mut impl rand::Rng,
-) -> (Vec<(UniformResource, u32)>, Vec<ToolKind>) {
+) -> (Vec<(UniformResource, u32)>, Vec<ToolKind>, u32) {
     let outcome = compute_market(fr);
     let effects: Vec<(usize, MarketModeEffect)> = outcome
         .farm_effects
@@ -373,9 +387,14 @@ pub fn run_market(
     }
 
     let mut tools_to_return: Vec<ToolKind> = Vec::new();
+    let mut population_growth: u32 = 0;
     for (i, effect) in effects {
         match effect {
-            MarketModeEffect::Boost(t) => fr.farms[i].boost = t,
+            MarketModeEffect::Boost(t) => fr.farms[i].boost = t as i32,
+            MarketModeEffect::Adopt => {
+                fr.farms[i].boost -= 10;
+                population_growth += 1;
+            }
             MarketModeEffect::Reroll { paid } => {
                 fr.farms[i].boost = 0;
                 if paid > 0 {
@@ -412,7 +431,7 @@ pub fn run_market(
         *event = FarmEvent::Market;
     }
 
-    (outcome.player_gains, tools_to_return)
+    (outcome.player_gains, tools_to_return, population_growth)
 }
 
 /// A month's production, computed by the shared core and applied by `apply_production`.
@@ -480,7 +499,7 @@ pub fn apply_production(fr: &mut FarmsResource, plan: &ProductionPlan) {
         farm.potato_stockpile = (farm.potato_stockpile + plan.potato_add[i]).min(STOCKPILE_MAX);
         farm.inedible_stockpile =
             (farm.inedible_stockpile + plan.inedible_add[i]).min(STOCKPILE_MAX);
-        farm.boost = farm.boost.saturating_sub(1);
+        farm.boost -= farm.boost.signum();
     }
 }
 
@@ -564,6 +583,10 @@ fn describe_farm_effect(fr: &FarmsResource, idx: usize) -> Vec<String> {
                 if let FarmProduction::Specialized(old_tool) = farm.production {
                     lines.push(format!("Returns the {} to storage", old_tool.label()));
                 }
+            }
+            MarketModeEffect::Adopt => {
+                lines
+                    .push("Adopts a family: population +1, production -10 (declining)".to_string());
             }
         }
     } else {
@@ -768,5 +791,35 @@ mod tests {
             outcome.farm_effects[&0].effect,
             MarketModeEffect::Boost(_)
         ));
+    }
+
+    #[test]
+    fn can_adopt_requires_capacity_above_ten() {
+        use UniformResource::Straw;
+        // area 10, no boost: capacity 10, exactly at the boundary -> not allowed.
+        let at_boundary = mk_farm(FarmProduction::Regular(Straw), Straw, 10.0, 0);
+        assert!(!at_boundary.can_adopt());
+
+        // area 11: capacity 11 -> allowed.
+        let above_boundary = mk_farm(FarmProduction::Regular(Straw), Straw, 11.0, 0);
+        assert!(above_boundary.can_adopt());
+    }
+
+    #[test]
+    fn adopt_grows_population_and_applies_declining_penalty() {
+        use UniformResource::Straw;
+        let a = mk_farm(FarmProduction::Regular(Straw), Straw, 20.0, 0);
+        let mut fr = farms_with(vec![a], vec![vec![]]);
+        fr.farm_events[0] = FarmEvent::Adopt;
+
+        let (_, _, population_growth) = run_market(&mut fr, &mut rand::rng());
+        assert_eq!(population_growth, 1);
+        assert_eq!(fr.farms[0].boost, -10);
+        assert_eq!(fr.farms[0].production_capacity(), 10);
+
+        // The penalty decays by 1/month, same as a positive boost, moving toward 0.
+        let plan = compute_production(&fr, &mut rand::rng());
+        apply_production(&mut fr, &plan);
+        assert_eq!(fr.farms[0].boost, -9);
     }
 }
