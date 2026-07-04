@@ -131,6 +131,7 @@ mod tests {
             }],
             storage: None,
             quality_factors: vec![],
+            restriction: crate::place::ParentRestriction::Unrestricted,
         }
     }
 

@@ -197,21 +197,63 @@ fn raw_score(
     }
 }
 
+/// One `QualityFactor`'s contribution to a place's overall quality, for
+/// display in the UI's breakdown. `None` fields mean the aspect didn't apply
+/// (see `raw_score`) and contributed no multiplier.
+pub struct QualityFactorResult {
+    pub aspect: QualityAspect,
+    pub raw: Option<f32>,
+    pub normalized: Option<f32>,
+    pub strength: f32,
+    /// `normalized.powf(strength)`, or `1.0` (no effect) if `raw` is `None`.
+    pub contribution: f32,
+}
+
+/// Overall quality of the place at `placed_places[idx]`, together with each
+/// `QualityFactor`'s individual contribution. `outdoorsness` should be
+/// computed once (via `compute_outdoorsness`) and shared across all place
+/// evaluations rather than recomputed per place.
+pub fn evaluate_place_breakdown(
+    cw: &ConstructedCity,
+    idx: usize,
+    outdoorsness: &HashMap<IVec3, f32>,
+) -> (f32, Vec<QualityFactorResult>) {
+    let origin = place_location(cw, idx);
+    let def = &cw.places[cw.placed_places[idx].place];
+    let mut overall = 1.0;
+    let results = def
+        .quality_factors
+        .iter()
+        .map(|factor| {
+            let raw = raw_score(cw, idx, origin, &factor.aspect, outdoorsness);
+            let (normalized, contribution) = match raw {
+                Some(raw) => {
+                    let normalized = ((raw - factor.range.start)
+                        / (factor.range.end - factor.range.start))
+                        .clamp(0.0, 1.0);
+                    (Some(normalized), normalized.powf(factor.strength))
+                }
+                None => (None, 1.0),
+            };
+            overall *= contribution;
+            QualityFactorResult {
+                aspect: factor.aspect.clone(),
+                raw,
+                normalized,
+                strength: factor.strength,
+                contribution,
+            }
+        })
+        .collect();
+    (overall, results)
+}
+
 /// Overall quality of the place at `placed_places[idx]`: the product of every
 /// `QualityFactor`'s normalized score raised to its `strength`. `outdoorsness`
 /// should be computed once (via `compute_outdoorsness`) and shared across all
 /// place evaluations rather than recomputed per place.
 pub fn evaluate_place(cw: &ConstructedCity, idx: usize, outdoorsness: &HashMap<IVec3, f32>) -> f32 {
-    let origin = place_location(cw, idx);
-    let def = &cw.places[cw.placed_places[idx].place];
-    def.quality_factors.iter().fold(1.0, |acc, factor| {
-        let Some(raw) = raw_score(cw, idx, origin, &factor.aspect, outdoorsness) else {
-            return acc;
-        };
-        let normalized =
-            ((raw - factor.range.start) / (factor.range.end - factor.range.start)).clamp(0.0, 1.0);
-        acc * normalized.powf(factor.strength)
-    })
+    evaluate_place_breakdown(cw, idx, outdoorsness).0
 }
 
 #[cfg(test)]
@@ -243,6 +285,7 @@ mod tests {
             }],
             storage: None,
             quality_factors,
+            restriction: crate::place::ParentRestriction::Unrestricted,
         }
     }
 

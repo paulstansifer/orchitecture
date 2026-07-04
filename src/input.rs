@@ -193,6 +193,7 @@ pub fn building_input_system(
     sandbox: Res<SandboxMode>,
     mut furniture_right_click: ResMut<crate::build_ui::FurnitureRightClick>,
     mut right_press_pos: Local<Option<Vec2>>,
+    mut ui_state: ResMut<crate::build_ui::UiState>,
 ) {
     let BuildAssets {
         structure_list,
@@ -236,7 +237,20 @@ pub fn building_input_system(
         };
     }
 
-    // --- Eorf selection by digit key (in sorted display order) ---
+    // --- Left-panel tab switching ---
+    if keyboard.just_pressed(KeyCode::F1) {
+        ui_state.left_tab = crate::build_ui::LeftTab::Elements;
+    }
+    if keyboard.just_pressed(KeyCode::F2) {
+        ui_state.left_tab = crate::build_ui::LeftTab::Furniture;
+    }
+    if keyboard.just_pressed(KeyCode::F3) {
+        ui_state.left_tab = crate::build_ui::LeftTab::Places;
+    }
+
+    // --- Eorf selection by digit key (in sorted display order, filtered to
+    // the active tab -- so digits 1-9 reach the same 9 structures the
+    // Elements/Furniture tab currently numbers 1-9). ---
     if !egui_wants_input.wants_keyboard_input() {
         const DIGIT_KEYS: [KeyCode; 9] = [
             KeyCode::Digit1,
@@ -249,11 +263,21 @@ pub fn building_input_system(
             KeyCode::Digit8,
             KeyCode::Digit9,
         ];
-        let sorted = crate::eorf::sorted_structure_indices(&constructed.eorfs);
-        for (display_idx, key) in DIGIT_KEYS.iter().enumerate() {
-            if keyboard.just_pressed(*key) {
-                if let Some(&struct_idx) = sorted.get(display_idx) {
-                    build_state.selected_structure = struct_idx;
+        let want_furniture = match ui_state.left_tab {
+            crate::build_ui::LeftTab::Elements => Some(false),
+            crate::build_ui::LeftTab::Furniture => Some(true),
+            crate::build_ui::LeftTab::Places => None,
+        };
+        if let Some(want_furniture) = want_furniture {
+            let filtered: Vec<usize> = crate::eorf::sorted_structure_indices(&constructed.eorfs)
+                .into_iter()
+                .filter(|&i| constructed.eorfs[i].is_furniture() == want_furniture)
+                .collect();
+            for (display_idx, key) in DIGIT_KEYS.iter().enumerate() {
+                if keyboard.just_pressed(*key) {
+                    if let Some(&struct_idx) = filtered.get(display_idx) {
+                        build_state.selected_structure = struct_idx;
+                    }
                 }
             }
         }

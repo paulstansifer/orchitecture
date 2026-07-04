@@ -462,6 +462,7 @@ mod tests {
                 striated: 0.0,
             },
             kind: crate::eorf::FurnitureOrElement::Element(crate::materials::ElementType::WallLike),
+            restriction: crate::place::ParentRestriction::Unrestricted,
         }];
         let mut cw = ConstructedCity::new(structs);
         cw.road_forbidden_zone = false;

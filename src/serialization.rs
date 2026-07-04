@@ -257,6 +257,7 @@ mod tests {
                 kind: crate::eorf::FurnitureOrElement::Element(
                     crate::materials::ElementType::WallLike,
                 ),
+                restriction: crate::place::ParentRestriction::Unrestricted,
             },
             EorfInfo {
                 name: "floor".to_string(),
@@ -272,6 +273,7 @@ mod tests {
                 kind: crate::eorf::FurnitureOrElement::Element(
                     crate::materials::ElementType::GroundFloorLike,
                 ),
+                restriction: crate::place::ParentRestriction::Unrestricted,
             },
         ]
     }

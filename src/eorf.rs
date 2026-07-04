@@ -47,6 +47,11 @@ pub struct EorfInfo {
     pub z_char: Option<char>,
     pub embedding: StructureEmbedding,
     pub kind: FurnitureOrElement,
+    /// Which `Place` kinds may claim this Furniture. Elements are never
+    /// claimed by `Place`s, so this is only meaningful for furniture, but it's
+    /// on `EorfInfo` (rather than `FurnitureOrElement::Furniture`) for
+    /// uniformity with `PlaceInfo::restriction`.
+    pub restriction: crate::place::ParentRestriction,
 }
 
 impl EorfInfo {
@@ -148,6 +153,7 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             z_char: e.z_char,
             embedding: e.embedding,
             kind: FurnitureOrElement::Element(e.element_type),
+            restriction: crate::place::ParentRestriction::Unrestricted,
         })
         .chain(furniture.into_iter().map(|f| EorfInfo {
             name: f.name,
@@ -156,6 +162,7 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             z_char: f.z_char,
             embedding: f.embedding,
             kind: FurnitureOrElement::Furniture(f.cost),
+            restriction: crate::place::ParentRestriction::Unrestricted,
         }))
         .collect()
 }

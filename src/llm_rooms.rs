@@ -350,5 +350,5 @@ pub fn rooms() -> Vec<Sparse3D<Cell>> {
         /*interest=*/ 0.85,
     );
 
-    vec![]  // Don't actually use any of these. Maybe try again with newer models.
+    vec![] // Don't actually use any of these. Maybe try again with newer models.
 }

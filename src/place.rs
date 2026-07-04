@@ -27,6 +27,62 @@ pub enum QualityAspect {
     NumberOf { porf_name: String },
 }
 
+/// Restricts which `Place` kinds may claim a Furniture/Place kind to fulfill
+/// one of their requirements. Attached to the Furniture/Place *kind* (an
+/// `EorfInfo`/`PlaceInfo`), not to any particular placed instance.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub enum ParentRestriction {
+    /// May be claimed by any `Place` kind that requires it. (Default.)
+    #[default]
+    Unrestricted,
+    /// May never be claimed by any `Place`.
+    Excluded,
+    /// May only be claimed by the named `Place` kind.
+    RestrictedTo(String),
+}
+
+impl ParentRestriction {
+    fn allows(&self, parent_name: &str) -> bool {
+        match self {
+            ParentRestriction::Unrestricted => true,
+            ParentRestriction::Excluded => false,
+            ParentRestriction::RestrictedTo(name) => name == parent_name,
+        }
+    }
+}
+
+/// `Place` kinds (by name) that have a requirement referencing `porf` --
+/// i.e. the parent kinds eligible to include this Furniture/Place kind.
+/// Used by the UI to populate the restriction dropdown; an empty result means
+/// the dropdown shouldn't be shown (nothing could ever include this kind).
+pub fn eligible_parent_kinds(places: &[PlaceInfo], porf: &Porf) -> Vec<String> {
+    places
+        .iter()
+        .filter(|p| {
+            p.requirements.iter().any(|r| match (&r.requirement, porf) {
+                (Porf::Furniture(a), Porf::Furniture(b)) => a == b,
+                (Porf::Place(a), Porf::Place(b)) => a == b,
+                _ => false,
+            })
+        })
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+impl QualityAspect {
+    /// Short human-readable label for UI display.
+    pub fn label(&self) -> String {
+        match self {
+            QualityAspect::FloorArea => "Floor area".to_string(),
+            QualityAspect::Spaciousness { .. } => "Spaciousness".to_string(),
+            QualityAspect::Quiet => "Quiet".to_string(),
+            QualityAspect::Subplaces => "Subplaces".to_string(),
+            QualityAspect::Indoors => "Indoors".to_string(),
+            QualityAspect::NumberOf { porf_name } => format!("Number of {porf_name}"),
+        }
+    }
+}
+
 /// One weighted, normalized contributor to a `Place`'s overall quality score.
 /// Overall quality is the product of every factor's normalized score raised
 /// to its `strength`.
@@ -110,6 +166,9 @@ pub struct PlaceInfo {
     pub storage: Option<PlaceStorageSpec>,
     #[serde(default)]
     pub quality_factors: Vec<QualityFactor>,
+    /// Which `Place` kinds may nest a place of this kind. See `ParentRestriction`.
+    #[serde(default)]
+    pub restriction: ParentRestriction,
 }
 
 /// What actually fulfills one slot of a placed `Place`'s requirements.
@@ -203,15 +262,36 @@ pub fn count_named_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> usiz
     furniture_of_name_near(cw, origin, name).len() + places_of_name_near(cw, origin, name).len()
 }
 
-/// Every cube/place fulfilling `req` within range of `origin`.
-fn candidates_near(cw: &ConstructedCity, origin: IVec3, req: &Porf) -> Vec<FulfilledPorf> {
+/// Every cube/place fulfilling `req` within range of `origin`, eligible to be
+/// claimed by a `Place` named `parent_name` (see `ParentRestriction`).
+fn candidates_near(
+    cw: &ConstructedCity,
+    origin: IVec3,
+    req: &Porf,
+    parent_name: &str,
+) -> Vec<FulfilledPorf> {
     match req {
         Porf::Furniture(name) => furniture_of_name_near(cw, origin, name)
             .into_iter()
+            .filter(|&cube| {
+                let cell = cw
+                    .contents
+                    .get(SlotCoord {
+                        cube,
+                        slot: Slot::Room,
+                    })
+                    .expect("furniture_of_name_near only returns occupied cubes");
+                cw.eorfs[cell.id.as_usize()].restriction.allows(parent_name)
+            })
             .map(FulfilledPorf::Furniture)
             .collect(),
         Porf::Place(name) => places_of_name_near(cw, origin, name)
             .into_iter()
+            .filter(|&idx| {
+                cw.places[cw.placed_places[idx].place]
+                    .restriction
+                    .allows(parent_name)
+            })
             .map(FulfilledPorf::Place)
             .collect(),
     }
@@ -238,10 +318,9 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
 
 /// True if `core` has at least `min` of every requirement within range.
 fn requirements_met(cw: &ConstructedCity, core: IVec3, place: &PlaceInfo) -> bool {
-    place
-        .requirements
-        .iter()
-        .all(|req| candidates_near(cw, core, &req.requirement).len() >= req.min as usize)
+    place.requirements.iter().all(|req| {
+        candidates_near(cw, core, &req.requirement, &place.name).len() >= req.min as usize
+    })
 }
 
 /// Choose the core fulfillment for `place_idx` nearest to `cube` (the cube
@@ -249,7 +328,7 @@ fn requirements_met(cw: &ConstructedCity, core: IVec3, place: &PlaceInfo) -> boo
 fn choose_core(cw: &ConstructedCity, cube: IVec3, place_idx: usize) -> Option<FulfilledPorf> {
     let place = &cw.places[place_idx];
     let core_req = &place.requirements[0].requirement;
-    let mut cores = candidates_near(cw, cube, core_req);
+    let mut cores = candidates_near(cw, cube, core_req, &place.name);
     cores.sort_by_key(|c| {
         let loc = fulfillment_location(cw, c);
         (loc != cube, manhattan2d(loc, cube))
@@ -352,7 +431,7 @@ pub fn plan_assignment(
         // already owned by another place, keeping each owner's index.
         let mut free: Vec<FulfilledPorf> = Vec::new();
         let mut assigned: Vec<(FulfilledPorf, usize)> = Vec::new();
-        for c in candidates_near(cw, core_loc, &req.requirement) {
+        for c in candidates_near(cw, core_loc, &req.requirement, &place.name) {
             if chosen.contains(&c) {
                 continue;
             }
@@ -485,10 +564,28 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
         let Some(core_req) = cw.places[place_idx].requirements.first() else {
             continue;
         };
+        let parent_name = &cw.places[place_idx].name;
         let cubes: Vec<IVec3> = match &core_req.requirement {
-            Porf::Furniture(name) => all_furniture_named(cw, name),
+            Porf::Furniture(name) => all_furniture_named(cw, name)
+                .into_iter()
+                .filter(|&cube| {
+                    let cell = cw
+                        .contents
+                        .get(SlotCoord {
+                            cube,
+                            slot: Slot::Room,
+                        })
+                        .expect("all_furniture_named only returns occupied cubes");
+                    cw.eorfs[cell.id.as_usize()].restriction.allows(parent_name)
+                })
+                .collect(),
             Porf::Place(name) => (0..cw.placed_places.len())
                 .filter(|&i| cw.places[cw.placed_places[i].place].name == *name)
+                .filter(|&i| {
+                    cw.places[cw.placed_places[i].place]
+                        .restriction
+                        .allows(parent_name)
+                })
                 .map(|i| place_location(cw, i))
                 .collect(),
         };
@@ -761,6 +858,7 @@ mod tests {
                 crate::resource::UniformResource::Plank,
                 1,
             )]),
+            restriction: ParentRestriction::Unrestricted,
         }]
     }
 
@@ -776,6 +874,7 @@ mod tests {
             }],
             storage: None,
             quality_factors: vec![],
+            restriction: ParentRestriction::Unrestricted,
         }
     }
 
