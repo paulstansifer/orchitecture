@@ -130,6 +130,7 @@ mod tests {
                 worker_visit_duration: 1.0,
             }],
             storage: None,
+            quality_factors: vec![],
         }
     }
 

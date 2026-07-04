@@ -571,6 +571,21 @@ impl<T> Sparse3D<T> {
     }
 
     pub fn ray_trace(&self, origin: RelSlotCoord, destination: RelSlotCoord) -> Vec<Vec<&T>> {
+        self.ray_trace_with_t(origin, destination)
+            .into_iter()
+            .map(|(_t, items)| items)
+            .collect()
+    }
+
+    /// Like `ray_trace`, but also returns each hit-group's `t` along the
+    /// segment (`0.0` at `origin`, `1.0` at `destination`), so callers that
+    /// need real-world distance (e.g. spaciousness scoring) don't have to
+    /// re-derive the plane-crossing math.
+    pub fn ray_trace_with_t(
+        &self,
+        origin: RelSlotCoord,
+        destination: RelSlotCoord,
+    ) -> Vec<(f64, Vec<&T>)> {
         let p0 = origin.get_center();
         let p1 = destination.get_center();
         let dir = (p1.0 - p0.0, p1.1 - p0.1, p1.2 - p0.2);
@@ -628,7 +643,7 @@ impl<T> Sparse3D<T> {
                     );
                     let items = self.collect_at_point(p_mid, epsilon);
                     if !items.is_empty() {
-                        result.push(items);
+                        result.push((t_mid, items));
                     }
                 }
             }
@@ -637,7 +652,7 @@ impl<T> Sparse3D<T> {
             let p_curr = (p0.0 + t * dir.0, p0.1 + t * dir.1, p0.2 + t * dir.2);
             let items = self.collect_at_point(p_curr, epsilon);
             if !items.is_empty() {
-                result.push(items);
+                result.push((t, items));
             }
 
             prev_t = Some(t);

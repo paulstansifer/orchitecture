@@ -6,12 +6,68 @@ use crate::sparse3d::{Facing, Slot, SlotCoord};
 use bevy::math::IVec3;
 use bevy::prelude::{Commands, DetectChangesMut, Res, ResMut};
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 
-#[allow(unused)]
-enum QualityFactor {
-    FloorArea { area_max: u16 },
+/// What a `QualityFactor` measures about a `Place`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum QualityAspect {
+    /// TODO: unimplemented -- always scores 1.0. See `evaluation::raw_score`.
+    FloorArea,
+    /// Average distance (in cells) to the first sightline-blocking structure,
+    /// along rays cast horizontally or upward. See `evaluation::compute_spaciousness`.
     Spaciousness { sightline_max: u8 },
-    Quiet { min: f32 },
+    /// TODO: unimplemented -- always scores 1.0. See `evaluation::raw_score`.
+    Quiet,
+    /// Average quality of directly-nested `Place`s (skipped entirely -- no
+    /// contribution -- if there are none).
+    Subplaces,
+    /// How sheltered from the outdoors this place is (`1.0 - outdoorsness`).
+    Indoors,
+    /// Count of `Porf`s (furniture or places) named `porf_name` near this place.
+    NumberOf { porf_name: String },
+}
+
+/// One weighted, normalized contributor to a `Place`'s overall quality score.
+/// Overall quality is the product of every factor's normalized score raised
+/// to its `strength`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct QualityFactor {
+    pub aspect: QualityAspect,
+    /// Exponent applied to the normalized [0,1] score before multiplying in.
+    pub strength: f32,
+    /// Maps a raw score to \[0.0, 1.0\] (clamped): `range.start` -> 0.0 (bad),
+    /// `range.end` -> 1.0 (nice). Not every aspect can reach every score.
+    pub range: Range<f32>,
+}
+
+/// `Place`s that don't explicitly list a `QualityFactor` for these aspects
+/// implicitly get one of these, unless already present.
+fn implicit_quality_factors() -> [QualityFactor; 2] {
+    [
+        QualityFactor {
+            aspect: QualityAspect::Indoors,
+            strength: 1.0,
+            range: 0.5..1.0,
+        },
+        QualityFactor {
+            aspect: QualityAspect::Subplaces,
+            strength: 1.0,
+            range: 0.0..1.2,
+        },
+    ]
+}
+
+/// Adds any `implicit_quality_factors` whose aspect isn't already listed.
+fn fill_default_quality_factors(info: &mut PlaceInfo) {
+    for default in implicit_quality_factors() {
+        let has_it = info
+            .quality_factors
+            .iter()
+            .any(|f| std::mem::discriminant(&f.aspect) == std::mem::discriminant(&default.aspect));
+        if !has_it {
+            info.quality_factors.push(default);
+        }
+    }
 }
 
 /// What a `Place` requirement can be fulfilled by: a piece of Furniture, or
@@ -52,6 +108,8 @@ pub struct PlaceInfo {
     // First requirement is the core.
     pub requirements: Vec<PlaceReq>,
     pub storage: Option<PlaceStorageSpec>,
+    #[serde(default)]
+    pub quality_factors: Vec<QualityFactor>,
 }
 
 /// What actually fulfills one slot of a placed `Place`'s requirements.
@@ -74,7 +132,11 @@ pub struct ParticularPlace {
 /// Loads the place definitions bundled at compile time.
 pub fn load_place_info() -> Vec<PlaceInfo> {
     let ron_content = include_str!("../buildables/places.ron");
-    ron::from_str(ron_content).unwrap()
+    let mut infos: Vec<PlaceInfo> = ron::from_str(ron_content).unwrap();
+    for info in &mut infos {
+        fill_default_quality_factors(info);
+    }
+    infos
 }
 
 /// Maximum 2D Manhattan distance (within a single y-layer) for a requirement
@@ -133,6 +195,12 @@ fn places_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<u
                 && manhattan2d(place_location(cw, idx), origin) <= PLACE_DIST
         })
         .collect()
+}
+
+/// Count of `Porf`s (furniture or places) named `name` near `origin` -- for
+/// the `QualityAspect::NumberOf` factor.
+pub fn count_named_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> usize {
+    furniture_of_name_near(cw, origin, name).len() + places_of_name_near(cw, origin, name).len()
 }
 
 /// Every cube/place fulfilling `req` within range of `origin`.
@@ -707,6 +775,7 @@ mod tests {
                 worker_visit_duration: 1.0,
             }],
             storage: None,
+            quality_factors: vec![],
         }
     }
 

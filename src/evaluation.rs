@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
-use bevy::math::IVec3;
+use bevy::math::{IVec3, Vec3};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
-use crate::city::Cell;
+use crate::city::{Cell, ConstructedCity};
 use crate::eorf::EorfInfo;
 use crate::flood_fill::{flood_fill, has_sky_above};
-use crate::sparse3d::{SlotCoord, Sparse3D};
+use crate::place::{count_named_near, place_location, FulfilledPorf, QualityAspect};
+use crate::sparse3d::{RelSlot, RelSlotCoord, SlotCoord, Sparse3D};
 
 /// Falloff per hop through open air (and through any structure that isn't a
 /// window or a doorway).
@@ -94,16 +97,272 @@ pub fn compute_outdoorsness(
     )
 }
 
+/// Structure names that fully block a sightline for `compute_spaciousness`.
+///
+/// TODO: this should become a proper flag on `Element` (like the falloffs
+/// used by `boundary_multiplier`/`compute_outdoorsness`) instead of matching
+/// on name.
+const SIGHTLINE_BLOCKING_NAMES: [&str; 5] = ["wall", "window", "doorway", "floor", "roof"];
+
+/// True if `cell` fully blocks a sightline. Furniture never blocks one.
+fn blocks_sightline(cw: &ConstructedCity, cell: &Cell) -> bool {
+    let info = &cw.eorfs[cell.id.as_usize()];
+    !info.is_furniture() && SIGHTLINE_BLOCKING_NAMES.contains(&info.name.as_str())
+}
+
+/// Number of rays cast per `compute_spaciousness` call.
+const SPACIOUSNESS_RAYS: u32 = 12;
+
+/// Deterministically seeds an RNG from a cube coordinate, so evaluating the
+/// same place twice gives the same result.
+fn seed_from_coord(c: IVec3) -> u64 {
+    ((c.x as u32 as u64) << 42) | ((c.y as u32 as u64) << 21) | (c.z as u32 as u64)
+}
+
+/// A uniformly-random unit direction that is horizontal or points upward
+/// (never downward).
+fn random_horizontal_or_up_dir(rng: &mut impl Rng) -> Vec3 {
+    let theta = rng.random_range(0.0..std::f32::consts::TAU);
+    let y: f32 = rng.random_range(0.0..=1.0);
+    let r = (1.0 - y * y).sqrt();
+    Vec3::new(r * theta.cos(), y, r * theta.sin())
+}
+
+/// Average distance (in cells) from `origin` to the first sightline-blocking
+/// structure, along `SPACIOUSNESS_RAYS` random directions that are
+/// horizontal or higher (never downward). A ray that reaches `sightline_max`
+/// unobstructed counts as `sightline_max` cells clear.
+///
+/// Casts each ray with `Sparse3D::ray_trace_with_t`, ignoring the hit-group
+/// at `origin` itself (the place's own core furniture).
+pub fn compute_spaciousness(cw: &ConstructedCity, origin: IVec3, sightline_max: u8) -> f32 {
+    let mut rng = StdRng::seed_from_u64(seed_from_coord(origin));
+    let total: f32 = (0..SPACIOUSNESS_RAYS)
+        .map(|_| {
+            let dir = random_horizontal_or_up_dir(&mut rng);
+            let dest = origin + (dir * sightline_max as f32).round().as_ivec3();
+            let ray_origin = RelSlotCoord::new(origin.x, origin.y, origin.z, RelSlot::Room);
+            let ray_dest = RelSlotCoord::new(dest.x, dest.y, dest.z, RelSlot::Room);
+            let hits = cw.contents.ray_trace_with_t(ray_origin, ray_dest);
+            // TODO: I think `.all` might be more correct, but we should pull the post-RNG part
+            // of this into a function to test it.
+            let first_block_t = hits
+                .iter()
+                .filter(|(t, _)| *t > 1e-6)
+                .find(|(_, items)| items.iter().any(|c| blocks_sightline(cw, c)))
+                .map(|(t, _)| *t);
+            match first_block_t {
+                Some(t) => t as f32 * sightline_max as f32,
+                None => sightline_max as f32,
+            }
+        })
+        .sum();
+    total / SPACIOUSNESS_RAYS as f32
+}
+
+/// The raw (pre-normalization) score for one `QualityAspect` of the place at
+/// `placed_places[idx]`, located at `origin`. `None` means the aspect isn't
+/// applicable here (e.g. `Subplaces` with no nested places) and should
+/// contribute no multiplier to the overall quality.
+fn raw_score(
+    cw: &ConstructedCity,
+    idx: usize,
+    origin: IVec3,
+    aspect: &QualityAspect,
+    outdoorsness: &HashMap<IVec3, f32>,
+) -> Option<f32> {
+    match aspect {
+        // TODO: derive from the place's actual floor area.
+        QualityAspect::FloorArea => Some(1.0),
+        // TODO: derive from nearby noise sources.
+        QualityAspect::Quiet => Some(1.0),
+        QualityAspect::Spaciousness { sightline_max } => {
+            Some(compute_spaciousness(cw, origin, *sightline_max))
+        }
+        QualityAspect::Indoors => Some(1.0 - outdoorsness.get(&origin).copied().unwrap_or(0.0)),
+        QualityAspect::Subplaces => {
+            let scores: Vec<f32> = cw.placed_places[idx]
+                .fulfillments
+                .iter()
+                .filter_map(|f| match f {
+                    FulfilledPorf::Place(inner) => Some(evaluate_place(cw, *inner, outdoorsness)),
+                    FulfilledPorf::Furniture(_) => None,
+                })
+                .collect();
+            (!scores.is_empty()).then(|| scores.iter().sum::<f32>() / scores.len() as f32)
+        }
+        QualityAspect::NumberOf { porf_name } => {
+            Some(count_named_near(cw, origin, porf_name) as f32)
+        }
+    }
+}
+
+/// Overall quality of the place at `placed_places[idx]`: the product of every
+/// `QualityFactor`'s normalized score raised to its `strength`. `outdoorsness`
+/// should be computed once (via `compute_outdoorsness`) and shared across all
+/// place evaluations rather than recomputed per place.
+pub fn evaluate_place(cw: &ConstructedCity, idx: usize, outdoorsness: &HashMap<IVec3, f32>) -> f32 {
+    let origin = place_location(cw, idx);
+    let def = &cw.places[cw.placed_places[idx].place];
+    def.quality_factors.iter().fold(1.0, |acc, factor| {
+        let Some(raw) = raw_score(cw, idx, origin, &factor.aspect, outdoorsness) else {
+            return acc;
+        };
+        let normalized =
+            ((raw - factor.range.start) / (factor.range.end - factor.range.start)).clamp(0.0, 1.0);
+        acc * normalized.powf(factor.strength)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use assert2::check;
     use bevy::math::IVec3;
 
     use crate::build_helpers::Builder;
+    use crate::city::{ConstructedCity, Material};
     use crate::eorf::load_structure_info;
-    use crate::sparse3d::RelSlot;
+    use crate::materials::BuildMaterialId;
+    use crate::place::{
+        FulfilledPorf, ParticularPlace, PlaceInfo, PlaceReq, Porf, QualityAspect, QualityFactor,
+    };
+    use crate::resource::Inventory;
+    use crate::sparse3d::{Facing, RelSlot, Slot, SlotCoord};
 
-    use super::compute_outdoorsness;
+    use super::{compute_outdoorsness, compute_spaciousness, evaluate_place};
+
+    fn place_def(quality_factors: Vec<QualityFactor>) -> PlaceInfo {
+        PlaceInfo {
+            name: "test place".to_string(),
+            requirements: vec![PlaceReq {
+                requirement: Porf::Furniture("bin".to_string()),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            }],
+            storage: None,
+            quality_factors,
+        }
+    }
+
+    /// Places a "bin" core furniture at `core` and registers a `ParticularPlace`
+    /// for `def` around it. Returns the new place's index into `placed_places`.
+    fn place_at(cw: &mut ConstructedCity, def: PlaceInfo, core: IVec3) -> usize {
+        let bin_id = cw.find_structure_by_name("bin").unwrap();
+        cw.contents.set(
+            SlotCoord {
+                cube: core,
+                slot: Slot::Room,
+            },
+            crate::city::Cell {
+                id: bin_id,
+                facing: Facing::default(),
+                evaluation: None,
+                material: Material::Planks,
+                build_material: BuildMaterialId::default(),
+            },
+        );
+        cw.places.push(def);
+        let place = cw.places.len() - 1;
+        cw.placed_places.push(ParticularPlace {
+            place,
+            fulfillments: vec![FulfilledPorf::Furniture(core)],
+            contents: Inventory::new(8, 20.0),
+        });
+        cw.placed_places.len() - 1
+    }
+
+    #[test]
+    fn number_of_matches_count_named_near() {
+        let structure_infos = load_structure_info();
+        let mut cw = ConstructedCity::new(structure_infos);
+        cw.road_forbidden_zone = false;
+        let def = place_def(vec![QualityFactor {
+            aspect: QualityAspect::NumberOf {
+                porf_name: "bin".to_string(),
+            },
+            strength: 1.0,
+            range: 0.0..2.0,
+        }]);
+        let idx = place_at(&mut cw, def, IVec3::new(0, 0, 0));
+
+        let score = evaluate_place(&cw, idx, &Default::default());
+        // One bin (the core itself) out of a 0.0..2.0 range -> normalized 0.5.
+        check!(score == 0.5);
+    }
+
+    #[test]
+    fn subplaces_with_no_nested_places_is_skipped() {
+        let structure_infos = load_structure_info();
+        let mut cw = ConstructedCity::new(structure_infos);
+        cw.road_forbidden_zone = false;
+        let def = place_def(vec![QualityFactor {
+            aspect: QualityAspect::Subplaces,
+            strength: 1.0,
+            range: 0.0..1.2,
+        }]);
+        let idx = place_at(&mut cw, def, IVec3::new(0, 0, 0));
+
+        // No nested places -> the factor contributes no multiplier, so the
+        // (otherwise-empty) product stays 1.0 rather than being dragged to 0.
+        let score = evaluate_place(&cw, idx, &Default::default());
+        check!(score == 1.0);
+    }
+
+    #[test]
+    fn quality_factor_normalizes_raw_score_through_its_range() {
+        let structure_infos = load_structure_info();
+        let mut cw = ConstructedCity::new(structure_infos);
+        cw.road_forbidden_zone = false;
+        // NumberOf raw score is exactly 1 (the core bin itself); a range of
+        // 1.0..1.0-plus-epsilon-free 1.0..3.0 puts it at the bottom (0.0).
+        let low = place_def(vec![QualityFactor {
+            aspect: QualityAspect::NumberOf {
+                porf_name: "bin".to_string(),
+            },
+            strength: 1.0,
+            range: 1.0..3.0,
+        }]);
+        let idx_low = place_at(&mut cw, low, IVec3::new(10, 0, 10));
+        check!(evaluate_place(&cw, idx_low, &Default::default()) == 0.0);
+
+        let high = place_def(vec![QualityFactor {
+            aspect: QualityAspect::NumberOf {
+                porf_name: "bin".to_string(),
+            },
+            strength: 1.0,
+            range: 0.0..1.0,
+        }]);
+        let idx_high = place_at(&mut cw, high, IVec3::new(20, 0, 20));
+        check!(evaluate_place(&cw, idx_high, &Default::default()) == 1.0);
+    }
+
+    #[test]
+    fn spaciousness_is_lower_inside_a_sealed_box_than_in_the_open() {
+        let structure_infos = load_structure_info();
+
+        let mut open_builder = Builder::new(&structure_infos);
+        open_builder.build_plane(
+            IVec3::new(0, 0, 0),
+            IVec3::new(0, 0, 0),
+            RelSlot::Floor,
+            None,
+        );
+        let mut open_cw = ConstructedCity::new(structure_infos.clone());
+        open_cw.contents = open_builder.get();
+        let open_score = compute_spaciousness(&open_cw, IVec3::new(0, 0, 0), 5);
+
+        let mut boxed_builder = Builder::new(&structure_infos);
+        boxed_builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 2, 2));
+        let mut boxed_cw = ConstructedCity::new(structure_infos);
+        boxed_cw.contents = boxed_builder.get();
+        let boxed_score = compute_spaciousness(&boxed_cw, IVec3::new(1, 1, 1), 5);
+
+        check!(boxed_score < open_score);
+        check!(boxed_score > 0.0);
+        check!(open_score == 5.0);
+    }
 
     /// A sealed box has opaque walls and a roof on all sides. No outdoorsness
     /// should reach any interior cube.
