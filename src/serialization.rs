@@ -256,7 +256,6 @@ mod tests {
                 kind: crate::eorf::FurnitureOrElement::Element(
                     crate::materials::ElementType::WallLike,
                 ),
-                restriction: crate::place::ParentRestriction::Unrestricted,
                 vantage_evaluated: false,
             },
             EorfInfo {
@@ -273,7 +272,6 @@ mod tests {
                 kind: crate::eorf::FurnitureOrElement::Element(
                     crate::materials::ElementType::GroundFloorLike,
                 ),
-                restriction: crate::place::ParentRestriction::Unrestricted,
                 vantage_evaluated: false,
             },
         ]

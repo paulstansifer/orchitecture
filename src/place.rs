@@ -184,9 +184,6 @@ pub struct PlaceInfo {
     pub storage: Option<PlaceStorageSpec>,
     #[serde(default)]
     pub quality_factors: Vec<QualityFactor>,
-    /// Which `Place` kinds may nest a place of this kind. See `ParentRestriction`.
-    #[serde(default)]
-    pub restriction: ParentRestriction,
     /// If set, individuals may be assigned to placed instances of this kind
     /// to satisfy this need (e.g. bedrooms are `Sleep`-assignable). See
     /// `population::assign_places`.
@@ -208,6 +205,9 @@ pub struct ParticularPlace {
     // First fulfillment is the core.
     pub fulfillments: Vec<FulfilledPorf>,
     pub contents: Inventory,
+    /// Which `Place` kinds may nest this particular place. Set per-instance
+    /// via the UI. See `ParentRestriction`.
+    pub restriction: ParentRestriction,
 }
 
 /// Stable identifier for a `ParticularPlace`: unique for the lifetime of a
@@ -323,11 +323,6 @@ fn validate_place_info(places: &[PlaceInfo], eorfs: &[crate::eorf::EorfInfo]) {
                 _ => {}
             }
         }
-        if let ParentRestriction::RestrictedTo(name) = &place.restriction {
-            if !place_exists(name) {
-                bad("place", name);
-            }
-        }
         for factor in &place.quality_factors {
             if let QualityAspect::NumberOf { porf_name } = &factor.aspect {
                 if !furniture_exists(porf_name) && !place_exists(porf_name) {
@@ -421,25 +416,16 @@ fn candidates_near(
     match req {
         Porf::Furniture(name) => furniture_of_name_near(cw, origin, name)
             .into_iter()
-            .filter(|&cube| {
-                let cell = cw
-                    .contents
-                    .get(SlotCoord {
-                        cube,
-                        slot: Slot::Room,
-                    })
-                    .expect("furniture_of_name_near only returns occupied cubes");
-                cw.eorfs[cell.id.as_usize()].restriction.allows(parent_name)
+            .filter(|cube| {
+                cw.furniture_restrictions
+                    .get(cube)
+                    .is_none_or(|r| r.allows(parent_name))
             })
             .map(FulfilledPorf::Furniture)
             .collect(),
         Porf::Place(name) => places_of_name_near(cw, origin, name)
             .into_iter()
-            .filter(|&id| {
-                cw.places[cw.placed_places[id].place]
-                    .restriction
-                    .allows(parent_name)
-            })
+            .filter(|&id| cw.placed_places[id].restriction.allows(parent_name))
             .map(FulfilledPorf::Place)
             .collect(),
     }
@@ -645,6 +631,7 @@ pub fn commit_assignment(cw: &mut ConstructedCity, cube: IVec3, place_idx: usize
         place: place_idx,
         fulfillments: plan.chosen,
         contents: Inventory::new(8, max_volume),
+        restriction: ParentRestriction::Unrestricted,
     });
 }
 
@@ -681,6 +668,37 @@ fn all_furniture_named(cw: &ConstructedCity, name: &str) -> Vec<IVec3> {
 pub fn sync_places(cw: &mut ConstructedCity) -> bool {
     let mut changed = false;
 
+    // Evict any currently-held fulfillment whose restriction no longer
+    // allows its owner (e.g. the user just excluded a bin already claimed by
+    // a storage room). Done before the minimums check below, since a place
+    // can still nominally meet its minimum -- via other nearby candidates --
+    // while still listing a now-disallowed member.
+    let mut evictions: Vec<(PlacedPlaceId, FulfilledPorf)> = Vec::new();
+    for (id, pp) in cw.placed_places.iter() {
+        let parent_name = &cw.places[pp.place].name;
+        for f in &pp.fulfillments {
+            let allowed = match f {
+                FulfilledPorf::Furniture(cube) => cw
+                    .furniture_restrictions
+                    .get(cube)
+                    .is_none_or(|r| r.allows(parent_name)),
+                FulfilledPorf::Place(pid) => cw
+                    .placed_places
+                    .get(*pid)
+                    .is_some_and(|p| p.restriction.allows(parent_name)),
+            };
+            if !allowed {
+                evictions.push((id, *f));
+            }
+        }
+    }
+    for (id, f) in evictions {
+        if let Some(pp) = cw.placed_places.get_mut(id) {
+            pp.fulfillments.retain(|x| *x != f);
+        }
+        changed = true;
+    }
+
     // Dissolve any existing place that no longer meets its own minimums (or,
     // if nested, whose core no longer resolves to a location).
     loop {
@@ -709,23 +727,17 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
         let cubes: Vec<IVec3> = match &core_req.requirement {
             Porf::Furniture(name) => all_furniture_named(cw, name)
                 .into_iter()
-                .filter(|&cube| {
-                    let cell = cw
-                        .contents
-                        .get(SlotCoord {
-                            cube,
-                            slot: Slot::Room,
-                        })
-                        .expect("all_furniture_named only returns occupied cubes");
-                    cw.eorfs[cell.id.as_usize()].restriction.allows(parent_name)
+                .filter(|cube| {
+                    cw.furniture_restrictions
+                        .get(cube)
+                        .is_none_or(|r| r.allows(parent_name))
                 })
                 .collect(),
             Porf::Place(name) => cw
                 .placed_places
                 .iter()
                 .filter(|(_, pp)| {
-                    let def = &cw.places[pp.place];
-                    def.name == *name && def.restriction.allows(parent_name)
+                    cw.places[pp.place].name == *name && pp.restriction.allows(parent_name)
                 })
                 .map(|(id, _)| place_location(cw, id))
                 .collect(),
@@ -934,6 +946,7 @@ pub fn place_initial_places(
             .map(|c| FulfilledPorf::Furniture(*c))
             .collect(),
         contents: inv,
+        restriction: ParentRestriction::Unrestricted,
     });
 
     // Place market stands opposite the stockpile (south of the E-W road at z = -1),
@@ -975,6 +988,7 @@ pub fn place_initial_places(
             place: market_stand_place_index,
             fulfillments: vec![FulfilledPorf::Furniture(*cube)],
             contents: Inventory::new(8, 20.0),
+            restriction: ParentRestriction::Unrestricted,
         });
     }
 
@@ -1014,7 +1028,6 @@ mod tests {
                 crate::resource::UniformResource::Plank,
                 1,
             )]),
-            restriction: ParentRestriction::Unrestricted,
             vantage_evaluated: false,
         }]
     }
@@ -1031,7 +1044,6 @@ mod tests {
             }],
             storage: None,
             quality_factors: vec![],
-            restriction: ParentRestriction::Unrestricted,
             assignable_for: None,
         }
     }
@@ -1107,6 +1119,7 @@ mod tests {
             place: 0,
             fulfillments: vec![f(b(0, 1)), f(b(0, 2))],
             contents: Inventory::new(8, 40.0),
+            restriction: ParentRestriction::Unrestricted,
         });
 
         // Right-click the free bin and form a new place from it.
@@ -1137,6 +1150,7 @@ mod tests {
             place: 0,
             fulfillments: vec![f(b(0, 0))],
             contents: Inventory::new(8, 20.0),
+            restriction: ParentRestriction::Unrestricted,
         });
         assert_eq!(place_id_at(&grid, b(0, 0)), Some(id));
         unassign_place(&mut grid, id);
@@ -1170,6 +1184,23 @@ mod tests {
         assert!(sync_places(&mut grid));
         assert_eq!(grid.placed_places.len(), 1);
         assert!(place_id_at(&grid, b(5, 5)).is_some());
+    }
+
+    #[test]
+    fn excluding_a_held_bin_evicts_it_even_if_the_room_still_meets_its_minimum() {
+        // Three bins within range: min 1, so the room can spare one.
+        let mut grid = grid_with_bins(place_def(1, None), &[b(0, 0), b(0, 1), b(0, 2)]);
+        assert!(sync_places(&mut grid));
+        let id = place_id_at(&grid, b(0, 0)).unwrap();
+        assert_eq!(grid.placed_places[id].fulfillments.len(), 3);
+
+        grid.furniture_restrictions
+            .insert(b(0, 1), ParentRestriction::Excluded);
+        assert!(sync_places(&mut grid));
+
+        assert!(!grid.placed_places[id].fulfillments.contains(&f(b(0, 1))));
+        assert!(grid.placed_places[id].fulfillments.contains(&f(b(0, 0))));
+        assert!(grid.placed_places[id].fulfillments.contains(&f(b(0, 2))));
     }
 
     // ── automatic place formation through the headless REPL ────────────────

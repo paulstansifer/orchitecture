@@ -166,7 +166,6 @@ mod tests {
             }],
             storage: None,
             quality_factors: vec![],
-            restriction: crate::place::ParentRestriction::Unrestricted,
             assignable_for: Some(AssignmentFlavor::Sleep),
         }
     }
@@ -176,6 +175,7 @@ mod tests {
             place,
             fulfillments: vec![FulfilledPorf::Furniture(IVec3::ZERO)],
             contents: crate::resource::Inventory::new(1, 1.0),
+            restriction: crate::place::ParentRestriction::Unrestricted,
         }
     }
 

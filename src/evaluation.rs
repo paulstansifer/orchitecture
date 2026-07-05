@@ -289,7 +289,6 @@ mod tests {
             }],
             storage: None,
             quality_factors,
-            restriction: crate::place::ParentRestriction::Unrestricted,
             assignable_for: None,
         }
     }
@@ -320,6 +319,7 @@ mod tests {
             place,
             fulfillments: vec![FulfilledPorf::Furniture(core)],
             contents: Inventory::new(8, 20.0),
+            restriction: crate::place::ParentRestriction::Unrestricted,
         })
     }
 

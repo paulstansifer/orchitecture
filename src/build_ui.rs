@@ -571,7 +571,7 @@ pub fn build_ui_system(
                                 restriction_dropdown(
                                     ui,
                                     ("place-restriction", idx),
-                                    &mut world.constructed.places[place_def_idx].restriction,
+                                    &mut world.constructed.placed_places[idx].restriction,
                                     &eligible,
                                 );
                             }
@@ -659,10 +659,15 @@ pub fn build_ui_system(
                         );
                         if !eligible.is_empty() {
                             ui.label("Nestable within:");
+                            let restriction = world
+                                .constructed
+                                .furniture_restrictions
+                                .entry(cube)
+                                .or_default();
                             restriction_dropdown(
                                 ui,
                                 ("furniture-restriction", eorf_idx),
-                                &mut world.constructed.eorfs[eorf_idx].restriction,
+                                restriction,
                                 &eligible,
                             );
                         }

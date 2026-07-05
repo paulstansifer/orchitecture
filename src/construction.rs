@@ -377,11 +377,11 @@ pub fn construct(
     for (loc, proposal) in proposals {
         match proposal {
             Proposal::Place(cell) => {
-                cw.contents.set(loc, cell.clone());
+                cw.set_cell(loc, cell.clone());
                 real_changes.push((loc, Some(cell)));
             }
             Proposal::Remove => {
-                cw.contents.take(loc);
+                cw.take_cell(loc);
                 real_changes.push((loc, None));
             }
         }
@@ -472,7 +472,6 @@ mod tests {
                 striated: 0.0,
             },
             kind: crate::eorf::FurnitureOrElement::Element(crate::materials::ElementType::WallLike),
-            restriction: crate::place::ParentRestriction::Unrestricted,
             vantage_evaluated: false,
         }];
         let mut cw = ConstructedCity::new(structs);

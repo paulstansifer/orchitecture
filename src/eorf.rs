@@ -47,11 +47,6 @@ pub struct EorfInfo {
     pub z_char: Option<char>,
     pub embedding: StructureEmbedding,
     pub kind: FurnitureOrElement,
-    /// Which `Place` kinds may claim this Furniture. Elements are never
-    /// claimed by `Place`s, so this is only meaningful for furniture, but it's
-    /// on `EorfInfo` (rather than `FurnitureOrElement::Furniture`) for
-    /// uniformity with `PlaceInfo::restriction`.
-    pub restriction: crate::place::ParentRestriction,
     /// Placing this structure attaches a `VantageEvaluation` for the QNN to
     /// score (e.g. desks evaluate the view from where someone would sit).
     pub vantage_evaluated: bool,
@@ -158,7 +153,6 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             z_char: e.z_char,
             embedding: e.embedding,
             kind: FurnitureOrElement::Element(e.element_type),
-            restriction: crate::place::ParentRestriction::Unrestricted,
             vantage_evaluated: false,
         })
         .chain(furniture.into_iter().map(|f| EorfInfo {
@@ -168,7 +162,6 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             z_char: f.z_char,
             embedding: f.embedding,
             kind: FurnitureOrElement::Furniture(f.cost),
-            restriction: crate::place::ParentRestriction::Unrestricted,
             vantage_evaluated: f.vantage_evaluated,
         }))
         .collect()

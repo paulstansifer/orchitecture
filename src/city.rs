@@ -281,6 +281,11 @@ pub struct ConstructedCity {
     pub eorfs: Vec<EorfInfo>,
     /// Duplicated from the `Res<>` for simplicity:
     pub places: Vec<crate::place::PlaceInfo>,
+    /// Per-instance `ParentRestriction` for furniture, keyed by the cube it's
+    /// placed at. Set in the UI; absent means `Unrestricted`. Cleared via
+    /// `set_cell`/`take_cell` whenever the furniture there is overwritten or
+    /// removed, since the restriction belongs to that specific placement.
+    pub furniture_restrictions: HashMap<IVec3, crate::place::ParentRestriction>,
 }
 
 impl ConstructedCity {
@@ -291,7 +296,25 @@ impl ConstructedCity {
             places: Vec::new(),
             placed_places: crate::place::PlacedPlaces::default(),
             road_forbidden_zone: true,
+            furniture_restrictions: HashMap::new(),
         }
+    }
+
+    /// Sets a cell, clearing any furniture restriction recorded for the cube
+    /// it occupied (the restriction belongs to the previous occupant).
+    pub fn set_cell(&mut self, loc: SlotCoord, cell: Cell) {
+        if loc.slot == Slot::Room {
+            self.furniture_restrictions.remove(&loc.cube);
+        }
+        self.contents.set(loc, cell);
+    }
+
+    /// Removes a cell, clearing any furniture restriction recorded for it.
+    pub fn take_cell(&mut self, loc: SlotCoord) -> Option<Cell> {
+        if loc.slot == Slot::Room {
+            self.furniture_restrictions.remove(&loc.cube);
+        }
+        self.contents.take(loc)
     }
 
     pub fn get_structure_names(&self) -> Vec<String> {
