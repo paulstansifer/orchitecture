@@ -27,6 +27,24 @@ pub enum QualityAspect {
     NumberOf { porf_name: String },
 }
 
+/// Which "need" an `Individual` can satisfy by being assigned to a `Place`.
+/// See `population::assign_places`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AssignmentFlavor {
+    Sleep,
+    Work,
+}
+
+impl AssignmentFlavor {
+    /// Short human-readable label for UI display.
+    pub fn label(&self) -> &'static str {
+        match self {
+            AssignmentFlavor::Sleep => "Sleep",
+            AssignmentFlavor::Work => "Work",
+        }
+    }
+}
+
 /// Restricts which `Place` kinds may claim a Furniture/Place kind to fulfill
 /// one of their requirements. Attached to the Furniture/Place *kind* (an
 /// `EorfInfo`/`PlaceInfo`), not to any particular placed instance.
@@ -169,6 +187,11 @@ pub struct PlaceInfo {
     /// Which `Place` kinds may nest a place of this kind. See `ParentRestriction`.
     #[serde(default)]
     pub restriction: ParentRestriction,
+    /// If set, individuals may be assigned to placed instances of this kind
+    /// to satisfy this need (e.g. bedrooms are `Sleep`-assignable). See
+    /// `population::assign_places`.
+    #[serde(default)]
+    pub assignable_for: Option<AssignmentFlavor>,
 }
 
 /// What actually fulfills one slot of a placed `Place`'s requirements.
@@ -875,6 +898,7 @@ mod tests {
             storage: None,
             quality_factors: vec![],
             restriction: ParentRestriction::Unrestricted,
+            assignable_for: None,
         }
     }
 

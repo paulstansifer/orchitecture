@@ -613,6 +613,21 @@ pub fn build_ui_system(
                                     ui.label(format!("{}", qty));
                                 });
                             }
+
+                            if let Some(flavor) = world.constructed.places[place_def_idx].assignable_for
+                            {
+                                let occupant = population
+                                    .individuals
+                                    .iter()
+                                    .position(|ind| ind.assigned(flavor) == Some(idx));
+                                ui.label(format!(
+                                    "{}: {}",
+                                    flavor.label(),
+                                    occupant
+                                        .map(|i| format!("Individual {}", i + 1))
+                                        .unwrap_or_else(|| "(unassigned)".to_string())
+                                ));
+                            }
                             ui.separator();
                         }
                         // Highlight the innermost place's furniture in 3D.

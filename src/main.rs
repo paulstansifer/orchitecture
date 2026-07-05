@@ -38,7 +38,7 @@ use orchitecture_lib::{
     },
     pathing::rebuild_navigation_grid,
     place::{spawn_initial_places, sync_places_system},
-    population::{spawn_population, sync_homes, Population},
+    population::{spawn_population, sync_assignments, Population},
     qnn::ModelPlugin,
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
@@ -142,7 +142,7 @@ fn main() {
                 (
                     sync_places_system.run_if(resource_changed::<ConstructedCity>),
                     rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
-                    sync_homes.run_if(
+                    sync_assignments.run_if(
                         resource_changed::<ConstructedCity>.or(resource_changed::<Population>),
                     ),
                 )

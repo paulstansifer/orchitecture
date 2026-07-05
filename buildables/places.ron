@@ -27,6 +27,7 @@
             ),
         ],
         storage: None,
+        assignable_for: Some(Sleep),
     ),
     (
         name: "market stand",

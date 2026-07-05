@@ -15,7 +15,7 @@
 //! Mutating commands (`place`, `advance`, ...) only mutate resources -- they
 //! do *not* advance the Bevy schedule. Call `tick` to run one `Update` pass,
 //! which is when change-detection-gated systems (`rebuild_navigation_grid`,
-//! `sync_homes`) actually react, and `query changed` reports what reacted on
+//! `sync_assignments`) actually react, and `query changed` reports what reacted on
 //! the most recent `tick`. This lets a test script mutate, tick, and observe
 //! exactly which systems fired -- and confirm a second `tick` with no
 //! intervening mutation causes nothing to fire again.
@@ -37,7 +37,7 @@ use crate::evaluation::compute_outdoorsness;
 use crate::materials::{BuildMaterialId, MaterialList};
 use crate::pathing::{rebuild_navigation_grid, NavigationGrid};
 use crate::place;
-use crate::population::{assign_homes, sync_homes, Individual, Population};
+use crate::population::{assign_places, sync_assignments, Individual, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
@@ -67,7 +67,7 @@ Commands (space-separated tokens, one per line):
   query places                                     list place types (Places form automatically)
   query place <x> <y> <z>                          inspect the place owning a cube
   query valid_places <x> <y> <z>                   place types formable around a cube
-  query population                                 each individual's home/fed/morale
+  query population                                 each individual's home/work/fed/morale
   query farms                                       list all farms
   query farm <idx>                                  detailed farm info + market/production preview
   query outdoorness <x> <y> <z>                    outdoorsness (0.0-1.0) at a cube
@@ -163,7 +163,7 @@ impl HeadlessSession {
             (
                 place::sync_places_system.run_if(resource_changed::<ConstructedCity>),
                 rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
-                sync_homes
+                sync_assignments
                     .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
             )
                 .chain(),
@@ -172,7 +172,7 @@ impl HeadlessSession {
             Update,
             report_changes_system
                 .after(rebuild_navigation_grid)
-                .after(sync_homes),
+                .after(sync_assignments),
         );
 
         // Settle the initial world (nav grid, home assignment) before the first
@@ -558,9 +558,12 @@ impl HeadlessSession {
                         .enumerate()
                         .map(|(i, ind)| {
                             format!(
-                                "{i} home={} fed={} morale={:.3}",
-                                ind.home
+                                "{i} home={} work={} fed={} morale={:.3}",
+                                ind.home()
                                     .map(|h| h.to_string())
+                                    .unwrap_or_else(|| "none".to_string()),
+                                ind.assigned(crate::place::AssignmentFlavor::Work)
+                                    .map(|w| w.to_string())
                                     .unwrap_or_else(|| "none".to_string()),
                                 ind.fed_this_month,
                                 ind.morale()
@@ -886,7 +889,16 @@ fn advance_month_system(
         }
     }
 
-    assign_homes(&mut population.individuals, &constructed);
+    assign_places(
+        crate::place::AssignmentFlavor::Sleep,
+        &mut population.individuals,
+        &constructed,
+    );
+    assign_places(
+        crate::place::AssignmentFlavor::Work,
+        &mut population.individuals,
+        &constructed,
+    );
     lines.push(format!("month={}", clock.month()));
     lines
 }

@@ -286,6 +286,7 @@ mod tests {
             storage: None,
             quality_factors,
             restriction: crate::place::ParentRestriction::Unrestricted,
+            assignable_for: None,
         }
     }
 
