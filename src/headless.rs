@@ -30,8 +30,8 @@ use rand::{rngs::StdRng, SeedableRng};
 
 use crate::build_helpers::Builder;
 use crate::build_ui::{construction_cost, place_resource_totals};
-use crate::city::{get_real_and_proposed, Cell, ConstructedCity, Material, Proposal, ProposedCity};
-use crate::construction::{self, Materials};
+use crate::city::{get_real_and_proposed, Cell, ConstructedCity, Proposal, ProposedCity};
+use crate::construction;
 use crate::eorf::{load_structure_info, EorfId};
 use crate::evaluation::compute_outdoorsness;
 use crate::materials::{BuildMaterialId, MaterialList};
@@ -137,7 +137,7 @@ impl HeadlessSession {
         let mut rng = StdRng::seed_from_u64(seed);
         let structures = load_structure_info();
         let mut constructed = ConstructedCity::new(structures);
-        constructed.places = place::load_place_info();
+        constructed.places = place::load_place_info(&constructed.eorfs);
         place::place_initial_places(&mut constructed, &mut rng);
 
         app.insert_resource(constructed);
@@ -193,13 +193,13 @@ impl HeadlessSession {
             .find_structure_by_name(&name)
     }
 
-    fn describe_cell(cw: &ConstructedCity, cell: &Cell) -> String {
+    fn describe_cell(cw: &ConstructedCity, ml: &MaterialList, cell: &Cell) -> String {
         let info = &cw.eorfs[cell.id.as_usize()];
         let mut s = format!(
             "{} facing={:?} material={}",
             info.name.replace(' ', "_"),
             cell.facing,
-            cell.material.label()
+            cell.material(&cw.eorfs, ml).label()
         );
         if let Some(eval) = &cell.evaluation {
             s.push_str(&format!(
@@ -436,17 +436,20 @@ impl HeadlessSession {
                 let loc = SlotCoord { cube, slot };
                 let world = self.world();
                 let cw = world.resource::<ConstructedCity>();
+                let ml = world.resource::<MaterialList>();
                 let pending = world.resource::<ProposedCity>();
                 let (real, _) = get_real_and_proposed(cw, pending, loc);
                 let real_desc = real
-                    .map(|c| Self::describe_cell(cw, c))
+                    .map(|c| Self::describe_cell(cw, ml, c))
                     .unwrap_or_else(|| "empty".to_string());
                 let proposal_desc = match pending.proposed_changes.get(loc) {
                     Some(Proposal::Remove) => "remove".to_string(),
                     Some(Proposal::Place(cell)) if real.is_some() => {
-                        format!("replace with {}", Self::describe_cell(cw, cell))
+                        format!("replace with {}", Self::describe_cell(cw, ml, cell))
                     }
-                    Some(Proposal::Place(cell)) => format!("add {}", Self::describe_cell(cw, cell)),
+                    Some(Proposal::Place(cell)) => {
+                        format!("add {}", Self::describe_cell(cw, ml, cell))
+                    }
                     None => "none".to_string(),
                 };
                 Ok(vec![
@@ -508,13 +511,13 @@ impl HeadlessSession {
                 }
                 let cube = parse_ivec3(&args[0..3])?;
                 let cw = self.world().resource::<ConstructedCity>();
-                match place::place_index_at(cw, cube) {
+                match place::place_id_at(cw, cube) {
                     None => Ok(vec!["none".to_string()]),
-                    Some(idx) => {
-                        let ps = &cw.placed_places[idx];
+                    Some(id) => {
+                        let ps = &cw.placed_places[id];
                         let info = &cw.places[ps.place];
                         let mut lines = vec![format!(
-                            "index={idx} type={} structures={}",
+                            "id={id} type={} structures={}",
                             info.name.replace(' ', "_"),
                             ps.fulfillments.len()
                         )];
@@ -707,11 +710,9 @@ fn place_system(
     cw: Res<ConstructedCity>,
     mut pending: ResMut<ProposedCity>,
 ) -> usize {
-    let materials = Materials {
-        material: Material::default(),
-        build_material: BuildMaterialId::default(),
-    };
-    pending.place_at(&cw, loc, item, dir, materials).len()
+    pending
+        .place_at(&cw, loc, item, dir, BuildMaterialId::default())
+        .len()
 }
 
 fn build_box_system(
@@ -726,12 +727,14 @@ fn build_box_system(
     };
     let mut n = 0;
     for (loc, cell) in built.iter() {
-        let materials = Materials {
-            material: cell.material,
-            build_material: cell.build_material,
-        };
         n += pending
-            .place_at(&cw, loc, Some(cell.id), cell.facing as u8 as i32, materials)
+            .place_at(
+                &cw,
+                loc,
+                Some(cell.id),
+                cell.facing as u8 as i32,
+                cell.build_material,
+            )
             .len();
     }
     n
@@ -827,15 +830,9 @@ fn advance_month_system(
     roll_traveler_offer(&mut traveler_state, CIRCLE_REVEAL_RADIUS, rng);
 
     if !gains.is_empty() {
-        let storage_idx = constructed.placed_places.iter().position(|ps| {
-            constructed
-                .places
-                .get(ps.place)
-                .is_some_and(|info| info.storage.is_some())
-        });
-        if let Some(idx) = storage_idx {
+        if let Some(&id) = place::storage_ids(&constructed).first() {
             for (res, qty) in &gains {
-                constructed.placed_places[idx]
+                constructed.placed_places[id]
                     .contents
                     .add_uniform(*res, *qty as u16);
             }

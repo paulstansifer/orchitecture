@@ -1169,7 +1169,6 @@ mod tests {
                 id: desk_id,
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::city::Material::default(),
                 build_material: crate::materials::BuildMaterialId::default(),
             }),
         );
@@ -1226,7 +1225,6 @@ mod tests {
                     id: desk_id,
                     facing: Facing::NegX,
                     evaluation: None,
-                    material: crate::city::Material::default(),
                     build_material: crate::materials::BuildMaterialId::default(),
                 }),
             );
@@ -1321,7 +1319,6 @@ mod tests {
                 id: desk_id,
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::city::Material::default(),
                 build_material: crate::materials::BuildMaterialId::default(),
             }),
         );
@@ -1431,7 +1428,6 @@ mod tests {
                 id: EorfId(0),
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::city::Material::default(),
                 build_material: crate::materials::BuildMaterialId::default(),
             },
         );

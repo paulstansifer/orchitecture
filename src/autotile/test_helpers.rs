@@ -46,7 +46,6 @@ pub fn make_cell(id: u32) -> Cell {
         id: EorfId(id),
         facing: Default::default(),
         evaluation: None,
-        material: Default::default(),
         build_material: Default::default(),
     }
 }
@@ -68,7 +67,6 @@ pub fn stairs_cell(facing: Facing) -> Cell {
         id: EorfId(2),
         facing,
         evaluation: None,
-        material: Default::default(),
         build_material: Default::default(),
     }
 }

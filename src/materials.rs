@@ -31,8 +31,17 @@ impl ElementType {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BuildMaterialId(pub u32);
+
+/// The default is Ashlar (whose `world_material` is `MarbleBlocks`), so cells
+/// that never chose a build material — e.g. anything loaded from disk — keep
+/// the marble look. Guarded by `default_build_material_is_ashlar`.
+impl Default for BuildMaterialId {
+    fn default() -> Self {
+        BuildMaterialId(5)
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct BuildMaterial {
@@ -77,5 +86,18 @@ impl MaterialList {
             .filter(|(_, m)| m.costs.contains_key(&stype))
             .map(|(idx, m)| (BuildMaterialId(idx as u32), m))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_build_material_is_ashlar() {
+        let list = MaterialList::load();
+        let def = &list.materials[BuildMaterialId::default().0 as usize];
+        assert_eq!(def.name, "Ashlar");
+        assert_eq!(def.world_material(), crate::city::Material::MarbleBlocks);
     }
 }

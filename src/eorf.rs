@@ -52,6 +52,9 @@ pub struct EorfInfo {
     /// on `EorfInfo` (rather than `FurnitureOrElement::Furniture`) for
     /// uniformity with `PlaceInfo::restriction`.
     pub restriction: crate::place::ParentRestriction,
+    /// Placing this structure attaches a `VantageEvaluation` for the QNN to
+    /// score (e.g. desks evaluate the view from where someone would sit).
+    pub vantage_evaluated: bool,
 }
 
 impl EorfInfo {
@@ -133,6 +136,8 @@ struct FurnitureRon {
     z_char: Option<char>,
     embedding: StructureEmbedding,
     cost: crate::materials::Cost,
+    #[serde(default)]
+    vantage_evaluated: bool,
 }
 
 /// Loads `buildables/elements.ron` and `buildables/furniture.ron`, in that
@@ -154,6 +159,7 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             embedding: e.embedding,
             kind: FurnitureOrElement::Element(e.element_type),
             restriction: crate::place::ParentRestriction::Unrestricted,
+            vantage_evaluated: false,
         })
         .chain(furniture.into_iter().map(|f| EorfInfo {
             name: f.name,
@@ -163,6 +169,7 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             embedding: f.embedding,
             kind: FurnitureOrElement::Furniture(f.cost),
             restriction: crate::place::ParentRestriction::Unrestricted,
+            vantage_evaluated: f.vantage_evaluated,
         }))
         .collect()
 }

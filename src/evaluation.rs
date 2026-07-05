@@ -7,7 +7,7 @@ use rand::{Rng, SeedableRng};
 use crate::city::{Cell, ConstructedCity};
 use crate::eorf::EorfInfo;
 use crate::flood_fill::{flood_fill, has_sky_above};
-use crate::place::{count_named_near, place_location, FulfilledPorf, QualityAspect};
+use crate::place::{count_named_near, place_location, FulfilledPorf, PlacedPlaceId, QualityAspect};
 use crate::sparse3d::{RelSlot, RelSlotCoord, SlotCoord, Sparse3D};
 
 /// Falloff per hop through open air (and through any structure that isn't a
@@ -166,7 +166,7 @@ pub fn compute_spaciousness(cw: &ConstructedCity, origin: IVec3, sightline_max: 
 /// contribute no multiplier to the overall quality.
 fn raw_score(
     cw: &ConstructedCity,
-    idx: usize,
+    id: PlacedPlaceId,
     origin: IVec3,
     aspect: &QualityAspect,
     outdoorsness: &HashMap<IVec3, f32>,
@@ -181,7 +181,7 @@ fn raw_score(
         }
         QualityAspect::Indoors => Some(1.0 - outdoorsness.get(&origin).copied().unwrap_or(0.0)),
         QualityAspect::Subplaces => {
-            let scores: Vec<f32> = cw.placed_places[idx]
+            let scores: Vec<f32> = cw.placed_places[id]
                 .fulfillments
                 .iter()
                 .filter_map(|f| match f {
@@ -215,17 +215,17 @@ pub struct QualityFactorResult {
 /// evaluations rather than recomputed per place.
 pub fn evaluate_place_breakdown(
     cw: &ConstructedCity,
-    idx: usize,
+    id: PlacedPlaceId,
     outdoorsness: &HashMap<IVec3, f32>,
 ) -> (f32, Vec<QualityFactorResult>) {
-    let origin = place_location(cw, idx);
-    let def = &cw.places[cw.placed_places[idx].place];
+    let origin = place_location(cw, id);
+    let def = &cw.places[cw.placed_places[id].place];
     let mut overall = 1.0;
     let results = def
         .quality_factors
         .iter()
         .map(|factor| {
-            let raw = raw_score(cw, idx, origin, &factor.aspect, outdoorsness);
+            let raw = raw_score(cw, id, origin, &factor.aspect, outdoorsness);
             let (normalized, contribution) = match raw {
                 Some(raw) => {
                     let normalized = ((raw - factor.range.start)
@@ -252,8 +252,12 @@ pub fn evaluate_place_breakdown(
 /// `QualityFactor`'s normalized score raised to its `strength`. `outdoorsness`
 /// should be computed once (via `compute_outdoorsness`) and shared across all
 /// place evaluations rather than recomputed per place.
-pub fn evaluate_place(cw: &ConstructedCity, idx: usize, outdoorsness: &HashMap<IVec3, f32>) -> f32 {
-    evaluate_place_breakdown(cw, idx, outdoorsness).0
+pub fn evaluate_place(
+    cw: &ConstructedCity,
+    id: PlacedPlaceId,
+    outdoorsness: &HashMap<IVec3, f32>,
+) -> f32 {
+    evaluate_place_breakdown(cw, id, outdoorsness).0
 }
 
 #[cfg(test)]
@@ -262,7 +266,7 @@ mod tests {
     use bevy::math::IVec3;
 
     use crate::build_helpers::Builder;
-    use crate::city::{ConstructedCity, Material};
+    use crate::city::ConstructedCity;
     use crate::eorf::load_structure_info;
     use crate::materials::BuildMaterialId;
     use crate::place::{
@@ -291,8 +295,12 @@ mod tests {
     }
 
     /// Places a "bin" core furniture at `core` and registers a `ParticularPlace`
-    /// for `def` around it. Returns the new place's index into `placed_places`.
-    fn place_at(cw: &mut ConstructedCity, def: PlaceInfo, core: IVec3) -> usize {
+    /// for `def` around it. Returns the new place's id.
+    fn place_at(
+        cw: &mut ConstructedCity,
+        def: PlaceInfo,
+        core: IVec3,
+    ) -> crate::place::PlacedPlaceId {
         let bin_id = cw.find_structure_by_name("bin").unwrap();
         cw.contents.set(
             SlotCoord {
@@ -303,18 +311,16 @@ mod tests {
                 id: bin_id,
                 facing: Facing::default(),
                 evaluation: None,
-                material: Material::Planks,
                 build_material: BuildMaterialId::default(),
             },
         );
         cw.places.push(def);
         let place = cw.places.len() - 1;
-        cw.placed_places.push(ParticularPlace {
+        cw.placed_places.insert(ParticularPlace {
             place,
             fulfillments: vec![FulfilledPorf::Furniture(core)],
             contents: Inventory::new(8, 20.0),
-        });
-        cw.placed_places.len() - 1
+        })
     }
 
     #[test]

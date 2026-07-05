@@ -1,24 +1,23 @@
 use crate::city::ConstructedCity;
-use crate::place::AssignmentFlavor;
+use crate::place::{AssignmentFlavor, PlacedPlaceId};
 use bevy::prelude::*;
 use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct Individual {
-    /// Index into `ConstructedCity::placed_places` of the place this
-    /// individual is assigned to for each flavor of need (e.g. the bedroom
-    /// they sleep in). See `assign_places`.
-    pub assignments: HashMap<AssignmentFlavor, usize>,
+    /// The place this individual is assigned to for each flavor of need
+    /// (e.g. the bedroom they sleep in). See `assign_places`.
+    pub assignments: HashMap<AssignmentFlavor, PlacedPlaceId>,
     pub fed_this_month: bool,
 }
 
 impl Individual {
-    pub fn assigned(&self, flavor: AssignmentFlavor) -> Option<usize> {
+    pub fn assigned(&self, flavor: AssignmentFlavor) -> Option<PlacedPlaceId> {
         self.assignments.get(&flavor).copied()
     }
 
     /// The place this individual sleeps in, if any.
-    pub fn home(&self) -> Option<usize> {
+    pub fn home(&self) -> Option<PlacedPlaceId> {
         self.assigned(AssignmentFlavor::Sleep)
     }
 
@@ -80,12 +79,15 @@ pub fn assign_places(
 ) -> bool {
     use std::collections::HashSet;
 
-    let eligible: HashSet<usize> = (0..cw.placed_places.len())
-        .filter(|&i| cw.places[cw.placed_places[i].place].assignable_for == Some(flavor))
+    let eligible: HashSet<PlacedPlaceId> = cw
+        .placed_places
+        .iter()
+        .filter(|(_, pp)| cw.places[pp.place].assignable_for == Some(flavor))
+        .map(|(id, _)| id)
         .collect();
 
-    let mut claimed: HashSet<usize> = HashSet::new();
-    let mut new_assignments: Vec<Option<usize>> = vec![None; individuals.len()];
+    let mut claimed: HashSet<PlacedPlaceId> = HashSet::new();
+    let mut new_assignments: Vec<Option<PlacedPlaceId>> = vec![None; individuals.len()];
     for (i, individual) in individuals.iter().enumerate() {
         if let Some(place) = individual.assigned(flavor) {
             if eligible.contains(&place) && claimed.insert(place) {
@@ -94,7 +96,7 @@ pub fn assign_places(
         }
     }
 
-    let mut vacant: Vec<usize> = eligible.difference(&claimed).copied().collect();
+    let mut vacant: Vec<PlacedPlaceId> = eligible.difference(&claimed).copied().collect();
     vacant.sort_unstable();
     let mut vacant = vacant.into_iter();
     for assignment in new_assignments.iter_mut() {
@@ -180,7 +182,9 @@ mod tests {
     fn city_with_bedrooms(n: usize) -> ConstructedCity {
         let mut cw = ConstructedCity::new(Vec::<EorfInfo>::new());
         cw.places = vec![bedroom_place()];
-        cw.placed_places = (0..n).map(|_| placed(0)).collect();
+        for _ in 0..n {
+            cw.placed_places.insert(placed(0));
+        }
         cw
     }
 
@@ -233,6 +237,34 @@ mod tests {
         let cw2 = city_with_bedrooms(1);
         assign_homes(&mut people, &cw2);
         assert_eq!(people.iter().filter(|i| i.home().is_some()).count(), 1);
-        assert!(people.iter().any(|i| i.home() == Some(0)));
+        let (remaining, _) = cw2.placed_places.iter().next().unwrap();
+        assert!(people.iter().any(|i| i.home() == Some(remaining)));
+    }
+
+    #[test]
+    fn eviction_targets_the_destroyed_bedroom_not_a_shifted_id() {
+        // Two bedrooms; destroy the *first*-inserted one. The individual in
+        // the second bedroom must keep it -- with positional indices, the
+        // survivor would have "slid down" into the destroyed slot and the
+        // wrong individual would have been evicted.
+        let mut cw = city_with_bedrooms(2);
+        let mut people = individuals(2);
+        assign_homes(&mut people, &cw);
+
+        let first = cw.placed_places.ids()[0];
+        let second = cw.placed_places.ids()[1];
+        let keeper = people
+            .iter()
+            .position(|i| i.home() == Some(second))
+            .unwrap();
+
+        cw.placed_places.remove(first);
+        assign_homes(&mut people, &cw);
+        assert_eq!(
+            people[keeper].home(),
+            Some(second),
+            "individual in the surviving bedroom keeps their home"
+        );
+        assert_eq!(people.iter().filter(|i| i.home().is_some()).count(), 1);
     }
 }

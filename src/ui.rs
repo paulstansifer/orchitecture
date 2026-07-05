@@ -107,7 +107,7 @@ pub fn shared_ui_system(
             constructed
                 .placed_places
                 .iter()
-                .filter(|ps| ps.place == idx)
+                .filter(|(_, ps)| ps.place == idx)
                 .count()
         });
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
@@ -217,13 +217,13 @@ pub fn shared_ui_system(
             let total_tools: usize = constructed
                 .placed_places
                 .iter()
-                .filter(|ps| {
+                .filter(|(_, ps)| {
                     constructed
                         .places
                         .get(ps.place)
                         .is_some_and(|info| info.storage.is_some())
                 })
-                .map(|ps| ps.contents.tool_count())
+                .map(|(_, ps)| ps.contents.tool_count())
                 .sum();
             if total_tools > 0 {
                 ui.horizontal(|ui| {
@@ -331,15 +331,9 @@ pub fn shared_ui_system(
         traveler::roll_traveler_offer(&mut traveler_state, CIRCLE_REVEAL_RADIUS, &mut rng);
 
         if !gains.is_empty() {
-            let storage_idx = constructed.placed_places.iter().position(|ps| {
-                constructed
-                    .places
-                    .get(ps.place)
-                    .is_some_and(|info| info.storage.is_some())
-            });
-            if let Some(idx) = storage_idx {
+            if let Some(&id) = crate::place::storage_ids(&constructed).first() {
                 for (res, qty) in gains {
-                    constructed.placed_places[idx]
+                    constructed.placed_places[id]
                         .contents
                         .add_uniform(res, qty as u16);
                 }

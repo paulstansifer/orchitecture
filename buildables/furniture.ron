@@ -11,6 +11,7 @@
             striated: 0.0,
         ),
         cost: [(Plank, 4)],
+        vantage_evaluated: true,
     ),
     (
         name: "market stand",

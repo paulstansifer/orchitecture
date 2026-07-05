@@ -936,7 +936,7 @@ pub(crate) fn place_resource_totals(
     use std::collections::HashMap;
 
     let mut map: HashMap<UniformResource, (u32, Precision)> = HashMap::new();
-    for place in &constructed.placed_places {
+    for (_, place) in constructed.placed_places.iter() {
         let Some(info) = constructed.places.get(place.place) else {
             continue;
         };

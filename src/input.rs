@@ -7,10 +7,10 @@ use crate::build_ui::SandboxMode;
 use crate::camera::{cursor_to_viewport, GameCamera};
 use crate::city::{
     apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
-    ConstructedCity, GridCellMarker, Material, MaterialAssets, ProposalGhostMarker,
-    ProposalOverlayAssets, ProposedCutMarker,
+    ConstructedCity, GridCellMarker, MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets,
+    ProposedCutMarker,
 };
-use crate::construction::{construct, Materials};
+use crate::construction::construct;
 use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::eorf::{EorfId, EorfList, PlacementStyle};
 use crate::materials::BuildMaterialId;
@@ -346,32 +346,24 @@ pub fn building_input_system(
         ) {
             let id = EorfId(build_state.selected_structure as u32);
             let dir = build_state.cur_dir as i32;
-            let (material, build_material) = {
+            let build_material = {
                 let info = &constructed.eorfs[id.as_usize()];
                 if info.is_furniture() {
-                    (Material::Planks, BuildMaterialId(0))
+                    // Meaningless for furniture (which always displays as
+                    // planks), but `propose` wants one.
+                    BuildMaterialId::default()
                 } else {
                     let stype = info.element_type().unwrap_or_default();
-                    let build_mat_id = build_state.material_for_type(stype, &material_list);
-                    if let Some(mat) = material_list.materials.get(build_mat_id.0 as usize) {
-                        let world_mat = mat.world_material();
-                        (world_mat, build_mat_id)
-                    } else {
-                        (Material::default(), build_mat_id)
-                    }
+                    build_state.material_for_type(stype, &material_list)
                 }
             };
 
             let dist_sq = (end - start).length_squared();
 
-            let materials = Materials {
-                material,
-                build_material,
-            };
             let changes = if dist_sq < 0.25 {
-                pending.click(&constructed, start, id, dir, remove, materials)
+                pending.click(&constructed, start, id, dir, remove, build_material)
             } else {
-                pending.drag(&constructed, (start, end), dir, id, remove, materials)
+                pending.drag(&constructed, (start, end), dir, id, remove, build_material)
             };
 
             if !changes.is_empty() {
@@ -482,6 +474,7 @@ pub fn recolor_new_mesh_children(
     cursor_entities: Res<CursorEntities>,
     overlay_assets: Res<ProposalOverlayAssets>,
     material_assets: Res<MaterialAssets>,
+    material_list: Res<crate::materials::MaterialList>,
     world: City,
     ghost_markers_q: Query<(), With<ProposalGhostMarker>>,
     proposed_cut_q: Query<(), With<ProposedCutMarker>>,
@@ -540,7 +533,7 @@ pub fn recolor_new_mesh_children(
             // re-check the entity at apply time rather than letting the command panic.
             Some(Recolor::Material(loc)) => {
                 let material = get_real_or_proposed(&constructed, &pending, loc)
-                    .map(|c| c.material)
+                    .map(|c| c.material(&constructed.eorfs, &material_list))
                     .unwrap_or_default();
                 let handle = material_assets.get(material);
                 commands.queue(move |world: &mut bevy::prelude::World| {

@@ -343,7 +343,7 @@ mod tests {
     use assert2::check;
     use bevy::math::IVec3;
 
-    use crate::city::{Cell, ConstructedCity, Material};
+    use crate::city::{Cell, ConstructedCity};
     use crate::eorf::{find_structure_by_name, load_structure_info};
     use crate::materials::BuildMaterialId;
     use crate::sparse3d::{Facing, Slot, SlotCoord};
@@ -380,7 +380,6 @@ mod tests {
                 id,
                 facing,
                 evaluation: None,
-                material: Material::default(),
                 build_material: BuildMaterialId::default(),
             },
         );

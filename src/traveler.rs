@@ -138,14 +138,8 @@ pub fn accept_traveler(offer: &IndividualTraveler, constructed: &mut Constructed
     for (res, qty) in &offer.demands {
         crate::place::consume_uniform(constructed, *res, *qty as u32);
     }
-    let storage_idx = constructed.placed_places.iter().position(|ps| {
-        constructed
-            .places
-            .get(ps.place)
-            .is_some_and(|info| info.storage.is_some())
-    });
-    if let Some(idx) = storage_idx {
-        let contents = &mut constructed.placed_places[idx].contents;
+    if let Some(&id) = crate::place::storage_ids(constructed).first() {
+        let contents = &mut constructed.placed_places[id].contents;
         match &offer.reward {
             ResolvedReward::Tool(kind) => contents.add_unique(UniqueResource::Tool(*kind)),
             ResolvedReward::Resource(res, qty) => contents.add_uniform(*res, *qty),

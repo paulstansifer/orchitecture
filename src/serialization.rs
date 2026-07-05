@@ -216,7 +216,6 @@ pub fn load_from_str(content: &str, structures: &[EorfInfo]) -> Sparse3D<Cell> {
                 id,
                 facing: Facing::NegX,
                 evaluation: None,
-                material: crate::city::Material::default(),
                 build_material: BuildMaterialId::default(),
             })
         },
@@ -235,7 +234,7 @@ mod tests {
     use assert2::check;
     use std::collections::HashMap;
 
-    use crate::city::{Cell, Material};
+    use crate::city::Cell;
     use crate::eorf::{EorfId, EorfInfo, PlacementStyle, StructureEmbedding};
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord};
 
@@ -258,6 +257,7 @@ mod tests {
                     crate::materials::ElementType::WallLike,
                 ),
                 restriction: crate::place::ParentRestriction::Unrestricted,
+                vantage_evaluated: false,
             },
             EorfInfo {
                 name: "floor".to_string(),
@@ -274,6 +274,7 @@ mod tests {
                     crate::materials::ElementType::GroundFloorLike,
                 ),
                 restriction: crate::place::ParentRestriction::Unrestricted,
+                vantage_evaluated: false,
             },
         ]
     }
@@ -283,7 +284,6 @@ mod tests {
             id: EorfId(id),
             facing: Facing::NegX,
             evaluation: None,
-            material: Material::default(),
             build_material: crate::materials::BuildMaterialId::default(),
         }
     }

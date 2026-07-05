@@ -105,8 +105,8 @@ pub struct VantageEvaluation {
     pub interest: Option<ConstrainedScore>,
 }
 
-/// What a structure is built from. Determines its color. Not serialized: anything
-/// loaded from disk is assumed to be `MarbleBlocks` (the default).
+/// What a structure is built from. Determines its color. Derived from a cell's
+/// `build_material` (see `Cell::material`), never stored.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum Material {
     Timbers,
@@ -166,13 +166,30 @@ pub struct Cell {
     #[serde(default)]
     pub facing: Facing,
     pub evaluation: Option<VantageEvaluation>,
-    /// What the structure is made from. Not serialized (see `Material`).
-    #[serde(skip)]
-    pub material: Material,
-    /// Index into the MaterialList. Serialized with a default fallback (unlike `material`,
-    /// which is derived from it and skipped entirely).
+    /// Index into the MaterialList. Serialized with a default fallback.
     #[serde(default)]
     pub build_material: crate::materials::BuildMaterialId,
+}
+
+impl Cell {
+    /// What this structure is made from, for display. Furniture is always
+    /// planks regardless of `build_material`; elements take their build
+    /// material's world material.
+    pub fn material(
+        &self,
+        eorfs: &[EorfInfo],
+        materials: &crate::materials::MaterialList,
+    ) -> Material {
+        if eorfs[self.id.as_usize()].is_furniture() {
+            Material::Planks
+        } else {
+            materials
+                .materials
+                .get(self.build_material.0 as usize)
+                .map(|m| m.world_material())
+                .unwrap_or_default()
+        }
+    }
 }
 
 impl crate::sparse3d::Rotateable for Cell {
@@ -257,8 +274,8 @@ use bevy::asset::Handle;
 #[derive(Resource)]
 pub struct ConstructedCity {
     pub contents: Sparse3D<Cell>,
-    /// Places placed in the world.
-    pub placed_places: Vec<crate::place::ParticularPlace>,
+    /// Places placed in the world, keyed by stable `PlacedPlaceId`.
+    pub placed_places: crate::place::PlacedPlaces,
     pub road_forbidden_zone: bool,
     /// Duplicated from the `Res<>` for simplicity:
     pub eorfs: Vec<EorfInfo>,
@@ -272,7 +289,7 @@ impl ConstructedCity {
             eorfs,
             contents: Sparse3D::new(),
             places: Vec::new(),
-            placed_places: Vec::new(),
+            placed_places: crate::place::PlacedPlaces::default(),
             road_forbidden_zone: true,
         }
     }
@@ -878,7 +895,7 @@ pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<Eor
         .map(|s| s.info.clone())
         .collect();
     let mut constructed = ConstructedCity::new(infos);
-    constructed.places = crate::place::load_place_info();
+    constructed.places = crate::place::load_place_info(&constructed.eorfs);
     commands.insert_resource(constructed);
     commands.insert_resource(ProposedCity::new());
     commands.insert_resource(AssembledCity::new());

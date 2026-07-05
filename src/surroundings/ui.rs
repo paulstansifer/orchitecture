@@ -219,7 +219,7 @@ pub fn surroundings_ui_system(
             constructed
                 .placed_places
                 .iter()
-                .filter(|ps| ps.place == idx)
+                .filter(|(_, ps)| ps.place == idx)
                 .count()
         });
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();

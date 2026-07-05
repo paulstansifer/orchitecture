@@ -1,4 +1,4 @@
-use crate::city::{apply_changes, AssembledCity, Cell, ConstructedCity, Material};
+use crate::city::{apply_changes, AssembledCity, Cell, ConstructedCity};
 use crate::eorf::EorfList;
 use crate::materials::BuildMaterialId;
 use crate::resource::{Approximation, Inventory, ToolKind, UniformResource, UniqueResource};
@@ -195,11 +195,10 @@ pub struct PlaceInfo {
 }
 
 /// What actually fulfills one slot of a placed `Place`'s requirements.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FulfilledPorf {
     Furniture(IVec3),
-    /// Index into `ConstructedCity::placed_places`.
-    Place(usize),
+    Place(PlacedPlaceId),
 }
 
 /// A placed place instance.
@@ -211,14 +210,132 @@ pub struct ParticularPlace {
     pub contents: Inventory,
 }
 
-/// Loads the place definitions bundled at compile time.
-pub fn load_place_info() -> Vec<PlaceInfo> {
+/// Stable identifier for a `ParticularPlace`: unique for the lifetime of a
+/// city and never reused. Anything that outlives one pass over
+/// `placed_places` -- individual assignments, nested-place fulfillments --
+/// must hold one of these, because places are removed (dissolved) as the
+/// city changes and positional indices would silently shift.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PlacedPlaceId(u32);
+
+impl std::fmt::Display for PlacedPlaceId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// The placed places of a city, keyed by stable `PlacedPlaceId`.
+#[derive(Default)]
+pub struct PlacedPlaces {
+    items: Vec<(PlacedPlaceId, ParticularPlace)>,
+    next_id: u32,
+}
+
+impl PlacedPlaces {
+    pub fn insert(&mut self, place: ParticularPlace) -> PlacedPlaceId {
+        let id = PlacedPlaceId(self.next_id);
+        self.next_id += 1;
+        self.items.push((id, place));
+        id
+    }
+
+    /// Removes the place with `id`. A stale (already-removed) id is a no-op.
+    pub fn remove(&mut self, id: PlacedPlaceId) {
+        self.items.retain(|(i, _)| *i != id);
+    }
+
+    pub fn get(&self, id: PlacedPlaceId) -> Option<&ParticularPlace> {
+        self.items.iter().find(|(i, _)| *i == id).map(|(_, pp)| pp)
+    }
+
+    pub fn get_mut(&mut self, id: PlacedPlaceId) -> Option<&mut ParticularPlace> {
+        self.items
+            .iter_mut()
+            .find(|(i, _)| *i == id)
+            .map(|(_, pp)| pp)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (PlacedPlaceId, &ParticularPlace)> {
+        self.items.iter().map(|(id, pp)| (*id, pp))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (PlacedPlaceId, &mut ParticularPlace)> {
+        self.items.iter_mut().map(|(id, pp)| (*id, pp))
+    }
+
+    /// Snapshot of every id, for loops that mutate while scanning.
+    pub fn ids(&self) -> Vec<PlacedPlaceId> {
+        self.items.iter().map(|(id, _)| *id).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
+impl std::ops::Index<PlacedPlaceId> for PlacedPlaces {
+    type Output = ParticularPlace;
+    fn index(&self, id: PlacedPlaceId) -> &ParticularPlace {
+        self.get(id).expect("no placed place with this id")
+    }
+}
+
+impl std::ops::IndexMut<PlacedPlaceId> for PlacedPlaces {
+    fn index_mut(&mut self, id: PlacedPlaceId) -> &mut ParticularPlace {
+        self.get_mut(id).expect("no placed place with this id")
+    }
+}
+
+/// Loads the place definitions bundled at compile time, panicking on any
+/// reference to a furniture or place name that doesn't exist.
+pub fn load_place_info(eorfs: &[crate::eorf::EorfInfo]) -> Vec<PlaceInfo> {
     let ron_content = include_str!("../buildables/places.ron");
     let mut infos: Vec<PlaceInfo> = ron::from_str(ron_content).unwrap();
     for info in &mut infos {
         fill_default_quality_factors(info);
     }
+    validate_place_info(&infos, eorfs);
     infos
+}
+
+/// Panics if any place definition cross-references an unknown furniture or
+/// place name -- a typo in places.ron would otherwise just silently never
+/// match anything.
+fn validate_place_info(places: &[PlaceInfo], eorfs: &[crate::eorf::EorfInfo]) {
+    let furniture_exists = |name: &str| eorfs.iter().any(|e| e.is_furniture() && e.name == name);
+    let place_exists = |name: &str| places.iter().any(|p| p.name == name);
+
+    for place in places {
+        let bad = |what: &str, name: &str| {
+            panic!(
+                "place {:?} references unknown {what} {name:?} in places.ron",
+                place.name
+            )
+        };
+        for req in &place.requirements {
+            match &req.requirement {
+                Porf::Furniture(name) if !furniture_exists(name) => bad("furniture", name),
+                Porf::Place(name) if !place_exists(name) => bad("place", name),
+                _ => {}
+            }
+        }
+        if let ParentRestriction::RestrictedTo(name) = &place.restriction {
+            if !place_exists(name) {
+                bad("place", name);
+            }
+        }
+        for factor in &place.quality_factors {
+            if let QualityAspect::NumberOf { porf_name } = &factor.aspect {
+                if !furniture_exists(porf_name) && !place_exists(porf_name) {
+                    bad("furniture or place", porf_name);
+                }
+            }
+        }
+    }
 }
 
 /// Maximum 2D Manhattan distance (within a single y-layer) for a requirement
@@ -230,18 +347,24 @@ fn manhattan2d(a: IVec3, b: IVec3) -> i32 {
 }
 
 /// The world location of a placed place: its core fulfillment's location,
-/// resolved recursively through nested places.
-pub fn place_location(cw: &ConstructedCity, idx: usize) -> IVec3 {
-    match cw.placed_places[idx].fulfillments[0] {
-        FulfilledPorf::Furniture(cube) => cube,
-        FulfilledPorf::Place(inner) => place_location(cw, inner),
+/// resolved recursively through nested places. `None` when `id` (or a nested
+/// place it points through) no longer exists.
+fn try_place_location(cw: &ConstructedCity, id: PlacedPlaceId) -> Option<IVec3> {
+    match cw.placed_places.get(id)?.fulfillments.first()? {
+        FulfilledPorf::Furniture(cube) => Some(*cube),
+        FulfilledPorf::Place(inner) => try_place_location(cw, *inner),
     }
+}
+
+/// The world location of a placed place; panics on a stale id.
+pub fn place_location(cw: &ConstructedCity, id: PlacedPlaceId) -> IVec3 {
+    try_place_location(cw, id).expect("placed place has no resolvable location")
 }
 
 fn fulfillment_location(cw: &ConstructedCity, f: &FulfilledPorf) -> IVec3 {
     match f {
         FulfilledPorf::Furniture(cube) => *cube,
-        FulfilledPorf::Place(idx) => place_location(cw, *idx),
+        FulfilledPorf::Place(id) => place_location(cw, *id),
     }
 }
 
@@ -268,14 +391,16 @@ fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Ve
     found
 }
 
-/// All placed-place indices named `name` within `PLACE_DIST` of `origin`
+/// All placed places named `name` within `PLACE_DIST` of `origin`
 /// (measured from each candidate's own resolved location).
-fn places_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<usize> {
-    (0..cw.placed_places.len())
-        .filter(|&idx| {
-            cw.places[cw.placed_places[idx].place].name == name
-                && manhattan2d(place_location(cw, idx), origin) <= PLACE_DIST
+fn places_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<PlacedPlaceId> {
+    cw.placed_places
+        .iter()
+        .filter(|(id, pp)| {
+            cw.places[pp.place].name == name
+                && manhattan2d(place_location(cw, *id), origin) <= PLACE_DIST
         })
+        .map(|(id, _)| id)
         .collect()
 }
 
@@ -310,8 +435,8 @@ fn candidates_near(
             .collect(),
         Porf::Place(name) => places_of_name_near(cw, origin, name)
             .into_iter()
-            .filter(|&idx| {
-                cw.places[cw.placed_places[idx].place]
+            .filter(|&id| {
+                cw.places[cw.placed_places[id].place]
                     .restriction
                     .allows(parent_name)
             })
@@ -332,9 +457,10 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
             })
             .map(|c| cw.eorfs[c.id.as_usize()].name == *name)
             .unwrap_or(false),
-        (FulfilledPorf::Place(idx), Porf::Place(name)) => {
-            cw.places[cw.placed_places[*idx].place].name == *name
-        }
+        (FulfilledPorf::Place(id), Porf::Place(name)) => cw
+            .placed_places
+            .get(*id)
+            .is_some_and(|pp| cw.places[pp.place].name == *name),
         _ => false,
     }
 }
@@ -368,45 +494,47 @@ pub fn valid_places_for(cw: &ConstructedCity, cube: IVec3) -> Vec<usize> {
         .collect()
 }
 
-fn place_contains(cw: &ConstructedCity, idx: usize, cube: IVec3) -> bool {
-    cw.placed_places[idx].fulfillments.iter().any(|f| match f {
-        FulfilledPorf::Furniture(c) => *c == cube,
-        FulfilledPorf::Place(inner) => place_contains(cw, *inner, cube),
+fn place_contains(cw: &ConstructedCity, id: PlacedPlaceId, cube: IVec3) -> bool {
+    cw.placed_places.get(id).is_some_and(|pp| {
+        pp.fulfillments.iter().any(|f| match f {
+            FulfilledPorf::Furniture(c) => *c == cube,
+            FulfilledPorf::Place(inner) => place_contains(cw, *inner, cube),
+        })
     })
 }
 
-/// The placed-place index (into `cw.placed_places`) that owns `cube`, if any
-/// -- searching recursively through nested place fulfillments.
-pub fn place_index_at(cw: &ConstructedCity, cube: IVec3) -> Option<usize> {
-    (0..cw.placed_places.len()).find(|&idx| place_contains(cw, idx, cube))
+/// The placed place that owns `cube`, if any -- searching recursively through
+/// nested place fulfillments.
+pub fn place_id_at(cw: &ConstructedCity, cube: IVec3) -> Option<PlacedPlaceId> {
+    cw.placed_places
+        .iter()
+        .map(|(id, _)| id)
+        .find(|&id| place_contains(cw, id, cube))
 }
 
 /// The chain of places containing `cube`, innermost first, up to the root.
-pub fn containing_chain(cw: &ConstructedCity, cube: IVec3) -> Vec<usize> {
+pub fn containing_chain(cw: &ConstructedCity, cube: IVec3) -> Vec<PlacedPlaceId> {
     let mut chain = Vec::new();
-    let Some(mut idx) = place_index_at(cw, cube) else {
+    let Some(mut id) = place_id_at(cw, cube) else {
         return chain;
     };
     loop {
-        chain.push(idx);
-        match cw
-            .placed_places
-            .iter()
-            .position(|pp| pp.fulfillments.contains(&FulfilledPorf::Place(idx)))
-        {
-            Some(parent) => idx = parent,
+        chain.push(id);
+        match owner_of(cw, &FulfilledPorf::Place(id)) {
+            Some(parent) => id = parent,
             None => break,
         }
     }
     chain
 }
 
-/// The placed-place index directly holding fulfillment `f` (not recursive --
-/// only used to find donors during (re)assignment).
-fn owner_of(cw: &ConstructedCity, f: &FulfilledPorf) -> Option<usize> {
+/// The placed place directly holding fulfillment `f` (not recursive -- only
+/// used to find donors during (re)assignment).
+fn owner_of(cw: &ConstructedCity, f: &FulfilledPorf) -> Option<PlacedPlaceId> {
     cw.placed_places
         .iter()
-        .position(|pp| pp.fulfillments.contains(f))
+        .find(|(_, pp)| pp.fulfillments.contains(f))
+        .map(|(id, _)| id)
 }
 
 /// A pre-computed assignment, shared by the panel preview and the commit so the
@@ -416,18 +544,8 @@ pub struct AssignmentPlan {
     pub chosen: Vec<FulfilledPorf>,
     /// How many of `chosen` had to be pulled from other places to meet a min.
     pub pulled: usize,
-    /// Indices into `placed_places` that drop below a min and must be destroyed.
-    ///
-    /// NOTE: these indices are only valid against `cw.placed_places` as it
-    /// stood when this plan was computed. `commit_assignment` removes them in
-    /// descending order so earlier indices stay valid *for this call*, but if
-    /// `chosen` also contains a `FulfilledPorf::Place` (a nested place used to
-    /// satisfy a `Porf::Place` requirement), removing a lower-indexed destroyed
-    /// place would shift that reference. No current place definitions nest,
-    /// so this can't happen today -- it would need a stable-ID rework
-    /// (replacing `usize` indices with real IDs) before nesting is exercised
-    /// in anger.
-    pub destroy: Vec<usize>,
+    /// Placed places that drop below a min and must be destroyed.
+    pub destroy: Vec<PlacedPlaceId>,
 }
 
 /// Plan assigning fulfillments to a new instance of `place_idx` around `cube`.
@@ -443,7 +561,7 @@ pub fn plan_assignment(
 
     let mut chosen: Vec<FulfilledPorf> = Vec::new();
     // For each donor place, which of its fulfillments we'd take.
-    let mut pulled_from: std::collections::HashMap<usize, Vec<FulfilledPorf>> =
+    let mut pulled_from: std::collections::HashMap<PlacedPlaceId, Vec<FulfilledPorf>> =
         std::collections::HashMap::new();
 
     for req in &place.requirements {
@@ -451,9 +569,9 @@ pub fn plan_assignment(
         let min = req.min as usize;
 
         // Partition reachable fulfillments into unassigned ("free") and those
-        // already owned by another place, keeping each owner's index.
+        // already owned by another place, keeping each owner's id.
         let mut free: Vec<FulfilledPorf> = Vec::new();
-        let mut assigned: Vec<(FulfilledPorf, usize)> = Vec::new();
+        let mut assigned: Vec<(FulfilledPorf, PlacedPlaceId)> = Vec::new();
         for c in candidates_near(cw, core_loc, &req.requirement, &place.name) {
             if chosen.contains(&c) {
                 continue;
@@ -479,8 +597,8 @@ pub fn plan_assignment(
     // A donor place is destroyed if, after losing its pulled fulfillments, it
     // no longer meets some minimum.
     let mut destroy = Vec::new();
-    for (&pp_idx, pulled_fs) in &pulled_from {
-        let pp = &cw.placed_places[pp_idx];
+    for (&pp_id, pulled_fs) in &pulled_from {
+        let pp = &cw.placed_places[pp_id];
         let def = &cw.places[pp.place];
         let still_meets = def.requirements.iter().all(|req| {
             pp.fulfillments
@@ -491,11 +609,11 @@ pub fn plan_assignment(
                 >= req.min as usize
         });
         if !still_meets {
-            destroy.push(pp_idx);
+            destroy.push(pp_id);
         }
     }
-    // Descending so `commit_assignment` can `remove` by index without shifting.
-    destroy.sort_unstable_by(|a, b| b.cmp(a));
+    // Deterministic destruction order (HashMap iteration above is not).
+    destroy.sort_unstable();
 
     let pulled = pulled_from.values().map(Vec::len).sum();
     Some(AssignmentPlan {
@@ -512,18 +630,18 @@ pub fn commit_assignment(cw: &mut ConstructedCity, cube: IVec3, place_idx: usize
     };
 
     // Take chosen fulfillments away from any place currently holding them.
-    for pp in &mut cw.placed_places {
+    for (_, pp) in cw.placed_places.iter_mut() {
         pp.fulfillments.retain(|f| !plan.chosen.contains(f));
     }
 
-    // Destroy donor places that fell below a minimum. `plan.destroy` is sorted
-    // descending so earlier indices stay valid. Their inventory is discarded.
-    for idx in &plan.destroy {
-        cw.placed_places.remove(*idx);
+    // Destroy donor places that fell below a minimum. Their inventory is
+    // discarded.
+    for id in &plan.destroy {
+        cw.placed_places.remove(*id);
     }
 
     let max_volume = 20.0 * plan.chosen.len() as f32;
-    cw.placed_places.push(ParticularPlace {
+    cw.placed_places.insert(ParticularPlace {
         place: place_idx,
         fulfillments: plan.chosen,
         contents: Inventory::new(8, max_volume),
@@ -531,10 +649,8 @@ pub fn commit_assignment(cw: &mut ConstructedCity, cube: IVec3, place_idx: usize
 }
 
 /// Remove a placed place, discarding its inventory contents.
-pub fn unassign_place(cw: &mut ConstructedCity, idx: usize) {
-    if idx < cw.placed_places.len() {
-        cw.placed_places.remove(idx);
-    }
+pub fn unassign_place(cw: &mut ConstructedCity, id: PlacedPlaceId) {
+    cw.placed_places.remove(id);
 }
 
 /// All furniture cubes named `name` anywhere in the grid (unbounded, unlike
@@ -565,15 +681,17 @@ fn all_furniture_named(cw: &ConstructedCity, name: &str) -> Vec<IVec3> {
 pub fn sync_places(cw: &mut ConstructedCity) -> bool {
     let mut changed = false;
 
-    // Dissolve any existing place that no longer meets its own minimums.
+    // Dissolve any existing place that no longer meets its own minimums (or,
+    // if nested, whose core no longer resolves to a location).
     loop {
-        let stale = (0..cw.placed_places.len()).find(|&idx| {
-            let def = &cw.places[cw.placed_places[idx].place];
-            !requirements_met(cw, place_location(cw, idx), def)
+        let stale = cw.placed_places.iter().find_map(|(id, pp)| {
+            let def = &cw.places[pp.place];
+            let ok = try_place_location(cw, id).is_some_and(|loc| requirements_met(cw, loc, def));
+            (!ok).then_some(id)
         });
         match stale {
-            Some(idx) => {
-                cw.placed_places.remove(idx);
+            Some(id) => {
+                cw.placed_places.remove(id);
                 changed = true;
             }
             None => break,
@@ -602,14 +720,14 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
                     cw.eorfs[cell.id.as_usize()].restriction.allows(parent_name)
                 })
                 .collect(),
-            Porf::Place(name) => (0..cw.placed_places.len())
-                .filter(|&i| cw.places[cw.placed_places[i].place].name == *name)
-                .filter(|&i| {
-                    cw.places[cw.placed_places[i].place]
-                        .restriction
-                        .allows(parent_name)
+            Porf::Place(name) => cw
+                .placed_places
+                .iter()
+                .filter(|(_, pp)| {
+                    let def = &cw.places[pp.place];
+                    def.name == *name && def.restriction.allows(parent_name)
                 })
-                .map(|i| place_location(cw, i))
+                .map(|(id, _)| place_location(cw, id))
                 .collect(),
         };
         candidates.extend(cubes.into_iter().map(|cube| (cube, place_idx)));
@@ -617,7 +735,7 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
     candidates.sort_by_key(|(cube, place_idx)| (cube.x, cube.y, cube.z, *place_idx));
 
     for (cube, place_idx) in candidates {
-        if place_index_at(cw, cube).is_some() {
+        if place_id_at(cw, cube).is_some() {
             continue;
         }
         if plan_assignment(cw, cube, place_idx).is_some() {
@@ -644,20 +762,17 @@ pub fn sync_places_system(mut constructed: ResMut<ConstructedCity>) {
 
 /// Total number of tools of `kind` held across all storage places.
 pub fn total_tools_of(cw: &ConstructedCity, kind: ToolKind) -> u32 {
-    (0..cw.placed_places.len())
-        .filter(|&i| is_storage(cw, i))
-        .map(|i| cw.placed_places[i].contents.tool_count_of(kind) as u32)
+    storage_ids(cw)
+        .into_iter()
+        .map(|id| cw.placed_places[id].contents.tool_count_of(kind) as u32)
         .sum()
 }
 
 /// Remove one tool of `kind` from the first storage place that holds one.
 /// Returns `true` if a tool was removed.
 pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
-    for i in 0..cw.placed_places.len() {
-        if !is_storage(cw, i) {
-            continue;
-        }
-        if cw.placed_places[i]
+    for id in storage_ids(cw) {
+        if cw.placed_places[id]
             .contents
             .remove_unique(&UniqueResource::Tool(kind))
         {
@@ -670,8 +785,8 @@ pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
 /// Deposit one tool of `kind` into the first storage place. Returns `true` on
 /// success (`false` if there is no storage place to receive it).
 pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
-    if let Some(i) = (0..cw.placed_places.len()).find(|&i| is_storage(cw, i)) {
-        cw.placed_places[i]
+    if let Some(&id) = storage_ids(cw).first() {
+        cw.placed_places[id]
             .contents
             .add_unique(UniqueResource::Tool(kind));
         true
@@ -680,17 +795,26 @@ pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
     }
 }
 
-fn is_storage(cw: &ConstructedCity, pp_idx: usize) -> bool {
+fn is_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
     cw.places
-        .get(cw.placed_places[pp_idx].place)
+        .get(pp.place)
         .is_some_and(|info| info.storage.is_some())
+}
+
+/// Every storage place, in placement order.
+pub fn storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
+    cw.placed_places
+        .iter()
+        .filter(|(_, pp)| is_storage(cw, pp))
+        .map(|(id, _)| id)
+        .collect()
 }
 
 /// Total quantity of `res` held across all storage places.
 pub fn total_uniform(cw: &ConstructedCity, res: UniformResource) -> u32 {
-    (0..cw.placed_places.len())
-        .filter(|&i| is_storage(cw, i))
-        .flat_map(|i| cw.placed_places[i].contents.uniform_totals())
+    storage_ids(cw)
+        .into_iter()
+        .flat_map(|id| cw.placed_places[id].contents.uniform_totals())
         .filter(|(r, _)| *r == res)
         .map(|(_, q)| q as u32)
         .sum()
@@ -704,14 +828,11 @@ pub fn consume_uniform(cw: &mut ConstructedCity, res: UniformResource, qty: u32)
         return false;
     }
     let mut remaining = qty;
-    for i in 0..cw.placed_places.len() {
+    for id in storage_ids(cw) {
         if remaining == 0 {
             break;
         }
-        if !is_storage(cw, i) {
-            continue;
-        }
-        let here = cw.placed_places[i]
+        let here = cw.placed_places[id]
             .contents
             .uniform_totals()
             .into_iter()
@@ -720,7 +841,7 @@ pub fn consume_uniform(cw: &mut ConstructedCity, res: UniformResource, qty: u32)
             .unwrap_or(0);
         let take = here.min(remaining);
         if take > 0 {
-            cw.placed_places[i]
+            cw.placed_places[id]
                 .contents
                 .subtract_uniform(res, take as u16);
             remaining -= take;
@@ -780,7 +901,6 @@ pub fn place_initial_places(
             id: bin_id,
             facing: Facing::default(),
             evaluation: None,
-            material: Material::Planks,
             build_material: BuildMaterialId::default(),
         };
         constructed.contents.set(loc, cell.clone());
@@ -793,7 +913,7 @@ pub fn place_initial_places(
     inv.add_uniform(UniformResource::Timber, 20);
     inv.add_uniform(UniformResource::Canvas, 10);
 
-    constructed.placed_places.push(ParticularPlace {
+    constructed.placed_places.insert(ParticularPlace {
         place: storage_room_index,
         fulfillments: chosen
             .iter()
@@ -829,7 +949,6 @@ pub fn place_initial_places(
             id: market_stand_id,
             facing: Facing::default(),
             evaluation: None,
-            material: Material::Planks,
             build_material: BuildMaterialId::default(),
         };
         constructed.contents.set(loc, cell.clone());
@@ -838,7 +957,7 @@ pub fn place_initial_places(
 
     // Register each market stand as its own place.
     for cube in &market_stand_positions {
-        constructed.placed_places.push(ParticularPlace {
+        constructed.placed_places.insert(ParticularPlace {
             place: market_stand_place_index,
             fulfillments: vec![FulfilledPorf::Furniture(*cube)],
             contents: Inventory::new(8, 20.0),
@@ -882,6 +1001,7 @@ mod tests {
                 1,
             )]),
             restriction: ParentRestriction::Unrestricted,
+            vantage_evaluated: false,
         }]
     }
 
@@ -917,7 +1037,6 @@ mod tests {
                     id: bin_id,
                     facing: Facing::default(),
                     evaluation: None,
-                    material: Material::Planks,
                     build_material: BuildMaterialId::default(),
                 },
             );
@@ -931,6 +1050,20 @@ mod tests {
 
     fn f(cube: IVec3) -> FulfilledPorf {
         FulfilledPorf::Furniture(cube)
+    }
+
+    #[test]
+    fn bundled_place_definitions_cross_reference_cleanly() {
+        // Panics if places.ron names a furniture/place that doesn't exist.
+        let infos = load_place_info(&crate::eorf::load_structure_info());
+        assert!(!infos.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown furniture")]
+    fn validation_rejects_unknown_furniture_reference() {
+        let places = vec![place_def(1, None)]; // requires furniture "bin"
+        validate_place_info(&places, &[]); // ...but no eorfs exist
     }
 
     #[test]
@@ -956,7 +1089,7 @@ mod tests {
     fn pulls_to_meet_min_and_destroys_starved_donor() {
         // Place needs min 2 bins. An existing place owns two of three bins.
         let mut grid = grid_with_bins(place_def(2, None), &[b(0, 0), b(0, 1), b(0, 2)]);
-        grid.placed_places.push(ParticularPlace {
+        let donor = grid.placed_places.insert(ParticularPlace {
             place: 0,
             fulfillments: vec![f(b(0, 1)), f(b(0, 2))],
             contents: Inventory::new(8, 40.0),
@@ -967,7 +1100,7 @@ mod tests {
         assert_eq!(plan.pulled, 1, "should pull exactly one bin to reach min 2");
         assert_eq!(
             plan.destroy,
-            vec![0],
+            vec![donor],
             "donor falls below min and is destroyed"
         );
 
@@ -977,7 +1110,8 @@ mod tests {
             1,
             "donor destroyed, new one added"
         );
-        let new = &grid.placed_places[0];
+        let (new_id, new) = grid.placed_places.iter().next().unwrap();
+        assert_ne!(new_id, donor, "the new place gets a fresh id");
         assert!(new.fulfillments.contains(&f(b(0, 0))));
         assert_eq!(new.fulfillments.len(), 2);
     }
@@ -985,21 +1119,21 @@ mod tests {
     #[test]
     fn unassign_removes_the_place() {
         let mut grid = grid_with_bins(place_def(1, None), &[b(0, 0)]);
-        grid.placed_places.push(ParticularPlace {
+        let id = grid.placed_places.insert(ParticularPlace {
             place: 0,
             fulfillments: vec![f(b(0, 0))],
             contents: Inventory::new(8, 20.0),
         });
-        assert_eq!(place_index_at(&grid, b(0, 0)), Some(0));
-        unassign_place(&mut grid, 0);
+        assert_eq!(place_id_at(&grid, b(0, 0)), Some(id));
+        unassign_place(&mut grid, id);
         assert!(grid.placed_places.is_empty());
-        assert_eq!(place_index_at(&grid, b(0, 0)), None);
+        assert_eq!(place_id_at(&grid, b(0, 0)), None);
     }
 
     #[test]
     fn unused_furniture_not_part_of_any_place() {
         let grid = grid_with_bins(place_def(1, None), &[b(0, 0)]);
-        assert_eq!(place_index_at(&grid, b(0, 0)), None);
+        assert_eq!(place_id_at(&grid, b(0, 0)), None);
         assert_eq!(valid_places_for(&grid, b(0, 0)), vec![0]);
     }
 
@@ -1008,8 +1142,8 @@ mod tests {
         let mut grid = grid_with_bins(place_def(1, None), &[b(0, 0), b(5, 5)]);
         assert!(sync_places(&mut grid));
         assert_eq!(grid.placed_places.len(), 2);
-        assert!(place_index_at(&grid, b(0, 0)).is_some());
-        assert!(place_index_at(&grid, b(5, 5)).is_some());
+        assert!(place_id_at(&grid, b(0, 0)).is_some());
+        assert!(place_id_at(&grid, b(5, 5)).is_some());
 
         // Re-running with nothing changed is a no-op.
         assert!(!sync_places(&mut grid));
@@ -1021,7 +1155,7 @@ mod tests {
         });
         assert!(sync_places(&mut grid));
         assert_eq!(grid.placed_places.len(), 1);
-        assert!(place_index_at(&grid, b(5, 5)).is_some());
+        assert!(place_id_at(&grid, b(5, 5)).is_some());
     }
 
     // ── automatic place formation through the headless REPL ────────────────
