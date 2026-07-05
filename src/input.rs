@@ -178,6 +178,31 @@ impl BuildState {
     }
 }
 
+/// Reflects a set of proposal-view `changes` into the world and ECS. In sandbox
+/// mode the proposals are committed immediately (built for real); otherwise they
+/// stay as proposal ghosts. No-op if `changes` is empty.
+#[allow(clippy::too_many_arguments)]
+fn apply_edit(
+    commands: &mut Commands,
+    constructed: &mut ConstructedCity,
+    pending: &mut crate::city::ProposedCity,
+    assembled: &mut crate::city::AssembledCity,
+    structure_list: &EorfList,
+    overlay_assets: &ProposalOverlayAssets,
+    sandbox_enabled: bool,
+    changes: Vec<(SlotCoord, crate::city::ProposalView)>,
+) {
+    if changes.is_empty() {
+        return;
+    }
+    if sandbox_enabled {
+        let real_changes = construct(constructed, pending);
+        apply_changes(commands, assembled, structure_list, real_changes);
+    } else {
+        apply_proposal_changes(commands, assembled, structure_list, overlay_assets, changes);
+    }
+}
+
 pub fn building_input_system(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -206,11 +231,15 @@ pub fn building_input_system(
         &mut world.pending,
         &mut world.assembled,
     );
+    // While egui has keyboard focus (e.g. typing in a text field), swallow all
+    // build-tool keyboard shortcuts so they don't fire behind the widget.
+    let typing = egui_wants_input.wants_keyboard_input();
+
     // --- Layer up/down ---
-    if keyboard.just_pressed(KeyCode::ArrowUp) {
+    if !typing && keyboard.just_pressed(KeyCode::ArrowUp) {
         build_state.cur_y = (build_state.cur_y + 1).min(10);
     }
-    if keyboard.just_pressed(KeyCode::ArrowDown) {
+    if !typing && keyboard.just_pressed(KeyCode::ArrowDown) {
         build_state.cur_y = (build_state.cur_y - 1).max(0);
     }
 
@@ -224,12 +253,12 @@ pub fn building_input_system(
     }
 
     // --- Rotation ---
-    if keyboard.just_pressed(KeyCode::KeyR) {
+    if !typing && keyboard.just_pressed(KeyCode::KeyR) {
         build_state.cur_dir = (build_state.cur_dir + 3) % 4;
     }
 
     // --- Cutaway mode cycle ---
-    if keyboard.just_pressed(KeyCode::KeyC) {
+    if !typing && keyboard.just_pressed(KeyCode::KeyC) {
         *cutaway_mode = match *cutaway_mode {
             CutawayMode::FloorEdge => CutawayMode::SimpleOctant,
             CutawayMode::SimpleOctant => CutawayMode::FloorEdgePlusOctant,
@@ -238,20 +267,20 @@ pub fn building_input_system(
     }
 
     // --- Left-panel tab switching ---
-    if keyboard.just_pressed(KeyCode::F1) {
+    if !typing && keyboard.just_pressed(KeyCode::F1) {
         ui_state.left_tab = crate::build_ui::LeftTab::Elements;
     }
-    if keyboard.just_pressed(KeyCode::F2) {
+    if !typing && keyboard.just_pressed(KeyCode::F2) {
         ui_state.left_tab = crate::build_ui::LeftTab::Furniture;
     }
-    if keyboard.just_pressed(KeyCode::F3) {
+    if !typing && keyboard.just_pressed(KeyCode::F3) {
         ui_state.left_tab = crate::build_ui::LeftTab::Places;
     }
 
     // --- Eorf selection by digit key (in sorted display order, filtered to
     // the active tab -- so digits 1-9 reach the same 9 structures the
     // Elements/Furniture tab currently numbers 1-9). ---
-    if !egui_wants_input.wants_keyboard_input() {
+    if !typing {
         const DIGIT_KEYS: [KeyCode; 9] = [
             KeyCode::Digit1,
             KeyCode::Digit2,
@@ -284,7 +313,9 @@ pub fn building_input_system(
     }
 
     // --- Undo / Redo ---
-    let undo_redo_changes = if keyboard.just_pressed(KeyCode::KeyZ) {
+    let undo_redo_changes = if typing {
+        None
+    } else if keyboard.just_pressed(KeyCode::KeyZ) {
         Some(pending.undo(&constructed))
     } else if keyboard.just_pressed(KeyCode::KeyY) {
         Some(pending.redo(&constructed))
@@ -292,24 +323,20 @@ pub fn building_input_system(
         None
     };
     if let Some(changes) = undo_redo_changes {
-        if !changes.is_empty() {
-            if sandbox.enabled {
-                let real_changes = construct(&mut constructed, &mut pending);
-                apply_changes(&mut commands, &mut assembled, &structure_list, real_changes);
-            } else {
-                apply_proposal_changes(
-                    &mut commands,
-                    &mut assembled,
-                    &structure_list,
-                    &overlay_assets,
-                    changes,
-                );
-            }
-        }
+        apply_edit(
+            &mut commands,
+            &mut constructed,
+            &mut pending,
+            &mut assembled,
+            &structure_list,
+            &overlay_assets,
+            sandbox.enabled,
+            changes,
+        );
     }
 
     // --- Evaluate (V key) ---
-    if keyboard.just_pressed(KeyCode::KeyV) {
+    if !typing && keyboard.just_pressed(KeyCode::KeyV) {
         if let Some(world_pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
             if let Some(holder) = &model_state.holder {
                 let holder = holder.lock().unwrap();
@@ -366,20 +393,16 @@ pub fn building_input_system(
                 pending.drag(&constructed, (start, end), dir, id, remove, build_material)
             };
 
-            if !changes.is_empty() {
-                if sandbox.enabled {
-                    let real_changes = construct(&mut constructed, &mut pending);
-                    apply_changes(&mut commands, &mut assembled, &structure_list, real_changes);
-                } else {
-                    apply_proposal_changes(
-                        &mut commands,
-                        &mut assembled,
-                        &structure_list,
-                        &overlay_assets,
-                        changes,
-                    );
-                }
-            }
+            apply_edit(
+                &mut commands,
+                &mut constructed,
+                &mut pending,
+                &mut assembled,
+                &structure_list,
+                &overlay_assets,
+                sandbox.enabled,
+                changes,
+            );
         }
     }
 

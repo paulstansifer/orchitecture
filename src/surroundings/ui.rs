@@ -16,6 +16,9 @@ const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
 const FOG_GRID_STEP_PX: f32 = 20.0;
 
+/// HSV (h in degrees, s/v in 0-1) to an sRGB `Color32`, treating the computed
+/// RGB directly as gamma-space bytes. (egui's `Hsva` gamma-encodes instead, which
+/// would visibly lighten these fills, so we keep the direct conversion.)
 fn hsv_to_color32(h: f32, s: f32, v: f32) -> egui::Color32 {
     let h = h % 360.0;
     let c = v * s;
@@ -211,17 +214,7 @@ pub fn surroundings_ui_system(
     const PANEL_W: f32 = 110.0;
 
     // Maximum invitees = number of placed market stand stations.
-    let market_stand_count = constructed
-        .places
-        .iter()
-        .position(|s| s.name == "market stand")
-        .map_or(0, |idx| {
-            constructed
-                .placed_places
-                .iter()
-                .filter(|(_, ps)| ps.place == idx)
-                .count()
-        });
+    let market_stand_count = crate::place::count_placed_places_named(&constructed, "market stand");
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
     let invite_limit_reached = invited_count >= market_stand_count;
 

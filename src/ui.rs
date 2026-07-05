@@ -3,18 +3,13 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::build_ui::SandboxMode;
 use crate::city::{CityMut, ViewableWorld};
-use crate::construction::advance_construction;
 use crate::eorf::EorfList;
 use crate::game_mode::GameMode;
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
-use crate::surroundings::farmstead::{
-    apply_production, compute_production, preview_market, run_market, update_wanted_resources,
-    FarmsResource, GameClock,
-};
-use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
+use crate::surroundings::farmstead::{preview_market, FarmsResource, GameClock};
 use crate::traveler::{self, TravelerState};
 use crate::{col_format, heading_label, label, note_label};
 
@@ -99,17 +94,7 @@ pub fn shared_ui_system(
     let n_display = m + months_remaining;
 
     // Farm/market status.
-    let market_stand_count = constructed
-        .places
-        .iter()
-        .position(|s| s.name == "market stand")
-        .map_or(0, |idx| {
-            constructed
-                .placed_places
-                .iter()
-                .filter(|(_, ps)| ps.place == idx)
-                .count()
-        });
+    let market_stand_count = crate::place::count_placed_places_named(&constructed, "market stand");
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
     let has_farms_invited = invited_count > 0;
     let has_traveler_invited = traveler_state.invited;
@@ -298,73 +283,26 @@ pub fn shared_ui_system(
 
     // ── Apply deferred actions ────────────────────────────────────────────────
     if go_advance_month {
-        clock.advance_month();
-        farms.ensure_adjacency();
         let mut rng = rand::rng();
-        let (gains, tools_to_return, population_growth) = run_market(&mut *farms, &mut rng);
-        for tool in tools_to_return {
-            crate::place::deposit_tool(&mut *constructed, tool);
-        }
-        for _ in 0..population_growth {
-            population
-                .individuals
-                .push(crate::population::Individual::default());
-        }
-        let plan = compute_production(&*farms, &mut rng);
-        apply_production(&mut *farms, &plan);
-        update_wanted_resources(&mut *farms);
-        for farm in &mut farms.farms {
-            farm.invited = false;
-        }
-
-        // Traveler resolution: deduct demands, deposit a Tool, reveal their path.
-        if traveler_state.invited {
-            if let Some(offer) = traveler_state.current_offer.take() {
-                if traveler::can_afford_traveler(&offer, &station_totals, &preview.player_gains) {
-                    let new_path = traveler::accept_traveler(&offer, &mut constructed);
-                    farms.traveler_reveals.push(new_path);
-                }
-            }
-        }
-        traveler_state.invited = false;
-        // Roll a new offer for next month.
-        traveler::roll_traveler_offer(&mut traveler_state, CIRCLE_REVEAL_RADIUS, &mut rng);
-
-        if !gains.is_empty() {
-            if let Some(&id) = crate::place::storage_ids(&constructed).first() {
-                for (res, qty) in gains {
-                    constructed.placed_places[id]
-                        .contents
-                        .add_uniform(res, qty as u16);
-                }
-            }
-        }
-        for individual in &mut population.individuals {
-            individual.fed_this_month = false;
-        }
-        for individual in &mut population.individuals {
-            if crate::place::consume_uniform(
-                &mut constructed,
-                crate::resource::UniformResource::Potato,
-                5,
-            ) {
-                individual.fed_this_month = true;
-            }
-        }
-
-        let construction_completed = advance_construction(
-            &mut pending,
+        let outcome = crate::month::advance_month(
+            &mut clock,
+            &mut farms,
             &mut constructed,
-            &mut commands,
-            &mut assembled,
-            &mut viewable,
-            &structure_list,
-            population.individuals.len(),
+            &mut pending,
+            &mut population,
+            &mut traveler_state,
+            &material_list,
+            sandbox.enabled,
+            &mut rng,
         );
-        if construction_completed && !sandbox.enabled {
-            for (res, qty) in &construction_cost {
-                crate::place::consume_uniform(&mut constructed, *res, *qty);
-            }
+        if let Some(real_changes) = outcome.construction_changes {
+            crate::construction::apply_construction_completion(
+                &mut commands,
+                &mut assembled,
+                &mut viewable,
+                &structure_list,
+                real_changes,
+            );
         }
         ctx.data_mut(|d| d.remove::<bool>(wait_id));
     }

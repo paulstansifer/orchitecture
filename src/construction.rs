@@ -389,33 +389,44 @@ pub fn construct(
     real_changes
 }
 
-/// Advances one month of construction progress. If enough months have elapsed,
-/// commits all proposals and resets the counter. Should be called once per
-/// "Advance Month" action when proposals are present.
-/// Returns `true` if construction completed this month (proposals were committed).
-pub fn advance_construction(
+/// Advances one month of construction progress (grid/resource state only, no ECS).
+/// If enough months have elapsed, commits all proposals and resets the counter.
+/// Should be called once per "Advance Month" action.
+///
+/// Returns `Some(real_changes)` if construction completed this month (proposals
+/// were committed); the caller is responsible for reflecting those into the ECS
+/// via [`apply_construction_completion`]. Returns `None` otherwise.
+pub fn tick_construction(
     pending: &mut ProposedCity,
     constructed: &mut ConstructedCity,
-    commands: &mut Commands,
-    assembled: &mut AssembledCity,
-    viewable: &mut ViewableWorld,
-    structure_list: &EorfList,
     population_size: usize,
-) -> bool {
+) -> Option<Vec<(SlotCoord, Option<Cell>)>> {
     if pending.num_changes() > 0 {
         pending.months_waited += 1;
         if pending.months_waited as usize >= pending.months_for_construction(population_size) {
             let real_changes = construct(constructed, pending);
-            clear_proposal_entities(commands, assembled);
-            clear_proposed_cut_entities(commands, viewable);
-            apply_changes(commands, assembled, structure_list, real_changes);
             pending.months_waited = 0;
-            return true;
+            return Some(real_changes);
         }
     } else {
         pending.months_waited = 0;
     }
-    false
+    None
+}
+
+/// Reflects a completed construction (the `real_changes` from [`tick_construction`])
+/// into the ECS: clears proposal ghosts and proposed-cut entities, then syncs the
+/// newly-committed cells to real geometry.
+pub fn apply_construction_completion(
+    commands: &mut Commands,
+    assembled: &mut AssembledCity,
+    viewable: &mut ViewableWorld,
+    structure_list: &EorfList,
+    real_changes: Vec<(SlotCoord, Option<Cell>)>,
+) {
+    clear_proposal_entities(commands, assembled);
+    clear_proposed_cut_entities(commands, viewable);
+    apply_changes(commands, assembled, structure_list, real_changes);
 }
 
 /// Loads a new building, replacing contents and clearing all history.

@@ -29,7 +29,6 @@ use bevy::prelude::*;
 use rand::{rngs::StdRng, SeedableRng};
 
 use crate::build_helpers::Builder;
-use crate::build_ui::{construction_cost, place_resource_totals};
 use crate::city::{get_real_and_proposed, Cell, ConstructedCity, Proposal, ProposedCity};
 use crate::construction;
 use crate::eorf::{load_structure_info, EorfId};
@@ -37,18 +36,13 @@ use crate::evaluation::compute_outdoorsness;
 use crate::materials::{BuildMaterialId, MaterialList};
 use crate::pathing::{rebuild_navigation_grid, NavigationGrid};
 use crate::place;
-use crate::population::{assign_places, sync_assignments, Individual, Population};
+use crate::population::{assign_places, sync_assignments, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::surroundings::farmstead::{
-    apply_production, compute_production, farm_breakdown, preview_market, run_market,
-    update_wanted_resources, FarmEvent, FarmsResource, GameClock,
-};
-use crate::surroundings::map::{generate_farms, CIRCLE_REVEAL_RADIUS};
-use crate::traveler::{
-    accept_traveler, can_afford_traveler, roll_traveler_offer, setup_travelers, TravelerState,
-};
+use crate::surroundings::farmstead::{farm_breakdown, FarmEvent, FarmsResource, GameClock};
+use crate::surroundings::map::generate_farms;
+use crate::traveler::{setup_travelers, TravelerState};
 
 const HELP_TEXT: &str = "\
 Commands (space-separated tokens, one per line):
@@ -791,101 +785,40 @@ fn advance_month_system(
     mut headless_rng: ResMut<HeadlessRng>,
     sandbox: Res<SandboxFlag>,
 ) -> Vec<String> {
-    let rng = &mut headless_rng.0;
+    let outcome = crate::month::advance_month(
+        &mut clock,
+        &mut farms,
+        &mut constructed,
+        &mut pending,
+        &mut population,
+        &mut traveler_state,
+        &material_list,
+        sandbox.0,
+        &mut headless_rng.0,
+    );
+
+    // Report the outcome, in the same order the fields are produced.
     let mut lines = Vec::new();
-    clock.advance_month();
-    farms.ensure_adjacency();
-
-    // Snapshot the market preview before mutating farms, matching the UI (which
-    // computes this once per frame, before the player's "advance" click).
-    let preview = preview_market(&farms);
-
-    let (gains, tools_to_return, population_growth) = run_market(&mut farms, rng);
-    for tool in &tools_to_return {
-        place::deposit_tool(&mut constructed, *tool);
+    match outcome.traveler_accepted {
+        Some(true) => lines.push("traveler: accepted".to_string()),
+        Some(false) => lines.push("traveler: could not afford, declined".to_string()),
+        None => {}
     }
-    for _ in 0..population_growth {
-        population.individuals.push(Individual::default());
-    }
-    let plan = compute_production(&farms, rng);
-    apply_production(&mut farms, &plan);
-    update_wanted_resources(&mut farms);
-    for farm in &mut farms.farms {
-        farm.invited = false;
-    }
-
-    if traveler_state.invited {
-        if let Some(offer) = traveler_state.current_offer.take() {
-            let station_totals = place_resource_totals(&constructed);
-            if can_afford_traveler(&offer, &station_totals, &preview.player_gains) {
-                let new_path = accept_traveler(&offer, &mut constructed);
-                farms.traveler_reveals.push(new_path);
-                lines.push("traveler: accepted".to_string());
-            } else {
-                lines.push("traveler: could not afford, declined".to_string());
-            }
-        }
-    }
-    traveler_state.invited = false;
-    roll_traveler_offer(&mut traveler_state, CIRCLE_REVEAL_RADIUS, rng);
-
-    if !gains.is_empty() {
-        if let Some(&id) = place::storage_ids(&constructed).first() {
-            for (res, qty) in &gains {
-                constructed.placed_places[id]
-                    .contents
-                    .add_uniform(*res, *qty as u16);
-            }
-        }
-        let summary = gains
+    if !outcome.market_gains.is_empty() {
+        let summary = outcome
+            .market_gains
             .iter()
             .map(|(r, q)| format!("{} {}", q, r.label()))
             .collect::<Vec<_>>()
             .join(", ");
         lines.push(format!("market gains: {summary}"));
     }
-
-    for individual in &mut population.individuals {
-        individual.fed_this_month = false;
-    }
-    for individual in &mut population.individuals {
-        if place::consume_uniform(&mut constructed, UniformResource::Potato, 5) {
-            individual.fed_this_month = true;
-        }
-    }
-
-    let cost = if pending.num_changes() > 0 && !sandbox.0 {
-        construction_cost(
-            &pending.proposed_changes,
-            &constructed.eorfs,
-            &material_list,
-        )
-    } else {
-        vec![]
-    };
-
-    let mut construction_completed = false;
-    if pending.num_changes() > 0 {
-        pending.months_waited += 1;
-        if pending.months_waited as usize
-            >= pending.months_for_construction(population.individuals.len())
-        {
-            construction::construct(&mut constructed, &mut pending);
-            pending.months_waited = 0;
-            construction_completed = true;
-        }
-    } else {
-        pending.months_waited = 0;
-    }
-    if construction_completed {
+    if outcome.construction_changes.is_some() {
         lines.push("construction: completed".to_string());
-        if !sandbox.0 {
-            for (res, qty) in &cost {
-                place::consume_uniform(&mut constructed, *res, *qty);
-            }
-        }
     }
 
+    // The graphical app runs place assignment via a separate change-detection
+    // system; the headless harness does it inline here.
     assign_places(
         crate::place::AssignmentFlavor::Sleep,
         &mut population.individuals,

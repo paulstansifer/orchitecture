@@ -810,6 +810,20 @@ pub fn storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
         .collect()
 }
 
+/// Number of placed places whose place type has the given name (e.g. how many
+/// "market stand" places exist).
+pub fn count_placed_places_named(cw: &ConstructedCity, name: &str) -> usize {
+    cw.places
+        .iter()
+        .position(|p| p.name == name)
+        .map_or(0, |idx| {
+            cw.placed_places
+                .iter()
+                .filter(|(_, pp)| pp.place == idx)
+                .count()
+        })
+}
+
 /// Total quantity of `res` held across all storage places.
 pub fn total_uniform(cw: &ConstructedCity, res: UniformResource) -> u32 {
     storage_ids(cw)

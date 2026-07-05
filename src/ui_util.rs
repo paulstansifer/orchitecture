@@ -102,50 +102,45 @@ macro_rules! col_format {
     }};
 }
 
+/// Builds a `LayoutJob` from `FormattedText` segments — each stamped with the
+/// given font and italics setting — and renders it as a label. Backs the
+/// `label!` / `heading_label!` / `note_label!` macros; not meant to be called
+/// directly.
+#[macro_export]
+macro_rules! styled_label {
+    ($ui:expr, $font:expr, $italics:expr, $($segment:expr),+ $(,)?) => {
+        {
+            let mut lj = ::bevy_egui::egui::text::LayoutJob::default();
+            $(
+                let mut seg: $crate::ui_util::FormattedText = $segment.into();
+                seg.fmt.font_id = $font;
+                seg.fmt.italics = $italics;
+                lj.append(&seg.txt, 0.0, seg.fmt);
+            )+
+            $ui.label(lj);
+        }
+    };
+}
+
 /// Creates a LayoutJob from multiple RichText segments and renders it as a label.
 /// Usage: `label!(ui, "Currently foo, ", col_format!(preview, "will be bar"))`
 #[macro_export]
 macro_rules! label {
     ($ui:expr, $($segment:expr),+ $(,)?) => {
-        {
-            let mut lj = ::bevy_egui::egui::text::LayoutJob::default();
-            $(
-                let mut seg: $crate::ui_util::FormattedText = $segment.into();
-                seg.fmt.font_id = $crate::ui_util::FontSizes::body();
-                lj.append(&seg.txt, 0.0, seg.fmt);
-            )+
-            $ui.label(lj);
-        }
+        $crate::styled_label!($ui, $crate::ui_util::FontSizes::body(), false, $($segment),+)
     };
 }
 
 #[macro_export]
 macro_rules! heading_label {
     ($ui:expr, $($segment:expr),+ $(,)?) => {
-        {
-            let mut lj = ::bevy_egui::egui::text::LayoutJob::default();
-            $(
-                let mut seg: $crate::ui_util::FormattedText = $segment.into();
-                seg.fmt.font_id = $crate::ui_util::FontSizes::heading();
-                lj.append(&seg.txt, 0.0, seg.fmt);
-            )+
-            $ui.label(lj);
-        }
+        $crate::styled_label!($ui, $crate::ui_util::FontSizes::heading(), false, $($segment),+)
     };
 }
 
 #[macro_export]
 macro_rules! note_label {
     ($ui:expr, $($segment:expr),+ $(,)?) => {
-        {
-            let mut lj = ::bevy_egui::egui::text::LayoutJob::default();
-            $(
-                let mut seg: $crate::ui_util::FormattedText = $segment.into();
-                seg.fmt.font_id = $crate::ui_util::FontSizes::small();
-                seg.fmt.italics = true;
-                lj.append(&seg.txt, 0.0, seg.fmt);
-            )+
-            $ui.label(lj);
-        }
+        $crate::styled_label!($ui, $crate::ui_util::FontSizes::small(), true, $($segment),+)
     };
 }
