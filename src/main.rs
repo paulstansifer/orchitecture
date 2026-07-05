@@ -2,7 +2,10 @@
 
 use bevy::camera::RenderTarget;
 use bevy::prelude::*;
-use bevy_egui::{EguiMultipassSchedule, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext};
+use bevy_egui::egui::{FontDefinitions, FontFamily};
+use bevy_egui::{
+    EguiContexts, EguiMultipassSchedule, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext,
+};
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
@@ -51,6 +54,23 @@ use orchitecture_lib::{
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
 };
+
+fn configure_fonts_once(mut contexts: EguiContexts, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let Ok(ctx) = contexts.ctx_mut() else { return };
+
+    let mut fonts = FontDefinitions::default();
+    fonts
+        .families
+        .get_mut(&FontFamily::Proportional)
+        .unwrap()
+        .push("Hack".to_owned());
+    ctx.set_fonts(fonts);
+
+    *done = true;
+}
 
 fn main() {
     App::new()
@@ -154,6 +174,7 @@ fn main() {
         .add_systems(
             EguiPrimaryContextPass,
             (
+                configure_fonts_once,
                 shared_ui_system,
                 build_ui_system.run_if(in_state(GameMode::Build)),
                 walk_ui_system.run_if(in_state(GameMode::Walk)),
