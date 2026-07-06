@@ -13,8 +13,7 @@ use crate::sparse3d::{RelSlot, RelSlotCoord, SlotCoord, Sparse3D};
 /// Falloff per hop through open air (and through any structure that isn't a
 /// window or a doorway).
 const FALLOFF: f32 = 0.3;
-/// Downward hops don't attenuate: a cube directly under a sky-visible cube is
-/// just as "outdoors" as the cube above it.
+/// Downward hops don't attenuate
 const FALLOFF_DOWNWARD: f32 = 0.0;
 /// Windows let light through but not weather/access: they block outdoorsness
 /// entirely.
@@ -34,7 +33,7 @@ fn boundary_multiplier(
 ) -> f32 {
     let falloff = match contents.get(SlotCoord::boundary(from, to)) {
         Some(cell) => match structures[cell.id.as_usize()].name.as_str() {
-            "wall" | "floor" | "window" => FALLOFF_WINDOW, // 1.0: fully blocks
+            "wall" | "floor" | "window" | "roof" => FALLOFF_WINDOW, // 1.0: fully blocks
             "doorway" => FALLOFF_DOORWAY,
             _ => default_falloff(from, to),
         },
