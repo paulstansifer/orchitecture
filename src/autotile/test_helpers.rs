@@ -58,7 +58,7 @@ pub fn floor_cell() -> Cell {
     make_cell(1)
 }
 
-pub fn desk_cell() -> Cell {
+pub fn table_cell() -> Cell {
     make_cell(1)
 }
 

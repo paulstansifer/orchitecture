@@ -893,7 +893,7 @@ mod tests {
         use bevy::math::Vec3;
 
         let structures = load_structure_info();
-        let desk_id = find_structure_by_name(&structures, "desk").unwrap();
+        let table_id = find_structure_by_name(&structures, "table").unwrap();
         let wall_id = find_structure_by_name(&structures, "wall").unwrap();
 
         let mut cw = ConstructedCity::new(structures.clone());
@@ -925,7 +925,7 @@ mod tests {
         let click_deltas = pe.click(
             &cw,
             Vec3::new(2.0, 0.0, 2.0),
-            desk_id,
+            table_id,
             0,
             false,
             BuildMaterialId::default(),
@@ -935,9 +935,9 @@ mod tests {
         check!(pe.proposed_changes.iter().count() == 3);
         // The desk is vantage-evaluated (per furniture.ron), so plopping it
         // attaches an empty VantageEvaluation for the QNN to fill in.
-        let desk_loc = RelSlotCoord::new(2, 0, 2, RelSlot::Room);
-        assert!(let Some(Proposal::Place(desk_cell)) = pe.proposed_changes.get(desk_loc));
-        check!(desk_cell.evaluation.is_some());
+        let table_loc = RelSlotCoord::new(2, 0, 2, RelSlot::Room);
+        assert!(let Some(Proposal::Place(table_cell)) = pe.proposed_changes.get(table_loc));
+        check!(table_cell.evaluation.is_some());
 
         // 4. Undo the desk; the two wall proposals remain.
         let undo_deltas = pe.undo(&cw);

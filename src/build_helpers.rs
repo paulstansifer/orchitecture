@@ -221,7 +221,7 @@ impl Builder {
         self.map.set(
             RelSlotCoord::new(loc.x, loc.y, loc.z, RelSlot::Room),
             Cell {
-                id: EorfId(*self.structures.get("desk").unwrap() as u32),
+                id: EorfId(*self.structures.get("table").unwrap() as u32),
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation {
                     interest: Some(interest.into()),
@@ -413,7 +413,7 @@ fn test_add_noise() {
     use rand::SeedableRng;
 
     let structures = crate::eorf::load_structure_info();
-    let desk_id = crate::eorf::find_structure_by_name(&structures, "desk").unwrap();
+    let table_id = crate::eorf::find_structure_by_name(&structures, "table").unwrap();
     let doorway_id = crate::eorf::find_structure_by_name(&structures, "doorway").unwrap();
 
     let mut s: Sparse3D<Cell> = Sparse3D::new();
@@ -422,7 +422,7 @@ fn test_add_noise() {
     s.set(
         v_loc,
         Cell {
-            id: desk_id,
+            id: table_id,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: Some(VantageEvaluation {
                 coherence: Some(ConstrainedScore::Exact(1.0)),

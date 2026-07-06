@@ -357,7 +357,7 @@ H:
     fn asymmetric_pattern_produces_four_orientations() {
         // Asymmetric: something only to the right of @.
         let input = "\
-== desk: room ==
+== table: room ==
 H:
  @ =
 --> mesh_a
@@ -417,7 +417,7 @@ H:
     #[test]
     fn rotation_propagates_to_mesh() {
         let input = "\
-== desk: room ==
+== table: room ==
 H:
  @ =
 --> my_mesh

@@ -565,11 +565,19 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
             (rotation, translation)
         }
         Slot::ZLoWall => {
-            let flip = if facing == Facing::PosZ { TAU / 2.0 } else { 0.0 };
+            let flip = if facing == Facing::PosZ {
+                TAU / 2.0
+            } else {
+                0.0
+            };
             wall_flip_transform(Quat::IDENTITY, Quat::from_rotation_y(flip), cube)
         }
         Slot::XLoWall => {
-            let flip = if facing == Facing::PosX { TAU / 2.0 } else { 0.0 };
+            let flip = if facing == Facing::PosX {
+                TAU / 2.0
+            } else {
+                0.0
+            };
             wall_flip_transform(ry_neg90, Quat::from_rotation_y(flip), cube)
         }
     };
@@ -590,7 +598,11 @@ pub fn nearest_wall_slot(pos: Vec3) -> SlotCoord {
     let cube = pos.round().as_ivec3();
     let dx = (pos.x - pos.x.round()).abs();
     let dz = (pos.z - pos.z.round()).abs();
-    let slot = if dx <= dz { Slot::XLoWall } else { Slot::ZLoWall };
+    let slot = if dx <= dz {
+        Slot::XLoWall
+    } else {
+        Slot::ZLoWall
+    };
     SlotCoord { cube, slot }
 }
 

@@ -374,7 +374,7 @@ H:
     fn rotation_consistent_with_sparse3d() {
         // Asymmetric room pattern: anchor desk has a matching neighbor in the +X direction.
         let input = "\
-== desk: room ==
+== table: room ==
 H:
  @ =
 --> my_mesh
@@ -382,7 +382,7 @@ H:
         let file = parse(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
-        fn is_desk(ch: char, id: EorfId, _facing: Facing) -> bool {
+        fn is_table(ch: char, id: EorfId, _facing: Facing) -> bool {
             ch == '=' && id.0 == 1
         }
 
@@ -394,7 +394,7 @@ H:
             &oriented,
             |loc| empty.get(loc).map(|c| (c.id, c.facing)),
             anchor,
-            is_desk,
+            is_table,
             no_name_match,
         )
         .is_empty());
@@ -403,12 +403,12 @@ H:
         // Due to the +2 rotation offset in compile_rule (needed to align with
         // wall_grid::cell_transform), this case produces mesh rotation 180°.
         let mut g0: Sparse3D<Cell> = Sparse3D::new();
-        g0.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), desk_cell());
+        g0.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), table_cell());
         let r0 = match_pattern(
             &oriented,
             |loc| g0.get(loc).map(|c| (c.id, c.facing)),
             anchor,
-            is_desk,
+            is_table,
             no_name_match,
         )[0];
         check!(
@@ -421,12 +421,12 @@ H:
         // the +X neighbor (1,0,0) to (0,0,1).  The autotile rot=1 (CW) case must
         // match this configuration.  With the +2 offset, it carries mesh rotation=270°.
         let mut g1: Sparse3D<Cell> = Sparse3D::new();
-        g1.set(RelSlotCoord::new(0, 0, 1, RelSlot::Room), desk_cell());
+        g1.set(RelSlotCoord::new(0, 0, 1, RelSlot::Room), table_cell());
         let r1 = match_pattern(
             &oriented,
             |loc| g1.get(loc).map(|c| (c.id, c.facing)),
             anchor,
-            is_desk,
+            is_table,
             no_name_match,
         )[0];
         check!(
@@ -438,12 +438,12 @@ H:
         // 180° (sparse3d OneEighty: (x,y,z)→(-x,y,-z)) moves (1,0,0) to (-1,0,0).
         // rot=2 with +2 offset → (2+2)*90=360°=0°.
         let mut g2: Sparse3D<Cell> = Sparse3D::new();
-        g2.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), desk_cell());
+        g2.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), table_cell());
         let r2 = match_pattern(
             &oriented,
             |loc| g2.get(loc).map(|c| (c.id, c.facing)),
             anchor,
-            is_desk,
+            is_table,
             no_name_match,
         )[0];
         check!(
@@ -455,12 +455,12 @@ H:
         // CCW / 270° CW (sparse3d CounterClockwise: (x,y,z)→(z,y,-x)) moves
         // (1,0,0) to (0,0,-1).  rot=3 with +2 offset → (3+2)*90=450°=90°.
         let mut g3: Sparse3D<Cell> = Sparse3D::new();
-        g3.set(RelSlotCoord::new(0, 0, -1, RelSlot::Room), desk_cell());
+        g3.set(RelSlotCoord::new(0, 0, -1, RelSlot::Room), table_cell());
         let r3 = match_pattern(
             &oriented,
             |loc| g3.get(loc).map(|c| (c.id, c.facing)),
             anchor,
-            is_desk,
+            is_table,
             no_name_match,
         )[0];
         check!(
@@ -472,7 +472,7 @@ H:
 
     // ── (multi) tests ─────────────────────────────────────────────────────────
 
-    fn is_desk(ch: char, id: EorfId, _facing: Facing) -> bool {
+    fn is_table(ch: char, id: EorfId, _facing: Facing) -> bool {
         ch == '=' && id.0 == 1
     }
 
@@ -481,7 +481,7 @@ H:
     #[test]
     fn multi_emits_all_matching_orientations() {
         let input = "\
-== desk: room ==
+== table: room ==
 H:
  @ =
 --> (multi) my_mesh
@@ -491,14 +491,14 @@ H:
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
         let mut grid: Sparse3D<Cell> = Sparse3D::new();
-        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), desk_cell());
-        grid.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), desk_cell());
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), table_cell());
+        grid.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), table_cell());
 
         let results = match_pattern(
             &oriented,
             |loc| grid.get(loc).map(|c| (c.id, c.facing)),
             anchor,
-            is_desk,
+            is_table,
             no_name_match,
         );
         check!(
@@ -512,7 +512,7 @@ H:
     #[test]
     fn non_multi_emits_single_orientation() {
         let input = "\
-== desk: room ==
+== table: room ==
 H:
  @ =
 --> my_mesh
@@ -522,14 +522,14 @@ H:
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
         let mut grid: Sparse3D<Cell> = Sparse3D::new();
-        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), desk_cell());
-        grid.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), desk_cell());
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), table_cell());
+        grid.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), table_cell());
 
         let results = match_pattern(
             &oriented,
             |loc| grid.get(loc).map(|c| (c.id, c.facing)),
             anchor,
-            is_desk,
+            is_table,
             no_name_match,
         );
         check!(
@@ -543,7 +543,7 @@ H:
     #[test]
     fn multi_skips_later_cases() {
         let input = "\
-== desk: room ==
+== table: room ==
 H:
  @ =
 --> (multi) my_mesh
@@ -554,13 +554,13 @@ H:
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
         let mut grid: Sparse3D<Cell> = Sparse3D::new();
-        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), desk_cell());
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), table_cell());
 
         let results = match_pattern(
             &oriented,
             |loc| grid.get(loc).map(|c| (c.id, c.facing)),
             anchor,
-            is_desk,
+            is_table,
             no_name_match,
         );
         // One matching orientation, and the `fallback` else case is not appended.

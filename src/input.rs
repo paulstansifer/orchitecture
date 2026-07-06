@@ -514,7 +514,8 @@ pub fn update_room_cursor_mesh(
     *last_id = Some(id);
     let struct_id = EorfId(id as u32);
     // The last case of the first rule is used as the preview
-    if constructed.structure_is_room_plop(struct_id) || constructed.structure_is_wall_plop(struct_id)
+    if constructed.structure_is_room_plop(struct_id)
+        || constructed.structure_is_wall_plop(struct_id)
     {
         let name = &structure_list.structures[id].info.name;
         let autotile_handle = autotile_rules

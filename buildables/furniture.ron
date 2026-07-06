@@ -1,6 +1,19 @@
 [
     (
-        name: "desk",
+        name: "chair",
+        placement_style: WallPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.2,
+            passable: 0.5,
+            decorative: 0.3,
+            striated: 0.0,
+        ),
+        cost: [(Plank, 2)],
+    ),
+    (
+        name: "table",
         placement_style: RoomPlop,
         x_char: Some('V'),
         z_char: Some('V'),

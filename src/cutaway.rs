@@ -1135,11 +1135,11 @@ mod tests {
     }
 
     /// Verifies that `compute_floor_edge` still includes the camera-facing walls
-    /// in the hidden set after a desk is proposed in the centre of the room.
+    /// in the hidden set after a table is proposed in the centre of the room.
     #[test]
-    fn test_compute_floor_edge_walls_hidden_after_desk_proposal() {
+    fn test_compute_floor_edge_walls_hidden_after_table_proposal() {
         let structures = load_structure_info();
-        let desk_id = crate::eorf::find_structure_by_name(&structures, "desk").unwrap();
+        let table_id = crate::eorf::find_structure_by_name(&structures, "table").unwrap();
 
         let mut builder = Builder::new(&structures);
         builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 0, 2));
@@ -1167,15 +1167,15 @@ mod tests {
             "wall should be in hidden set before any proposal"
         );
 
-        // With a desk proposed at the centre of the room.
-        let mut pe_with_desk = ProposedCity::new();
-        pe_with_desk.proposed_changes.set(
+        // With a table proposed at the centre of the room.
+        let mut pe_with_table = ProposedCity::new();
+        pe_with_table.proposed_changes.set(
             SlotCoord {
                 cube: IVec3::new(1, 0, 1),
                 slot: Slot::Room,
             },
             crate::city::Proposal::Place(Cell {
-                id: desk_id,
+                id: table_id,
                 facing: Facing::NegX,
                 evaluation: None,
                 build_material: crate::materials::BuildMaterialId::default(),
@@ -1183,28 +1183,28 @@ mod tests {
         );
 
         let (hidden_after, _) =
-            compute_floor_edge(&cw, &pe_with_desk, (focus_pos, false), camera_pos, 0);
+            compute_floor_edge(&cw, &pe_with_table, (focus_pos, false), camera_pos, 0);
         let set_after: HashSet<SlotCoord> = hidden_after.into_iter().collect();
 
         // The wall should still be hidden — the bug is that it falls out of the
-        // hidden set when a desk proposal is present.
+        // hidden set when a table proposal is present.
         check!(
             set_after.contains(&x_wall_loc),
-            "wall should still be in hidden set after desk proposal"
+            "wall should still be in hidden set after table proposal"
         );
     }
 
     /// Verifies that ECS entities for hidden walls keep `SHADOW_ONLY_LAYER` after
-    /// a desk is proposed in the cut zone.  The bug: `update_cutaway_system`
+    /// a table is proposed in the cut zone.  The bug: `update_cutaway_system`
     /// removes the shadow layer from previously-hidden walls on the frame after
     /// the proposal is added.
     #[test]
-    fn test_hidden_wall_keeps_shadow_layer_after_desk_proposal() {
+    fn test_hidden_wall_keeps_shadow_layer_after_table_proposal() {
         let (mut app, x_wall_loc, _z_wall_loc) = room_shadow_test_app();
 
-        let desk_id = {
+        let table_id = {
             let structures = load_structure_info();
-            crate::eorf::find_structure_by_name(&structures, "desk").unwrap()
+            crate::eorf::find_structure_by_name(&structures, "table").unwrap()
         };
 
         // Spawn a GridCellMarker entity for the +X wall that should be hidden.
@@ -1222,7 +1222,7 @@ mod tests {
             "wall should have SHADOW_ONLY_LAYER after first frame"
         );
 
-        // Now propose a desk in the middle of the room.
+        // Now propose a table in the middle of the room.
         {
             let mut pe = app.world_mut().resource_mut::<ProposedCity>();
             pe.proposed_changes.set(
@@ -1231,7 +1231,7 @@ mod tests {
                     slot: Slot::Room,
                 },
                 crate::city::Proposal::Place(Cell {
-                    id: desk_id,
+                    id: table_id,
                     facing: Facing::NegX,
                     evaluation: None,
                     build_material: crate::materials::BuildMaterialId::default(),
@@ -1246,7 +1246,7 @@ mod tests {
         // The bug manifests here: the shadow layer is incorrectly removed.
         check!(
             app.world().get::<RenderLayers>(wall_entity).cloned() == Some(desired),
-            "wall should still have SHADOW_ONLY_LAYER after desk proposal is added"
+            "wall should still have SHADOW_ONLY_LAYER after table proposal is added"
         );
     }
 
@@ -1276,7 +1276,7 @@ mod tests {
         use crate::eorf::Eorf;
 
         let structures = load_structure_info();
-        let desk_id = crate::eorf::find_structure_by_name(&structures, "desk").unwrap();
+        let table_id = crate::eorf::find_structure_by_name(&structures, "table").unwrap();
 
         let mut builder = Builder::new(&structures);
         builder.build_box(IVec3::new(0, 0, 0), IVec3::new(2, 0, 2));
@@ -1314,18 +1314,18 @@ mod tests {
         cw.contents = contents;
         app.insert_resource(cw);
 
-        // Propose a desk at Room(1,0,1). With SimpleOctant (focus=(0,0,0),
+        // Propose a table at Room(1,0,1). With SimpleOctant (focus=(0,0,0),
         // camera=(10,5,10)), octant_hidden returns true for x≥0 and z≥0,
         // so the ghost lands in the hidden zone.
-        let desk_loc = SlotCoord {
+        let table_loc = SlotCoord {
             cube: IVec3::new(1, 0, 1),
             slot: Slot::Room,
         };
         let mut pe = ProposedCity::new();
         pe.proposed_changes.set(
-            desk_loc,
+            table_loc,
             crate::city::Proposal::Place(crate::city::Cell {
-                id: desk_id,
+                id: table_id,
                 facing: Facing::NegX,
                 evaluation: None,
                 build_material: crate::materials::BuildMaterialId::default(),
@@ -1361,11 +1361,11 @@ mod tests {
             .world()
             .resource::<AssembledCity>()
             .proposal_entities
-            .get(&desk_loc)
+            .get(&table_loc)
             .and_then(|v| v.first().copied());
         check!(
             ghost_after_frame2.is_some(),
-            "ghost entity for desk should exist after frame 2"
+            "ghost entity for table should exist after frame 2"
         );
         check!(
             app.world()
@@ -1383,7 +1383,7 @@ mod tests {
             app.world_mut()
                 .resource_mut::<AssembledCity>()
                 .proposal_autotile_results
-                .remove(&desk_loc);
+                .remove(&table_loc);
         }
 
         // Frame 3: execution order:
@@ -1397,7 +1397,7 @@ mod tests {
             .world()
             .resource::<AssembledCity>()
             .proposal_entities
-            .get(&desk_loc)
+            .get(&table_loc)
             .cloned()
             .unwrap_or_default();
         check!(
