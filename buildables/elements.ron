@@ -1,7 +1,7 @@
 [
     (
         name: "doorway",
-        placement_style: WallDrag,
+        placement_style: WallPlop,
         x_char: Some('D'),
         z_char: Some('D'),
         embedding: (
@@ -14,7 +14,7 @@
     ),
     (
         name: "window",
-        placement_style: WallDrag,
+        placement_style: WallPlop,
         x_char: Some('W'),
         z_char: Some('W'),
         embedding: (
@@ -92,7 +92,7 @@
     ),
     (
         name: "column",
-        placement_style: WallDrag,
+        placement_style: WallPlop,
         x_char: Some('P'),
         z_char: Some('P'),
         embedding: (

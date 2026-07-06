@@ -45,11 +45,16 @@ pub fn cursor_system(
 ) {
     let id = EorfId(build_state.selected_structure as u32);
     let is_room = constructed.structure_is_room_plop(id);
+    let is_wall_plop = constructed.structure_is_wall_plop(id);
+    // Both `RoomPlop` and `WallPlop` preview the actual mesh (via the "room"
+    // cursor entity, snapped to a room cube or a wall boundary respectively)
+    // instead of the plain pin used by drag-based placement styles.
+    let uses_object_cursor = is_room || is_wall_plop;
     let maybe_pos = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32);
     let y = build_state.cur_y as f32;
 
     if let Ok((mut t, mut vis)) = cursors.get_mut(cursor_entities.wall) {
-        match (!is_room).then_some(maybe_pos).flatten() {
+        match (!uses_object_cursor).then_some(maybe_pos).flatten() {
             Some(pos) => {
                 let s = pos.round();
                 t.translation = Vec3::new(s.x, y, s.z);
@@ -60,12 +65,18 @@ pub fn cursor_system(
     }
 
     if let Ok((mut t, mut vis)) = cursors.get_mut(cursor_entities.room) {
-        match is_room.then_some(maybe_pos).flatten() {
+        match uses_object_cursor.then_some(maybe_pos).flatten() {
             Some(pos) => {
-                let s = pos.round();
-                let cube = IVec3::new(s.x as i32, build_state.cur_y, s.z as i32);
-                let facing = Facing::from_number(build_state.cur_dir);
-                let tr = zup_scene_transform(cell_transform(Slot::Room, facing, cube));
+                let (slot, cube, facing) = if is_room {
+                    let s = pos.round();
+                    let cube = IVec3::new(s.x as i32, build_state.cur_y, s.z as i32);
+                    (Slot::Room, cube, Facing::from_number(build_state.cur_dir))
+                } else {
+                    let loc = crate::city::nearest_wall_slot(pos);
+                    let facing = Facing::from_number(build_state.wall_plop_dir(loc.slot) as u8);
+                    (loc.slot, loc.cube, facing)
+                };
+                let tr = zup_scene_transform(cell_transform(slot, facing, cube));
                 t.translation = tr.translation;
                 t.rotation = tr.rotation;
                 t.scale = Vec3::splat(0.999);
@@ -153,6 +164,15 @@ pub struct BuildState {
     pub cur_dir: u8,
     pub cur_y: i32,
     pub drag_start: Option<Vec3>,
+    /// `WallPlop`'s rotation state on `XLoWall`s: unflipped (`NegX`) or
+    /// flipped 180° (`PosX`). Kept separate from `wall_plop_flip_z` so that
+    /// rotating the preview while it's snapped to an X-wall doesn't affect
+    /// its remembered orientation on Z-walls (which sit 90° apart), and
+    /// vice versa.
+    pub wall_plop_flip_x: bool,
+    /// `WallPlop`'s rotation state on `ZLoWall`s: unflipped (`NegZ`) or
+    /// flipped 180° (`PosZ`). See `wall_plop_flip_x`.
+    pub wall_plop_flip_z: bool,
     /// Latest evaluation results (coherence, interest).
     pub evaluation: Option<(f32, f32)>,
     /// Selected material (`BuildMaterialId`, index into `MaterialList::materials`) per structure type.
@@ -175,6 +195,29 @@ impl BuildState {
                 .map(|&(id, _)| id)
                 .unwrap_or_default()
         })
+    }
+
+    /// The `Facing` (as a `Cell::facing` number, 0-3) `WallPlop` should place
+    /// with when snapping onto `slot`, per the remembered per-axis rotation
+    /// state. `slot` must be `XLoWall` or `ZLoWall`.
+    pub fn wall_plop_dir(&self, slot: Slot) -> i32 {
+        match slot {
+            Slot::XLoWall => {
+                if self.wall_plop_flip_x {
+                    Facing::PosX as i32
+                } else {
+                    Facing::NegX as i32
+                }
+            }
+            Slot::ZLoWall => {
+                if self.wall_plop_flip_z {
+                    Facing::PosZ as i32
+                } else {
+                    Facing::NegZ as i32
+                }
+            }
+            Slot::Room | Slot::Floor => 0,
+        }
     }
 }
 
@@ -254,7 +297,22 @@ pub fn building_input_system(
 
     // --- Rotation ---
     if !typing && keyboard.just_pressed(KeyCode::KeyR) {
-        build_state.cur_dir = (build_state.cur_dir + 3) % 4;
+        let id = EorfId(build_state.selected_structure as u32);
+        if constructed.structure_is_wall_plop(id) {
+            // WallPlop only rotates 180°, and the X-wall/Z-wall rotation
+            // states are independent (see `BuildState::wall_plop_flip_x`).
+            // Which one flips depends on whichever wall the cursor is
+            // currently nearest to.
+            if let Some(pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
+                match crate::city::nearest_wall_slot(pos).slot {
+                    Slot::XLoWall => build_state.wall_plop_flip_x = !build_state.wall_plop_flip_x,
+                    Slot::ZLoWall => build_state.wall_plop_flip_z = !build_state.wall_plop_flip_z,
+                    Slot::Room | Slot::Floor => {}
+                }
+            }
+        } else {
+            build_state.cur_dir = (build_state.cur_dir + 3) % 4;
+        }
     }
 
     // --- Cutaway mode cycle ---
@@ -372,7 +430,11 @@ pub fn building_input_system(
             cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32),
         ) {
             let id = EorfId(build_state.selected_structure as u32);
-            let dir = build_state.cur_dir as i32;
+            let dir = if constructed.structure_is_wall_plop(id) {
+                build_state.wall_plop_dir(crate::city::nearest_wall_slot(start).slot)
+            } else {
+                build_state.cur_dir as i32
+            };
             let build_material = {
                 let info = &constructed.eorfs[id.as_usize()];
                 if info.is_furniture() {
@@ -452,7 +514,8 @@ pub fn update_room_cursor_mesh(
     *last_id = Some(id);
     let struct_id = EorfId(id as u32);
     // The last case of the first rule is used as the preview
-    if constructed.structure_is_room_plop(struct_id) {
+    if constructed.structure_is_room_plop(struct_id) || constructed.structure_is_wall_plop(struct_id)
+    {
         let name = &structure_list.structures[id].info.name;
         let autotile_handle = autotile_rules
             .0

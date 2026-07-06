@@ -302,6 +302,10 @@ impl ConstructedCity {
         self.eorfs[id.as_usize()].placement_style == crate::eorf::PlacementStyle::RoomPlop
     }
 
+    pub fn structure_is_wall_plop(&self, id: EorfId) -> bool {
+        self.eorfs[id.as_usize()].placement_style == crate::eorf::PlacementStyle::WallPlop
+    }
+
     pub fn find_structure_by_name(&self, name: &str) -> Option<EorfId> {
         crate::eorf::find_structure_by_name(&self.eorfs, name)
     }
@@ -502,6 +506,11 @@ pub fn desired(cw: &ConstructedCity, pw: &ProposedCity, loc: impl Into<SlotCoord
 }
 
 /// Computes the Bevy Transform for a cell at the given grid position.
+///
+/// For wall slots, `facing` only ever carries a 180° flip (`WallPlop`'s two
+/// rotation states -- e.g. `NegX`/`PosX` for `XLoWall`), mirroring the mesh in
+/// place; `WallDrag` cells always use the default `Facing` and so render
+/// unflipped, matching their pre-`WallPlop` appearance.
 pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
     let ry_neg90 = Quat::from_rotation_y(-TAU / 4.0);
 
@@ -516,8 +525,14 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
             let translation = cell_center + facing_rot.mul_vec3(Vec3::splat(-0.5));
             (rotation, translation)
         }
-        Slot::ZLoWall => (Quat::IDENTITY, cube.as_vec3()),
-        Slot::XLoWall => (ry_neg90, cube.as_vec3()),
+        Slot::ZLoWall => {
+            let flip = if facing == Facing::PosZ { TAU / 2.0 } else { 0.0 };
+            (Quat::from_rotation_y(flip), cube.as_vec3())
+        }
+        Slot::XLoWall => {
+            let flip = if facing == Facing::PosX { TAU / 2.0 } else { 0.0 };
+            (ry_neg90 * Quat::from_rotation_y(flip), cube.as_vec3())
+        }
     };
 
     Transform {
@@ -525,6 +540,19 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
         rotation,
         scale: Vec3::ONE,
     }
+}
+
+/// Snaps a continuous ground-plane position to the nearest wall boundary for
+/// `WallPlop` placement: picks `XLoWall` when `pos.x` sits closer to an
+/// integer grid line than `pos.z` does, otherwise `ZLoWall`. Unlike
+/// `WallDrag` (which infers the wall axis from drag direction), this lets a
+/// single click/plop pick whichever wall is nearest the cursor.
+pub fn nearest_wall_slot(pos: Vec3) -> SlotCoord {
+    let cube = pos.round().as_ivec3();
+    let dx = (pos.x - pos.x.round()).abs();
+    let dz = (pos.z - pos.z.round()).abs();
+    let slot = if dx <= dz { Slot::XLoWall } else { Slot::ZLoWall };
+    SlotCoord { cube, slot }
 }
 
 /// Applies a list of real cell changes: despawns old entities, spawns new ones.
@@ -1016,5 +1044,70 @@ mod tests {
         check!(pw.months_for_construction(2) == 1);
         // Population 0 is treated the same as population 1 (never divide by zero).
         check!(pw.months_for_construction(0) == 2);
+    }
+
+    // ── cell_transform wall flip ─────────────────────────────────────────────
+
+    #[test]
+    fn cell_transform_xlowall_unflipped_matches_pre_wallplop_rotation() {
+        use crate::sparse3d::{Facing, Slot};
+        use bevy::math::IVec3;
+
+        let t = super::cell_transform(Slot::XLoWall, Facing::NegX, IVec3::new(2, 0, 3));
+        check!(t.rotation == bevy::math::Quat::from_rotation_y(-std::f32::consts::TAU / 4.0));
+    }
+
+    #[test]
+    fn cell_transform_zlowall_unflipped_is_identity() {
+        use crate::sparse3d::{Facing, Slot};
+        use bevy::math::IVec3;
+
+        let t = super::cell_transform(Slot::ZLoWall, Facing::NegZ, IVec3::new(2, 0, 3));
+        check!(t.rotation == bevy::math::Quat::IDENTITY);
+    }
+
+    #[test]
+    fn cell_transform_wall_flip_rotates_180_without_moving() {
+        use crate::sparse3d::{Facing, Slot};
+        use bevy::math::IVec3;
+
+        let cube = IVec3::new(2, 0, 3);
+        let unflipped = super::cell_transform(Slot::XLoWall, Facing::NegX, cube);
+        let flipped = super::cell_transform(Slot::XLoWall, Facing::PosX, cube);
+        check!(flipped.translation == unflipped.translation);
+        check!(
+            (flipped.rotation.angle_between(unflipped.rotation) - std::f32::consts::PI).abs()
+                < 1e-4
+        );
+
+        let unflipped_z = super::cell_transform(Slot::ZLoWall, Facing::NegZ, cube);
+        let flipped_z = super::cell_transform(Slot::ZLoWall, Facing::PosZ, cube);
+        check!(flipped_z.translation == unflipped_z.translation);
+        check!(
+            (flipped_z.rotation.angle_between(unflipped_z.rotation) - std::f32::consts::PI).abs()
+                < 1e-4
+        );
+    }
+
+    // ── nearest_wall_slot ─────────────────────────────────────────────────────
+
+    #[test]
+    fn nearest_wall_slot_picks_xlowall_near_x_boundary() {
+        use crate::sparse3d::Slot;
+        use bevy::math::{IVec3, Vec3};
+
+        let loc = super::nearest_wall_slot(Vec3::new(3.02, 0.0, 3.6));
+        check!(loc.slot == Slot::XLoWall);
+        check!(loc.cube == IVec3::new(3, 0, 4));
+    }
+
+    #[test]
+    fn nearest_wall_slot_picks_zlowall_near_z_boundary() {
+        use crate::sparse3d::Slot;
+        use bevy::math::{IVec3, Vec3};
+
+        let loc = super::nearest_wall_slot(Vec3::new(3.6, 0.0, 3.02));
+        check!(loc.slot == Slot::ZLoWall);
+        check!(loc.cube == IVec3::new(4, 0, 3));
     }
 }
