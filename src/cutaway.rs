@@ -41,7 +41,16 @@ fn get_cuts(
                         .map(|cut| {
                             (
                                 cut.clone(),
-                                zup_scene_transform(autotile_transform(loc, spec)),
+                                // The cutaway view's cut meshes don't track a
+                                // `WallPlop` cell's actual `facing` (that would
+                                // need threading it through `cut_entries`
+                                // alongside `EorfId`); they always render
+                                // unflipped, same as before `WallPlop` existed.
+                                zup_scene_transform(autotile_transform(
+                                    loc,
+                                    crate::sparse3d::Facing::NegX,
+                                    spec,
+                                )),
                             )
                         })
                 } else {

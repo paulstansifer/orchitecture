@@ -505,6 +505,22 @@ pub fn desired(cw: &ConstructedCity, pw: &ProposedCity, loc: impl Into<SlotCoord
     }
 }
 
+/// Composes a wall slot's fixed base rotation (`base`) with `WallPlop`'s 180°
+/// `flip`, and computes the translation that rotates the mesh around the wall
+/// run's center rather than the slot's corner -- otherwise flipping would
+/// shift the mesh into the neighboring slot instead of mirroring it in place.
+///
+/// Wall meshes (see `buildables/wall.scad`, `window.scad`, `doorway.scad`,
+/// `column_*.scad`) are all authored with their local origin at the slot's
+/// corner and their run (the wall's length) spanning one unit along local
+/// `+X`, so `run_offset` is `(0.5, 0, 0)` regardless of slot type.
+fn wall_flip_transform(base: Quat, flip: Quat, cube: IVec3) -> (Quat, Vec3) {
+    let run_offset = Vec3::new(0.5, 0.0, 0.0);
+    let center_offset = run_offset - flip.mul_vec3(run_offset);
+    let translation = cube.as_vec3() + base.mul_vec3(center_offset);
+    (base * flip, translation)
+}
+
 /// Computes the Bevy Transform for a cell at the given grid position.
 ///
 /// For wall slots, `facing` only ever carries a 180° flip (`WallPlop`'s two
@@ -527,11 +543,11 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
         }
         Slot::ZLoWall => {
             let flip = if facing == Facing::PosZ { TAU / 2.0 } else { 0.0 };
-            (Quat::from_rotation_y(flip), cube.as_vec3())
+            wall_flip_transform(Quat::IDENTITY, Quat::from_rotation_y(flip), cube)
         }
         Slot::XLoWall => {
             let flip = if facing == Facing::PosX { TAU / 2.0 } else { 0.0 };
-            (ry_neg90 * Quat::from_rotation_y(flip), cube.as_vec3())
+            wall_flip_transform(ry_neg90, Quat::from_rotation_y(flip), cube)
         }
     };
 
@@ -1067,26 +1083,41 @@ mod tests {
     }
 
     #[test]
-    fn cell_transform_wall_flip_rotates_180_without_moving() {
+    fn cell_transform_wall_flip_mirrors_in_place() {
         use crate::sparse3d::{Facing, Slot};
-        use bevy::math::IVec3;
+        use bevy::math::{IVec3, Vec3};
 
         let cube = IVec3::new(2, 0, 3);
-        let unflipped = super::cell_transform(Slot::XLoWall, Facing::NegX, cube);
-        let flipped = super::cell_transform(Slot::XLoWall, Facing::PosX, cube);
-        check!(flipped.translation == unflipped.translation);
-        check!(
-            (flipped.rotation.angle_between(unflipped.rotation) - std::f32::consts::PI).abs()
-                < 1e-4
-        );
 
-        let unflipped_z = super::cell_transform(Slot::ZLoWall, Facing::NegZ, cube);
-        let flipped_z = super::cell_transform(Slot::ZLoWall, Facing::PosZ, cube);
-        check!(flipped_z.translation == unflipped_z.translation);
-        check!(
-            (flipped_z.rotation.angle_between(unflipped_z.rotation) - std::f32::consts::PI).abs()
-                < 1e-4
-        );
+        for (slot, unflipped_facing, flipped_facing) in [
+            (Slot::XLoWall, Facing::NegX, Facing::PosX),
+            (Slot::ZLoWall, Facing::NegZ, Facing::PosZ),
+        ] {
+            let unflipped = super::cell_transform(slot, unflipped_facing, cube);
+            let flipped = super::cell_transform(slot, flipped_facing, cube);
+
+            // 180° apart in orientation.
+            check!(
+                (flipped.rotation.angle_between(unflipped.rotation) - std::f32::consts::PI).abs()
+                    < 1e-4
+            );
+
+            // The mesh's local run-axis endpoints (0,0,0) and (1,0,0) should land
+            // on the same pair of world points, just swapped -- i.e. the flip
+            // mirrors the mesh in place (within its wall slot) rather than
+            // shifting it into the neighboring slot (the bug this test guards
+            // against: rotating around the slot's corner instead of its center).
+            let unflipped_ends = [
+                unflipped.transform_point(Vec3::ZERO),
+                unflipped.transform_point(Vec3::X),
+            ];
+            let flipped_ends = [
+                flipped.transform_point(Vec3::ZERO),
+                flipped.transform_point(Vec3::X),
+            ];
+            check!(flipped_ends[0].distance(unflipped_ends[1]) < 1e-4);
+            check!(flipped_ends[1].distance(unflipped_ends[0]) < 1e-4);
+        }
     }
 
     // ── nearest_wall_slot ─────────────────────────────────────────────────────
