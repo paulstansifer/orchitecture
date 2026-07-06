@@ -36,12 +36,16 @@ fn char_matches(
 }
 
 /// Computes the transform for an autotile mesh at `loc`, applying the rotation
-/// the matched rule (`spec`) assigned. The input cell's facing is deliberately
-/// ignored — only the rule's matched direction matters.
-pub fn autotile_transform(loc: SlotCoord, spec: &MeshSpec) -> Transform {
+/// the matched rule (`spec`) assigned on top of the cell's own `facing`. Which
+/// *case* of a rule matches is decided purely by neighboring structure (see
+/// `char_matches`/`evaluate_autotile_rules`) -- `facing` never affects that --
+/// but the final render must still respect it, since `WallPlop` items
+/// (windows, doorways, columns) use `facing` for their 180° flip. For every
+/// other (`WallDrag`) structure `facing` is always the default (`NegX`/`NegZ`),
+/// so passing it through here is a no-op for them.
+pub fn autotile_transform(loc: SlotCoord, facing: Facing, spec: &MeshSpec) -> Transform {
     let unoriented = slot_to_unoriented(loc.slot);
-    // Ignore the direction of the input cell! Only the direction the rule matched in matters.
-    let mut transform = cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube);
+    let mut transform = cell_transform(loc.slot, facing, loc.cube);
     let rot_deg = spec.outer_rotation();
     if rot_deg != 0 {
         let angle = rot_deg as f32 * std::f32::consts::TAU / 360.0;
@@ -61,6 +65,7 @@ fn spawn_entities_from_results(
     commands: &mut Commands,
     autotile_handles: &AutotileHandles,
     loc: SlotCoord,
+    facing: Facing,
     results: &[AutotileResult],
     mut spawn_one: impl FnMut(&mut Commands, SceneRoot, Transform) -> Entity,
 ) -> Vec<Entity> {
@@ -70,7 +75,7 @@ fn spawn_entities_from_results(
         if let AutotileResult::Mesh { spec, .. } = result {
             let stem = spec_stem(spec, unoriented);
             if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
-                let transform = zup_scene_transform(autotile_transform(loc, spec));
+                let transform = zup_scene_transform(autotile_transform(loc, facing, spec));
                 entities.push(spawn_one(
                     commands,
                     SceneRoot(main_handle.clone()),
@@ -111,6 +116,7 @@ fn apply_autotile_updates(
                 commands,
                 autotile_handles,
                 loc,
+                cell.facing,
                 &new_results,
                 |cmd, scene, transform| make_entity(cmd, scene, transform, loc),
             )

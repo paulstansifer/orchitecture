@@ -225,6 +225,29 @@ impl ProposedCity {
         changes
     }
 
+    /// Plops a `WallPlop` structure (window, doorway, column, ...) onto
+    /// whichever wall is nearest `location` -- see [`crate::city::nearest_wall_slot`].
+    /// Unlike `WallDrag`, this is a single-click placement onto one boundary,
+    /// with no drag-to-extend behavior.
+    pub fn wall_plop(
+        &mut self,
+        cw: &ConstructedCity,
+        location: Vec3,
+        dir: i32,
+        selected_mesh_id: Option<EorfId>,
+        build_material: BuildMaterialId,
+    ) -> Vec<(SlotCoord, ProposalView)> {
+        let loc = crate::city::nearest_wall_slot(location);
+        self.propose(
+            cw,
+            dir,
+            (loc.cube, loc.cube),
+            loc.slot,
+            selected_mesh_id,
+            build_material,
+        )
+    }
+
     pub fn drag(
         &mut self,
         cw: &ConstructedCity,
@@ -277,6 +300,13 @@ impl ProposedCity {
     ) -> Vec<(SlotCoord, ProposalView)> {
         match cw.eorfs[selected_mesh_id.as_usize()].placement_style {
             PlacementStyle::RoomPlop => self.room_plop(
+                cw,
+                position,
+                dir,
+                (!remove).then_some(selected_mesh_id),
+                build_material,
+            ),
+            PlacementStyle::WallPlop => self.wall_plop(
                 cw,
                 position,
                 dir,
@@ -923,5 +953,80 @@ mod tests {
         check!(pe.undo_record.len() == 1);
         // Original loaded wall + 2 newly constructed walls
         check!(cw.contents.iter().count() == 3);
+    }
+
+    // ── WallPlop ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn click_on_wall_plop_structure_snaps_to_nearest_wall() {
+        use crate::eorf::{find_structure_by_name, load_structure_info};
+        use crate::sparse3d::Facing;
+        use bevy::math::Vec3;
+
+        let structures = load_structure_info();
+        let window_id = find_structure_by_name(&structures, "window").unwrap();
+
+        let mut cw = ConstructedCity::new(structures.clone());
+        cw.road_forbidden_zone = false;
+        let mut pe = ProposedCity::new();
+
+        // A click near an X-boundary (x close to an integer, z mid-cell) snaps
+        // to the XLoWall there, not the ZLoWall of the current room.
+        let deltas = pe.click(
+            &cw,
+            Vec3::new(3.02, 0.0, 3.6),
+            window_id,
+            Facing::PosX as i32,
+            false,
+            BuildMaterialId::default(),
+        );
+
+        check!(deltas.len() == 1);
+        let (loc, view) = &deltas[0];
+        check!(loc.slot == Slot::XLoWall);
+        check!(loc.cube == IVec3::new(3, 0, 4));
+        assert!(let ProposalView::Add(cell) = view);
+        check!(cell.id == window_id);
+        check!(cell.facing == Facing::PosX);
+    }
+
+    #[test]
+    fn click_on_wall_plop_structure_removes_existing_cell() {
+        use crate::eorf::{find_structure_by_name, load_structure_info};
+        use crate::sparse3d::Facing;
+        use bevy::math::Vec3;
+
+        let structures = load_structure_info();
+        let column_id = find_structure_by_name(&structures, "column").unwrap();
+
+        let mut cw = ConstructedCity::new(structures.clone());
+        cw.road_forbidden_zone = false;
+        cw.contents.set(
+            RelSlotCoord::new(4, 0, 3, RelSlot::ZLoWall),
+            Cell {
+                id: column_id,
+                facing: Facing::NegZ,
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            },
+        );
+        let mut pe = ProposedCity::new();
+
+        // A click near a Z-boundary with `remove: true` proposes removing
+        // whatever real cell is there.
+        let deltas = pe.click(
+            &cw,
+            Vec3::new(3.6, 0.0, 3.02),
+            column_id,
+            0,
+            true,
+            BuildMaterialId::default(),
+        );
+
+        check!(deltas.len() == 1);
+        let (loc, view) = &deltas[0];
+        check!(loc.slot == Slot::ZLoWall);
+        check!(loc.cube == IVec3::new(4, 0, 3));
+        check!(matches!(view, ProposalView::Remove));
     }
 }

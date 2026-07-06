@@ -18,6 +18,10 @@ pub enum PlacementStyle {
     FloorDrag,
     RoomPlop,
     RoomDrag,
+    /// Like `RoomPlop` (single click, mesh preview), but snaps onto whichever
+    /// wall (`XLoWall`/`ZLoWall`) is nearest the cursor instead of a room
+    /// cube. Manual rotation flips 180° rather than stepping 90°, and X-walls
+    /// and Z-walls (90° apart) remember their flip state independently.
     WallPlop,
 }
 

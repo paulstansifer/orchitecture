@@ -780,7 +780,19 @@ fn build_footer(
 ) {
     ui.separator();
     ui.label(format!("Layer (Y): {}", build_state.cur_y));
-    ui.label(format!("Direction: {}", build_state.cur_dir));
+    let selected = &world.constructed.eorfs[build_state.selected_structure];
+    if selected.placement_style == crate::eorf::PlacementStyle::WallPlop {
+        ui.label(format!(
+            "Rotation (X-wall): {}",
+            if build_state.wall_plop_flip_x { "flipped" } else { "normal" }
+        ));
+        ui.label(format!(
+            "Rotation (Z-wall): {}",
+            if build_state.wall_plop_flip_z { "flipped" } else { "normal" }
+        ));
+    } else {
+        ui.label(format!("Direction: {}", build_state.cur_dir));
+    }
 
     if let Some((coherence, interest)) = build_state.evaluation {
         ui.separator();
