@@ -25,7 +25,9 @@ rust-scripts/target/
 target/
 dist/
 
-# TODO: delete these lines
+# Temporary files from Wings3D:
+buildables/*~
+buildables/#*#
 buildables/autotile/*
 sprites/pngs/*
 
