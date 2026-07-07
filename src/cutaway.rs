@@ -10,13 +10,16 @@ use crate::autotile::{slot_to_unoriented, spec_stem, AutotileHandles, AutotileRe
 use crate::camera::GameCamera;
 use crate::city::{
     cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledCity, City,
-    ConstructedCity, GridCellMarker, Proposal, ProposalGhostMarker, ProposalOverlayMarker,
-    ProposedCity, ProposedCutMarker, ViewableWorld,
+    ConstructedCity, GridCellMarker, MaterialAssets, Proposal, ProposalGhostMarker,
+    ProposalOverlayMarker, ProposedCity, ProposedCutMarker, ViewableWorld,
 };
 use crate::eorf::{EorfId, EorfList};
+use crate::gi_material::{GiMaterial, ShadowOnlyMaterial};
 use crate::input::{cursor_world_pos, BuildState};
+use crate::materials::MaterialList;
 use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
 use crate::util::zup_scene_transform;
+use bevy::pbr::Material;
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
 /// with. Returns one `(handle, transform)` pair per autotile mesh that has a cut variant,
@@ -96,8 +99,18 @@ pub struct CutCellMarker {
     pub loc: SlotCoord,
 }
 
-/// Layer used for geometry that should cast shadows but not be seen by the main camera.
+/// Layer used for geometry that should be hidden from the main camera. Ghosts and
+/// overlays (which don't need to cast shadows when hidden) still use this; real
+/// cells instead swap to `ShadowOnlyMaterial` so they keep casting — see
+/// `sync_cutaway_shadow_material` and the note on `queue_shadows` there.
 const SHADOW_ONLY_LAYER: usize = 1;
+
+/// Marks a real-cell (`GridCellMarker`) root that is currently cutaway-hidden, i.e.
+/// its mesh leaves have been swapped to `ShadowOnlyMaterial` (invisible to the
+/// camera, still casting a shadow). Maintained by `update_cutaway_system`; acted on
+/// by `sync_cutaway_shadow_material`.
+#[derive(Component)]
+pub struct CutawayHidden;
 
 /// Sets `layers` on `entity` and every descendant, so that `RenderLayers` is consistent
 /// through the whole scene-spawned hierarchy (Bevy does not auto-propagate `RenderLayers`).
@@ -626,13 +639,13 @@ impl HiddenPredicate {
 }
 
 /// Propagates `RenderLayers` from scene-root entities to newly-spawned children.
+/// Real cells (`GridCellMarker`) no longer use `RenderLayers` for cutaway hiding
+/// (they swap materials instead — see `sync_cutaway_shadow_material`), so only
+/// ghosts still need this.
 pub fn propagate_render_layers_system(
     changed_q: Query<
         (Entity, Option<&RenderLayers>),
-        (
-            Or<(With<GridCellMarker>, With<ProposalGhostMarker>)>,
-            Changed<Children>,
-        ),
+        (With<ProposalGhostMarker>, Changed<Children>),
     >,
     children_q: Query<&Children>,
     mut commands: Commands,
@@ -660,7 +673,7 @@ pub fn update_cutaway_system(
     cutaway_mode: Res<CutawayMode>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
-    vis_q: Query<(Entity, &GridCellMarker, Option<&RenderLayers>)>,
+    vis_q: Query<(Entity, &GridCellMarker, Has<CutawayHidden>)>,
     ghost_q: Query<(Entity, &ProposalGhostMarker, Option<&RenderLayers>)>,
     overlay_q: Query<(Entity, &ProposalOverlayMarker, Option<&RenderLayers>)>,
     children_q: Query<&Children>,
@@ -755,14 +768,16 @@ pub fn update_cutaway_system(
             }
         };
 
-    for (entity, marker, current_layers) in vis_q.iter() {
-        let desired = if hidden.contains(marker.loc) {
-            RenderLayers::layer(SHADOW_ONLY_LAYER)
-        } else {
-            RenderLayers::default()
-        };
-        if current_layers.map_or(desired != RenderLayers::default(), |l| l != &desired) {
-            apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
+    // Real cells: toggle the `CutawayHidden` marker on transitions only (so
+    // `Added`/`RemovedComponents` in `sync_cutaway_shadow_material` fire once per
+    // change). The actual material swap that makes them invisible-but-casting lives
+    // there — render layers can't do it (see that system's note).
+    for (entity, marker, is_hidden_now) in vis_q.iter() {
+        let want_hidden = hidden.contains(marker.loc);
+        if want_hidden && !is_hidden_now {
+            commands.entity(entity).insert(CutawayHidden);
+        } else if !want_hidden && is_hidden_now {
+            commands.entity(entity).remove::<CutawayHidden>();
         }
     }
 
@@ -865,6 +880,115 @@ pub fn update_cutaway_system(
                 })
                 .collect();
             viewable.proposed_cut_entities.insert(loc, (id, entities));
+        }
+    }
+}
+
+/// Collects `root` and all of its descendants (the whole scene subtree).
+fn collect_subtree(root: Entity, children_q: &Query<&Children>) -> Vec<Entity> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(e) = stack.pop() {
+        out.push(e);
+        if let Ok(children) = children_q.get(e) {
+            for child in children.iter() {
+                stack.push(child);
+            }
+        }
+    }
+    out
+}
+
+/// Queues a swap of every `MeshMaterial3d<From>` leaf in `entities` to
+/// `MeshMaterial3d<To>`. Done in a queued closure so it's safe against entities
+/// despawned before the flush (edits respawn cells constantly).
+fn swap_leaf_material<From: Material, To: Material>(
+    commands: &mut Commands,
+    entities: Vec<Entity>,
+    to: Handle<To>,
+) {
+    commands.queue(move |world: &mut World| {
+        for e in entities {
+            if let Ok(mut em) = world.get_entity_mut(e) {
+                if em.contains::<MeshMaterial3d<From>>() {
+                    em.remove::<MeshMaterial3d<From>>();
+                    em.insert(MeshMaterial3d(to.clone()));
+                }
+            }
+        }
+    });
+}
+
+/// Applies the `CutawayHidden` marker (maintained by `update_cutaway_system`) to a
+/// real cell's mesh leaves by swapping their material.
+///
+/// Why a material swap rather than render layers: Bevy's `queue_shadows` filters
+/// shadow casters by the *camera's* render layers, so a caster must share a layer
+/// with the camera to cast a shadow into its view — which is also exactly what
+/// makes it visible. There's no layer that is "invisible to the camera but still
+/// casts for it". `ShadowOnlyMaterial` instead stays on the camera's layer and
+/// discards in the color pass, so the cell is invisible but keeps casting.
+pub fn sync_cutaway_shadow_material(
+    mut commands: Commands,
+    world: City,
+    material_list: Res<MaterialList>,
+    material_assets: Res<MaterialAssets>,
+    children_q: Query<&Children>,
+    child_of_q: Query<&ChildOf>,
+    cell_root_q: Query<&GridCellMarker>,
+    hidden_root_q: Query<(), With<CutawayHidden>>,
+    newly_hidden: Query<Entity, Added<CutawayHidden>>,
+    mut unhidden: RemovedComponents<CutawayHidden>,
+    new_gi_leaves: Query<Entity, Added<MeshMaterial3d<GiMaterial>>>,
+) {
+    let shadow = material_assets.shadow_only();
+
+    // Cells that just became hidden: hide every current GI leaf in their subtree.
+    for root in newly_hidden.iter() {
+        let subtree = collect_subtree(root, &children_q);
+        swap_leaf_material::<GiMaterial, ShadowOnlyMaterial>(
+            &mut commands,
+            subtree,
+            shadow.clone(),
+        );
+    }
+
+    // Cells that just became visible again: restore the cell's real material.
+    for root in unhidden.read() {
+        let Ok(marker) = cell_root_q.get(root) else {
+            continue; // root was despawned along with the removal — nothing to restore
+        };
+        let Some(cell) = get_real_or_proposed(&world.constructed, &world.pending, marker.loc)
+        else {
+            continue;
+        };
+        let material = cell.material(&world.constructed.eorfs, &material_list);
+        let gi = material_assets.get(material);
+        let subtree = collect_subtree(root, &children_q);
+        swap_leaf_material::<ShadowOnlyMaterial, GiMaterial>(&mut commands, subtree, gi);
+    }
+
+    // GI leaves that appear while their cell is already hidden (a cell respawned by
+    // an edit, or scene children that loaded late): hide them too. This is the
+    // material-swap analogue of `propagate_render_layers_system` for ghosts, and it
+    // closes the same ordering race between cell (re)spawn and the cutaway state.
+    for leaf in new_gi_leaves.iter() {
+        let mut node = leaf;
+        loop {
+            if cell_root_q.contains(node) {
+                if hidden_root_q.contains(node) {
+                    swap_leaf_material::<GiMaterial, ShadowOnlyMaterial>(
+                        &mut commands,
+                        vec![leaf],
+                        shadow.clone(),
+                    );
+                }
+                break;
+            }
+            match child_of_q.get(node) {
+                Ok(child_of) => node = child_of.0,
+                Err(_) => break,
+            }
         }
     }
 }
@@ -1194,12 +1318,12 @@ mod tests {
         );
     }
 
-    /// Verifies that ECS entities for hidden walls keep `SHADOW_ONLY_LAYER` after
-    /// a table is proposed in the cut zone.  The bug: `update_cutaway_system`
-    /// removes the shadow layer from previously-hidden walls on the frame after
-    /// the proposal is added.
+    /// Verifies that a hidden wall keeps its `CutawayHidden` marker (and therefore
+    /// its shadow-only material) after a table is proposed in the cut zone. The
+    /// original bug: `update_cutaway_system` dropped previously-hidden walls out of
+    /// the hidden set on the frame after the proposal was added.
     #[test]
-    fn test_hidden_wall_keeps_shadow_layer_after_table_proposal() {
+    fn test_hidden_wall_keeps_cutaway_marker_after_table_proposal() {
         let (mut app, x_wall_loc, _z_wall_loc) = room_shadow_test_app();
 
         let table_id = {
@@ -1213,13 +1337,12 @@ mod tests {
             .spawn((GridCellMarker { loc: x_wall_loc }, Visibility::default()))
             .id();
 
-        // Frame 1: cutaway runs; the wall should receive SHADOW_ONLY_LAYER.
+        // Frame 1: cutaway runs; the wall should be marked CutawayHidden.
         app.update();
 
-        let desired = RenderLayers::layer(SHADOW_ONLY_LAYER);
         check!(
-            app.world().get::<RenderLayers>(wall_entity).cloned() == Some(desired.clone()),
-            "wall should have SHADOW_ONLY_LAYER after first frame"
+            app.world().get::<CutawayHidden>(wall_entity).is_some(),
+            "wall should be CutawayHidden after first frame"
         );
 
         // Now propose a table in the middle of the room.
@@ -1242,11 +1365,10 @@ mod tests {
         // Frame 2: cutaway runs again after the proposal.
         app.update();
 
-        // The wall is still in the cut zone, so it must still have SHADOW_ONLY_LAYER.
-        // The bug manifests here: the shadow layer is incorrectly removed.
+        // The wall is still in the cut zone, so it must still be CutawayHidden.
         check!(
-            app.world().get::<RenderLayers>(wall_entity).cloned() == Some(desired),
-            "wall should still have SHADOW_ONLY_LAYER after table proposal is added"
+            app.world().get::<CutawayHidden>(wall_entity).is_some(),
+            "wall should still be CutawayHidden after table proposal is added"
         );
     }
 
@@ -1460,49 +1582,97 @@ mod tests {
         (app, loc)
     }
 
-    #[test]
-    fn test_cutaway_shadow_layer_set_on_root_and_loaded_children() {
+    /// Like `shadow_layer_test_app`, but wired for the material-swap mechanism:
+    /// includes `sync_cutaway_shadow_material` and the `MaterialAssets`/`MaterialList`
+    /// resources it needs, using bare (assetless) handles.
+    fn shadow_material_test_app() -> (App, SlotCoord) {
         let (mut app, loc) = shadow_layer_test_app();
-
-        let grandchild = app.world_mut().spawn_empty().id();
-        let child = app.world_mut().spawn(Visibility::default()).id();
-        let root = app
-            .world_mut()
-            .spawn((GridCellMarker { loc }, Visibility::default()))
-            .id();
-        app.world_mut().entity_mut(child).add_child(grandchild);
-        app.world_mut().entity_mut(root).add_child(child);
-
-        app.update();
-
-        let desired = RenderLayers::layer(SHADOW_ONLY_LAYER);
-        check!(app.world().get::<RenderLayers>(root).cloned() == Some(desired.clone()));
-        check!(app.world().get::<RenderLayers>(child).cloned() == Some(desired.clone()));
-        check!(app.world().get::<RenderLayers>(grandchild).cloned() == Some(desired));
+        app.add_systems(
+            Update,
+            sync_cutaway_shadow_material.after(update_cutaway_system),
+        );
+        app.insert_resource(MaterialAssets::for_test(
+            Handle::default(),
+            Handle::default(),
+        ));
+        app.insert_resource(MaterialList::default());
+        (app, loc)
     }
 
+    /// Spawns a `GridCellMarker` root with one `GiMaterial` leaf; the cell is in the
+    /// hidden octant, so the leaf's material should be swapped to `ShadowOnlyMaterial`
+    /// (invisible to the camera, still casting) and the root marked `CutawayHidden`.
     #[test]
-    fn test_shadow_layer_propagates_to_late_loaded_children() {
-        let (mut app, loc) = shadow_layer_test_app();
+    fn test_hidden_cell_swaps_leaf_to_shadow_only() {
+        let (mut app, loc) = shadow_material_test_app();
 
+        let leaf = app
+            .world_mut()
+            .spawn((MeshMaterial3d::<GiMaterial>(Handle::default()),))
+            .id();
         let root = app
             .world_mut()
             .spawn((GridCellMarker { loc }, Visibility::default()))
             .id();
+        app.world_mut().entity_mut(root).add_child(leaf);
 
         app.update();
 
-        let desired = RenderLayers::layer(SHADOW_ONLY_LAYER);
-        check!(app.world().get::<RenderLayers>(root).cloned() == Some(desired.clone()));
+        check!(app.world().get::<CutawayHidden>(root).is_some());
+        check!(app
+            .world()
+            .get::<MeshMaterial3d<ShadowOnlyMaterial>>(leaf)
+            .is_some());
+        check!(app
+            .world()
+            .get::<MeshMaterial3d<GiMaterial>>(leaf)
+            .is_none());
+    }
 
-        let grandchild = app.world_mut().spawn_empty().id();
-        let child = app.world_mut().spawn_empty().id();
-        app.world_mut().entity_mut(child).add_child(grandchild);
-        app.world_mut().entity_mut(root).add_child(child);
+    /// After a cell is hidden and its leaf swapped to shadow-only, moving the camera
+    /// so the cell leaves the hidden octant should restore the real `GiMaterial`.
+    #[test]
+    fn test_unhidden_cell_restores_leaf_material() {
+        let (mut app, loc) = shadow_material_test_app();
 
+        let leaf = app
+            .world_mut()
+            .spawn((MeshMaterial3d::<GiMaterial>(Handle::default()),))
+            .id();
+        let root = app
+            .world_mut()
+            .spawn((GridCellMarker { loc }, Visibility::default()))
+            .id();
+        app.world_mut().entity_mut(root).add_child(leaf);
+
+        // Frame 1: hidden — leaf becomes shadow-only.
         app.update();
+        check!(app
+            .world()
+            .get::<MeshMaterial3d<ShadowOnlyMaterial>>(leaf)
+            .is_some());
 
-        check!(app.world().get::<RenderLayers>(child).cloned() == Some(desired.clone()));
-        check!(app.world().get::<RenderLayers>(grandchild).cloned() == Some(desired));
+        // Move the camera to the opposite octant so `loc` is no longer hidden.
+        let cam_entity = {
+            let mut q = app.world_mut().query_filtered::<Entity, With<GameCamera>>();
+            q.single(app.world()).unwrap()
+        };
+        app.world_mut()
+            .entity_mut(cam_entity)
+            .insert(GlobalTransform::from(Transform::from_xyz(
+                -10.0, 5.0, -10.0,
+            )));
+
+        // Frame 2: no longer hidden — the real material is restored.
+        app.update();
+        check!(app.world().get::<CutawayHidden>(root).is_none());
+        check!(app
+            .world()
+            .get::<MeshMaterial3d<GiMaterial>>(leaf)
+            .is_some());
+        check!(app
+            .world()
+            .get::<MeshMaterial3d<ShadowOnlyMaterial>>(leaf)
+            .is_none());
     }
 }

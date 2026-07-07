@@ -16,7 +16,7 @@
 use bevy::asset::{Asset, RenderAssetUsages};
 use bevy::image::Image;
 use bevy::math::Vec4;
-use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, StandardMaterial};
+use bevy::pbr::{ExtendedMaterial, Material, MaterialExtension, MaterialPlugin, StandardMaterial};
 use bevy::prelude::*;
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{
@@ -77,10 +77,28 @@ pub fn default_gi_image() -> Image {
     }
 }
 
+/// Shadow-caster-only material: invisible in the color pass (its fragment shader
+/// [assets/static/shaders/shadow_only.wgsl] discards), but still casts shadows,
+/// because the light's shadow/prepass uses a separate depth-only pipeline that
+/// never runs this fragment.
+///
+/// Used for cutaway-hidden geometry, which must stay on the camera's render layer
+/// to cast a shadow into its view (see `queue_shadows`' camera-layer filter) and
+/// therefore can't be hidden with render layers.
+#[derive(Asset, TypePath, AsBindGroup, Clone, Default)]
+pub struct ShadowOnlyMaterial {}
+
+impl Material for ShadowOnlyMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "assets/static/shaders/shadow_only.wgsl".into()
+    }
+}
+
 pub struct GiPlugin;
 
 impl Plugin for GiPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<GiMaterial>::default());
+        app.add_plugins(MaterialPlugin::<ShadowOnlyMaterial>::default());
     }
 }

@@ -21,7 +21,10 @@ use orchitecture_lib::{
         spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
         update_place_highlight, ConstructedCity, PlaceHighlight,
     },
-    cutaway::{propagate_render_layers_system, update_cutaway_system, CutawayMode},
+    cutaway::{
+        propagate_render_layers_system, sync_cutaway_shadow_material, update_cutaway_system,
+        CutawayMode,
+    },
     eorf::{spawn_structures, EorfList},
     game_mode::GameMode,
     gi_material::GiPlugin,
@@ -158,6 +161,7 @@ fn main() {
                 autotile_update_system.after(building_input_system),
                 update_cutaway_system.after(autotile_update_system),
                 propagate_render_layers_system.after(update_cutaway_system),
+                sync_cutaway_shadow_material.after(update_cutaway_system),
                 update_global_illumination.run_if(resource_changed::<ConstructedCity>),
                 (
                     sync_places_system.run_if(resource_changed::<ConstructedCity>),

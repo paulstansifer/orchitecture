@@ -12,7 +12,7 @@ use bevy::prelude::{
 use serde::{Deserialize, Serialize};
 
 use crate::eorf::{EorfId, EorfInfo, EorfList};
-use crate::gi_material::{default_gi_image, GiExtension, GiMaterial};
+use crate::gi_material::{default_gi_image, GiExtension, GiMaterial, ShadowOnlyMaterial};
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 
 /// A score that may be an exact target or a one-sided inequality constraint.
@@ -862,6 +862,9 @@ pub fn spawn_proposal_overlay_assets(
 #[derive(Resource)]
 pub struct MaterialAssets {
     handles: [Handle<GiMaterial>; Material::ALL.len()],
+    /// Shared invisible-but-casts-shadow material for cutaway-hidden cells; see
+    /// `crate::gi_material::ShadowOnlyMaterial` and `cutaway::sync_cutaway_shadow_material`.
+    shadow_only: Handle<ShadowOnlyMaterial>,
 }
 
 impl MaterialAssets {
@@ -869,9 +872,26 @@ impl MaterialAssets {
         self.handles[material as usize].clone()
     }
 
+    /// The shared shadow-only material used for cutaway-hidden geometry.
+    pub fn shadow_only(&self) -> Handle<ShadowOnlyMaterial> {
+        self.shadow_only.clone()
+    }
+
     /// All material handles (one per `Material` variant).
     pub fn all(&self) -> impl Iterator<Item = &Handle<GiMaterial>> {
         self.handles.iter()
+    }
+
+    /// Builds a `MaterialAssets` from bare handles for tests (no `Assets` needed).
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        gi: Handle<GiMaterial>,
+        shadow_only: Handle<ShadowOnlyMaterial>,
+    ) -> Self {
+        MaterialAssets {
+            handles: std::array::from_fn(|_| gi.clone()),
+            shadow_only,
+        }
     }
 }
 
@@ -880,6 +900,7 @@ impl MaterialAssets {
 pub fn spawn_material_assets(
     mut commands: Commands,
     mut materials: ResMut<Assets<GiMaterial>>,
+    mut shadow_only_materials: ResMut<Assets<ShadowOnlyMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let gi_tex = images.add(default_gi_image());
@@ -897,7 +918,11 @@ pub fn spawn_material_assets(
             },
         })
     });
-    commands.insert_resource(MaterialAssets { handles });
+    let shadow_only = shadow_only_materials.add(ShadowOnlyMaterial::default());
+    commands.insert_resource(MaterialAssets {
+        handles,
+        shadow_only,
+    });
 }
 
 /// Furniture cubes (always `Slot::Room`) to highlight in the 3D view for the
