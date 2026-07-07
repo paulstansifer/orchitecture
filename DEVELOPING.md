@@ -69,6 +69,22 @@ Not very important, for non-user-constructed buildings:
 `build.rs` also warns about any `buildables/*.scad` that no autotile rule or
 structure references.
 
+## Wings3D-sourced meshes
+
+A mesh can also come from a hand-modeled `buildables/{name}.wings` file instead of
+`{name}.scad`. Wings3D has no headless/scriptable export, so `build.rs` can't
+compile `.wings` → mesh itself: export a matching `buildables/{name}.glb` by hand
+from the Wings3D GUI (File > Export Selected/All > glTF Binary) and commit it
+alongside the `.wings` source. `build.rs` fails the build if a `.wings` file has no
+matching `.glb`, and warns (without failing) if the `.glb` is older than the
+`.wings` file, since that usually means the export is stale.
+
+Once the `.glb` exists, `{name}` can be used as a mesh name in `structures.autotile`,
+`elements.ron`, or `furniture.ron` exactly like a `.scad`-backed atom — except
+Wings3D-sourced meshes are opaque pre-baked glTF, so they don't support baked
+rotation/translation (`:90`, `:+x`) or CSG (`,`/`*`) in `structures.autotile`, and
+get no cutaway (`-cut-y-pos`) variant.
+
 The checked-in .gtlf files are programmatically-generated from the OpenSCAD files (eventually, this should be part of the build process). To regenerate them:
 ```
 for f in buildables/*.scad; do dest="$(echo "$f" | sed 's/.scad/.gltf/')"; openscad "$f" -o /tmp/tmp.stl && assimp export /tmp/tmp.stl "$dest"; done;

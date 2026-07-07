@@ -32,6 +32,12 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
 
+    // Wings3D has no headless export, so every buildables/*.wings must have a
+    // hand-exported {stem}.glb sitting next to it. Missing exports fail the build;
+    // stale ones (older than the .wings source) just warn.
+    let wings_files = collect_wings_files(&buildables);
+    let wings_stems = check_wings_exports(&wings_files);
+
     let out_dir = manifest.join("assets/generated/autotile");
     fs::create_dir_all(&out_dir)
         .unwrap_or_else(|e| panic!("Failed to create {}: {e}", out_dir.display()));
@@ -57,6 +63,43 @@ fn main() {
     }
 
     for (name, (spec, slot)) in &spec_map {
+        let mut wings_atoms = Vec::new();
+        collect_wings_atoms(spec, &wings_stems, &mut wings_atoms);
+
+        if !wings_atoms.is_empty() {
+            // Wings3D-sourced meshes are opaque pre-baked glTF: there's no OpenSCAD
+            // source to re-run with a rotate()/translate() wrapper or CSG operator,
+            // so only a bare, untransformed atom reference is supported.
+            let plain_wings_atom = match spec {
+                MeshSpec::Atom {
+                    name: atom_name,
+                    rotation: 0,
+                    translation: None,
+                } if wings_stems.contains(atom_name) => Some(atom_name.clone()),
+                _ => None,
+            };
+
+            let Some(atom_name) = plain_wings_atom else {
+                panic!(
+                    "structures.autotile: the mesh spec for \"{name}\" uses {} in a rotated, \
+                     translated, union, or intersection expression, but Wings3D-sourced meshes \
+                     don't support baked rotation/translation or CSG (there's no OpenSCAD \
+                     source to recompile). Reference {} directly, with no `:rotation`, \
+                     `:translation`, `+`, or `*`.",
+                    wings_atoms.join(", "),
+                    if wings_atoms.len() == 1 { "it" } else { "them" }
+                );
+            };
+
+            let glb = buildables.join(format!("{atom_name}.glb"));
+            let main_gltf = out_dir.join(format!("{name}.gltf"));
+            copy_glb_if_needed(&glb, &main_gltf);
+            // No CSG support means no cut-away variant either.
+            let cut_gltf = out_dir.join(format!("{name}-cut-y-pos.gltf"));
+            let _ = fs::remove_file(&cut_gltf);
+            continue;
+        }
+
         let scad_deps = collect_scad_deps(spec, &buildables);
         for dep in &scad_deps {
             println!("cargo:rerun-if-changed={}", dep.display());
@@ -73,10 +116,17 @@ fn main() {
     }
 
     // Generate the fallback meshes for the structures in elements.ron/furniture.ron.
-    generate_structure_meshes(&buildables, &out_dir, &spec_map, &mut referenced_scad);
+    generate_structure_meshes(
+        &buildables,
+        &out_dir,
+        &spec_map,
+        &mut referenced_scad,
+        &wings_stems,
+    );
 
     // Generate atomic meshes in the atomic/ subdirectory.
     generate_atomic_meshes(&buildables, &atomic_out_dir, &mut referenced_scad);
+    generate_wings_atomic_meshes(&atomic_out_dir, &wings_files, &buildables);
 
     // Generate a JSON file mapping structures to their category (elements vs furniture).
     generate_structure_categories(&buildables, &out_dir);
@@ -319,6 +369,7 @@ fn generate_structure_meshes(
     out_dir: &Path,
     spec_map: &HashMap<String, (MeshSpec, UnorientedSlot)>,
     referenced_scad: &mut HashSet<PathBuf>,
+    wings_stems: &HashSet<String>,
 ) {
     let elements_path = buildables.join("elements.ron");
     let furniture_path = buildables.join("furniture.ron");
@@ -336,11 +387,6 @@ fn generate_structure_meshes(
     for info in infos {
         let stem = info.name.replace(' ', "_");
         let scad = buildables.join(format!("{stem}.scad"));
-        if !scad.exists() {
-            continue;
-        }
-        println!("cargo:rerun-if-changed={}", scad.display());
-        referenced_scad.insert(scad.clone());
 
         // If the autotile rules already emit this stem, they produce the same atom
         // mesh (and cut); don't regenerate it.
@@ -348,26 +394,38 @@ fn generate_structure_meshes(
             continue;
         }
 
-        // A trivial (unrotated) atom; slot only matters for rotated atoms.
-        let spec = MeshSpec::Atom {
-            name: stem.clone(),
-            rotation: 0,
-            translation: None,
-        };
-        let inputs: Vec<&Path> = vec![
-            elements_path.as_path(),
-            furniture_path.as_path(),
-            scad.as_path(),
-        ];
-        generate_if_needed(
-            &stem,
-            &spec,
-            UnorientedSlot::Room,
-            buildables,
-            out_dir,
-            &inputs,
-            !info.furniture,
-        );
+        if scad.exists() {
+            println!("cargo:rerun-if-changed={}", scad.display());
+            referenced_scad.insert(scad.clone());
+
+            // A trivial (unrotated) atom; slot only matters for rotated atoms.
+            let spec = MeshSpec::Atom {
+                name: stem.clone(),
+                rotation: 0,
+                translation: None,
+            };
+            let inputs: Vec<&Path> = vec![
+                elements_path.as_path(),
+                furniture_path.as_path(),
+                scad.as_path(),
+            ];
+            generate_if_needed(
+                &stem,
+                &spec,
+                UnorientedSlot::Room,
+                buildables,
+                out_dir,
+                &inputs,
+                !info.furniture,
+            );
+        } else if wings_stems.contains(&stem) {
+            // No CSG support for Wings3D-sourced meshes means no cut-away variant.
+            let glb = buildables.join(format!("{stem}.glb"));
+            let main_gltf = out_dir.join(format!("{stem}.gltf"));
+            let cut_gltf = out_dir.join(format!("{stem}-cut-y-pos.gltf"));
+            let _ = fs::remove_file(&cut_gltf);
+            copy_glb_if_needed(&glb, &main_gltf);
+        }
     }
 }
 
@@ -441,6 +499,128 @@ fn collect_autotile_files(dir: &Path) -> Vec<PathBuf> {
         .collect();
     paths.sort(); // deterministic order
     paths
+}
+
+fn collect_wings_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return vec![];
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wings"))
+        .collect();
+    paths.sort(); // deterministic order
+    paths
+}
+
+// ─── Wings3D export freshness ───────────────────────────────────────────────
+
+/// Wings3D has no headless/scriptable export, so every `buildables/*.wings` file
+/// needs a hand-exported `{stem}.glb` sitting next to it (File > Export Selected/All
+/// > glTF Binary in the Wings3D GUI). A missing export fails the build outright,
+/// since there's nothing we could generate in its place; a stale one (older than
+/// the .wings source, meaning it predates the last edit) only warns, since it may
+/// still be an intentional/usable export.
+///
+/// Returns the stems of all `.wings` files (all of which are confirmed to have a
+/// `.glb` by the time this returns, since a missing one panics).
+fn check_wings_exports(wings_files: &[PathBuf]) -> HashSet<String> {
+    let mut stems = HashSet::new();
+    let mut missing = Vec::new();
+
+    for wings in wings_files {
+        println!("cargo:rerun-if-changed={}", wings.display());
+        let stem = wings
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap()
+            .to_owned();
+        let glb = wings.with_extension("glb");
+        println!("cargo:rerun-if-changed={}", glb.display());
+
+        match fs::metadata(&glb) {
+            Err(_) => missing.push(glb),
+            Ok(glb_meta) => {
+                let wings_meta = fs::metadata(wings)
+                    .unwrap_or_else(|e| panic!("Failed to stat {}: {e}", wings.display()));
+                if let (Ok(glb_time), Ok(wings_time)) = (glb_meta.modified(), wings_meta.modified())
+                {
+                    if glb_time < wings_time {
+                        println!(
+                            "cargo:warning={} is older than {} — re-export it from Wings3D \
+                             (File > Export Selected/All > glTF Binary)",
+                            glb.display(),
+                            wings.display()
+                        );
+                    }
+                }
+                stems.insert(stem);
+            }
+        }
+    }
+
+    if !missing.is_empty() {
+        let list = missing
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        panic!(
+            "Missing Wings3D export(s): {list}. Wings3D has no headless export, so export each \
+             .wings file to a matching .glb by hand in the Wings3D GUI (File > Export Selected/All \
+             > glTF Binary) and commit the .glb alongside the .wings source."
+        );
+    }
+
+    stems
+}
+
+/// Copy a hand-exported `.glb` to a generated `.gltf` path if the `.glb` is newer.
+/// Bevy's glTF loader auto-detects binary vs. text glTF from the file's magic bytes,
+/// not its extension, so a `.glb`'s bytes work fine at a `.gltf`-suffixed path.
+fn copy_glb_if_needed(glb: &Path, gltf_out: &Path) {
+    if !needs_rebuild(gltf_out, &[glb]) {
+        return;
+    }
+    if let Err(e) = fs::copy(glb, gltf_out) {
+        println!(
+            "cargo:warning=Failed to copy {} to {}: {e}",
+            glb.display(),
+            gltf_out.display()
+        );
+    }
+}
+
+/// Generate `.gltf` files (by copying the hand-exported `.glb`) for all Wings3D
+/// atomic meshes, in the atomic/ subdirectory — mirrors `generate_atomic_meshes`
+/// for `.scad` files.
+fn generate_wings_atomic_meshes(atomic_out_dir: &Path, wings_files: &[PathBuf], buildables: &Path) {
+    for wings in wings_files {
+        let stem = wings.file_stem().and_then(|s| s.to_str()).unwrap();
+        if stem.starts_with("u_") {
+            continue;
+        }
+        let glb = buildables.join(format!("{stem}.glb"));
+        let out = atomic_out_dir.join(format!("{stem}.gltf"));
+        copy_glb_if_needed(&glb, &out);
+    }
+}
+
+/// Wings3D-backed atom names referenced anywhere in `spec` (deduplicated).
+fn collect_wings_atoms(spec: &MeshSpec, wings_stems: &HashSet<String>, found: &mut Vec<String>) {
+    match spec {
+        MeshSpec::Atom { name, .. } => {
+            if wings_stems.contains(name) && !found.contains(name) {
+                found.push(name.clone());
+            }
+        }
+        MeshSpec::Union(a, b) | MeshSpec::Intersection(a, b) => {
+            collect_wings_atoms(a, wings_stems, found);
+            collect_wings_atoms(b, wings_stems, found);
+        }
+        MeshSpec::Rotation(_, inner) => collect_wings_atoms(inner, wings_stems, found),
+    }
 }
 
 // ─── Spec collection ──────────────────────────────────────────────────────────
