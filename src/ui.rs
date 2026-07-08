@@ -94,7 +94,8 @@ pub fn shared_ui_system(
     let n_display = m + months_remaining;
 
     // Farm/market status.
-    let market_stand_count = crate::place::count_placed_places_named(&constructed, "market stand");
+    let market_stand_count =
+        crate::place::count_furniture_named_in_places(&constructed, "market stand", "market");
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
     let has_farms_invited = invited_count > 0;
     let has_traveler_invited = traveler_state.invited;

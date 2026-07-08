@@ -213,8 +213,10 @@ pub fn surroundings_ui_system(
     // ── Farm info panels ──────────────────────────────────────────────────────
     const PANEL_W: f32 = 110.0;
 
-    // Maximum invitees = number of placed market stand stations.
-    let market_stand_count = crate::place::count_placed_places_named(&constructed, "market stand");
+    // Maximum invitees = number of market stand furniture placed across all
+    // market places.
+    let market_stand_count =
+        crate::place::count_furniture_named_in_places(&constructed, "market stand", "market");
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
     let invite_limit_reached = invited_count >= market_stand_count;
 

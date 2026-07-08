@@ -822,18 +822,32 @@ pub fn storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
         .collect()
 }
 
-/// Number of placed places whose place type has the given name (e.g. how many
-/// "market stand" places exist).
-pub fn count_placed_places_named(cw: &ConstructedCity, name: &str) -> usize {
-    cw.places
+/// Number of furniture pieces named `furniture_name` fulfilling placed places
+/// whose place type is named `place_name` (e.g. how many "market stand"
+/// furniture are placed across all "market" places).
+pub fn count_furniture_named_in_places(
+    cw: &ConstructedCity,
+    furniture_name: &str,
+    place_name: &str,
+) -> usize {
+    cw.placed_places
         .iter()
-        .position(|p| p.name == name)
-        .map_or(0, |idx| {
-            cw.placed_places
-                .iter()
-                .filter(|(_, pp)| pp.place == idx)
-                .count()
+        .filter(|(_, pp)| cw.places[pp.place].name == place_name)
+        .flat_map(|(_, pp)| pp.fulfillments.iter())
+        .filter(|f| match f {
+            FulfilledPorf::Furniture(cube) => {
+                let loc = SlotCoord {
+                    cube: *cube,
+                    slot: Slot::Room,
+                };
+                cw.contents.get(loc).is_some_and(|cell| {
+                    let info = &cw.eorfs[cell.id.as_usize()];
+                    info.is_furniture() && info.name == furniture_name
+                })
+            }
+            FulfilledPorf::Place(_) => false,
         })
+        .count()
 }
 
 /// Total quantity of `res` held across all storage places.
@@ -954,13 +968,6 @@ pub fn place_initial_places(
     let Some(market_stand_id) = constructed.find_structure_by_name("market stand") else {
         return changes;
     };
-    let Some(market_stand_place_index) = constructed
-        .places
-        .iter()
-        .position(|s| s.name == "market stand")
-    else {
-        return changes;
-    };
 
     let market_stand_positions = [
         IVec3::new(1, 0, -1),
@@ -980,16 +987,6 @@ pub fn place_initial_places(
         };
         constructed.contents.set(loc, cell.clone());
         changes.push((loc, Some(cell)));
-    }
-
-    // Register each market stand as its own place.
-    for cube in &market_stand_positions {
-        constructed.placed_places.insert(ParticularPlace {
-            place: market_stand_place_index,
-            fulfillments: vec![FulfilledPorf::Furniture(*cube)],
-            contents: Inventory::new(8, 20.0),
-            restriction: ParentRestriction::Unrestricted,
-        });
     }
 
     changes
