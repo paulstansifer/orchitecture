@@ -855,7 +855,7 @@ fn build_footer(
 /// `switch_to_furniture`) to switch to the Furniture tab.
 fn place_requirements_ui(
     ui: &mut egui::Ui,
-    places: &[crate::place::PlaceInfo],
+    places: &[crate::place::Place],
     eorfs: &[crate::eorf::EorfInfo],
     place_idx: usize,
     visited: &mut Vec<usize>,

@@ -280,7 +280,7 @@ pub struct ConstructedCity {
     /// Duplicated from the `Res<>` for simplicity:
     pub eorfs: Vec<EorfInfo>,
     /// Duplicated from the `Res<>` for simplicity:
-    pub places: Vec<crate::place::PlaceInfo>,
+    pub places: Vec<crate::place::Place>,
     /// Per-instance `ParentRestriction` for furniture, keyed by the cube it's
     /// placed at. Set in the UI; absent means `Unrestricted`. Cleared via
     /// `set_cell`/`take_cell` whenever the furniture there is overwritten or

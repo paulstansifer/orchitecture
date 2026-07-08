@@ -269,15 +269,15 @@ mod tests {
     use crate::eorf::load_structure_info;
     use crate::materials::BuildMaterialId;
     use crate::place::{
-        FulfilledPorf, ParticularPlace, PlaceInfo, PlaceReq, Porf, QualityAspect, QualityFactor,
+        FulfilledPorf, ParticularPlace, Place, PlaceReq, Porf, QualityAspect, QualityFactor,
     };
     use crate::resource::Inventory;
     use crate::sparse3d::{Facing, RelSlot, Slot, SlotCoord};
 
     use super::{compute_outdoorsness, compute_spaciousness, evaluate_place};
 
-    fn place_def(quality_factors: Vec<QualityFactor>) -> PlaceInfo {
-        PlaceInfo {
+    fn place_def(quality_factors: Vec<QualityFactor>) -> Place {
+        Place {
             name: "test place".to_string(),
             requirements: vec![PlaceReq {
                 requirement: Porf::Furniture("bin".to_string()),
@@ -294,11 +294,7 @@ mod tests {
 
     /// Places a "bin" core furniture at `core` and registers a `ParticularPlace`
     /// for `def` around it. Returns the new place's id.
-    fn place_at(
-        cw: &mut ConstructedCity,
-        def: PlaceInfo,
-        core: IVec3,
-    ) -> crate::place::PlacedPlaceId {
+    fn place_at(cw: &mut ConstructedCity, def: Place, core: IVec3) -> crate::place::PlacedPlaceId {
         let bin_id = cw.find_structure_by_name("bin").unwrap();
         cw.contents.set(
             SlotCoord {

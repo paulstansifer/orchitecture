@@ -150,12 +150,12 @@ pub fn sync_assignments(mut population: ResMut<Population>, cw: Res<ConstructedC
 mod tests {
     use super::*;
     use crate::eorf::EorfInfo;
-    use crate::place::{FulfilledPorf, ParticularPlace, PlaceInfo, PlaceReq, Porf};
+    use crate::place::{FulfilledPorf, ParticularPlace, Place, PlaceReq, Porf};
     use bevy::math::IVec3;
     use std::collections::HashSet;
 
-    fn bedroom_place() -> PlaceInfo {
-        PlaceInfo {
+    fn bedroom_place() -> Place {
+        Place {
             name: "bedroom".to_string(),
             requirements: vec![PlaceReq {
                 requirement: Porf::Furniture("pallet".to_string()),
