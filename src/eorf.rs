@@ -208,8 +208,14 @@ pub fn spawn_structures(asset_server: Res<AssetServer>, mut structure_list: ResM
 
     for info in &infos {
         let stem = structure_mesh_stem(&info.name);
-        let mesh_handle =
-            asset_server.load(format!("assets/generated/autotile/{stem}.gltf#Scene0"));
+        // Structures drawn entirely by autotile rules (e.g. "column", "roof") have
+        // no `{stem}.scad` and so build.rs generates no fallback mesh for them;
+        // loading a nonexistent path would just spam the asset-server error log.
+        let mesh_handle = if autotile_gltf_present(&stem, "") {
+            asset_server.load(format!("assets/generated/autotile/{stem}.gltf#Scene0"))
+        } else {
+            Handle::default()
+        };
         let cut_handle = if autotile_gltf_present(&stem, "-cut-y-pos") {
             Some(asset_server.load(format!(
                 "assets/generated/autotile/{stem}-cut-y-pos.gltf#Scene0"
