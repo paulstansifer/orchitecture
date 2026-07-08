@@ -41,5 +41,15 @@
             ),
         ],
         storage: None,
+        quality_factors: [
+            (
+                aspect: Indoors,
+                strength: 0.0,
+                range: (
+                    start: 0.0,
+                    end: 1.0
+                )
+            ),
+        ]
     ),
 ]
