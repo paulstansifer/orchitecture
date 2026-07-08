@@ -95,12 +95,12 @@ V:
   @ 
 --> h_corner_fill_full:90
 
-==floor:floor==
-V:
-  .
- @ .
-  w
---> (multi) h_corner_fill_full_ceiling:90
+#==floor:floor==
+#V:
+#  .
+# @ .
+#  w
+#--> (multi) h_corner_fill_full_ceiling:90
 
 ==roof:floor==
 V:
