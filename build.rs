@@ -838,8 +838,21 @@ fn generate_if_needed(
 fn compile_scad(scad_path: &Path, gltf_out: &Path) {
     let tmp_stl = std::env::temp_dir().join("orchitecture_autotile.stl");
 
+    // OpenSCAD is Z-up; the game (and every mesh format it loads, including
+    // Wings3D-sourced glTF) is Y-up. Apply the correction here, as the outermost
+    // (last-applied) transform, so every OpenSCAD-derived asset comes out of the
+    // build already in game coordinates — including "plain" atoms referenced
+    // directly by elements.ron/furniture.ron/structures.autotile with no baked
+    // rotation/translation of their own.
+    let out_dir = scad_path.parent().unwrap();
+    let target_name = scad_path.file_name().unwrap().to_str().unwrap();
+    let wrapper_path = out_dir.join(format!("{target_name}.yup.scad"));
+    let wrapper_src = format!("rotate([-90, 0, 0]) {{\n    include <{target_name}>\n}}\n");
+    fs::write(&wrapper_path, &wrapper_src)
+        .unwrap_or_else(|e| panic!("Failed to write {}: {e}", wrapper_path.display()));
+
     let openscad = Command::new("openscad")
-        .arg(scad_path)
+        .arg(&wrapper_path)
         .arg("-o")
         .arg(&tmp_stl)
         .output();

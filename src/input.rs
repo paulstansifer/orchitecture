@@ -15,7 +15,6 @@ use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::eorf::{EorfId, EorfList, PlacementStyle};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::util::zup_scene_transform;
 
 /// Bundles read-only resources used by `building_input_system` so its
 /// parameter count stays under Bevy's system-function arity limit (16).
@@ -76,7 +75,7 @@ pub fn cursor_system(
                     let facing = Facing::from_number(build_state.wall_plop_dir(loc.slot) as u8);
                     (loc.slot, loc.cube, facing)
                 };
-                let tr = zup_scene_transform(cell_transform(slot, facing, cube));
+                let tr = cell_transform(slot, facing, cube);
                 t.translation = tr.translation;
                 t.rotation = tr.rotation;
                 t.scale = Vec3::splat(0.999);

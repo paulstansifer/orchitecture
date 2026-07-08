@@ -78,4 +78,17 @@
         ),
         cost: [(Straw, 2), (Canvas, 2)],
     ),
+    (
+        name: "hearth",
+        placement_style: RoomPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.9,
+            passable: 0.8,
+            decorative: 0.4,
+            striated: 0.0,
+        ),
+        cost: [(Fieldstone, 5), (Timber, 3)],
+    )
 ]

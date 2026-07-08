@@ -622,8 +622,7 @@ pub fn apply_changes(
         // Clear autotile state so the per-frame system unconditionally re-evaluates.
         assembled.autotile_results.remove(&loc);
         if let Some(cell) = new_cell {
-            let transform =
-                crate::util::zup_scene_transform(cell_transform(loc.slot, cell.facing, loc.cube));
+            let transform = cell_transform(loc.slot, cell.facing, loc.cube);
             let handle = structure_list.scene_handle(cell.id).clone();
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
