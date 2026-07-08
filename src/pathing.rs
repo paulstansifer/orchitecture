@@ -12,7 +12,8 @@
 //! Floor/ceiling boundary nodes are deliberately left at the grid's impassable
 //! default: there is no general vertical connectivity, only the explicit
 //! `Nav::Portal` edges added for `stairs` below.
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 
 use bevy::math::{IVec3, UVec3};
 use bevy::prelude::{Commands, Res, Resource};
@@ -175,6 +176,39 @@ impl GridSpace {
     }
 }
 
+/// A `reachable_within` frontier entry: ordered by `cost` alone (via a
+/// tie-break on position, for a total order `BinaryHeap` requires), so
+/// wrapping it in `Reverse` turns the heap into a min-priority queue.
+struct HeapEntry {
+    cost: u32,
+    cube: IVec3,
+    pos: UVec3,
+}
+
+impl Ord for HeapEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cost
+            .cmp(&other.cost)
+            .then_with(|| self.cube.x.cmp(&other.cube.x))
+            .then_with(|| self.cube.y.cmp(&other.cube.y))
+            .then_with(|| self.cube.z.cmp(&other.cube.z))
+    }
+}
+
+impl PartialOrd for HeapEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for HeapEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for HeapEntry {}
+
 /// The navigation grid over the current `ConstructedCity`, rebuilt whenever
 /// the city changes (see `rebuild_navigation_grid`).
 #[derive(Resource)]
@@ -209,6 +243,114 @@ impl NavigationGrid {
             return false;
         };
         self.grid.is_path_viable(start, goal)
+    }
+
+    /// All Room cubes reachable from `from` with total movement cost at most
+    /// `max_cost` (mirroring the same per-node `Nav::Passable`/`Nav::Portal`
+    /// costs `find_path` weighs its routes by), including `from` itself at
+    /// cost 0. For debug visualization and similar budgeted-reachability uses.
+    pub fn reachable_within(&self, from: IVec3, max_cost: u32) -> Vec<IVec3> {
+        let Some(start) = self.space.room_doubled(from) else {
+            return Vec::new();
+        };
+        if !matches!(
+            self.grid.nav(start),
+            Some(Nav::Passable(_)) | Some(Nav::Portal(_))
+        ) {
+            return Vec::new();
+        }
+
+        let mut cost_from_start: HashMap<IVec3, u32> = HashMap::from([(from, 0)]);
+        let mut frontier = BinaryHeap::from([Reverse(HeapEntry {
+            cost: 0,
+            cube: from,
+            pos: start,
+        })]);
+
+        while let Some(Reverse(HeapEntry { cost, cube, pos })) = frontier.pop() {
+            if cost_from_start.get(&cube).is_some_and(|&best| cost > best) {
+                continue; // Stale entry from before a cheaper route was found.
+            }
+            for (neighbor_cube, neighbor_pos, edge_cost) in self.room_neighbors(cube, pos) {
+                let neighbor_cost = cost + edge_cost;
+                if neighbor_cost > max_cost {
+                    continue;
+                }
+                if cost_from_start
+                    .get(&neighbor_cube)
+                    .is_some_and(|&best| neighbor_cost >= best)
+                {
+                    continue;
+                }
+                cost_from_start.insert(neighbor_cube, neighbor_cost);
+                frontier.push(Reverse(HeapEntry {
+                    cost: neighbor_cost,
+                    cube: neighbor_cube,
+                    pos: neighbor_pos,
+                }));
+            }
+        }
+
+        cost_from_start.into_keys().collect()
+    }
+
+    /// Room cubes directly reachable from `cube` in a single step: open
+    /// horizontal neighbors, plus the far side of a stairs portal if `cube`
+    /// has one. For debug visualization (e.g. drawing edges between
+    /// reachable cubes); `cube` need not itself be reachable from anywhere.
+    pub fn connected_neighbors(&self, cube: IVec3) -> Vec<IVec3> {
+        let Some(pos) = self.space.room_doubled(cube) else {
+            return Vec::new();
+        };
+        self.room_neighbors(cube, pos)
+            .into_iter()
+            .map(|(neighbor_cube, _, _)| neighbor_cube)
+            .collect()
+    }
+
+    /// Room cubes directly reachable from `cube` (at doubled position `pos`)
+    /// in a single step, alongside the movement cost of taking that step:
+    /// open horizontal neighbors (boundary cost plus the neighbor room's own
+    /// cost, mirroring the two doubled-grid nodes crossed), plus the far side
+    /// of a stairs portal if `cube` has one (just the target's own cost, same
+    /// as `find_path`'s underlying grid pays for a portal hop).
+    fn room_neighbors(&self, cube: IVec3, pos: UVec3) -> Vec<(IVec3, UVec3, u32)> {
+        let mut neighbors = Vec::new();
+        for dir in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z] {
+            let neighbor_cube = cube + dir;
+            let Some(neighbor_pos) = self.space.room_doubled(neighbor_cube) else {
+                continue;
+            };
+            let Some(boundary_pos) = self
+                .space
+                .boundary_doubled(horizontal_boundary_loc(cube, neighbor_cube))
+            else {
+                continue;
+            };
+            let Some(Nav::Passable(boundary_cost)) = self.grid.nav(boundary_pos) else {
+                continue;
+            };
+            if let Some(neighbor_cost) = self.grid.nav(neighbor_pos).and_then(nav_cost) {
+                neighbors.push((neighbor_cube, neighbor_pos, boundary_cost + neighbor_cost));
+            }
+        }
+        if let Some(Nav::Portal(portal)) = self.grid.nav(pos) {
+            if let Some(target_cube) = self.space.cube_of_room(portal.target) {
+                let target_cost = self.grid.nav(portal.target).and_then(nav_cost).unwrap_or(0);
+                neighbors.push((target_cube, portal.target, target_cost));
+            }
+        }
+        neighbors
+    }
+}
+
+/// The movement cost of arriving at a node with the given `Nav`, or `None` if
+/// it's impassable.
+fn nav_cost(nav: Nav) -> Option<u32> {
+    match nav {
+        Nav::Passable(cost) => Some(cost),
+        Nav::Portal(portal) => Some(portal.cost),
+        Nav::Impassable => None,
     }
 }
 
@@ -522,5 +664,64 @@ mod tests {
         let city = test_city();
         let nav = build_navigation_grid(&city);
         check!(!nav.is_connected(IVec3::new(0, 0, 0), IVec3::new(0, 1, 0)));
+    }
+
+    #[test]
+    fn reachable_within_includes_start_and_respects_cost_budget() {
+        let city = test_city();
+        let nav = build_navigation_grid(&city);
+        let origin = IVec3::new(0, 0, 0);
+
+        let zero_budget = nav.reachable_within(origin, 0);
+        check!(zero_budget == vec![origin]);
+
+        // An open horizontal step costs 2 (boundary 1 + room 1), so a budget
+        // of 1 can't afford any step, but 2 reaches all 4 neighbors.
+        let no_budget_for_a_step = nav.reachable_within(origin, 1);
+        check!(no_budget_for_a_step == vec![origin]);
+
+        let one_step = nav.reachable_within(origin, 2);
+        check!(one_step.len() == 5); // origin plus its 4 open horizontal neighbors.
+        check!(one_step.contains(&origin));
+        check!(one_step.contains(&IVec3::new(1, 0, 0)));
+        check!(one_step.contains(&IVec3::new(-1, 0, 0)));
+        check!(one_step.contains(&IVec3::new(0, 0, 1)));
+        check!(one_step.contains(&IVec3::new(0, 0, -1)));
+    }
+
+    #[test]
+    fn reachable_within_stops_at_walls() {
+        let mut city = test_city();
+        enclose_except_east(&mut city);
+        let nav = build_navigation_grid(&city);
+        // Only the east face is open, so a budget for a single open step (2)
+        // can only reach that neighbor (the other 3 directions require
+        // walking around, which costs more).
+        let mut reachable = nav.reachable_within(IVec3::new(0, 0, 0), 2);
+        reachable.sort_by_key(|c| (c.x, c.y, c.z));
+        check!(reachable == vec![IVec3::new(0, 0, 0), IVec3::new(1, 0, 0)]);
+    }
+
+    #[test]
+    fn reachable_within_respects_higher_room_cost() {
+        let mut city = test_city();
+        // "table" has `passable: 0.5` (embedding cost -> Nav::Passable(2)),
+        // so entering (1, 0, 0) costs 2 instead of the default 1.
+        place(
+            &mut city,
+            IVec3::new(1, 0, 0),
+            Slot::Room,
+            "table",
+            Facing::NegX,
+        );
+        let nav = build_navigation_grid(&city);
+        let origin = IVec3::new(0, 0, 0);
+
+        // Open boundary (1) + table room (2) = 3 total; budget 2 falls short.
+        let just_short = nav.reachable_within(origin, 2);
+        check!(!just_short.contains(&IVec3::new(1, 0, 0)));
+
+        let enough = nav.reachable_within(origin, 3);
+        check!(enough.contains(&IVec3::new(1, 0, 0)));
     }
 }

@@ -4,12 +4,14 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::game_mode::GameMode;
+use crate::orc::DebugNav;
 use crate::ortho_camera::WalkCameraState;
 
 pub fn walk_ui_system(
     mut contexts: EguiContexts,
     mut next_game_mode: ResMut<NextState<GameMode>>,
     walk_state: Res<WalkCameraState>,
+    mut debug_nav: ResMut<DebugNav>,
 ) {
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
@@ -22,6 +24,8 @@ pub fn walk_ui_system(
             if ui.button("Build").clicked() {
                 next_game_mode.set(GameMode::Build);
             }
+            ui.separator();
+            ui.checkbox(&mut debug_nav.0, "Debug Nav");
         });
     });
 

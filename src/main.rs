@@ -36,7 +36,8 @@ use orchitecture_lib::{
     },
     materials::MaterialList,
     orc::{
-        despawn_orc, orc_click_to_move_system, orc_input_system, setup_orc_animation, spawn_orc,
+        despawn_orc, draw_debug_nav_gizmos, orc_click_to_move_system, orc_input_system,
+        setup_orc_animation, spawn_orc, DebugNav,
     },
     ortho_camera::{
         resize_pixel_canvas_system, spawn_pixel_canvas, walk_camera_system, PixelCanvas,
@@ -111,6 +112,7 @@ fn main() {
         .insert_resource(PlaceHighlight::default())
         .insert_resource(GameClock::default())
         .insert_resource(MaterialList::load())
+        .insert_resource(DebugNav::default())
         .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))
         .add_systems(OnExit(GameMode::Walk), despawn_orc)
         .add_systems(OnEnter(GameMode::Build), enter_build_mode)
@@ -156,6 +158,7 @@ fn main() {
                 orc_input_system
                     .run_if(in_state(GameMode::Walk))
                     .after(orc_click_to_move_system),
+                draw_debug_nav_gizmos.run_if(in_state(GameMode::Walk)),
                 resize_pixel_canvas_system,
                 recolor_new_mesh_children,
                 autotile_update_system.after(building_input_system),

@@ -13,6 +13,17 @@ use crate::camera::{cursor_to_viewport, GameCamera};
 use crate::ortho_camera::{cam_fwd_xz_base, trimetric_camera_basis, WalkCameraState};
 use crate::pathing::NavigationGrid;
 
+/// Movement-cost budget within which reachable cubes are highlighted by
+/// `draw_debug_nav_gizmos` when `DebugNav` is enabled. An open horizontal
+/// step costs 2 (a boundary plus a room, each defaulting to cost 1), so this
+/// roughly covers 6 unobstructed steps; costlier doors/rooms shrink it.
+const DEBUG_NAV_BUDGET: u32 = 12;
+
+/// Toggled by the "Debug Nav" checkbox in the Walk mode bottom bar; when set,
+/// `draw_debug_nav_gizmos` highlights cubes reachable from the orc.
+#[derive(Resource, Default)]
+pub struct DebugNav(pub bool);
+
 /// Clip indices within assets/static/orcs/orc1_mesh2motion.glb.
 /// Order: Idle Listening(0), Sitting_Enter(1), Sprint_Loop(2), Walk_Loop(3).
 const IDLE_ANIMATION_INDEX: usize = 0;
@@ -49,9 +60,25 @@ pub fn spawn_orc(mut commands: Commands, asset_server: Res<AssetServer>) {
                 nav_path: VecDeque::new(),
             },
             SceneRoot(asset_server.load("assets/static/orcs/orc1_mesh2motion.glb#Scene0")),
-            Transform::from_xyz(0.0, 0.1, 0.0).with_scale(Vec3::splat(0.5)),
+            Transform::from_xyz(0.5, 0.1, 0.5).with_scale(Vec3::splat(0.5)),
         ))
         .observe(on_orc_scene_ready);
+}
+
+/// Recovers the room cube whose center-bottom a world position sits at (the
+/// inverse of `cube_center_bottom`), rounding to absorb float drift.
+fn cube_of_center_bottom(pos: Vec3) -> IVec3 {
+    (pos - Vec3::new(0.5, 0.0, 0.5)).round().as_ivec3()
+}
+
+/// The world position at the center of `cube`'s bottom face, offset up by
+/// `y_offset` (how far above the floor the orc's origin sits).
+fn cube_center_bottom(cube: IVec3, y_offset: f32) -> Vec3 {
+    Vec3::new(
+        cube.x as f32 + 0.5,
+        cube.y as f32 + y_offset,
+        cube.z as f32 + 0.5,
+    )
 }
 
 fn on_orc_scene_ready(
@@ -203,7 +230,7 @@ pub fn orc_click_to_move_system(
     // so rounding a hit's world position recovers its cube uniformly whether
     // it's the ground, a floor, or a room interior.
     let to = hit.point.round().as_ivec3();
-    let from = transform.translation.round().as_ivec3();
+    let from = cube_of_center_bottom(transform.translation);
     if let Some(path) = nav_grid.find_path(from, to) {
         orc.nav_path = path.into();
     }
@@ -257,7 +284,7 @@ pub fn orc_input_system(
         transform.look_to(-rounded_dir, Vec3::Y);
     } else if let Some(&next) = orc.nav_path.front() {
         // `Orc` walks at `floor_y + 0.1` (see `spawn_orc`), so waypoints keep that offset.
-        let target = Vec3::new(next.x as f32, next.y as f32 + 0.1, next.z as f32);
+        let target = cube_center_bottom(next, 0.1);
         let to_target = target - transform.translation;
         let dist = to_target.length();
         const ARRIVE_EPS: f32 = 0.05;
@@ -301,5 +328,63 @@ pub fn orc_input_system(
         }
         // Already in the right state.
         _ => {}
+    }
+}
+
+/// Draws a thin cylinder from `a` to `b` (world positions), oriented along
+/// the segment between them.
+fn draw_cylinder_between(gizmos: &mut Gizmos, a: Vec3, b: Vec3, radius: f32, color: Color) {
+    let delta = b - a;
+    let length = delta.length();
+    if length < 1e-6 {
+        return;
+    }
+    let mid = (a + b) * 0.5;
+    let rotation = Quat::from_rotation_arc(Vec3::Y, delta / length);
+    gizmos.primitive_3d(
+        &Cylinder::new(radius, length),
+        Isometry3d::new(mid, rotation),
+        color,
+    );
+}
+
+/// When `DebugNav` is enabled, draws a green sphere at the center of every
+/// cube reachable from the orc within `DEBUG_NAV_BUDGET` movement cost, plus
+/// a cylinder linking each pair of reachable cubes directly connected to
+/// each other.
+pub fn draw_debug_nav_gizmos(
+    debug_nav: Res<DebugNav>,
+    nav_grid: Option<Res<NavigationGrid>>,
+    orcs: Query<&Transform, With<Orc>>,
+    mut gizmos: Gizmos,
+) {
+    if !debug_nav.0 {
+        return;
+    }
+    let Some(nav_grid) = nav_grid else {
+        return;
+    };
+    let Ok(transform) = orcs.single() else {
+        return;
+    };
+
+    let from = cube_of_center_bottom(transform.translation);
+    let reachable = nav_grid.reachable_within(from, DEBUG_NAV_BUDGET);
+    let reachable_set: HashSet<IVec3> = reachable.iter().copied().collect();
+    let color = Color::srgb(0.0, 1.0, 0.0);
+
+    for &cube in &reachable {
+        gizmos.sphere(cube_center_bottom(cube, 0.5), 0.15, color);
+        for neighbor in nav_grid.connected_neighbors(cube) {
+            if reachable_set.contains(&neighbor) {
+                draw_cylinder_between(
+                    &mut gizmos,
+                    cube_center_bottom(cube, 0.5),
+                    cube_center_bottom(neighbor, 0.5),
+                    0.02,
+                    color,
+                );
+            }
+        }
     }
 }
