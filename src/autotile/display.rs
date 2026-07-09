@@ -10,7 +10,6 @@ use crate::city::{
 };
 use crate::eorf::{EorfId, EorfList};
 use crate::sparse3d::{Facing, SlotCoord};
-use crate::util::zup_scene_transform;
 
 use super::meshes::{AutotileHandles, AutotileRules};
 use super::parser::char_matches_name;
@@ -75,7 +74,7 @@ fn spawn_entities_from_results(
         if let AutotileResult::Mesh { spec, .. } = result {
             let stem = spec_stem(spec, unoriented);
             if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
-                let transform = zup_scene_transform(autotile_transform(loc, facing, spec));
+                let transform = autotile_transform(loc, facing, spec);
                 entities.push(spawn_one(
                     commands,
                     SceneRoot(main_handle.clone()),
@@ -109,7 +108,7 @@ fn apply_autotile_updates(
         }
         let new_entities = if use_fallback && new_results.is_empty() {
             let handle = structure_list.scene_handle(cell.id).clone();
-            let transform = zup_scene_transform(cell_transform(loc.slot, cell.facing, loc.cube));
+            let transform = cell_transform(loc.slot, cell.facing, loc.cube);
             vec![make_entity(commands, SceneRoot(handle), transform, loc)]
         } else {
             spawn_entities_from_results(

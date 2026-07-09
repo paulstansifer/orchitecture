@@ -41,5 +41,91 @@
             ),
         ],
         storage: None,
+        quality_factors: [
+            (
+                aspect: Indoors,
+                strength: 0.0,
+                range: (
+                    start: 0.0,
+                    end: 1.0
+                )
+            ),
+        ]
     ),
+    (
+        name: "kitchen",
+        requirements: [
+            (
+                requirement: Furniture("hearth"),
+                min: 1,
+                max: Some(1),
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+            (
+                requirement: Furniture("table"),
+                min: 1,
+                max: Some(4),
+                worker_visit_weight: 0.2,
+                worker_visit_duration: 1.0,
+            ),
+        ]
+    ),
+    (
+        name: "dining room",
+        requirements: [
+            (
+                requirement: Furniture("table"),
+                min: 1,
+                max: None,
+                worker_visit_weight: 0.0,
+                worker_visit_duration: 1.0,
+            ),
+            (
+                requirement: Furniture("chair"),
+                min: 2,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+        ],
+        quality_factors: [
+            (
+                aspect: Spaciousness (
+                    sightline_max: 4
+                ),
+                strength: 0.0,
+                range: (
+                    start: 0.0,
+                    end: 1.0
+                )
+            ),
+        ]
+    ),
+    (
+        name: "inn",
+            requirements: [
+            (
+                requirement: Place("dining room"),
+                min: 1,
+                max: Some(1),
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+            (
+                requirement: Place("kitchen"),
+                min: 1,
+                max: Some(1),
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+            (
+                requirement: Place("bedroom"),
+                min: 2,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+        ]
+    )
 ]

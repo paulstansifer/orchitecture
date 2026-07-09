@@ -3,10 +3,13 @@
   * Probably pull some things out of build.rs
   * Finished goods:
     * Baskets, barrels, candles, clothes
-  * Split `WallGrid` into multiple things to make change-detection meaningful
-  * Shadow-only rendering seems to be path-dependent in some way.
   * Maybe refactor material assignment; seems like GI has added a bit of a mess.
   * Don't derive `Clone` or `Copy` on resources; define conserving operations, and a `.clone_for_simulation()` to use when imagining outcomes 
+  * Add "pane", which is brought by travelers, a requirement for windows.
+    * Make doors more costly, too, since they'll be the early source of light.
+  * Return resources (other than lime) for deconstructed buildings.
+  * "dining room" doesn't seem to form; why?
+  * Wings3D shapes wind up in the wrong spot, relative to their cube.
 
 # Walk-around mode:
   * Make textures and try pixel-art texturing

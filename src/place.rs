@@ -26,6 +26,9 @@ pub enum QualityAspect {
     Indoors,
     /// Count of `Porf`s (furniture or places) named `porf_name` near this place.
     NumberOf { porf_name: String },
+    // TODO:
+    // How well-lit (according to the GI system) the place is
+    //Light,
 }
 
 /// Which "need" an `Individual` can satisfy by being assigned to a `Place`.
@@ -74,7 +77,7 @@ impl ParentRestriction {
 /// i.e. the parent kinds eligible to include this Furniture/Place kind.
 /// Used by the UI to populate the restriction dropdown; an empty result means
 /// the dropdown shouldn't be shown (nothing could ever include this kind).
-pub fn eligible_parent_kinds(places: &[PlaceInfo], porf: &Porf) -> Vec<String> {
+pub fn eligible_parent_kinds(places: &[Place], porf: &Porf) -> Vec<String> {
     places
         .iter()
         .filter(|p| {
@@ -133,7 +136,7 @@ fn implicit_quality_factors() -> [QualityFactor; 2] {
 }
 
 /// Adds any `implicit_quality_factors` whose aspect isn't already listed.
-fn fill_default_quality_factors(info: &mut PlaceInfo) {
+fn fill_default_quality_factors(info: &mut Place) {
     for default in implicit_quality_factors() {
         let has_it = info
             .quality_factors
@@ -178,7 +181,7 @@ pub struct PlaceStorageSpec {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PlaceInfo {
+pub struct Place {
     pub name: String,
     // First requirement is the core.
     pub requirements: Vec<PlaceReq>,
@@ -293,9 +296,9 @@ impl std::ops::IndexMut<PlacedPlaceId> for PlacedPlaces {
 
 /// Loads the place definitions bundled at compile time, panicking on any
 /// reference to a furniture or place name that doesn't exist.
-pub fn load_place_info(eorfs: &[crate::eorf::EorfInfo]) -> Vec<PlaceInfo> {
+pub fn load_place_info(eorfs: &[crate::eorf::EorfInfo]) -> Vec<Place> {
     let ron_content = include_str!("../buildables/places.ron");
-    let mut infos: Vec<PlaceInfo> = ron::from_str(ron_content).unwrap();
+    let mut infos: Vec<Place> = ron::from_str(ron_content).unwrap();
     for info in &mut infos {
         fill_default_quality_factors(info);
     }
@@ -306,7 +309,7 @@ pub fn load_place_info(eorfs: &[crate::eorf::EorfInfo]) -> Vec<PlaceInfo> {
 /// Panics if any place definition cross-references an unknown furniture or
 /// place name -- a typo in places.ron would otherwise just silently never
 /// match anything.
-fn validate_place_info(places: &[PlaceInfo], eorfs: &[crate::eorf::EorfInfo]) {
+fn validate_place_info(places: &[Place], eorfs: &[crate::eorf::EorfInfo]) {
     let furniture_exists = |name: &str| eorfs.iter().any(|e| e.is_furniture() && e.name == name);
     let place_exists = |name: &str| places.iter().any(|p| p.name == name);
 
@@ -453,7 +456,7 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
 }
 
 /// True if `core` has at least `min` of every requirement within range.
-fn requirements_met(cw: &ConstructedCity, core: IVec3, place: &PlaceInfo) -> bool {
+fn requirements_met(cw: &ConstructedCity, core: IVec3, place: &Place) -> bool {
     place.requirements.iter().all(|req| {
         candidates_near(cw, core, &req.requirement, &place.name).len() >= req.min as usize
     })
@@ -1017,8 +1020,8 @@ mod tests {
         }]
     }
 
-    fn place_def(min: u8, max: Option<u8>) -> PlaceInfo {
-        PlaceInfo {
+    fn place_def(min: u8, max: Option<u8>) -> Place {
+        Place {
             name: "storage room".to_string(),
             requirements: vec![PlaceReq {
                 requirement: Porf::Furniture("bin".to_string()),
@@ -1033,7 +1036,7 @@ mod tests {
         }
     }
 
-    fn grid_with_bins(def: PlaceInfo, bins: &[IVec3]) -> ConstructedCity {
+    fn grid_with_bins(def: Place, bins: &[IVec3]) -> ConstructedCity {
         let mut cw = ConstructedCity::new(bin_structures());
         cw.road_forbidden_zone = false;
         cw.places = vec![def];

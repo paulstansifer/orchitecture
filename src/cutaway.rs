@@ -18,7 +18,6 @@ use crate::gi_material::{GiMaterial, ShadowOnlyMaterial};
 use crate::input::{cursor_world_pos, BuildState};
 use crate::materials::MaterialList;
 use crate::sparse3d::{RelSlot, RelSlotCoord, Slot, SlotCoord};
-use crate::util::zup_scene_transform;
 use bevy::pbr::Material;
 
 /// Resolves the cut mesh for `loc` along with the transform it should be spawned
@@ -49,11 +48,7 @@ fn get_cuts(
                                 // need threading it through `cut_entries`
                                 // alongside `EorfId`); they always render
                                 // unflipped, same as before `WallPlop` existed.
-                                zup_scene_transform(autotile_transform(
-                                    loc,
-                                    crate::sparse3d::Facing::NegX,
-                                    spec,
-                                )),
+                                autotile_transform(loc, crate::sparse3d::Facing::NegX, spec),
                             )
                         })
                 } else {
@@ -67,11 +62,7 @@ fn get_cuts(
             .map(|h| {
                 (
                     h.clone(),
-                    zup_scene_transform(cell_transform(
-                        loc.slot,
-                        crate::sparse3d::Facing::NegX,
-                        loc.cube,
-                    )),
+                    cell_transform(loc.slot, crate::sparse3d::Facing::NegX, loc.cube),
                 )
             })
             .into_iter()
