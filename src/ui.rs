@@ -43,30 +43,44 @@ pub fn shared_ui_system(
 
     // Market preview for resource gain display.
     let preview = preview_market(&farms);
-    let gains_map: std::collections::HashMap<UniformResource, u32> =
-        preview.player_gains.iter().copied().collect();
 
     let station_totals = crate::build_ui::place_resource_totals(&constructed);
 
-    // Construction cost (non-sandbox only).
-    let construction_cost = if pending.num_changes() > 0 && !sandbox.enabled {
-        crate::build_ui::construction_cost(
-            &pending.proposed_changes,
-            &constructed.eorfs,
-            &material_list,
-        )
+    // Remaining construction need (non-sandbox only).
+    let remaining_need: Vec<(UniformResource, u32)> = if pending.num_changes() > 0
+        && !sandbox.enabled
+    {
+        crate::build_ui::remaining_construction_need(&pending, &constructed.eorfs, &material_list)
     } else {
         vec![]
     };
-    let cost_map: std::collections::HashMap<UniformResource, u32> =
-        construction_cost.iter().copied().collect();
-    let can_afford_construction = construction_cost.iter().all(|(res, qty)| {
-        station_totals
-            .iter()
-            .find(|(r, _, _)| r == res)
-            .map(|(_, q, _)| *q >= *qty)
-            .unwrap_or(*qty == 0)
-    });
+    let remaining_need_map: std::collections::HashMap<UniformResource, u32> =
+        remaining_need.iter().copied().collect();
+
+    let has_storage = !crate::place::storage_ids(&constructed).is_empty();
+    let storage_snapshot = crate::place::storage_totals(&constructed);
+    let storage_free_capacity: std::collections::HashMap<UniformResource, f32> = preview
+        .player_gains
+        .iter()
+        .map(|(res, _)| {
+            (
+                *res,
+                crate::place::storage_free_capacity(&constructed, *res),
+            )
+        })
+        .collect();
+    let known_farm_output = crate::surroundings::farmstead::known_farm_plentifulness(&farms);
+
+    let flows = crate::resource::distribute_incoming_resources(
+        &preview.player_gains,
+        &remaining_need_map,
+        &storage_snapshot,
+        &storage_free_capacity,
+        &known_farm_output,
+    );
+
+    // Hard block: too much unpaid construction cost.
+    let blocked_construction = remaining_need.iter().any(|(_, qty)| *qty > 100);
 
     let mut rhs_resources: Vec<UniformResource> =
         station_totals.iter().map(|(r, _, _)| *r).collect();
@@ -75,7 +89,7 @@ pub fn shared_ui_system(
             rhs_resources.push(*r);
         }
     }
-    for (r, _) in &construction_cost {
+    for (r, _) in &remaining_need {
         if !rhs_resources.contains(r) {
             rhs_resources.push(*r);
         }
@@ -84,14 +98,11 @@ pub fn shared_ui_system(
 
     // Construction status.
     let has_project = pending.num_changes() > 0;
-    let m = pending.months_waited as usize;
-    let months_remaining = if has_project {
-        let raw_n = pending.months_for_construction(population.individuals.len());
-        (raw_n as isize - m as isize).max(1) as usize
-    } else {
-        0
-    };
-    let n_display = m + months_remaining;
+    let construction_progress = crate::build_ui::construction_progress_fraction(
+        &pending,
+        &constructed.eorfs,
+        &material_list,
+    );
 
     // Farm/market status.
     let market_stand_count =
@@ -119,21 +130,27 @@ pub fn shared_ui_system(
             ui.add_space(2.0);
 
             if has_project || has_farms_invited || has_traveler_invited {
-                ui.add_enabled_ui(can_afford_construction, |ui| {
+                ui.add_enabled_ui(!blocked_construction, |ui| {
                     if ui.button("Advance Month").clicked() {
                         go_advance_month = true;
                     }
                 });
-                if has_project && !can_afford_construction {
-                    note_label!(ui, col_format!(problem, "Insufficient resources for construction"));
+                if has_project && blocked_construction {
+                    note_label!(
+                        ui,
+                        col_format!(
+                            problem,
+                            "Too much unpaid construction cost — cancel some proposed construction."
+                        )
+                    );
                 }
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.set_min_width(0.0);
                         if has_project {
-                            label!(
-                                ui,
-                                format!("Construction: {} of {} months", m, n_display)
+                            ui.add(
+                                egui::ProgressBar::new(construction_progress.unwrap_or(1.0))
+                                    .show_percentage(),
                             );
                         } else {
                             label!(ui, "No current project");
@@ -174,28 +191,63 @@ pub fn shared_ui_system(
                     .find(|(r, _, _)| r == res)
                     .map(|(_, q, p)| (*q, *p))
                     .unwrap_or((0, Precision::Exact));
-                let gain = *gains_map.get(res).unwrap_or(&0);
+                let need = *remaining_need_map.get(res).unwrap_or(&0);
+                let flow = flows.get(res).copied().unwrap_or_default();
+                let usable = flow.applied_to_construction + flow.stored;
+                let lost = flow.lost;
 
-                let quantity_str = match precision {
-                    Precision::Exact => format!("{}", current),
-                    Precision::Approximate => format!("~{}", current),
-                    Precision::Conservative => format!(">{}", current),
+                let name = if has_storage {
+                    let quantity_str = match precision {
+                        Precision::Exact => format!("{}", current),
+                        Precision::Approximate => format!("~{}", current),
+                        Precision::Conservative => format!(">{}", current),
+                    };
+                    format!("{}: {}", res.label(), quantity_str)
+                } else {
+                    res.label().to_string()
                 };
 
-                let cost = *cost_map.get(res).unwrap_or(&0);
-                let text = match (gain > 0, cost > 0) {
-                    (true, true) => format!("{}: {} +{} -{}", res.label(), quantity_str, gain, cost),
-                    (true, false) => format!("{}: {} +{}", res.label(), quantity_str, gain),
-                    (false, true) => format!("{}: {} -{}", res.label(), quantity_str, cost),
-                    (false, false) => format!("{}: {}", res.label(), quantity_str),
-                };
                 ui.horizontal(|ui| {
                     if let Some(&tex) = icon_textures_lg.get(res) {
                         ui.add(egui::Image::new(egui::load::SizedTexture::new(
                             tex, LARGE_SIZE,
                         )));
                     }
-                    label!(ui, format!("{}", text));
+                    match (need > 0, usable > 0, lost > 0) {
+                        (false, false, false) => label!(ui, name),
+                        (true, false, false) => {
+                            label!(ui, name, col_format!(problem, " –{}", need))
+                        }
+                        (false, true, false) => {
+                            label!(ui, name, col_format!(preview, " +{}", usable))
+                        }
+                        (false, false, true) => label!(ui, name, format!(" ({} lost)", lost)),
+                        (true, true, false) => label!(
+                            ui,
+                            name,
+                            col_format!(problem, " –{}", need),
+                            col_format!(preview, " +{}", usable)
+                        ),
+                        (true, false, true) => label!(
+                            ui,
+                            name,
+                            col_format!(problem, " –{}", need),
+                            format!(" ({} lost)", lost)
+                        ),
+                        (false, true, true) => label!(
+                            ui,
+                            name,
+                            col_format!(preview, " +{}", usable),
+                            format!(" ({} lost)", lost)
+                        ),
+                        (true, true, true) => label!(
+                            ui,
+                            name,
+                            col_format!(problem, " –{}", need),
+                            col_format!(preview, " +{}", usable),
+                            format!(" ({} lost)", lost)
+                        ),
+                    }
                 });
             }
 

@@ -128,11 +128,11 @@ impl HeadlessSession {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
 
-        let mut rng = StdRng::seed_from_u64(seed);
+        let rng = StdRng::seed_from_u64(seed);
         let structures = load_structure_info();
         let mut constructed = ConstructedCity::new(structures);
         constructed.places = place::load_place_info(&constructed.eorfs);
-        place::place_initial_places(&mut constructed, &mut rng);
+        place::place_initial_places(&mut constructed);
 
         app.insert_resource(constructed);
         app.insert_resource(ProposedCity::new());
@@ -633,13 +633,16 @@ impl HeadlessSession {
             }
 
             "proposals" => {
-                let population_size = self.world().resource::<Population>().individuals.len();
-                let pending = self.world().resource::<ProposedCity>();
+                let world = self.world();
+                let cw = world.resource::<ConstructedCity>();
+                let material_list = world.resource::<MaterialList>();
+                let pending = world.resource::<ProposedCity>();
+                let need =
+                    crate::build_ui::remaining_construction_need(pending, &cw.eorfs, material_list);
                 Ok(vec![format!(
-                    "pending_changes={} months_waited={} months_for_construction={}",
+                    "pending_changes={} remaining_need={:?}",
                     pending.num_changes(),
-                    pending.months_waited,
-                    pending.months_for_construction(population_size)
+                    need
                 )])
             }
 
@@ -737,7 +740,6 @@ fn build_box_system(
 fn construct_system(mut cw: ResMut<ConstructedCity>, mut pending: ResMut<ProposedCity>) -> usize {
     let n = pending.num_changes();
     construction::construct(&mut cw, &mut pending);
-    pending.months_waited = 0;
     n
 }
 

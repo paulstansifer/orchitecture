@@ -382,7 +382,7 @@ impl ProposedCity {
     /// Entity cleanup is the caller's responsibility.
     pub fn reset(&mut self) {
         self.proposed_changes = Sparse3D::new();
-        self.months_waited = 0;
+        self.resource_progress.clear();
     }
 }
 
@@ -402,6 +402,7 @@ pub fn construct(
         .collect();
 
     pe.proposed_changes = Sparse3D::new();
+    pe.resource_progress.clear();
 
     let mut real_changes = vec![];
     for (loc, proposal) in proposals {
@@ -419,9 +420,14 @@ pub fn construct(
     real_changes
 }
 
-/// Advances one month of construction progress (grid/resource state only, no ECS).
-/// If enough months have elapsed, commits all proposals and resets the counter.
-/// Should be called once per "Advance Month" action.
+/// Advances one month of construction progress (grid/resource state only, no
+/// ECS). Completes (commits all proposals) once every material's cost has
+/// been fully paid off. Should be called once per "Advance Month" action,
+/// after that month's resources have already been applied toward payment.
+///
+/// `fully_paid` should reflect whether
+/// `build_ui::remaining_construction_need` is empty (or `true`
+/// unconditionally in sandbox mode).
 ///
 /// Returns `Some(real_changes)` if construction completed this month (proposals
 /// were committed); the caller is responsible for reflecting those into the ECS
@@ -429,17 +435,10 @@ pub fn construct(
 pub fn tick_construction(
     pending: &mut ProposedCity,
     constructed: &mut ConstructedCity,
-    population_size: usize,
+    fully_paid: bool,
 ) -> Option<Vec<(SlotCoord, Option<Cell>)>> {
-    if pending.num_changes() > 0 {
-        pending.months_waited += 1;
-        if pending.months_waited as usize >= pending.months_for_construction(population_size) {
-            let real_changes = construct(constructed, pending);
-            pending.months_waited = 0;
-            return Some(real_changes);
-        }
-    } else {
-        pending.months_waited = 0;
+    if pending.num_changes() > 0 && fully_paid {
+        return Some(construct(constructed, pending));
     }
     None
 }
@@ -469,6 +468,7 @@ pub fn load_from_offline(
     pw.proposed_changes = Sparse3D::new();
     pw.undo_record.clear();
     pw.redo_record.clear();
+    pw.resource_progress.clear();
     // Shift the building into the no-road semiplane (south of the E-W road).
     let z_shift = -new_contents.bounding_box().1.z;
     let shifted = new_contents.translate(IVec3::new(0, 0, z_shift));
@@ -486,7 +486,7 @@ mod tests {
     use crate::materials::BuildMaterialId;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
 
-    use super::{construct, load_from_offline};
+    use super::{construct, load_from_offline, tick_construction};
 
     fn make_world() -> (ConstructedCity, ProposedCity) {
         use crate::eorf::StructureEmbedding;
@@ -729,6 +729,23 @@ mod tests {
     }
 
     #[test]
+    fn construct_clears_resource_progress() {
+        let (mut cw, mut pw) = make_world();
+        pw.propose(
+            &cw,
+            0,
+            (IVec3::ZERO, IVec3::ZERO),
+            Slot::XLoWall,
+            thing(&cw),
+            BuildMaterialId::default(),
+        );
+        pw.resource_progress
+            .insert(crate::resource::UniformResource::Timber, 30);
+        construct(&mut cw, &mut pw);
+        check!(pw.resource_progress.is_empty());
+    }
+
+    #[test]
     fn undo_after_construct_creates_reverse_proposal() {
         let (mut cw, mut pw) = make_world();
         let loc = xlowall(1, 0, 0);
@@ -776,6 +793,56 @@ mod tests {
         check!(!pw.undo_record.is_empty());
         // Real contents untouched
         check!(cw.contents.get(xlowall(0, 0, 0)).is_none());
+    }
+
+    #[test]
+    fn reset_clears_resource_progress() {
+        let (_cw, mut pw) = make_world();
+        pw.resource_progress
+            .insert(crate::resource::UniformResource::Timber, 30);
+        pw.reset();
+        check!(pw.resource_progress.is_empty());
+    }
+
+    // ── tick_construction ────────────────────────────────────────────────────
+
+    #[test]
+    fn tick_construction_completes_when_fully_paid() {
+        let (mut cw, mut pw) = make_world();
+        pw.propose(
+            &cw,
+            0,
+            (IVec3::ZERO, IVec3::ZERO),
+            Slot::XLoWall,
+            thing(&cw),
+            BuildMaterialId::default(),
+        );
+        let result = tick_construction(&mut pw, &mut cw, true);
+        check!(result.is_some());
+        check!(pw.num_changes() == 0);
+    }
+
+    #[test]
+    fn tick_construction_waits_when_not_fully_paid() {
+        let (mut cw, mut pw) = make_world();
+        pw.propose(
+            &cw,
+            0,
+            (IVec3::ZERO, IVec3::ZERO),
+            Slot::XLoWall,
+            thing(&cw),
+            BuildMaterialId::default(),
+        );
+        let result = tick_construction(&mut pw, &mut cw, false);
+        check!(result.is_none());
+        check!(pw.num_changes() == 1);
+    }
+
+    #[test]
+    fn tick_construction_no_project_is_a_noop() {
+        let (mut cw, mut pw) = make_world();
+        let result = tick_construction(&mut pw, &mut cw, true);
+        check!(result.is_none());
     }
 
     // ── redo ──────────────────────────────────────────────────────────────────

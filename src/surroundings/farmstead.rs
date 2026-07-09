@@ -365,6 +365,22 @@ pub fn preview_market(fr: &FarmsResource) -> MarketOutcome {
     compute_market(fr)
 }
 
+/// Sums `production_capacity()` per produced resource across farms the
+/// player currently knows about (fog alpha below `REVEAL_THRESHOLD` at the
+/// farm's centroid). Used as a discard-priority tie-break in
+/// `resource::distribute_incoming_resources`.
+pub fn known_farm_plentifulness(fr: &FarmsResource) -> HashMap<UniformResource, u32> {
+    use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
+
+    let mut totals = HashMap::new();
+    for farm in &fr.farms {
+        if fog_alpha_at(farm.centroid(), &fr.traveler_reveals) < REVEAL_THRESHOLD {
+            *totals.entry(farm.produced_resource()).or_insert(0) += farm.production_capacity();
+        }
+    }
+    totals
+}
+
 /// Run the monthly market for invited farms, applying the effects computed by the
 /// shared `compute_market`. Returns the resources the player gains, the tools that
 /// must be returned to storage (Whipsaws freed when a Specialized farm re-rolls),

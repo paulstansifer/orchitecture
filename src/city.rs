@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::eorf::{EorfId, EorfInfo, EorfList};
 use crate::gi_material::{default_gi_image, GiExtension, GiMaterial, ShadowOnlyMaterial};
+use crate::resource::UniformResource;
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 
 /// A score that may be an exact target or a one-sided inequality constraint.
@@ -357,8 +358,11 @@ pub struct ProposedCity {
     pub(crate) undo_record: Vec<UndoRecord>,
     /// Inverse of undone actions, for redo. Cleared when a fresh edit is made.
     pub(crate) redo_record: Vec<UndoRecord>,
-    /// Months already waited toward completing the current construction project.
-    pub months_waited: u32,
+    /// Cumulative resource units already applied toward the current pending
+    /// construction batch. Reset whenever `proposed_changes` is cleared
+    /// (`reset()`) or a batch completes (`construct()`). See
+    /// `build_ui::remaining_construction_need`.
+    pub resource_progress: HashMap<UniformResource, u32>,
 }
 
 impl Default for ProposedCity {
@@ -373,16 +377,12 @@ impl ProposedCity {
             proposed_changes: Sparse3D::new(),
             undo_record: Vec::new(),
             redo_record: Vec::new(),
-            months_waited: 0,
+            resource_progress: HashMap::new(),
         }
     }
 
     pub fn num_changes(&self) -> usize {
         self.proposed_changes.iter().count()
-    }
-
-    pub fn months_for_construction(&self, population_size: usize) -> usize {
-        self.num_changes().div_ceil(80 * population_size.max(1))
     }
 }
 
@@ -1096,30 +1096,6 @@ mod tests {
             .unbound_higher()
             .add(1.0);
         check!(result == ConstrainedScore::AtLeast { at_least: 4.0 });
-    }
-
-    #[test]
-    fn months_for_construction_scales_with_population() {
-        use crate::sparse3d::{Slot, SlotCoord};
-        use bevy::math::IVec3;
-
-        let mut pw = super::ProposedCity::new();
-        for x in 0..100 {
-            pw.proposed_changes.set(
-                SlotCoord {
-                    cube: IVec3::new(x, 0, 0),
-                    slot: Slot::Room,
-                },
-                super::Proposal::Remove,
-            );
-        }
-        check!(pw.num_changes() == 100);
-        // At population 1, the rate is 80 cells/month (today's behavior): 100 -> 2 months.
-        check!(pw.months_for_construction(1) == 2);
-        // At population 2, the rate doubles to 160 cells/month: 100 -> 1 month.
-        check!(pw.months_for_construction(2) == 1);
-        // Population 0 is treated the same as population 1 (never divide by zero).
-        check!(pw.months_for_construction(0) == 2);
     }
 
     // ── cell_transform wall flip ─────────────────────────────────────────────

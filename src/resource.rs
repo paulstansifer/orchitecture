@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rgb::Rgb;
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +44,13 @@ impl UniformResource {
             UniformResource::Lime => "Lime",
             UniformResource::Plank => "Planks",
         }
+    }
+
+    /// Maximum units of this material construction can absorb per month —
+    /// its construction rate. Currently the same for every material; the
+    /// per-material split exists so individual materials can diverge later.
+    pub fn construct_per_month(self) -> f32 {
+        50.0
     }
 
     pub fn farmable(self) -> bool {
@@ -183,6 +192,11 @@ impl Inventory {
         res
     }
 
+    /// Remaining volume this inventory can accept before hitting `max_volume`.
+    pub fn remaining_capacity(&self) -> f32 {
+        (self.max_volume - self.total_volume()).max(0.0)
+    }
+
     pub fn may_add(&self, _new_stuff: &InventoryEntry) -> bool {
         todo!()
     }
@@ -246,6 +260,249 @@ impl Inventory {
                 }
             }
         }
+    }
+}
+
+/// Outcome of distributing one month's incoming resources across construction
+/// payment, storage, and loss. Invariant: `applied_to_construction + stored +
+/// lost == incoming_qty` for every resource present in the `incoming` passed
+/// to `distribute_incoming_resources`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ResourceFlow {
+    pub applied_to_construction: u32,
+    pub stored: u32,
+    pub lost: u32,
+}
+
+/// Distributes `incoming` resources across construction payment and storage;
+/// whatever's left over is lost. Construction first, then storage, then
+/// loss.
+///
+/// Construction absorption is capped independently per resource by the
+/// lesser of `remaining_need[r]` and `r.construct_per_month()` — no shared
+/// budget across resource types.
+///
+/// Storage is (today) one physical pool shared across all resource types, so
+/// when combined leftover exceeds capacity, resources are bumped out
+/// starting from the most "plentiful" one — `storage_snapshot[r]` descending,
+/// then `known_farm_output[r]` descending, then `UniformResource`'s `Ord` as
+/// a final deterministic tie-break — so scarce resources keep priority for
+/// the remaining space. `storage_free_capacity` is keyed per resource for
+/// forward compatibility (storage may vary per material later); today all
+/// its entries are equal (see `place::storage_free_capacity`), so the shared
+/// pool size is taken as the max across contending resources.
+pub fn distribute_incoming_resources(
+    incoming: &[(UniformResource, u32)],
+    remaining_need: &HashMap<UniformResource, u32>,
+    storage_snapshot: &HashMap<UniformResource, u32>,
+    storage_free_capacity: &HashMap<UniformResource, f32>,
+    known_farm_output: &HashMap<UniformResource, u32>,
+) -> HashMap<UniformResource, ResourceFlow> {
+    let plentifulness_key = |r: &UniformResource| {
+        (
+            *storage_snapshot.get(r).unwrap_or(&0),
+            *known_farm_output.get(r).unwrap_or(&0),
+        )
+    };
+    // Sort descending by plentifulness (most plentiful first); `UniformResource`'s
+    // derived `Ord` breaks remaining ties deterministically.
+    let sort_most_plentiful_first = |xs: &mut Vec<UniformResource>| {
+        xs.sort_by(|a, b| {
+            plentifulness_key(b)
+                .cmp(&plentifulness_key(a))
+                .then(a.cmp(b))
+        });
+    };
+    // Greedily zero out/reduce `amounts` starting from the most-plentiful
+    // resource until their sum no longer exceeds `budget`.
+    let cap_total = |amounts: &mut HashMap<UniformResource, u32>, budget: u32| {
+        let total: u32 = amounts.values().sum();
+        if total <= budget {
+            return;
+        }
+        let mut excess = total - budget;
+        let mut ordered: Vec<UniformResource> = amounts.keys().copied().collect();
+        sort_most_plentiful_first(&mut ordered);
+        for r in ordered {
+            if excess == 0 {
+                break;
+            }
+            let v = amounts.get_mut(&r).unwrap();
+            let cut = (*v).min(excess);
+            *v -= cut;
+            excess -= cut;
+        }
+    };
+
+    // Stage 1: construction demand, capped per resource by remaining need and
+    // that resource's own construction rate (no cross-resource competition).
+    let applied: HashMap<UniformResource, u32> = incoming
+        .iter()
+        .map(|(r, qty)| {
+            let need = *remaining_need.get(r).unwrap_or(&0);
+            let rate = r.construct_per_month().floor().max(0.0) as u32;
+            (*r, (*qty).min(need).min(rate))
+        })
+        .collect();
+
+    // Stage 2: whatever wasn't applied to construction tries storage, capped
+    // by the shared free volume pool.
+    let mut stored: HashMap<UniformResource, u32> = incoming
+        .iter()
+        .filter_map(|(r, qty)| {
+            let leftover = qty - applied.get(r).copied().unwrap_or(0);
+            (leftover > 0).then_some((*r, leftover))
+        })
+        .collect();
+    let pool_capacity = stored
+        .keys()
+        .filter_map(|r| storage_free_capacity.get(r).copied())
+        .fold(0.0_f32, f32::max);
+    let max_storable = pool_capacity.max(0.0).floor() as u32;
+    cap_total(&mut stored, max_storable);
+
+    // Assemble per-resource flows; remainder is lost.
+    incoming
+        .iter()
+        .map(|(r, qty)| {
+            let applied_to_construction = applied.get(r).copied().unwrap_or(0);
+            let leftover = qty - applied_to_construction;
+            let stored_qty = stored.get(r).copied().unwrap_or(0);
+            let lost = leftover - stored_qty;
+            (
+                *r,
+                ResourceFlow {
+                    applied_to_construction,
+                    stored: stored_qty,
+                    lost,
+                },
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod distribute_tests {
+    use super::*;
+    use UniformResource::*;
+
+    fn m(pairs: &[(UniformResource, u32)]) -> HashMap<UniformResource, u32> {
+        pairs.iter().copied().collect()
+    }
+
+    fn cap(pairs: &[(UniformResource, f32)]) -> HashMap<UniformResource, f32> {
+        pairs.iter().copied().collect()
+    }
+
+    #[test]
+    fn fully_applied_to_construction_when_need_and_rate_allow() {
+        let flows = distribute_incoming_resources(
+            &[(Timber, 10)],
+            &m(&[(Timber, 30)]),
+            &m(&[]),
+            &cap(&[]),
+            &m(&[]),
+        );
+        assert_eq!(
+            flows[&Timber],
+            ResourceFlow {
+                applied_to_construction: 10,
+                stored: 0,
+                lost: 0
+            }
+        );
+    }
+
+    #[test]
+    fn excess_over_need_flows_to_storage_then_loss() {
+        let flows = distribute_incoming_resources(
+            &[(Timber, 10)],
+            &m(&[(Timber, 4)]),
+            &m(&[]),
+            &cap(&[(Timber, 3.0)]),
+            &m(&[]),
+        );
+        // 4 applied, 6 leftover, 3 fit in storage, 3 lost.
+        assert_eq!(
+            flows[&Timber],
+            ResourceFlow {
+                applied_to_construction: 4,
+                stored: 3,
+                lost: 3
+            }
+        );
+    }
+
+    #[test]
+    fn construction_rate_caps_absorption_independently_per_resource() {
+        // construct_per_month() is 50.0 for everything currently; demand above
+        // that rate can't be applied to construction even if fully needed.
+        let flows = distribute_incoming_resources(
+            &[(Timber, 80)],
+            &m(&[(Timber, 200)]),
+            &m(&[]),
+            &cap(&[]),
+            &m(&[]),
+        );
+        assert_eq!(flows[&Timber].applied_to_construction, 50);
+        assert_eq!(flows[&Timber].lost, 30);
+    }
+
+    #[test]
+    fn storage_contention_discards_most_plentiful_first() {
+        let flows = distribute_incoming_resources(
+            &[(Timber, 20), (Straw, 20)],
+            &m(&[]), // nothing needed for construction, all leftover competes for storage
+            &m(&[(Timber, 100), (Straw, 10)]), // Timber more plentiful in storage
+            &cap(&[(Timber, 25.0), (Straw, 25.0)]),
+            &m(&[]),
+        );
+        // Timber is most plentiful -> discarded first from storage.
+        assert_eq!(flows[&Straw].stored, 20);
+        assert_eq!(flows[&Timber].stored, 5);
+        assert_eq!(flows[&Timber].lost, 15);
+    }
+
+    #[test]
+    fn farm_output_breaks_ties_when_storage_equal() {
+        let flows = distribute_incoming_resources(
+            &[(Timber, 20), (Straw, 20)],
+            &m(&[]),
+            &m(&[(Timber, 5), (Straw, 5)]), // tied storage
+            &cap(&[(Timber, 25.0), (Straw, 25.0)]),
+            &m(&[(Timber, 20), (Straw, 1)]), // Timber more plentiful via farm output
+        );
+        assert_eq!(flows[&Straw].stored, 20);
+        assert_eq!(flows[&Timber].stored, 5);
+    }
+
+    #[test]
+    fn no_storage_places_loses_everything_not_used_for_construction() {
+        let flows =
+            distribute_incoming_resources(&[(Potato, 5)], &m(&[]), &m(&[]), &cap(&[]), &m(&[]));
+        assert_eq!(
+            flows[&Potato],
+            ResourceFlow {
+                applied_to_construction: 0,
+                stored: 0,
+                lost: 5
+            }
+        );
+    }
+
+    #[test]
+    fn conservation_holds_across_all_flows() {
+        let flows = distribute_incoming_resources(
+            &[(Timber, 17), (Potato, 8)],
+            &m(&[(Timber, 5)]),
+            &m(&[(Timber, 2)]),
+            &cap(&[(Timber, 4.0), (Potato, 4.0)]),
+            &m(&[]),
+        );
+        let t = flows[&Timber];
+        assert_eq!(t.applied_to_construction + t.stored + t.lost, 17);
+        let p = flows[&Potato];
+        assert_eq!(p.applied_to_construction + p.stored + p.lost, 8);
     }
 }
 
