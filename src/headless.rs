@@ -916,3 +916,181 @@ pub fn run() {
         out.flush().ok();
     }
 }
+
+/// End-to-end tests of construction operations, driven entirely through
+/// [`HeadlessSession::dispatch`] the same way a scripted session would --
+/// exercising the resource-payment rework (propose, pay down incrementally
+/// via the market, force-commit, undo/redo) rather than calling internal
+/// systems directly.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Dispatches `cmd`, panicking with the session's error on failure -- test
+    /// bodies read as the command script they are.
+    fn dispatch_ok(session: &mut HeadlessSession, cmd: &str) -> Vec<String> {
+        session
+            .dispatch(cmd)
+            .unwrap_or_else(|e| panic!("{cmd}: {e}"))
+    }
+
+    /// Indices of farms whose `produces=` field in `query farms` matches
+    /// `resource` (e.g. "Straw").
+    fn farms_producing(session: &mut HeadlessSession, resource: &str) -> Vec<usize> {
+        dispatch_ok(session, "query farms")
+            .iter()
+            .filter_map(|line| {
+                let idx: usize = line.split_whitespace().next()?.parse().ok()?;
+                let produces = line
+                    .split_whitespace()
+                    .find_map(|tok| tok.strip_prefix("produces="))?;
+                (produces == resource).then_some(idx)
+            })
+            .collect()
+    }
+
+    fn invite_all(session: &mut HeadlessSession, indices: &[usize]) {
+        for &idx in indices {
+            dispatch_ok(session, &format!("invite {idx}"));
+        }
+    }
+
+    /// `pallet` (a furniture piece with a fixed, material-independent cost of
+    /// 2 straw + 2 canvas, both directly farmable) is used throughout as the
+    /// cheapest structure whose cost can actually be paid off by the market --
+    /// walls/pillars/floors go through `BuildMaterialId::default()` (Ashlar,
+    /// priced in Block), and nothing in the game currently produces Block.
+    const PALLET_CELL: &str = "100 0 100 room";
+
+    #[test]
+    fn sandbox_build_skips_resource_payment() {
+        let mut session = HeadlessSession::new(1);
+        // Sandbox is on by default: placing commits immediately, for free.
+        dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
+
+        let cell = dispatch_ok(&mut session, &format!("query cell {PALLET_CELL}"));
+        assert!(
+            cell[0].starts_with("real: pallet"),
+            "expected an immediately-built pallet: {cell:?}"
+        );
+
+        let proposals = dispatch_ok(&mut session, "query proposals");
+        assert_eq!(proposals[0], "pending_changes=0 remaining_need=[]");
+
+        // No storage exists and nothing was paid for, so inventory stays empty.
+        assert_eq!(
+            dispatch_ok(&mut session, "query inventory"),
+            vec!["(empty)".to_string()]
+        );
+    }
+
+    #[test]
+    fn non_sandbox_place_proposes_and_tracks_remaining_need() {
+        let mut session = HeadlessSession::new(2);
+        dispatch_ok(&mut session, "sandbox off");
+        dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
+
+        let cell = dispatch_ok(&mut session, &format!("query cell {PALLET_CELL}"));
+        assert_eq!(cell[0], "real: empty");
+        assert!(cell[1].starts_with("proposed: add pallet"), "{cell:?}");
+
+        let proposals = dispatch_ok(&mut session, "query proposals");
+        assert_eq!(
+            proposals[0], "pending_changes=1 remaining_need=[(Straw, 2), (Canvas, 2)]",
+            "a pallet costs exactly 2 straw + 2 canvas: {proposals:?}"
+        );
+    }
+
+    #[test]
+    fn undo_redo_round_trips_a_pending_proposal() {
+        let mut session = HeadlessSession::new(3);
+        dispatch_ok(&mut session, "sandbox off");
+        dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
+        assert!(dispatch_ok(&mut session, "query proposals")[0].starts_with("pending_changes=1"));
+
+        dispatch_ok(&mut session, "undo");
+        assert_eq!(
+            dispatch_ok(&mut session, "query proposals")[0],
+            "pending_changes=0 remaining_need=[]"
+        );
+
+        dispatch_ok(&mut session, "redo");
+        assert!(dispatch_ok(&mut session, "query proposals")[0].starts_with("pending_changes=1"));
+    }
+
+    #[test]
+    fn construct_command_force_commits_regardless_of_payment() {
+        let mut session = HeadlessSession::new(4);
+        dispatch_ok(&mut session, "sandbox off");
+        dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
+        // Nothing has been paid off yet, but `construct` is a manual override
+        // (mirrors what sandbox mode does automatically).
+        dispatch_ok(&mut session, "construct");
+
+        let cell = dispatch_ok(&mut session, &format!("query cell {PALLET_CELL}"));
+        assert!(cell[0].starts_with("real: pallet"), "{cell:?}");
+        assert_eq!(
+            dispatch_ok(&mut session, "query proposals")[0],
+            "pending_changes=0 remaining_need=[]"
+        );
+    }
+
+    #[test]
+    fn advance_withholds_construction_until_resources_are_delivered() {
+        let mut session = HeadlessSession::new(5);
+        dispatch_ok(&mut session, "sandbox off");
+        dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
+        let before = dispatch_ok(&mut session, "query proposals");
+        assert_eq!(
+            before[0],
+            "pending_changes=1 remaining_need=[(Straw, 2), (Canvas, 2)]"
+        );
+
+        // No farms invited: nothing arrives at the market, so nothing gets
+        // applied toward the cost.
+        dispatch_ok(&mut session, "advance");
+        let after = dispatch_ok(&mut session, "query proposals");
+        assert_eq!(
+            after, before,
+            "remaining need shouldn't move without any market gains"
+        );
+
+        // Invite every farm producing either needed resource and retry,
+        // re-inviting each month since invitations reset once the market runs.
+        let straw = farms_producing(&mut session, "Straw");
+        let canvas = farms_producing(&mut session, "Canvas");
+        assert!(
+            !straw.is_empty() && !canvas.is_empty(),
+            "expected at least one farm producing each of straw and canvas"
+        );
+
+        let mut completed = false;
+        for _ in 0..8 {
+            invite_all(&mut session, &straw);
+            invite_all(&mut session, &canvas);
+            let lines = dispatch_ok(&mut session, "advance");
+            if lines.iter().any(|l| l == "construction: completed") {
+                completed = true;
+                break;
+            }
+        }
+        assert!(
+            completed,
+            "construction should complete once enough straw/canvas reached the market"
+        );
+
+        let cell = dispatch_ok(&mut session, &format!("query cell {PALLET_CELL}"));
+        assert!(cell[0].starts_with("real: pallet"), "{cell:?}");
+        assert_eq!(
+            dispatch_ok(&mut session, "query proposals")[0],
+            "pending_changes=0 remaining_need=[]"
+        );
+
+        // There's still no storage, so any resources beyond what construction
+        // consumed were lost rather than stockpiled.
+        assert_eq!(
+            dispatch_ok(&mut session, "query inventory"),
+            vec!["(empty)".to_string()]
+        );
+    }
+}
