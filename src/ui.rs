@@ -147,10 +147,12 @@ pub fn shared_ui_system(
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.set_min_width(0.0);
+                        ui.set_max_width(400.0);
                         if has_project {
                             ui.add(
                                 egui::ProgressBar::new(construction_progress.unwrap_or(1.0))
-                                    .show_percentage(),
+                                .desired_width(100.0)
+                                .show_percentage(),
                             );
                         } else {
                             label!(ui, "No current project");
