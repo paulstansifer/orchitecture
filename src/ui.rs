@@ -3,14 +3,15 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::build_ui::SandboxMode;
 use crate::city::{CityMut, ViewableWorld};
+use crate::city_effect::{compute_month_effects, CityEffect, Effect};
 use crate::eorf::EorfList;
 use crate::game_mode::GameMode;
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
-use crate::surroundings::farmstead::{preview_market, FarmsResource, GameClock};
-use crate::traveler::{self, TravelerState};
+use crate::surroundings::farmstead::{FarmsResource, GameClock};
+use crate::traveler::TravelerState;
 use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
@@ -41,41 +42,46 @@ pub fn shared_ui_system(
         return;
     };
 
-    // Market preview for resource gain display.
-    let preview = preview_market(&farms);
-    let gains_map: std::collections::HashMap<UniformResource, u32> =
-        preview.player_gains.iter().copied().collect();
-
+    // This month's effects (market participation, feeding, a traveler's
+    // visit, construction absorption) — computed once and shared by the
+    // resource preview, the per-resource tooltip, and the traveler
+    // checkbox's affordability. Same computation `advance_month` uses to
+    // actually apply things, just not mutated here.
+    let effects = compute_month_effects(
+        &farms,
+        &constructed,
+        &pending,
+        &population,
+        &traveler_state,
+        &material_list,
+        sandbox.enabled,
+    );
     let station_totals = crate::build_ui::place_resource_totals(&constructed);
 
-    // Construction cost (non-sandbox only).
-    let construction_cost = if pending.num_changes() > 0 && !sandbox.enabled {
-        crate::build_ui::construction_cost(
-            &pending.proposed_changes,
-            &constructed.eorfs,
-            &material_list,
-        )
+    // Remaining construction need (non-sandbox only).
+    let remaining_need: Vec<(UniformResource, u32)> = if pending.num_changes() > 0
+        && !sandbox.enabled
+    {
+        crate::build_ui::remaining_construction_need(&pending, &constructed.eorfs, &material_list)
     } else {
         vec![]
     };
-    let cost_map: std::collections::HashMap<UniformResource, u32> =
-        construction_cost.iter().copied().collect();
-    let can_afford_construction = construction_cost.iter().all(|(res, qty)| {
-        station_totals
-            .iter()
-            .find(|(r, _, _)| r == res)
-            .map(|(_, q, _)| *q >= *qty)
-            .unwrap_or(*qty == 0)
-    });
+    let remaining_need_map: std::collections::HashMap<UniformResource, u32> =
+        remaining_need.iter().copied().collect();
+
+    let has_storage = !crate::place::storage_ids(&constructed).is_empty();
+
+    // Hard block: too much unpaid construction cost.
+    let blocked_construction = remaining_need.iter().any(|(_, qty)| *qty > 100);
 
     let mut rhs_resources: Vec<UniformResource> =
         station_totals.iter().map(|(r, _, _)| *r).collect();
-    for (r, _) in &preview.player_gains {
+    for (r, _) in &effects.player_gains {
         if !rhs_resources.contains(r) {
             rhs_resources.push(*r);
         }
     }
-    for (r, _) in &construction_cost {
+    for (r, _) in &remaining_need {
         if !rhs_resources.contains(r) {
             rhs_resources.push(*r);
         }
@@ -84,14 +90,11 @@ pub fn shared_ui_system(
 
     // Construction status.
     let has_project = pending.num_changes() > 0;
-    let m = pending.months_waited as usize;
-    let months_remaining = if has_project {
-        let raw_n = pending.months_for_construction(population.individuals.len());
-        (raw_n as isize - m as isize).max(1) as usize
-    } else {
-        0
-    };
-    let n_display = m + months_remaining;
+    let construction_progress = crate::build_ui::construction_progress_fraction(
+        &pending,
+        &constructed.eorfs,
+        &material_list,
+    );
 
     // Farm/market status.
     let market_stand_count =
@@ -100,9 +103,14 @@ pub fn shared_ui_system(
     let has_farms_invited = invited_count > 0;
     let has_traveler_invited = traveler_state.invited;
 
-    let can_afford_traveler = traveler_state.current_offer.as_ref().is_some_and(|offer| {
-        traveler::can_afford_traveler(offer, &station_totals, &preview.player_gains)
-    });
+    let can_afford_traveler = effects
+        .effects
+        .iter()
+        .find_map(|e| match e {
+            CityEffect::TravelerVisit(t) => Some(t.possible()),
+            _ => None,
+        })
+        .unwrap_or(false);
 
     let wait_id = egui::Id::new("wait_confirmation");
 
@@ -119,21 +127,29 @@ pub fn shared_ui_system(
             ui.add_space(2.0);
 
             if has_project || has_farms_invited || has_traveler_invited {
-                ui.add_enabled_ui(can_afford_construction, |ui| {
+                ui.add_enabled_ui(!blocked_construction, |ui| {
                     if ui.button("Advance Month").clicked() {
                         go_advance_month = true;
                     }
                 });
-                if has_project && !can_afford_construction {
-                    note_label!(ui, col_format!(problem, "Insufficient resources for construction"));
+                if has_project && blocked_construction {
+                    note_label!(
+                        ui,
+                        col_format!(
+                            problem,
+                            "Too much unpaid construction cost — cancel some proposed construction."
+                        )
+                    );
                 }
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.set_min_width(0.0);
+                        ui.set_max_width(400.0);
                         if has_project {
-                            label!(
-                                ui,
-                                format!("Construction: {} of {} months", m, n_display)
+                            ui.add(
+                                egui::ProgressBar::new(construction_progress.unwrap_or(1.0))
+                                .desired_width(100.0)
+                                .show_percentage(),
                             );
                         } else {
                             label!(ui, "No current project");
@@ -166,38 +182,121 @@ pub fn shared_ui_system(
             if rhs_resources.is_empty() {
                 ui.label("(none)");
             }
-            for res in &rhs_resources {
-                use crate::resource::Precision;
+            egui::Grid::new("resource_grid")
+                .num_columns(3)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    for res in &rhs_resources {
+                        use crate::resource::Precision;
 
-                let (current, precision) = station_totals
-                    .iter()
-                    .find(|(r, _, _)| r == res)
-                    .map(|(_, q, p)| (*q, *p))
-                    .unwrap_or((0, Precision::Exact));
-                let gain = *gains_map.get(res).unwrap_or(&0);
+                        let (current, precision) = station_totals
+                            .iter()
+                            .find(|(r, _, _)| r == res)
+                            .map(|(_, q, p)| (*q, *p))
+                            .unwrap_or((0, Precision::Exact));
+                        let need = *remaining_need_map.get(res).unwrap_or(&0);
+                        let lost = effects.leftover.get(res).map(|f| f.lost).unwrap_or(0);
+                        let storage_delta = effects.storage_delta(*res);
+                        let applied = effects
+                            .all()
+                            .find_map(|e| match e {
+                                CityEffect::Construction(c) => {
+                                    Some(*c.applied.get(res).unwrap_or(&0))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or(0);
 
-                let quantity_str = match precision {
-                    Precision::Exact => format!("{}", current),
-                    Precision::Approximate => format!("~{}", current),
-                    Precision::Conservative => format!(">{}", current),
-                };
+                        // Icon cell.
+                        if let Some(&tex) = icon_textures_lg.get(res) {
+                            ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                tex, LARGE_SIZE,
+                            )));
+                        } else {
+                            ui.label("");
+                        }
 
-                let cost = *cost_map.get(res).unwrap_or(&0);
-                let text = match (gain > 0, cost > 0) {
-                    (true, true) => format!("{}: {} +{} -{}", res.label(), quantity_str, gain, cost),
-                    (true, false) => format!("{}: {} +{}", res.label(), quantity_str, gain),
-                    (false, true) => format!("{}: {} -{}", res.label(), quantity_str, cost),
-                    (false, false) => format!("{}: {}", res.label(), quantity_str),
-                };
-                ui.horizontal(|ui| {
-                    if let Some(&tex) = icon_textures_lg.get(res) {
-                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                            tex, LARGE_SIZE,
-                        )));
+                        // Storage cell: current amount, plus the net change
+                        // to storage this month, plus anything lost to a
+                        // full store. Tooltip lives here.
+                        let quantity_str = match precision {
+                            Precision::Exact => format!("{}", current),
+                            Precision::Approximate => format!("~{}", current),
+                            Precision::Conservative => format!(">{}", current),
+                        };
+                        let storage_resp = if !has_storage {
+                            if lost > 0 {
+                                label!(ui, format!("({} lost)", lost))
+                            } else {
+                                ui.label("")
+                            }
+                        } else if storage_delta > 0 {
+                            if lost > 0 {
+                                label!(
+                                    ui,
+                                    quantity_str,
+                                    col_format!(preview, " +{}", storage_delta),
+                                    format!(" ({} lost)", lost)
+                                )
+                            } else {
+                                label!(ui, quantity_str, col_format!(preview, " +{}", storage_delta))
+                            }
+                        } else if storage_delta < 0 {
+                            label!(ui, quantity_str, col_format!(problem, " –{}", -storage_delta))
+                        } else if lost > 0 {
+                            label!(ui, quantity_str, format!(" ({} lost)", lost))
+                        } else {
+                            label!(ui, quantity_str)
+                        };
+
+                        // Tooltip: one colored line per contributing effect,
+                        // e.g. "+10 (market)" or "-7 (traveler)".
+                        storage_resp.on_hover_ui(|ui| {
+                            let mut any = false;
+                            for effect in effects.all() {
+                                let delta = effect.apply_resource(*res);
+                                if delta == 0 {
+                                    continue;
+                                }
+                                any = true;
+                                if delta > 0 {
+                                    label!(
+                                        ui,
+                                        col_format!(preview, "+{} ({})", delta, effect.effect_name())
+                                    );
+                                } else {
+                                    label!(
+                                        ui,
+                                        col_format!(problem, "{} ({})", delta, effect.effect_name())
+                                    );
+                                }
+                            }
+                            if lost > 0 {
+                                label!(ui, format!("({} lost)", lost));
+                                any = true;
+                            }
+                            if !any {
+                                label!(ui, "No activity this month.");
+                            }
+                        });
+
+                        // Construction cell: total remaining need, minus
+                        // what's being applied this month. Empty if nothing
+                        // is needed.
+                        if need > 0 {
+                            label!(
+                                ui,
+                                col_format!(problem, "{}", need),
+                                " – ",
+                                col_format!(preview, "{}", applied)
+                            );
+                        } else {
+                            ui.label("");
+                        }
+
+                        ui.end_row();
                     }
-                    label!(ui, format!("{}", text));
                 });
-            }
 
             // Tools count (UniqueResource — tracked separately from uniform resources).
             let total_tools: usize = constructed

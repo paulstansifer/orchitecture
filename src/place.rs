@@ -6,6 +6,7 @@ use crate::sparse3d::{Facing, Slot, SlotCoord};
 use bevy::math::IVec3;
 use bevy::prelude::{Commands, DetectChangesMut, Res, ResMut};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ops::Range;
 
 /// What a `QualityFactor` measures about a `Place`.
@@ -893,83 +894,69 @@ pub fn consume_uniform(cw: &mut ConstructedCity, res: UniformResource, qty: u32)
     true
 }
 
-/// The starting storage room: a 4×3 area set one cell back from the road's NE
-/// inside corner. The E-W road occupies z ∈ [0, 4); the north arm occupies
-/// x ∈ [0, 4) for z ≥ 4. Stepping one cell off both road edges puts the room at
-/// x ∈ [5, 9), z ∈ [5, 8).
-const ROOM_X: std::ops::Range<i32> = 5..9;
-const ROOM_Z: std::ops::Range<i32> = 5..8;
-const NUM_BINS: usize = 5;
-
-/// Places the starting storage room with randomly-positioned bins and market
-/// stands, pre-stocked with potatoes, timber, and canvas, directly into
-/// `constructed` (real cells, no proposal step) and registers their places.
-/// Returns the real-cell deltas for the caller to pass to `apply_changes`.
-/// Pure aside from `rng`, so it can be driven deterministically (e.g. by the
-/// headless testing harness) as well as by the `spawn_initial_places` startup system.
-pub fn place_initial_places(
-    constructed: &mut ConstructedCity,
-    rng: &mut impl rand::Rng,
-) -> Vec<(SlotCoord, Option<Cell>)> {
-    let Some(bin_id) = constructed.find_structure_by_name("bin") else {
-        return Vec::new();
-    };
-    let Some(storage_room_index) = constructed
-        .places
-        .iter()
-        .position(|s| s.name == "storage room")
-    else {
-        return Vec::new();
-    };
-
-    // Pick NUM_BINS distinct cells from the 4×3 footprint.
-    let mut candidates: Vec<IVec3> = Vec::new();
-    for x in ROOM_X {
-        for z in ROOM_Z {
-            candidates.push(IVec3::new(x, 0, z));
+/// Current per-resource totals held across all storage places (raw,
+/// unrounded — for internal calculations, unlike the display-oriented
+/// `build_ui::place_resource_totals`).
+pub fn storage_totals(cw: &ConstructedCity) -> HashMap<UniformResource, u32> {
+    let mut totals = HashMap::new();
+    for id in storage_ids(cw) {
+        for (res, qty) in cw.placed_places[id].contents.uniform_totals() {
+            *totals.entry(res).or_insert(0) += qty as u32;
         }
     }
-    use rand::seq::SliceRandom;
-    candidates.shuffle(rng);
-    let chosen: Vec<IVec3> = candidates.into_iter().take(NUM_BINS).collect();
+    totals
+}
 
-    // Place the bins as real cells and spawn their meshes.
-    let mut changes: Vec<(SlotCoord, Option<Cell>)> = Vec::new();
-    for cube in &chosen {
-        let loc = SlotCoord {
-            cube: *cube,
-            slot: Slot::Room,
-        };
-        let cell = Cell {
-            id: bin_id,
-            facing: Facing::default(),
-            evaluation: None,
-            build_material: BuildMaterialId::default(),
-        };
-        constructed.contents.set(loc, cell.clone());
-        changes.push((loc, Some(cell)));
+/// Free volume available for `res` across all storage places. Takes `res` for
+/// forward compatibility: storage doesn't yet vary by material, but a place
+/// marked `just_one_kind` already excludes resources other than the one it's
+/// currently holding, and future storage kinds may restrict further.
+pub fn storage_free_capacity(cw: &ConstructedCity, res: UniformResource) -> f32 {
+    storage_ids(cw)
+        .into_iter()
+        .filter_map(|id| {
+            let pp = &cw.placed_places[id];
+            let spec = cw.places.get(pp.place)?.storage.as_ref()?;
+            let usable =
+                !spec.just_one_kind || pp.contents.uniform_totals().iter().all(|(r, _)| *r == res);
+            usable.then(|| pp.contents.remaining_capacity())
+        })
+        .sum()
+}
+
+/// Deposits `qty` of `res`, spreading it across storage places' remaining
+/// capacity in placement order (mirrors `consume_uniform`'s spreading
+/// pattern). Returns the amount actually stored, which may be less than
+/// `qty` if free capacity runs out.
+pub fn deposit_uniform_with_capacity(
+    cw: &mut ConstructedCity,
+    res: UniformResource,
+    qty: u32,
+) -> u32 {
+    let mut remaining = qty;
+    let mut deposited = 0;
+    for id in storage_ids(cw) {
+        if remaining == 0 {
+            break;
+        }
+        let free = cw.placed_places[id].contents.remaining_capacity();
+        let take = (free.floor().max(0.0) as u32).min(remaining);
+        if take > 0 {
+            cw.placed_places[id].contents.add_uniform(res, take as u16);
+            remaining -= take;
+            deposited += take;
+        }
     }
+    deposited
+}
 
-    // Stock the inventory and register the storage room place.
-    let mut inv = Inventory::new(8, 20.0 * NUM_BINS as f32);
-    inv.add_uniform(UniformResource::Potato, 9);
-    inv.add_uniform(UniformResource::Timber, 20);
-    inv.add_uniform(UniformResource::Canvas, 10);
-
-    constructed.placed_places.insert(ParticularPlace {
-        place: storage_room_index,
-        fulfillments: chosen
-            .iter()
-            .map(|c| FulfilledPorf::Furniture(*c))
-            .collect(),
-        contents: inv,
-        restriction: ParentRestriction::Unrestricted,
-    });
-
-    // Place market stands opposite the stockpile (south of the E-W road at z = -1),
-    // with one space between each structure.
+/// Places the starting market stands directly into `constructed` (real
+/// cells, no proposal step). Returns the real-cell deltas for the caller to
+/// pass to `apply_changes`. The player starts with **no storage** — storage
+/// rooms/bins must be built normally through construction.
+pub fn place_initial_places(constructed: &mut ConstructedCity) -> Vec<(SlotCoord, Option<Cell>)> {
     let Some(market_stand_id) = constructed.find_structure_by_name("market stand") else {
-        return changes;
+        return Vec::new();
     };
 
     let market_stand_positions = [
@@ -977,6 +964,7 @@ pub fn place_initial_places(
         IVec3::new(3, 0, -1),
         IVec3::new(5, 0, -1),
     ];
+    let mut changes: Vec<(SlotCoord, Option<Cell>)> = Vec::new();
     for cube in &market_stand_positions {
         let loc = SlotCoord {
             cube: *cube,
@@ -995,15 +983,15 @@ pub fn place_initial_places(
     changes
 }
 
-/// Startup system: places the initial places using thread-local randomness
-/// and spawns its meshes. Must run after `spawn_grid`.
+/// Startup system: places the initial places and spawns its meshes. Must run
+/// after `spawn_grid`.
 pub fn spawn_initial_places(
     mut commands: Commands,
     eorf_list: Res<EorfList>,
     mut constructed: ResMut<ConstructedCity>,
     mut assembled: ResMut<AssembledCity>,
 ) {
-    let changes = place_initial_places(&mut constructed, &mut rand::rng());
+    let changes = place_initial_places(&mut constructed);
     apply_changes(&mut commands, &mut assembled, &eorf_list, changes);
 }
 
@@ -1223,8 +1211,8 @@ mod tests {
     fn placing_a_pallet_auto_forms_a_bedroom_and_drives_home_assignment() {
         let mut session = HeadlessSession::new(1);
 
-        // Place a pallet far from the initial storage room / market stands so
-        // it can't be swept into an existing place.
+        // Place a pallet far from the initial market stands so it can't be
+        // swept into an existing place.
         dispatch_ok(&mut session, "place 100 0 100 room pallet");
         dispatch_ok(&mut session, "tick");
 
@@ -1242,5 +1230,76 @@ mod tests {
             population[0].contains("home=none"),
             "expected the individual to be evicted: {population:?}"
         );
+    }
+
+    // ── storage capacity helpers ────────────────────────────────────────────
+
+    fn storage_place_def(just_one_kind: bool) -> Place {
+        Place {
+            name: "storage room".to_string(),
+            requirements: vec![PlaceReq {
+                requirement: Porf::Furniture("bin".to_string()),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            }],
+            storage: Some(PlaceStorageSpec {
+                just_one_kind,
+                accounting: Approximation {
+                    digits: 2,
+                    max: 999,
+                },
+            }),
+            quality_factors: vec![],
+            assignable_for: None,
+        }
+    }
+
+    fn grid_with_storage(def: Place, inv: Inventory) -> ConstructedCity {
+        let mut cw = ConstructedCity::new(bin_structures());
+        cw.road_forbidden_zone = false;
+        cw.places = vec![def];
+        cw.placed_places.insert(ParticularPlace {
+            place: 0,
+            fulfillments: vec![f(b(0, 0))],
+            contents: inv,
+            restriction: ParentRestriction::Unrestricted,
+        });
+        cw
+    }
+
+    #[test]
+    fn storage_totals_sums_across_places() {
+        let mut inv = Inventory::new(8, 20.0);
+        inv.add_uniform(UniformResource::Timber, 5);
+        let cw = grid_with_storage(storage_place_def(false), inv);
+        assert_eq!(storage_totals(&cw).get(&UniformResource::Timber), Some(&5));
+    }
+
+    #[test]
+    fn storage_free_capacity_reflects_remaining_volume() {
+        let mut inv = Inventory::new(8, 20.0);
+        inv.add_uniform(UniformResource::Timber, 12);
+        let cw = grid_with_storage(storage_place_def(false), inv);
+        assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 8.0);
+    }
+
+    #[test]
+    fn deposit_with_capacity_caps_at_remaining_volume() {
+        let inv = Inventory::new(8, 5.0);
+        let mut cw = grid_with_storage(storage_place_def(false), inv);
+        let deposited = deposit_uniform_with_capacity(&mut cw, UniformResource::Timber, 12);
+        assert_eq!(deposited, 5);
+        assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 0.0);
+    }
+
+    #[test]
+    fn just_one_kind_place_excludes_other_resources_from_capacity() {
+        let mut inv = Inventory::new(8, 20.0);
+        inv.add_uniform(UniformResource::Timber, 5);
+        let cw = grid_with_storage(storage_place_def(true), inv);
+        assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 15.0);
+        assert_eq!(storage_free_capacity(&cw, UniformResource::Straw), 0.0);
     }
 }

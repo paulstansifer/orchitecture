@@ -1034,3 +1034,63 @@ pub(crate) fn construction_cost(
     result.sort_by_key(|(r, _)| *r);
     result
 }
+
+/// Resource cost still owed to complete the current proposed construction:
+/// `construction_cost(...)` (unchanged, total cost) minus
+/// `pending.resource_progress` already applied, floored at zero. Drops zero
+/// entries. Empty when there's nothing pending.
+pub(crate) fn remaining_construction_need(
+    pending: &crate::city::ProposedCity,
+    structure_infos: &[crate::eorf::EorfInfo],
+    material_list: &crate::materials::MaterialList,
+) -> Vec<(crate::resource::UniformResource, u32)> {
+    construction_cost(&pending.proposed_changes, structure_infos, material_list)
+        .into_iter()
+        .filter_map(|(res, total)| {
+            let progress = pending.resource_progress.get(&res).copied().unwrap_or(0);
+            let remaining = total.saturating_sub(progress.min(total));
+            (remaining > 0).then_some((res, remaining))
+        })
+        .collect()
+}
+
+/// Fraction (0.0–1.0) of the current pending construction's total material
+/// cost that's already been paid off, weighted by each material's time cost
+/// (`1 / UniformResource::construct_per_month()`) so materials that are
+/// slower to deliver count for more of the bar. `None` when there's no
+/// pending construction (or its cost is zero).
+pub(crate) fn construction_progress_fraction(
+    pending: &crate::city::ProposedCity,
+    structure_infos: &[crate::eorf::EorfInfo],
+    material_list: &crate::materials::MaterialList,
+) -> Option<f32> {
+    let total_cost = construction_cost(&pending.proposed_changes, structure_infos, material_list);
+    if total_cost.is_empty() {
+        return None;
+    }
+
+    let time_cost = |res: crate::resource::UniformResource, qty: u32| -> f32 {
+        qty as f32 / res.construct_per_month()
+    };
+
+    let total_time: f32 = total_cost
+        .iter()
+        .map(|(res, qty)| time_cost(*res, *qty))
+        .sum();
+    if total_time <= 0.0 {
+        return Some(1.0);
+    }
+    let paid_time: f32 = total_cost
+        .iter()
+        .map(|(res, qty)| {
+            let progress = pending
+                .resource_progress
+                .get(res)
+                .copied()
+                .unwrap_or(0)
+                .min(*qty);
+            time_cost(*res, progress)
+        })
+        .sum();
+    Some((paid_time / total_time).clamp(0.0, 1.0))
+}

@@ -135,7 +135,7 @@ pub struct FarmsResource {
     /// Rebuilt from polygons when empty (covers fresh generation and loaded saves).
     #[serde(skip)]
     pub neighbors: Vec<Vec<usize>>,
-    /// Per-cycle market event, parallel to `farms`. Defaults to Market; reset by `run_market`.
+    /// Per-cycle market event, parallel to `farms`. Defaults to Market; reset by `reset_farm_events`.
     #[serde(skip)]
     pub farm_events: Vec<FarmEvent>,
 }
@@ -217,32 +217,25 @@ impl GameClock {
     }
 }
 
-/// The market effect a single invited farm produces, given its event. Computed by
-/// the shared `compute_market` and consumed by both the preview UI and the executor.
-#[derive(Clone, Copy)]
-pub struct FarmMarketEffect {
-    pub travel_cost: u32,
-    pub potato_contributed: u32,
-    pub inedible_contributed: (UniformResource, u32),
-    pub effect: MarketModeEffect,
-}
-
 #[derive(Clone, Copy)]
 pub enum MarketModeEffect {
-    /// `Market` event: the farm's wanted resource was filled, granting this boost.
-    Boost(u32),
+    /// `Market` event: the farm's wanted resource was filled by `granted` units,
+    /// funded by `potatoes_spent` potatoes from the pool.
+    Boost { granted: u32, potatoes_spent: u32 },
     /// `RerollResource` event: paid this much of the wanted resource to re-roll.
     Reroll { paid: u32 },
-    /// `Specialize` event: switch production to use the given tool
+    /// `Specialize` event: paid this much of the wanted resource to switch to
+    /// using the given tool.
     Specialize { paid: u32, tool: ToolKind },
     /// `Adopt` event: population grows by one, production takes a -10 declining penalty.
     Adopt,
 }
 
-/// Read-only snapshot of what `run_market` would do given the current state.
+/// Read-only snapshot of what applying this month's market effects would do
+/// given the current state.
 pub struct MarketOutcome {
-    /// Per invited farm index: its market effect.
-    pub farm_effects: HashMap<usize, FarmMarketEffect>,
+    /// Per invited farm index: its `CityEffect::Market`.
+    pub farm_effects: HashMap<usize, crate::city_effect::CityEffect>,
     /// Resources the player will gain (resource, quantity).
     pub player_gains: Vec<(UniformResource, u32)>,
 }
@@ -276,21 +269,22 @@ fn pool_totals(
 }
 
 /// Fill a `Market`-event farm's wanted resource from the pool, consuming an equal
-/// number of potatoes, and return the boost granted.
+/// number of potatoes, and return `(granted, potatoes_spent)`.
 fn take_boost(
     farm: &FarmData,
     potato_pool: &mut u32,
     inedible_pool: &mut HashMap<UniformResource, u32>,
-) -> u32 {
+) -> (u32, u32) {
     let wanted = farm.wanted_resource;
     let available = *inedible_pool.get(&wanted).unwrap_or(&0);
     let t = available.min(farm.want_max);
+    let mut potatoes_spent = 0;
     if t > 0 {
         *inedible_pool.get_mut(&wanted).unwrap() -= t;
-        let take_potatoes = (*potato_pool).min(t);
-        *potato_pool -= take_potatoes;
+        potatoes_spent = (*potato_pool).min(t);
+        *potato_pool -= potatoes_spent;
     }
-    t
+    (t, potatoes_spent)
 }
 
 fn gains_from_pool(
@@ -310,8 +304,11 @@ fn gains_from_pool(
 }
 
 /// Compute what the next market run would do, without mutating state or using RNG.
-/// Shared by the preview UI, the "…" breakdown, and the executor `run_market`.
+/// Shared by the preview UI, the "…" breakdown, and real execution (via
+/// `city_effect::compute_month_effects`, which applies each `CityEffect::Market`).
 pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
+    use crate::city_effect::CityEffect;
+
     let invited = invited_with_costs(&fr.farms, fr.circle_pos);
     // TODO: copy-and-mutate inside a simulation
     let (mut potato_pool, mut inedible_pool) = pool_totals(&fr.farms, &invited);
@@ -322,7 +319,12 @@ pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
         let event = fr.farm_event(i);
         let effect = match event {
             FarmEvent::Market => {
-                MarketModeEffect::Boost(take_boost(farm, &mut potato_pool, &mut inedible_pool))
+                let (granted, potatoes_spent) =
+                    take_boost(farm, &mut potato_pool, &mut inedible_pool);
+                MarketModeEffect::Boost {
+                    granted,
+                    potatoes_spent,
+                }
             }
             FarmEvent::RerollResource => {
                 let wanted = farm.wanted_resource;
@@ -333,20 +335,42 @@ pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
                     }
                 } else {
                     // Can't afford the re-roll: fall back to a normal boost.
-                    MarketModeEffect::Boost(take_boost(farm, &mut potato_pool, &mut inedible_pool))
+                    let (granted, potatoes_spent) =
+                        take_boost(farm, &mut potato_pool, &mut inedible_pool);
+                    MarketModeEffect::Boost {
+                        granted,
+                        potatoes_spent,
+                    }
                 }
             }
-            FarmEvent::Specialize(tool) => MarketModeEffect::Specialize {
-                paid: RECONFIGURE_COST,
-                tool,
-            },
+            FarmEvent::Specialize(tool) => {
+                let wanted = farm.wanted_resource;
+                if *inedible_pool.get(&wanted).unwrap_or(&0) >= RECONFIGURE_COST {
+                    *inedible_pool.get_mut(&wanted).unwrap() -= RECONFIGURE_COST;
+                    MarketModeEffect::Specialize {
+                        paid: RECONFIGURE_COST,
+                        tool,
+                    }
+                } else {
+                    // Can't afford to specialize: fall back to a normal boost,
+                    // same as RerollResource does.
+                    let (granted, potatoes_spent) =
+                        take_boost(farm, &mut potato_pool, &mut inedible_pool);
+                    MarketModeEffect::Boost {
+                        granted,
+                        potatoes_spent,
+                    }
+                }
+            }
             FarmEvent::Adopt => MarketModeEffect::Adopt,
         };
         farm_effects.insert(
             i,
-            FarmMarketEffect {
+            CityEffect::Market {
+                farm_idx: i,
                 travel_cost: cost,
                 potato_contributed: farm.potato_stockpile.saturating_sub(cost),
+                wanted_resource: farm.wanted_resource,
                 inedible_contributed: (farm.produced_resource(), farm.inedible_stockpile),
                 effect,
             },
@@ -365,73 +389,27 @@ pub fn preview_market(fr: &FarmsResource) -> MarketOutcome {
     compute_market(fr)
 }
 
-/// Run the monthly market for invited farms, applying the effects computed by the
-/// shared `compute_market`. Returns the resources the player gains, the tools that
-/// must be returned to storage (Whipsaws freed when a Specialized farm re-rolls),
-/// and the number of new individuals gained this month (from `Adopt`).
-pub fn run_market(
-    fr: &mut FarmsResource,
-    rng: &mut impl rand::Rng,
-) -> (Vec<(UniformResource, u32)>, Vec<ToolKind>, u32) {
-    let outcome = compute_market(fr);
-    let effects: Vec<(usize, MarketModeEffect)> = outcome
-        .farm_effects
-        .iter()
-        .map(|(&i, e)| (i, e.effect))
-        .collect();
+/// Sums `production_capacity()` per produced resource across farms the
+/// player currently knows about (fog alpha below `REVEAL_THRESHOLD` at the
+/// farm's centroid). Used as a discard-priority tie-break in
+/// `resource::distribute_incoming_resources`.
+pub fn known_farm_plentifulness(fr: &FarmsResource) -> HashMap<UniformResource, u32> {
+    use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
 
-    // Invited farms sold their stockpiles into the pool.
-    for &(i, _) in &effects {
-        fr.farms[i].potato_stockpile = 0;
-        fr.farms[i].inedible_stockpile = 0;
-    }
-
-    let mut tools_to_return: Vec<ToolKind> = Vec::new();
-    let mut population_growth: u32 = 0;
-    for (i, effect) in effects {
-        match effect {
-            MarketModeEffect::Boost(t) => fr.farms[i].boost = t as i32,
-            MarketModeEffect::Adopt => {
-                fr.farms[i].boost -= 10;
-                population_growth += 1;
-            }
-            MarketModeEffect::Reroll { paid } => {
-                fr.farms[i].boost = 0;
-                if paid > 0 {
-                    // If this farm was Specialized, its tool is freed when it reverts.
-                    if let FarmProduction::Specialized(prev_tool) = fr.farms[i].production {
-                        tools_to_return.push(prev_tool);
-                    }
-                    let current_res = fr.farms[i].produced_resource();
-                    let options: Vec<UniformResource> = UniformResource::inedible_farmables()
-                        .iter()
-                        .copied()
-                        .filter(|&r| r != current_res)
-                        .collect();
-                    fr.farms[i].production =
-                        FarmProduction::Regular(options[rng.random_range(0..options.len())]);
-                }
-            }
-            MarketModeEffect::Specialize { paid, tool } => {
-                fr.farms[i].boost = 0;
-                if paid > 0 {
-                    // If this farm was Specialized, its tool is freed when it reverts.
-                    if let FarmProduction::Specialized(prev_tool) = fr.farms[i].production {
-                        tools_to_return.push(prev_tool);
-                    }
-
-                    fr.farms[i].production = FarmProduction::Specialized(tool);
-                }
-            }
+    let mut totals = HashMap::new();
+    for farm in &fr.farms {
+        if fog_alpha_at(farm.centroid(), &fr.traveler_reveals) < REVEAL_THRESHOLD {
+            *totals.entry(farm.produced_resource()).or_insert(0) += farm.production_capacity();
         }
     }
+    totals
+}
 
-    // Reset per-cycle events for the next month.
+/// Reset per-cycle farm events for the next month (invited or not).
+pub fn reset_farm_events(fr: &mut FarmsResource) {
     for event in fr.farm_events.iter_mut() {
         *event = FarmEvent::Market;
     }
-
-    (outcome.player_gains, tools_to_return, population_growth)
 }
 
 /// A month's production, computed by the shared core and applied by `apply_production`.
@@ -533,35 +511,52 @@ pub fn market_effect(
     idx: usize,
     event: FarmEvent,
 ) -> Option<MarketModeEffect> {
+    use crate::city_effect::CityEffect;
+
     fr.ensure_adjacency();
     let saved = fr.farm_event(idx);
     fr.set_farm_event(idx, event);
-    let effect = compute_market(fr).farm_effects.get(&idx).map(|e| e.effect);
+    let effect = compute_market(fr)
+        .farm_effects
+        .get(&idx)
+        .and_then(|e| match e {
+            CityEffect::Market { effect, .. } => Some(*effect),
+            _ => None,
+        });
     fr.set_farm_event(idx, saved);
     effect
 }
 
 fn describe_farm_effect(fr: &FarmsResource, idx: usize) -> Vec<String> {
+    use crate::city_effect::CityEffect;
+
     let mut lines = Vec::new();
     let outcome = compute_market(fr);
     let farm = &fr.farms[idx];
     let wanted = farm.wanted_resource.label();
 
-    if let Some(eff) = outcome.farm_effects.get(&idx) {
-        let (res, qty) = eff.inedible_contributed;
+    if let Some(CityEffect::Market {
+        travel_cost,
+        potato_contributed,
+        inedible_contributed,
+        effect,
+        ..
+    }) = outcome.farm_effects.get(&idx)
+    {
+        let (res, qty) = *inedible_contributed;
         lines.push(format!(
             "After {} travel cost, contributes {} potatoes and {} {} to the pool",
-            eff.travel_cost,
-            eff.potato_contributed,
+            travel_cost,
+            potato_contributed,
             qty,
             res.label()
         ));
-        match eff.effect {
-            MarketModeEffect::Boost(t) => {
-                if t > 0 {
+        match *effect {
+            MarketModeEffect::Boost { granted, .. } => {
+                if granted > 0 {
                     lines.push(format!(
                         "Receives {} {}: +{} production next month",
-                        t, wanted, t
+                        granted, wanted, granted
                     ));
                 } else {
                     lines.push(format!("No {} in the marketplace", wanted));
@@ -781,15 +776,21 @@ mod tests {
         // Pool has >= RECONFIGURE_COST timber: A pays and re-rolls.
         let outcome = compute_market(&make(RECONFIGURE_COST + 5));
         assert!(matches!(
-            outcome.farm_effects[&0].effect,
-            MarketModeEffect::Reroll { paid } if paid == RECONFIGURE_COST
+            outcome.farm_effects[&0],
+            crate::city_effect::CityEffect::Market {
+                effect: MarketModeEffect::Reroll { paid },
+                ..
+            } if paid == RECONFIGURE_COST
         ));
 
         // Pool has too little timber: A falls back to a normal boost.
         let outcome = compute_market(&make(RECONFIGURE_COST - 1));
         assert!(matches!(
-            outcome.farm_effects[&0].effect,
-            MarketModeEffect::Boost(_)
+            outcome.farm_effects[&0],
+            crate::city_effect::CityEffect::Market {
+                effect: MarketModeEffect::Boost { .. },
+                ..
+            }
         ));
     }
 
@@ -807,13 +808,32 @@ mod tests {
 
     #[test]
     fn adopt_grows_population_and_applies_declining_penalty() {
+        use crate::city::{ConstructedCity, ProposedCity};
+        use crate::city_effect::{Effect, EffectContext};
+        use crate::population::Population;
+        use rand::SeedableRng;
         use UniformResource::Straw;
+
         let a = mk_farm(FarmProduction::Regular(Straw), Straw, 20.0, 0);
         let mut fr = farms_with(vec![a], vec![vec![]]);
         fr.farm_events[0] = FarmEvent::Adopt;
 
-        let (_, _, population_growth) = run_market(&mut fr, &mut rand::rng());
-        assert_eq!(population_growth, 1);
+        let effect = compute_market(&fr).farm_effects.remove(&0).unwrap();
+
+        let mut constructed = ConstructedCity::new(Vec::new());
+        let mut pending = ProposedCity::new();
+        let mut population = Population::default();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+        effect.apply(&mut EffectContext {
+            constructed: &mut constructed,
+            pending: &mut pending,
+            population: &mut population,
+            farms: &mut fr,
+            rng: &mut rng,
+        });
+
+        // Population::default() starts with one individual; Adopt adds one more.
+        assert_eq!(population.individuals.len(), 2);
         assert_eq!(fr.farms[0].boost, -10);
         assert_eq!(fr.farms[0].production_capacity(), 10);
 

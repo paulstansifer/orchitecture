@@ -7,27 +7,26 @@
 //! geometry via [`crate::construction::apply_construction_completion`]) and for
 //! turning the outcome into user-facing text or log lines.
 
-use crate::build_ui::{construction_cost, place_resource_totals};
+use crate::build_ui::remaining_construction_need;
 use crate::city::{Cell, ConstructedCity, ProposedCity};
+use crate::city_effect::{compute_month_effects, CityEffect, Effect, EffectContext};
 use crate::construction::tick_construction;
 use crate::materials::MaterialList;
 use crate::place;
-use crate::population::{Individual, Population};
+use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::sparse3d::SlotCoord;
 use crate::surroundings::farmstead::{
-    apply_production, compute_production, preview_market, run_market, update_wanted_resources,
+    apply_production, compute_production, reset_farm_events, update_wanted_resources,
     FarmsResource, GameClock,
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
-use crate::traveler::{accept_traveler, can_afford_traveler, roll_traveler_offer, TravelerState};
-
-/// Number of potatoes each individual eats per month.
-const POTATOES_PER_INDIVIDUAL: u32 = 5;
+use crate::traveler::{roll_traveler_offer, TravelerState};
 
 /// Outcome of one month advance, for callers to report or apply.
 pub struct MonthOutcome {
-    /// Resources deposited into storage from the market this month.
+    /// This month's market inflow, before any claims (construction, storage,
+    /// etc.) — i.e. what farms delivered to the pool.
     pub market_gains: Vec<(UniformResource, u32)>,
     /// Traveler resolution: `None` if none was invited, `Some(true)` if accepted,
     /// `Some(false)` if invited but unaffordable (declined).
@@ -39,11 +38,13 @@ pub struct MonthOutcome {
 
 /// Advances the game by one month, mutating the game resources in place.
 ///
-/// Sequence: run the market (depositing returned tools and growing population),
-/// produce next month's stockpiles, clear farm invites, resolve any invited
-/// traveler, roll a fresh traveler offer, deposit market gains into storage, feed
-/// the population, then tick construction (deducting its cost on completion when
-/// not in sandbox mode).
+/// Sequence: compute this month's effects (market participation per invited
+/// farm, population feeding, a traveler's visit, construction's material
+/// absorption — see [`crate::city_effect`]) against the current state, apply
+/// every one of them, then produce next month's stockpiles, clear farm
+/// invites, roll a fresh traveler offer, deposit whatever's left of this
+/// month's inflow into storage, and tick construction (which completes once
+/// fully paid, unconditionally in sandbox mode).
 #[allow(clippy::too_many_arguments)]
 pub fn advance_month(
     clock: &mut GameClock,
@@ -59,17 +60,33 @@ pub fn advance_month(
     clock.advance_month();
     farms.ensure_adjacency();
 
-    // Snapshot the market preview before mutating farms; the traveler
-    // affordability check below reads its predicted player gains.
-    let preview = preview_market(farms);
+    let effects = compute_month_effects(
+        farms,
+        constructed,
+        pending,
+        population,
+        traveler_state,
+        material_list,
+        sandbox_enabled,
+    );
 
-    let (market_gains, tools_to_return, population_growth) = run_market(farms, rng);
-    for tool in &tools_to_return {
-        place::deposit_tool(constructed, *tool);
+    {
+        // Reborrow (not move) so `rng` is still usable below.
+        let rng: &mut dyn rand::RngCore = &mut *rng;
+        let mut ctx = EffectContext {
+            constructed,
+            pending,
+            population,
+            farms,
+            rng,
+        };
+        for effect in &effects.effects {
+            effect.apply(&mut ctx);
+        }
     }
-    for _ in 0..population_growth {
-        population.individuals.push(Individual::default());
-    }
+
+    // Invited farms' per-cycle events are spent; reset for next month.
+    reset_farm_events(farms);
 
     let plan = compute_production(farms, rng);
     apply_production(farms, &plan);
@@ -78,65 +95,29 @@ pub fn advance_month(
         farm.invited = false;
     }
 
-    // Traveler resolution: deduct demands, deposit the reward, reveal their path.
-    let traveler_accepted = if traveler_state.invited {
-        traveler_state.current_offer.take().map(|offer| {
-            let station_totals = place_resource_totals(constructed);
-            if can_afford_traveler(&offer, &station_totals, &preview.player_gains) {
-                let new_path = accept_traveler(&offer, constructed);
-                farms.traveler_reveals.push(new_path);
-                true
-            } else {
-                false
-            }
-        })
-    } else {
-        None
-    };
+    let traveler_accepted = effects.effects.iter().find_map(|e| match e {
+        CityEffect::TravelerVisit(t) if t.invited => Some(t.affordable),
+        _ => None,
+    });
     traveler_state.invited = false;
     roll_traveler_offer(traveler_state, CIRCLE_REVEAL_RADIUS, rng);
 
-    if !market_gains.is_empty() {
-        if let Some(&id) = place::storage_ids(constructed).first() {
-            for (res, qty) in &market_gains {
-                constructed.placed_places[id]
-                    .contents
-                    .add_uniform(*res, *qty as u16);
-            }
+    // Whatever wasn't claimed by any effect above is stored (if capacity
+    // allows) or was already accounted as lost.
+    for (res, flow) in &effects.leftover {
+        if flow.stored > 0 {
+            place::deposit_uniform_with_capacity(constructed, *res, flow.stored);
         }
     }
 
-    // Feed the population: each individual eats a fixed number of potatoes.
-    for individual in &mut population.individuals {
-        individual.fed_this_month = false;
-    }
-    for individual in &mut population.individuals {
-        if place::consume_uniform(
-            constructed,
-            UniformResource::Potato,
-            POTATOES_PER_INDIVIDUAL,
-        ) {
-            individual.fed_this_month = true;
-        }
-    }
-
-    // Construction: compute cost up front (it depends on the still-pending
-    // proposals), tick progress, and deduct the cost if it completed.
-    let cost = if pending.num_changes() > 0 && !sandbox_enabled {
-        construction_cost(&pending.proposed_changes, &constructed.eorfs, material_list)
-    } else {
-        vec![]
-    };
-    let construction_changes =
-        tick_construction(pending, constructed, population.individuals.len());
-    if construction_changes.is_some() && !sandbox_enabled {
-        for (res, qty) in &cost {
-            place::consume_uniform(constructed, *res, *qty);
-        }
-    }
+    // Construction completes once fully paid off (sandbox mode bypasses the
+    // resource requirement, as it always has).
+    let fully_paid = sandbox_enabled
+        || remaining_construction_need(pending, &constructed.eorfs, material_list).is_empty();
+    let construction_changes = tick_construction(pending, constructed, fully_paid);
 
     MonthOutcome {
-        market_gains,
+        market_gains: effects.player_gains,
         traveler_accepted,
         construction_changes,
     }

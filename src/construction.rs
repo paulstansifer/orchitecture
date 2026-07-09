@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::math::{IVec3, Vec3};
 use bevy::prelude::Commands;
 
@@ -8,6 +10,7 @@ use crate::city::{
 };
 use crate::eorf::{EorfId, EorfList, PlacementStyle};
 use crate::materials::BuildMaterialId;
+use crate::resource::UniformResource;
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 
 fn proposal_view(proposal: &Option<Proposal>, has_real_cell: bool) -> ProposalView {
@@ -382,7 +385,7 @@ impl ProposedCity {
     /// Entity cleanup is the caller's responsibility.
     pub fn reset(&mut self) {
         self.proposed_changes = Sparse3D::new();
-        self.months_waited = 0;
+        self.resource_progress.clear();
     }
 }
 
@@ -402,6 +405,7 @@ pub fn construct(
         .collect();
 
     pe.proposed_changes = Sparse3D::new();
+    pe.resource_progress.clear();
 
     let mut real_changes = vec![];
     for (loc, proposal) in proposals {
@@ -419,9 +423,14 @@ pub fn construct(
     real_changes
 }
 
-/// Advances one month of construction progress (grid/resource state only, no ECS).
-/// If enough months have elapsed, commits all proposals and resets the counter.
-/// Should be called once per "Advance Month" action.
+/// Advances one month of construction progress (grid/resource state only, no
+/// ECS). Completes (commits all proposals) once every material's cost has
+/// been fully paid off. Should be called once per "Advance Month" action,
+/// after that month's resources have already been applied toward payment.
+///
+/// `fully_paid` should reflect whether
+/// `build_ui::remaining_construction_need` is empty (or `true`
+/// unconditionally in sandbox mode).
 ///
 /// Returns `Some(real_changes)` if construction completed this month (proposals
 /// were committed); the caller is responsible for reflecting those into the ECS
@@ -429,17 +438,10 @@ pub fn construct(
 pub fn tick_construction(
     pending: &mut ProposedCity,
     constructed: &mut ConstructedCity,
-    population_size: usize,
+    fully_paid: bool,
 ) -> Option<Vec<(SlotCoord, Option<Cell>)>> {
-    if pending.num_changes() > 0 {
-        pending.months_waited += 1;
-        if pending.months_waited as usize >= pending.months_for_construction(population_size) {
-            let real_changes = construct(constructed, pending);
-            pending.months_waited = 0;
-            return Some(real_changes);
-        }
-    } else {
-        pending.months_waited = 0;
+    if pending.num_changes() > 0 && fully_paid {
+        return Some(construct(constructed, pending));
     }
     None
 }
@@ -469,10 +471,97 @@ pub fn load_from_offline(
     pw.proposed_changes = Sparse3D::new();
     pw.undo_record.clear();
     pw.redo_record.clear();
+    pw.resource_progress.clear();
     // Shift the building into the no-road semiplane (south of the E-W road).
     let z_shift = -new_contents.bounding_box().1.z;
     let shifted = new_contents.translate(IVec3::new(0, 0, z_shift));
     cw.replace_contents(shifted)
+}
+
+/// The pending construction project's absorption of resources this month:
+/// how much of each material's cost got paid off, and how much of that came
+/// from pre-existing storage (as opposed to this month's fresh market
+/// inflow, which needs no physical deposit/withdrawal to claim).
+#[derive(Clone, Debug, Default)]
+pub struct Construction {
+    pub applied: HashMap<UniformResource, u32>,
+    pub from_storage: HashMap<UniformResource, u32>,
+}
+
+impl Construction {
+    pub fn possible(&self) -> bool {
+        true
+    }
+
+    pub fn apply_resource(&self, res: UniformResource) -> i16 {
+        -(self.applied.get(&res).copied().unwrap_or(0) as i16)
+    }
+
+    pub fn apply(&self, pending: &mut ProposedCity, constructed: &mut ConstructedCity) {
+        for (&res, &qty) in &self.applied {
+            if qty > 0 {
+                *pending.resource_progress.entry(res).or_insert(0) += qty;
+            }
+        }
+        for (&res, &qty) in &self.from_storage {
+            if qty > 0 {
+                crate::place::consume_uniform(constructed, res, qty);
+            }
+        }
+    }
+
+    pub fn effect_name(&self) -> String {
+        "construction".to_string()
+    }
+
+    pub fn describe(&self) -> String {
+        let total: u32 = self.applied.values().sum();
+        if total == 0 {
+            "No resources were available for construction this month.".to_string()
+        } else {
+            format!("Construction absorbs {total} resource unit(s) this month.")
+        }
+    }
+}
+
+/// Claims resources toward `remaining_need`, up to each resource's
+/// `construct_per_month()` rate, drawing from `inflow_available` first (so
+/// construction can "rescue" resources that would otherwise be lost to
+/// storage-fill/loss) and topping up from `storage_available` second.
+/// Mutates both maps to subtract what's claimed.
+pub fn compute_construction_absorption(
+    remaining_need: &HashMap<UniformResource, u32>,
+    inflow_available: &mut HashMap<UniformResource, u32>,
+    storage_available: &mut HashMap<UniformResource, u32>,
+) -> Construction {
+    let mut applied = HashMap::new();
+    let mut from_storage = HashMap::new();
+    for (&res, &need) in remaining_need {
+        let rate = res.construct_per_month().floor().max(0.0) as u32;
+        let want = need.min(rate);
+
+        let have_inflow = inflow_available.get(&res).copied().unwrap_or(0);
+        let from_inflow = want.min(have_inflow);
+        if from_inflow > 0 {
+            *inflow_available.get_mut(&res).unwrap() -= from_inflow;
+        }
+
+        let have_storage = storage_available.get(&res).copied().unwrap_or(0);
+        let from_store = (want - from_inflow).min(have_storage);
+        if from_store > 0 {
+            *storage_available.get_mut(&res).unwrap() -= from_store;
+            from_storage.insert(res, from_store);
+        }
+
+        let total = from_inflow + from_store;
+        if total > 0 {
+            applied.insert(res, total);
+        }
+    }
+    Construction {
+        applied,
+        from_storage,
+    }
 }
 
 #[cfg(test)]
@@ -486,7 +575,7 @@ mod tests {
     use crate::materials::BuildMaterialId;
     use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
 
-    use super::{construct, load_from_offline};
+    use super::{compute_construction_absorption, construct, load_from_offline, tick_construction};
 
     fn make_world() -> (ConstructedCity, ProposedCity) {
         use crate::eorf::StructureEmbedding;
@@ -729,6 +818,23 @@ mod tests {
     }
 
     #[test]
+    fn construct_clears_resource_progress() {
+        let (mut cw, mut pw) = make_world();
+        pw.propose(
+            &cw,
+            0,
+            (IVec3::ZERO, IVec3::ZERO),
+            Slot::XLoWall,
+            thing(&cw),
+            BuildMaterialId::default(),
+        );
+        pw.resource_progress
+            .insert(crate::resource::UniformResource::Timber, 30);
+        construct(&mut cw, &mut pw);
+        check!(pw.resource_progress.is_empty());
+    }
+
+    #[test]
     fn undo_after_construct_creates_reverse_proposal() {
         let (mut cw, mut pw) = make_world();
         let loc = xlowall(1, 0, 0);
@@ -776,6 +882,123 @@ mod tests {
         check!(!pw.undo_record.is_empty());
         // Real contents untouched
         check!(cw.contents.get(xlowall(0, 0, 0)).is_none());
+    }
+
+    #[test]
+    fn reset_clears_resource_progress() {
+        let (_cw, mut pw) = make_world();
+        pw.resource_progress
+            .insert(crate::resource::UniformResource::Timber, 30);
+        pw.reset();
+        check!(pw.resource_progress.is_empty());
+    }
+
+    // ── tick_construction ────────────────────────────────────────────────────
+
+    #[test]
+    fn tick_construction_completes_when_fully_paid() {
+        let (mut cw, mut pw) = make_world();
+        pw.propose(
+            &cw,
+            0,
+            (IVec3::ZERO, IVec3::ZERO),
+            Slot::XLoWall,
+            thing(&cw),
+            BuildMaterialId::default(),
+        );
+        let result = tick_construction(&mut pw, &mut cw, true);
+        check!(result.is_some());
+        check!(pw.num_changes() == 0);
+    }
+
+    #[test]
+    fn tick_construction_waits_when_not_fully_paid() {
+        let (mut cw, mut pw) = make_world();
+        pw.propose(
+            &cw,
+            0,
+            (IVec3::ZERO, IVec3::ZERO),
+            Slot::XLoWall,
+            thing(&cw),
+            BuildMaterialId::default(),
+        );
+        let result = tick_construction(&mut pw, &mut cw, false);
+        check!(result.is_none());
+        check!(pw.num_changes() == 1);
+    }
+
+    #[test]
+    fn tick_construction_no_project_is_a_noop() {
+        let (mut cw, mut pw) = make_world();
+        let result = tick_construction(&mut pw, &mut cw, true);
+        check!(result.is_none());
+    }
+
+    // ── compute_construction_absorption ─────────────────────────────────────
+
+    use crate::resource::UniformResource;
+    use std::collections::HashMap;
+
+    fn m(pairs: &[(UniformResource, u32)]) -> HashMap<UniformResource, u32> {
+        pairs.iter().copied().collect()
+    }
+
+    #[test]
+    fn fully_applied_from_inflow_when_need_and_rate_allow() {
+        let mut inflow = m(&[(UniformResource::Timber, 10)]);
+        let mut storage = m(&[]);
+        let c = compute_construction_absorption(
+            &m(&[(UniformResource::Timber, 30)]),
+            &mut inflow,
+            &mut storage,
+        );
+        check!(c.applied[&UniformResource::Timber] == 10);
+        check!(!c.from_storage.contains_key(&UniformResource::Timber));
+        check!(inflow[&UniformResource::Timber] == 0);
+    }
+
+    #[test]
+    fn construction_rate_caps_absorption_independently_per_resource() {
+        // construct_per_month() is 50.0 for everything currently; demand above
+        // that rate can't be applied even if fully needed and available.
+        let mut inflow = m(&[(UniformResource::Timber, 80)]);
+        let mut storage = m(&[]);
+        let c = compute_construction_absorption(
+            &m(&[(UniformResource::Timber, 200)]),
+            &mut inflow,
+            &mut storage,
+        );
+        check!(c.applied[&UniformResource::Timber] == 50);
+        check!(inflow[&UniformResource::Timber] == 30);
+    }
+
+    #[test]
+    fn draws_from_inflow_before_storage() {
+        let mut inflow = m(&[(UniformResource::Timber, 4)]);
+        let mut storage = m(&[(UniformResource::Timber, 100)]);
+        let c = compute_construction_absorption(
+            &m(&[(UniformResource::Timber, 10)]),
+            &mut inflow,
+            &mut storage,
+        );
+        check!(c.applied[&UniformResource::Timber] == 10);
+        check!(c.from_storage[&UniformResource::Timber] == 6);
+        check!(inflow[&UniformResource::Timber] == 0);
+        check!(storage[&UniformResource::Timber] == 94);
+    }
+
+    #[test]
+    fn never_draws_more_storage_than_needed_after_inflow() {
+        let mut inflow = m(&[(UniformResource::Timber, 10)]);
+        let mut storage = m(&[(UniformResource::Timber, 100)]);
+        let c = compute_construction_absorption(
+            &m(&[(UniformResource::Timber, 10)]),
+            &mut inflow,
+            &mut storage,
+        );
+        check!(c.applied[&UniformResource::Timber] == 10);
+        check!(!c.from_storage.contains_key(&UniformResource::Timber));
+        check!(storage[&UniformResource::Timber] == 100);
     }
 
     // ── redo ──────────────────────────────────────────────────────────────────

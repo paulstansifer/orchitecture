@@ -117,7 +117,7 @@ macro_rules! styled_label {
                 seg.fmt.italics = $italics;
                 lj.append(&seg.txt, 0.0, seg.fmt);
             )+
-            $ui.label(lj);
+            $ui.label(lj)
         }
     };
 }

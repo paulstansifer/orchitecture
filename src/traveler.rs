@@ -108,43 +108,91 @@ pub fn roll_traveler_offer(state: &mut TravelerState, view_radius: f32, rng: &mu
     }
 }
 
-/// Returns true if the player can afford all of the traveler's demands after
-/// market preview gains are applied.
-pub fn can_afford_traveler(
-    offer: &IndividualTraveler,
-    station_totals: &[(UniformResource, u32, crate::resource::Precision)],
-    preview_gains: &[(UniformResource, u32)],
-) -> bool {
-    let available = |res: UniformResource| -> u32 {
-        let stored = station_totals
-            .iter()
-            .find(|(r, _, _)| *r == res)
-            .map_or(0, |(_, q, _)| *q);
-        let gain = preview_gains
-            .iter()
-            .find(|(r, _)| *r == res)
-            .map_or(0, |(_, q)| *q);
-        stored + gain
-    };
-    offer
-        .demands
-        .iter()
-        .all(|(res, qty)| available(*res) >= *qty as u32)
+/// A traveler's visit this month: its resolved demands (each claimed partly
+/// from this month's market inflow, partly from pre-existing storage — see
+/// `city_effect::compute_month_effects`) and reward.
+///
+/// `affordable` reflects whether *all* demands could be fully claimed, and is
+/// computed regardless of `invited` — it's what drives the "Invite" checkbox's
+/// enabled state, since the player needs to see affordability before deciding
+/// to invite. `invited` reflects whether the player actually checked that
+/// box. Only when *both* are true were the demands actually claimed
+/// (`granted`/`granted_from_storage` are 0 for every demand otherwise), and
+/// `apply()`/`apply_resource()` only have an effect in that case.
+pub struct TravelerVisit {
+    /// `(resource, desired, granted, granted_from_storage)`.
+    pub demands: Vec<(UniformResource, u32, u32, u32)>,
+    pub reward: ResolvedReward,
+    pub path: Vec<Vec2>,
+    pub affordable: bool,
+    pub invited: bool,
 }
 
-/// Deducts demands from storage (spread across stations), deposits the traveler's
-/// reward into the first storage place, and returns the traveler's path.
-pub fn accept_traveler(offer: &IndividualTraveler, constructed: &mut ConstructedCity) -> Vec<Vec2> {
-    for (res, qty) in &offer.demands {
-        crate::place::consume_uniform(constructed, *res, *qty as u32);
-    }
-    if let Some(&id) = crate::place::storage_ids(constructed).first() {
-        let contents = &mut constructed.placed_places[id].contents;
-        match &offer.reward {
-            ResolvedReward::Tool(kind) => contents.add_unique(UniqueResource::Tool(*kind)),
-            ResolvedReward::Resource(res, qty) => contents.add_uniform(*res, *qty),
-        }
+impl TravelerVisit {
+    /// Whether the "Invite" checkbox should be enabled.
+    pub fn possible(&self) -> bool {
+        self.affordable
     }
 
-    offer.path.clone()
+    fn active(&self) -> bool {
+        self.affordable && self.invited
+    }
+
+    pub fn apply_resource(&self, res: UniformResource) -> i16 {
+        if !self.active() {
+            return 0;
+        }
+        let demand: i16 = self
+            .demands
+            .iter()
+            .filter(|(r, ..)| *r == res)
+            .map(|(_, _, granted, _)| *granted as i16)
+            .sum();
+        let reward = match &self.reward {
+            ResolvedReward::Resource(r, qty) if *r == res => *qty as i16,
+            _ => 0,
+        };
+        reward - demand
+    }
+
+    /// Deducts the storage-backed portion of each demand (the inflow-backed
+    /// portion needs no physical action — it was simply never deposited),
+    /// deposits the reward into the first storage place, and reveals the
+    /// traveler's path. No-op unless the visit was both affordable and invited.
+    pub fn apply(
+        &self,
+        constructed: &mut ConstructedCity,
+        farms: &mut crate::surroundings::farmstead::FarmsResource,
+    ) {
+        if !self.active() {
+            return;
+        }
+        for &(res, _, _granted, from_storage) in &self.demands {
+            if from_storage > 0 {
+                crate::place::consume_uniform(constructed, res, from_storage);
+            }
+        }
+        if let Some(&id) = crate::place::storage_ids(constructed).first() {
+            let contents = &mut constructed.placed_places[id].contents;
+            match &self.reward {
+                ResolvedReward::Tool(kind) => contents.add_unique(UniqueResource::Tool(*kind)),
+                ResolvedReward::Resource(res, qty) => contents.add_uniform(*res, *qty),
+            }
+        }
+        farms.traveler_reveals.push(self.path.clone());
+    }
+
+    pub fn effect_name(&self) -> String {
+        "traveler".to_string()
+    }
+
+    pub fn describe(&self) -> String {
+        if !self.invited {
+            "A traveler is nearby but hasn't been invited.".to_string()
+        } else if self.affordable {
+            "A traveler's demands are met; their reward is delivered.".to_string()
+        } else {
+            "A traveler's demands can't be met this month; they're declined.".to_string()
+        }
+    }
 }
