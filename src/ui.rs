@@ -3,14 +3,15 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::build_ui::SandboxMode;
 use crate::city::{CityMut, ViewableWorld};
+use crate::city_effect::{compute_month_effects, CityEffect, Effect};
 use crate::eorf::EorfList;
 use crate::game_mode::GameMode;
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
-use crate::surroundings::farmstead::{preview_market, FarmsResource, GameClock};
-use crate::traveler::{self, TravelerState};
+use crate::surroundings::farmstead::{FarmsResource, GameClock};
+use crate::traveler::TravelerState;
 use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
@@ -41,8 +42,22 @@ pub fn shared_ui_system(
         return;
     };
 
-    // Market preview for resource gain display.
-    let preview = preview_market(&farms);
+    // This month's effects (market participation, feeding, a traveler's
+    // visit, construction absorption) — computed once and shared by the
+    // resource preview, the per-resource tooltip, and the traveler
+    // checkbox's affordability. Same computation `advance_month` uses to
+    // actually apply things, just not mutated here.
+    let effects = compute_month_effects(
+        &farms,
+        &constructed,
+        &pending,
+        &population,
+        &traveler_state,
+        &material_list,
+        sandbox.enabled,
+    );
+    let player_gains_map: std::collections::HashMap<UniformResource, u32> =
+        effects.player_gains.iter().copied().collect();
 
     let station_totals = crate::build_ui::place_resource_totals(&constructed);
 
@@ -58,33 +73,13 @@ pub fn shared_ui_system(
         remaining_need.iter().copied().collect();
 
     let has_storage = !crate::place::storage_ids(&constructed).is_empty();
-    let storage_snapshot = crate::place::storage_totals(&constructed);
-    let storage_free_capacity: std::collections::HashMap<UniformResource, f32> = preview
-        .player_gains
-        .iter()
-        .map(|(res, _)| {
-            (
-                *res,
-                crate::place::storage_free_capacity(&constructed, *res),
-            )
-        })
-        .collect();
-    let known_farm_output = crate::surroundings::farmstead::known_farm_plentifulness(&farms);
-
-    let flows = crate::resource::distribute_incoming_resources(
-        &preview.player_gains,
-        &remaining_need_map,
-        &storage_snapshot,
-        &storage_free_capacity,
-        &known_farm_output,
-    );
 
     // Hard block: too much unpaid construction cost.
     let blocked_construction = remaining_need.iter().any(|(_, qty)| *qty > 100);
 
     let mut rhs_resources: Vec<UniformResource> =
         station_totals.iter().map(|(r, _, _)| *r).collect();
-    for (r, _) in &preview.player_gains {
+    for (r, _) in &effects.player_gains {
         if !rhs_resources.contains(r) {
             rhs_resources.push(*r);
         }
@@ -111,9 +106,14 @@ pub fn shared_ui_system(
     let has_farms_invited = invited_count > 0;
     let has_traveler_invited = traveler_state.invited;
 
-    let can_afford_traveler = traveler_state.current_offer.as_ref().is_some_and(|offer| {
-        traveler::can_afford_traveler(offer, &station_totals, &preview.player_gains)
-    });
+    let can_afford_traveler = effects
+        .effects
+        .iter()
+        .find_map(|e| match e {
+            CityEffect::TravelerVisit(t) => Some(t.possible()),
+            _ => None,
+        })
+        .unwrap_or(false);
 
     let wait_id = egui::Id::new("wait_confirmation");
 
@@ -194,9 +194,9 @@ pub fn shared_ui_system(
                     .map(|(_, q, p)| (*q, *p))
                     .unwrap_or((0, Precision::Exact));
                 let need = *remaining_need_map.get(res).unwrap_or(&0);
-                let flow = flows.get(res).copied().unwrap_or_default();
-                let usable = flow.applied_to_construction + flow.stored;
-                let lost = flow.lost;
+                let gain = *player_gains_map.get(res).unwrap_or(&0);
+                let lost = effects.leftover.get(res).map(|f| f.lost).unwrap_or(0);
+                let usable = gain.saturating_sub(lost);
 
                 let name = if has_storage {
                     let quantity_str = match precision {
@@ -209,46 +209,73 @@ pub fn shared_ui_system(
                     res.label().to_string()
                 };
 
-                ui.horizontal(|ui| {
-                    if let Some(&tex) = icon_textures_lg.get(res) {
-                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                            tex, LARGE_SIZE,
-                        )));
+                let resp = ui
+                    .horizontal(|ui| {
+                        if let Some(&tex) = icon_textures_lg.get(res) {
+                            ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                tex, LARGE_SIZE,
+                            )));
+                        }
+                        match (need > 0, usable > 0, lost > 0) {
+                            (false, false, false) => label!(ui, name),
+                            (true, false, false) => {
+                                label!(ui, name, col_format!(problem, " –{}", need))
+                            }
+                            (false, true, false) => {
+                                label!(ui, name, col_format!(preview, " +{}", usable))
+                            }
+                            (false, false, true) => label!(ui, name, format!(" ({} lost)", lost)),
+                            (true, true, false) => label!(
+                                ui,
+                                name,
+                                col_format!(problem, " –{}", need),
+                                col_format!(preview, " +{}", usable)
+                            ),
+                            (true, false, true) => label!(
+                                ui,
+                                name,
+                                col_format!(problem, " –{}", need),
+                                format!(" ({} lost)", lost)
+                            ),
+                            (false, true, true) => label!(
+                                ui,
+                                name,
+                                col_format!(preview, " +{}", usable),
+                                format!(" ({} lost)", lost)
+                            ),
+                            (true, true, true) => label!(
+                                ui,
+                                name,
+                                col_format!(problem, " –{}", need),
+                                col_format!(preview, " +{}", usable),
+                                format!(" ({} lost)", lost)
+                            ),
+                        }
+                    })
+                    .response;
+
+                // Tooltip: one colored line per contributing effect, e.g.
+                // "+10 (market)" or "-7 (traveler)".
+                resp.on_hover_ui(|ui| {
+                    let mut any = false;
+                    for effect in effects.all() {
+                        let delta = effect.apply_resource(*res);
+                        if delta == 0 {
+                            continue;
+                        }
+                        any = true;
+                        if delta > 0 {
+                            label!(ui, col_format!(preview, "+{} ({})", delta, effect.effect_name()));
+                        } else {
+                            label!(ui, col_format!(problem, "{} ({})", delta, effect.effect_name()));
+                        }
                     }
-                    match (need > 0, usable > 0, lost > 0) {
-                        (false, false, false) => label!(ui, name),
-                        (true, false, false) => {
-                            label!(ui, name, col_format!(problem, " –{}", need))
-                        }
-                        (false, true, false) => {
-                            label!(ui, name, col_format!(preview, " +{}", usable))
-                        }
-                        (false, false, true) => label!(ui, name, format!(" ({} lost)", lost)),
-                        (true, true, false) => label!(
-                            ui,
-                            name,
-                            col_format!(problem, " –{}", need),
-                            col_format!(preview, " +{}", usable)
-                        ),
-                        (true, false, true) => label!(
-                            ui,
-                            name,
-                            col_format!(problem, " –{}", need),
-                            format!(" ({} lost)", lost)
-                        ),
-                        (false, true, true) => label!(
-                            ui,
-                            name,
-                            col_format!(preview, " +{}", usable),
-                            format!(" ({} lost)", lost)
-                        ),
-                        (true, true, true) => label!(
-                            ui,
-                            name,
-                            col_format!(problem, " –{}", need),
-                            col_format!(preview, " +{}", usable),
-                            format!(" ({} lost)", lost)
-                        ),
+                    if lost > 0 {
+                        label!(ui, format!("({} lost)", lost));
+                        any = true;
+                    }
+                    if !any {
+                        label!(ui, "No activity this month.");
                     }
                 });
             }

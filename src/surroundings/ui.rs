@@ -10,6 +10,7 @@ use super::farmstead::{
     MarketModeEffect, SurroundingsState,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
+use crate::city_effect::CityEffect;
 use crate::resource::ToolKind;
 
 const PIXELS_PER_UNIT: f32 = 8.0;
@@ -123,8 +124,11 @@ pub fn surroundings_ui_system(
     let preview = preview_market(&*farms);
     // Predicted boost for a farm, if it is invited in `Market` mode.
     let predicted_boost = |i: usize| -> u32 {
-        match preview.farm_effects.get(&i).map(|e| e.effect) {
-            Some(MarketModeEffect::Boost(t)) => t,
+        match preview.farm_effects.get(&i) {
+            Some(CityEffect::Market {
+                effect: MarketModeEffect::Boost { granted, .. },
+                ..
+            }) => *granted,
             _ => 0,
         }
     };

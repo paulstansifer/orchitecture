@@ -1234,8 +1234,8 @@ mod tests {
 
     // ── storage capacity helpers ────────────────────────────────────────────
 
-    fn storage_place_def(just_one_kind: bool) -> PlaceInfo {
-        PlaceInfo {
+    fn storage_place_def(just_one_kind: bool) -> Place {
+        Place {
             name: "storage room".to_string(),
             requirements: vec![PlaceReq {
                 requirement: Porf::Furniture("bin".to_string()),
@@ -1256,7 +1256,7 @@ mod tests {
         }
     }
 
-    fn grid_with_storage(def: PlaceInfo, inv: Inventory) -> ConstructedCity {
+    fn grid_with_storage(def: Place, inv: Inventory) -> ConstructedCity {
         let mut cw = ConstructedCity::new(bin_structures());
         cw.road_forbidden_zone = false;
         cw.places = vec![def];

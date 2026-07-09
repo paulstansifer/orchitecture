@@ -6,6 +6,7 @@ pub mod build_ui;
 pub mod camera;
 pub mod ceiling_lights;
 pub mod city;
+pub mod city_effect;
 pub mod construction;
 pub mod cutaway;
 pub mod eorf;
