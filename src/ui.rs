@@ -209,14 +209,14 @@ pub fn shared_ui_system(
                     res.label().to_string()
                 };
 
-                let resp = ui
+                let (icon_resp, label_resp) = ui
                     .horizontal(|ui| {
-                        if let Some(&tex) = icon_textures_lg.get(res) {
+                        let icon_resp = icon_textures_lg.get(res).map(|&tex| {
                             ui.add(egui::Image::new(egui::load::SizedTexture::new(
                                 tex, LARGE_SIZE,
-                            )));
-                        }
-                        match (need > 0, usable > 0, lost > 0) {
+                            )))
+                        });
+                        let label_resp = match (need > 0, usable > 0, lost > 0) {
                             (false, false, false) => label!(ui, name),
                             (true, false, false) => {
                                 label!(ui, name, col_format!(problem, " –{}", need))
@@ -250,9 +250,17 @@ pub fn shared_ui_system(
                                 col_format!(preview, " +{}", usable),
                                 format!(" ({} lost)", lost)
                             ),
-                        }
+                        };
+                        (icon_resp, label_resp)
                     })
-                    .response;
+                    .inner;
+
+                let row_rect = icon_resp.map_or(label_resp.rect, |r| r.rect.union(label_resp.rect));
+                let resp = ui.interact(
+                    row_rect,
+                    ui.id().with(("resource_row", res)),
+                    egui::Sense::hover(),
+                );
 
                 // Tooltip: one colored line per contributing effect, e.g.
                 // "+10 (market)" or "-7 (traveler)".

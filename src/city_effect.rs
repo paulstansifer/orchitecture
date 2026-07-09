@@ -324,6 +324,13 @@ pub fn compute_month_effects(
     let mut storage: HashMap<UniformResource, u32> = place::storage_totals(constructed);
 
     let mut effects: Vec<CityEffect> = market.farm_effects.into_values().collect();
+    // `farm_effects` is a `HashMap`, whose default hasher reseeds on every
+    // instantiation — sort here so the tooltip/execution order is canonical
+    // (by farm id) rather than shuffling from frame to frame.
+    effects.sort_by_key(|e| match e {
+        CityEffect::Market { farm_idx, .. } => *farm_idx,
+        _ => unreachable!("only Market variants exist at this point"),
+    });
 
     // 1. Eat.
     let desired_potato = population.individuals.len() as u32 * POTATOES_PER_INDIVIDUAL;
