@@ -26,7 +26,7 @@ use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResour
 use crate::surroundings::farmstead::{
     compute_market, known_farm_plentifulness, FarmProduction, FarmsResource, MarketModeEffect,
 };
-use crate::traveler::{TravelerState, TravelerVisit};
+use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 
 /// Number of potatoes each individual eats per month.
 pub const POTATOES_PER_INDIVIDUAL: u32 = 5;
@@ -282,6 +282,44 @@ pub struct MonthEffects {
 impl MonthEffects {
     pub fn all(&self) -> impl Iterator<Item = &CityEffect> {
         self.effects.iter()
+    }
+
+    /// Net change to the storage pool for `res` this month: leftover inflow
+    /// that gets deposited there, plus a traveler's reward (deposited
+    /// directly, bypassing the leftover pool), minus whatever Eat,
+    /// TravelerVisit, or Construction drew from pre-existing storage to
+    /// cover a shortfall. Positive = storage grows; negative = storage
+    /// shrinks.
+    pub fn storage_delta(&self, res: UniformResource) -> i64 {
+        let mut delta = self
+            .leftover
+            .get(&res)
+            .map(|f| f.stored as i64)
+            .unwrap_or(0);
+        for effect in &self.effects {
+            match effect {
+                CityEffect::Eat(e) if res == UniformResource::Potato => {
+                    delta -= e.from_storage as i64;
+                }
+                CityEffect::TravelerVisit(t) if t.affordable && t.invited => {
+                    for &(demand_res, _, _, from_storage) in &t.demands {
+                        if demand_res == res {
+                            delta -= from_storage as i64;
+                        }
+                    }
+                    if let ResolvedReward::Resource(reward_res, qty) = &t.reward {
+                        if *reward_res == res {
+                            delta += *qty as i64;
+                        }
+                    }
+                }
+                CityEffect::Construction(c) => {
+                    delta -= *c.from_storage.get(&res).unwrap_or(&0) as i64;
+                }
+                _ => {}
+            }
+        }
+        delta
     }
 }
 
@@ -539,6 +577,44 @@ mod tests {
 
         assert_eq!(eat_of(&effects).granted_potato, 10);
         assert!(!traveler_of(&effects).affordable);
+    }
+
+    #[test]
+    fn storage_delta_combines_leftover_reward_and_storage_draws() {
+        let mut leftover = HashMap::new();
+        leftover.insert(Timber, ResourceFlow { stored: 6, lost: 4 });
+
+        let effects = MonthEffects {
+            effects: vec![
+                CityEffect::Eat(Eat {
+                    desired_potato: 10,
+                    granted_potato: 10,
+                    from_storage: 3,
+                }),
+                CityEffect::TravelerVisit(TravelerVisit {
+                    demands: vec![(Straw, 5, 5, 2)],
+                    reward: ResolvedReward::Resource(Timber, 7),
+                    path: Vec::new(),
+                    affordable: true,
+                    invited: true,
+                }),
+                CityEffect::Construction(crate::construction::Construction {
+                    applied: HashMap::from([(Straw, 4)]),
+                    from_storage: HashMap::from([(Straw, 1)]),
+                }),
+            ],
+            player_gains: Vec::new(),
+            leftover,
+        };
+
+        // Timber: leftover deposit (6) + traveler reward (7).
+        assert_eq!(effects.storage_delta(Timber), 13);
+        // Potato: Eat drew 3 from storage.
+        assert_eq!(effects.storage_delta(Potato), -3);
+        // Straw: traveler demand drew 2, construction drew 1.
+        assert_eq!(effects.storage_delta(Straw), -3);
+        // Untouched resource.
+        assert_eq!(effects.storage_delta(Fieldstone), 0);
     }
 
     #[test]

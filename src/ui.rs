@@ -56,9 +56,6 @@ pub fn shared_ui_system(
         &material_list,
         sandbox.enabled,
     );
-    let player_gains_map: std::collections::HashMap<UniformResource, u32> =
-        effects.player_gains.iter().copied().collect();
-
     let station_totals = crate::build_ui::place_resource_totals(&constructed);
 
     // Remaining construction need (non-sandbox only).
@@ -185,108 +182,121 @@ pub fn shared_ui_system(
             if rhs_resources.is_empty() {
                 ui.label("(none)");
             }
-            for res in &rhs_resources {
-                use crate::resource::Precision;
+            egui::Grid::new("resource_grid")
+                .num_columns(3)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    for res in &rhs_resources {
+                        use crate::resource::Precision;
 
-                let (current, precision) = station_totals
-                    .iter()
-                    .find(|(r, _, _)| r == res)
-                    .map(|(_, q, p)| (*q, *p))
-                    .unwrap_or((0, Precision::Exact));
-                let need = *remaining_need_map.get(res).unwrap_or(&0);
-                let gain = *player_gains_map.get(res).unwrap_or(&0);
-                let lost = effects.leftover.get(res).map(|f| f.lost).unwrap_or(0);
-                let usable = gain.saturating_sub(lost);
+                        let (current, precision) = station_totals
+                            .iter()
+                            .find(|(r, _, _)| r == res)
+                            .map(|(_, q, p)| (*q, *p))
+                            .unwrap_or((0, Precision::Exact));
+                        let need = *remaining_need_map.get(res).unwrap_or(&0);
+                        let lost = effects.leftover.get(res).map(|f| f.lost).unwrap_or(0);
+                        let storage_delta = effects.storage_delta(*res);
+                        let applied = effects
+                            .all()
+                            .find_map(|e| match e {
+                                CityEffect::Construction(c) => {
+                                    Some(*c.applied.get(res).unwrap_or(&0))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or(0);
 
-                let name = if has_storage {
-                    let quantity_str = match precision {
-                        Precision::Exact => format!("{}", current),
-                        Precision::Approximate => format!("~{}", current),
-                        Precision::Conservative => format!(">{}", current),
-                    };
-                    format!("{}: {}", res.label(), quantity_str)
-                } else {
-                    res.label().to_string()
-                };
-
-                let (icon_resp, label_resp) = ui
-                    .horizontal(|ui| {
-                        let icon_resp = icon_textures_lg.get(res).map(|&tex| {
+                        // Icon cell.
+                        if let Some(&tex) = icon_textures_lg.get(res) {
                             ui.add(egui::Image::new(egui::load::SizedTexture::new(
                                 tex, LARGE_SIZE,
-                            )))
-                        });
-                        let label_resp = match (need > 0, usable > 0, lost > 0) {
-                            (false, false, false) => label!(ui, name),
-                            (true, false, false) => {
-                                label!(ui, name, col_format!(problem, " –{}", need))
-                            }
-                            (false, true, false) => {
-                                label!(ui, name, col_format!(preview, " +{}", usable))
-                            }
-                            (false, false, true) => label!(ui, name, format!(" ({} lost)", lost)),
-                            (true, true, false) => label!(
-                                ui,
-                                name,
-                                col_format!(problem, " –{}", need),
-                                col_format!(preview, " +{}", usable)
-                            ),
-                            (true, false, true) => label!(
-                                ui,
-                                name,
-                                col_format!(problem, " –{}", need),
-                                format!(" ({} lost)", lost)
-                            ),
-                            (false, true, true) => label!(
-                                ui,
-                                name,
-                                col_format!(preview, " +{}", usable),
-                                format!(" ({} lost)", lost)
-                            ),
-                            (true, true, true) => label!(
-                                ui,
-                                name,
-                                col_format!(problem, " –{}", need),
-                                col_format!(preview, " +{}", usable),
-                                format!(" ({} lost)", lost)
-                            ),
-                        };
-                        (icon_resp, label_resp)
-                    })
-                    .inner;
-
-                let row_rect = icon_resp.map_or(label_resp.rect, |r| r.rect.union(label_resp.rect));
-                let resp = ui.interact(
-                    row_rect,
-                    ui.id().with(("resource_row", res)),
-                    egui::Sense::hover(),
-                );
-
-                // Tooltip: one colored line per contributing effect, e.g.
-                // "+10 (market)" or "-7 (traveler)".
-                resp.on_hover_ui(|ui| {
-                    let mut any = false;
-                    for effect in effects.all() {
-                        let delta = effect.apply_resource(*res);
-                        if delta == 0 {
-                            continue;
-                        }
-                        any = true;
-                        if delta > 0 {
-                            label!(ui, col_format!(preview, "+{} ({})", delta, effect.effect_name()));
+                            )));
                         } else {
-                            label!(ui, col_format!(problem, "{} ({})", delta, effect.effect_name()));
+                            ui.label("");
                         }
-                    }
-                    if lost > 0 {
-                        label!(ui, format!("({} lost)", lost));
-                        any = true;
-                    }
-                    if !any {
-                        label!(ui, "No activity this month.");
+
+                        // Storage cell: current amount, plus the net change
+                        // to storage this month, plus anything lost to a
+                        // full store. Tooltip lives here.
+                        let quantity_str = match precision {
+                            Precision::Exact => format!("{}", current),
+                            Precision::Approximate => format!("~{}", current),
+                            Precision::Conservative => format!(">{}", current),
+                        };
+                        let storage_resp = if !has_storage {
+                            if lost > 0 {
+                                label!(ui, format!("({} lost)", lost))
+                            } else {
+                                ui.label("")
+                            }
+                        } else if storage_delta > 0 {
+                            if lost > 0 {
+                                label!(
+                                    ui,
+                                    quantity_str,
+                                    col_format!(preview, " +{}", storage_delta),
+                                    format!(" ({} lost)", lost)
+                                )
+                            } else {
+                                label!(ui, quantity_str, col_format!(preview, " +{}", storage_delta))
+                            }
+                        } else if storage_delta < 0 {
+                            label!(ui, quantity_str, col_format!(problem, " –{}", -storage_delta))
+                        } else if lost > 0 {
+                            label!(ui, quantity_str, format!(" ({} lost)", lost))
+                        } else {
+                            label!(ui, quantity_str)
+                        };
+
+                        // Tooltip: one colored line per contributing effect,
+                        // e.g. "+10 (market)" or "-7 (traveler)".
+                        storage_resp.on_hover_ui(|ui| {
+                            let mut any = false;
+                            for effect in effects.all() {
+                                let delta = effect.apply_resource(*res);
+                                if delta == 0 {
+                                    continue;
+                                }
+                                any = true;
+                                if delta > 0 {
+                                    label!(
+                                        ui,
+                                        col_format!(preview, "+{} ({})", delta, effect.effect_name())
+                                    );
+                                } else {
+                                    label!(
+                                        ui,
+                                        col_format!(problem, "{} ({})", delta, effect.effect_name())
+                                    );
+                                }
+                            }
+                            if lost > 0 {
+                                label!(ui, format!("({} lost)", lost));
+                                any = true;
+                            }
+                            if !any {
+                                label!(ui, "No activity this month.");
+                            }
+                        });
+
+                        // Construction cell: total remaining need, minus
+                        // what's being applied this month. Empty if nothing
+                        // is needed.
+                        if need > 0 {
+                            label!(
+                                ui,
+                                col_format!(problem, "{}", need),
+                                " – ",
+                                col_format!(preview, "{}", applied)
+                            );
+                        } else {
+                            ui.label("");
+                        }
+
+                        ui.end_row();
                     }
                 });
-            }
 
             // Tools count (UniqueResource — tracked separately from uniform resources).
             let total_tools: usize = constructed
