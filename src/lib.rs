@@ -32,6 +32,7 @@ pub mod resource;
 pub mod resource_icons;
 pub mod road;
 pub mod scene;
+pub mod selection;
 pub mod serialization;
 pub mod sparse3d;
 pub mod surroundings;

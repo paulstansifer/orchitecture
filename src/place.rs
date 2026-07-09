@@ -25,6 +25,9 @@ pub enum QualityAspect {
     Indoors,
     /// Count of `Porf`s (furniture or places) named `porf_name` near this place.
     NumberOf { porf_name: String },
+    // TODO:
+    // How well-lit (according to the GI system) the place is
+    //Light,
 }
 
 /// Which "need" an `Individual` can satisfy by being assigned to a `Place`.

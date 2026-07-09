@@ -6,8 +6,8 @@ use crate::autotile::AutotileResult;
 use bevy::ecs::system::SystemParam;
 use bevy::math::{IVec3, Quat, Vec3};
 use bevy::prelude::{
-    AlphaMode, Assets, Color, Commands, Component, DetectChanges, Entity, Image, Mesh, Mesh3d,
-    MeshMaterial3d, Query, Res, ResMut, Resource, SceneRoot, StandardMaterial, Transform, With,
+    AlphaMode, Assets, Color, Commands, Component, Entity, Image, Mesh, Mesh3d, MeshMaterial3d,
+    Res, ResMut, Resource, SceneRoot, StandardMaterial, Transform,
 };
 use serde::{Deserialize, Serialize};
 
@@ -924,71 +924,12 @@ pub fn spawn_material_assets(
     });
 }
 
-/// Furniture cubes (always `Slot::Room`) to highlight in the 3D view for the
-/// currently-inspected place. Written by `ui_system`, rendered by
-/// `update_place_highlight`.
+/// Cells to highlight in the 3D view: the currently-inspected place's
+/// furniture (always `Slot::Room`) plus the exact cell that was right-clicked
+/// to open the panel, whatever its slot. Written by `ui_system`, rendered by
+/// `selection::update_selection_ring`.
 #[derive(Resource, Default, PartialEq)]
-pub struct PlaceHighlight(pub Vec<IVec3>);
-
-/// Mesh + translucent material for place-highlight overlay cuboids.
-#[derive(Resource)]
-pub struct HighlightAssets {
-    mesh: Handle<Mesh>,
-    mat: Handle<StandardMaterial>,
-}
-
-/// Marks a spawned place-highlight overlay entity for despawn on the next change.
-#[derive(Component)]
-pub struct PlaceHighlightMarker;
-
-/// Startup system: creates the highlight cuboid mesh and material.
-pub fn spawn_highlight_assets(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let mesh = meshes.add(bevy::prelude::Cuboid::new(0.95, 0.95, 0.95));
-    let mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.3, 0.9, 1.0, 0.35),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        double_sided: true,
-        cull_mode: None,
-        ..Default::default()
-    });
-    commands.insert_resource(HighlightAssets { mesh, mat });
-}
-
-/// Despawns prior highlight overlays and spawns one translucent cuboid per
-/// highlighted furniture cube whenever the highlight set changes.
-pub fn update_place_highlight(
-    mut commands: Commands,
-    highlight: Res<PlaceHighlight>,
-    assets: Option<Res<HighlightAssets>>,
-    existing: Query<Entity, With<PlaceHighlightMarker>>,
-) {
-    if !highlight.is_changed() {
-        return;
-    }
-    let Some(assets) = assets else {
-        return;
-    };
-    for entity in &existing {
-        commands.entity(entity).despawn();
-    }
-    for cube in &highlight.0 {
-        let center = slot_center(SlotCoord {
-            cube: *cube,
-            slot: Slot::Room,
-        });
-        commands.spawn((
-            Mesh3d(assets.mesh.clone()),
-            MeshMaterial3d(assets.mat.clone()),
-            Transform::from_translation(center),
-            PlaceHighlightMarker,
-        ));
-    }
-}
+pub struct PlaceHighlight(pub Vec<SlotCoord>);
 
 /// Startup system: creates the four world resources from the already-populated EorfList.
 pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<EorfList>) {

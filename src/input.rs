@@ -261,6 +261,7 @@ pub fn building_input_system(
     mut furniture_right_click: ResMut<crate::build_ui::FurnitureRightClick>,
     mut right_press_pos: Local<Option<Vec2>>,
     mut ui_state: ResMut<crate::build_ui::UiState>,
+    mut grid_raycast: crate::selection::GridRaycast,
 ) {
     let BuildAssets {
         structure_list,
@@ -479,15 +480,12 @@ pub fn building_input_system(
             .unwrap_or(f32::INFINITY);
         // A click barely moves the cursor; a rotate-drag moves it a lot.
         if moved < 4.0 && !egui_wants_input.wants_any_pointer_input() {
-            if let Some(pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
-                let cube = pos.round().as_ivec3();
-                let loc = SlotCoord {
-                    cube,
-                    slot: Slot::Room,
-                };
-                if let Some(cell) = constructed.contents.get(loc) {
-                    if constructed.eorfs[cell.id.as_usize()].is_furniture() {
-                        furniture_right_click.0 = Some(cube);
+            if let Some(ray) = crate::selection::cursor_ray(&windows, &camera_q) {
+                if let Some(loc) = grid_raycast.cast(ray) {
+                    if let Some(cell) = constructed.contents.get(loc) {
+                        if constructed.eorfs[cell.id.as_usize()].is_furniture() {
+                            furniture_right_click.0 = Some(loc);
+                        }
                     }
                 }
             }

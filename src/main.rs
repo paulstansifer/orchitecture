@@ -18,8 +18,8 @@ use orchitecture_lib::{
         GameCamera,
     },
     city::{
-        spawn_grid, spawn_highlight_assets, spawn_material_assets, spawn_proposal_overlay_assets,
-        update_place_highlight, ConstructedCity, PlaceHighlight,
+        spawn_grid, spawn_material_assets, spawn_proposal_overlay_assets, ConstructedCity,
+        PlaceHighlight,
     },
     cutaway::{
         propagate_render_layers_system, sync_cutaway_shadow_material, update_cutaway_system,
@@ -49,6 +49,10 @@ use orchitecture_lib::{
     qnn::ModelPlugin,
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
+    selection::{
+        animate_selection_rings, spawn_ring_mesh_assets, update_hover_highlight,
+        update_selection_ring, HoveredFurniture, RingMaterial,
+    },
     surroundings::{
         enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
         GameClock,
@@ -100,6 +104,7 @@ fn main() {
         .add_plugins(GridPreviewPlugin)
         .add_plugins(GiPlugin)
         .add_plugins(ModelPlugin)
+        .add_plugins(MaterialPlugin::<RingMaterial>::default())
         .init_state::<GameMode>()
         .insert_resource(CameraState::default())
         .insert_resource(WalkCameraState::default())
@@ -110,6 +115,7 @@ fn main() {
         .insert_resource(SandboxMode::default())
         .insert_resource(FurnitureRightClick::default())
         .insert_resource(PlaceHighlight::default())
+        .insert_resource(HoveredFurniture::default())
         .insert_resource(GameClock::default())
         .insert_resource(MaterialList::load())
         .insert_resource(DebugNav::default())
@@ -139,7 +145,7 @@ fn main() {
                 spawn_cursors,
                 spawn_proposal_overlay_assets,
                 spawn_material_assets,
-                spawn_highlight_assets,
+                spawn_ring_mesh_assets,
                 discover_user_files,
                 spawn_resource_icons,
             ),
@@ -174,7 +180,11 @@ fn main() {
                     ),
                 )
                     .chain(),
-                update_place_highlight,
+                (
+                    update_selection_ring,
+                    animate_selection_rings,
+                    update_hover_highlight.run_if(in_state(GameMode::Build)),
+                ),
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))

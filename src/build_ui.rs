@@ -141,8 +141,8 @@ pub enum PlacesView {
     /// Every `Place` kind and its (recursive) requirements.
     #[default]
     List,
-    /// Ancestor-chain view for the furniture cube that was right-clicked.
-    Hierarchy { cube: IVec3 },
+    /// Ancestor-chain view for the furniture cell that was right-clicked.
+    Hierarchy { loc: SlotCoord },
 }
 
 #[derive(Resource, Default)]
@@ -158,7 +158,7 @@ pub struct UiState {
 /// A right-click pick on a real furniture cell, produced by `building_input_system`
 /// and consumed by `ui_system` to open the place panel.
 #[derive(Resource, Default)]
-pub struct FurnitureRightClick(pub Option<IVec3>);
+pub struct FurnitureRightClick(pub Option<SlotCoord>);
 
 /// When enabled, construction edits commit immediately instead of becoming
 /// proposals, and (eventually) edits are free. Loading structures is only
@@ -257,9 +257,9 @@ pub fn build_ui_system(
     };
 
     // A right-click pick (from building_input_system) opens the place panel.
-    if let Some(cube) = furniture_right_click.0.take() {
+    if let Some(loc) = furniture_right_click.0.take() {
         ui_state.left_tab = LeftTab::Places;
-        ui_state.places_view = PlacesView::Hierarchy { cube };
+        ui_state.places_view = PlacesView::Hierarchy { loc };
     }
 
     // Captures a map name selected via the dropdown; handled after the egui block.
@@ -408,7 +408,7 @@ pub fn build_ui_system(
     // `wall_grid`) immutably while rendering.
     let mut next_tab: Option<LeftTab> = None;
     let mut next_places_view: Option<PlacesView> = None;
-    let mut highlight: Vec<IVec3> = Vec::new();
+    let mut highlight: Vec<SlotCoord> = Vec::new();
     let tab = ui_state.left_tab;
     let places_view = ui_state.places_view;
 
@@ -503,7 +503,8 @@ pub fn build_ui_system(
                             next_tab = Some(LeftTab::Furniture);
                         }
                     }
-                    PlacesView::Hierarchy { cube } => {
+                    PlacesView::Hierarchy { loc } => {
+                    let cube = loc.cube;
                     ui.heading("Place");
                     ui.separator();
                     if ui.button("← Back").clicked() {
@@ -631,12 +632,16 @@ pub fn build_ui_system(
                             ui.separator();
                         }
                         // Highlight the innermost place's furniture in 3D.
+                        // Place fulfillments are always `Slot::Room` furniture.
                         let innermost = &world.constructed.placed_places[chain[0]];
                         highlight = innermost
                             .fulfillments
                             .iter()
                             .filter_map(|f| match f {
-                                crate::place::FulfilledPorf::Furniture(loc) => Some(*loc),
+                                crate::place::FulfilledPorf::Furniture(cube) => Some(SlotCoord {
+                                    cube: *cube,
+                                    slot: Slot::Room,
+                                }),
                                 crate::place::FulfilledPorf::Place(_) => None,
                             })
                             .collect();
@@ -644,11 +649,14 @@ pub fn build_ui_system(
 
                     // The clicked furniture itself, at the bottom (below every
                     // containing place, from outermost down to innermost).
-                    if let Some(cell) = world
-                        .constructed
-                        .contents
-                        .get(SlotCoord { cube, slot: Slot::Room })
-                    {
+                    if let Some(cell) = world.constructed.contents.get(loc) {
+                        // Always highlight the exact clicked cell at its own slot,
+                        // independent of place membership -- e.g. `WallPlop`
+                        // furniture never fulfills a place (fulfillments are
+                        // Room-slot only), so it wouldn't otherwise get a ring.
+                        if !highlight.contains(&loc) {
+                            highlight.push(loc);
+                        }
                         let eorf_idx = cell.id.as_usize();
                         let furniture_name = world.constructed.eorfs[eorf_idx].name.clone();
                         ui.label(egui::RichText::new(&furniture_name).heading());
