@@ -175,7 +175,6 @@ pub struct PlaceReq {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PlaceStorageSpec {
-    pub just_one_kind: bool,
     pub accounting: Approximation,
     // max storage space is 20.0 * bins + 10.0 * racks
 }
@@ -826,6 +825,14 @@ pub fn storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
         .collect()
 }
 
+/// True if `cube` is a bin fulfillment of some storage place -- used by the
+/// UI to decide whether to offer a per-bin resource-restriction dropdown.
+pub fn cube_is_storage_bin(cw: &ConstructedCity, cube: IVec3) -> bool {
+    cw.placed_places.iter().any(|(_, pp)| {
+        is_storage(cw, pp) && pp.fulfillments.contains(&FulfilledPorf::Furniture(cube))
+    })
+}
+
 /// Number of furniture pieces named `furniture_name` fulfilling placed places
 /// whose place type is named `place_name` (e.g. how many "market stand"
 /// furniture are placed across all "market" places).
@@ -907,27 +914,70 @@ pub fn storage_totals(cw: &ConstructedCity) -> HashMap<UniformResource, u32> {
     totals
 }
 
-/// Free volume available for `res` across all storage places. Takes `res` for
-/// forward compatibility: storage doesn't yet vary by material, but a place
-/// marked `just_one_kind` already excludes resources other than the one it's
-/// currently holding, and future storage kinds may restrict further.
+/// Per-bin capacity ceiling for `res` within `pp`: 20 units for every bin
+/// fulfillment that is unrestricted or restricted to `res`; bins restricted
+/// to a different resource contribute nothing.
+fn place_capacity_ceiling(cw: &ConstructedCity, pp: &ParticularPlace, res: UniformResource) -> f32 {
+    pp.fulfillments
+        .iter()
+        .filter(|f| match f {
+            FulfilledPorf::Furniture(cube) => cw
+                .bin_resource_restrictions
+                .get(cube)
+                .is_none_or(|r| *r == res),
+            FulfilledPorf::Place(_) => false,
+        })
+        .count() as f32
+        * 20.0
+}
+
+/// Free volume `pp` can currently accept for `res`: bounded by its bins'
+/// individual resource restrictions (via `place_capacity_ceiling`) and by its
+/// overall room volume.
+fn place_free_capacity_for(
+    cw: &ConstructedCity,
+    pp: &ParticularPlace,
+    res: UniformResource,
+) -> f32 {
+    let current = pp
+        .contents
+        .uniform_totals()
+        .into_iter()
+        .find(|(r, _)| *r == res)
+        .map(|(_, q)| q as f32)
+        .unwrap_or(0.0);
+    let ceiling_free = (place_capacity_ceiling(cw, pp, res) - current).max(0.0);
+    ceiling_free.min(pp.contents.remaining_capacity())
+}
+
+/// Free volume available for `res` across all storage places, honoring each
+/// bin's individual resource restriction (see `place_capacity_ceiling`).
 pub fn storage_free_capacity(cw: &ConstructedCity, res: UniformResource) -> f32 {
     storage_ids(cw)
         .into_iter()
-        .filter_map(|id| {
-            let pp = &cw.placed_places[id];
-            let spec = cw.places.get(pp.place)?.storage.as_ref()?;
-            let usable =
-                !spec.just_one_kind || pp.contents.uniform_totals().iter().all(|(r, _)| *r == res);
-            usable.then(|| pp.contents.remaining_capacity())
-        })
+        .map(|id| place_free_capacity_for(cw, &cw.placed_places[id], res))
         .sum()
 }
 
-/// Deposits `qty` of `res`, spreading it across storage places' remaining
-/// capacity in placement order (mirrors `consume_uniform`'s spreading
-/// pattern). Returns the amount actually stored, which may be less than
-/// `qty` if free capacity runs out.
+/// Total remaining room volume across all storage places, resource-agnostic
+/// — the hard ceiling on how much can be stored this month regardless of how
+/// it splits across resources. Since dedicated (restricted) bins' free
+/// capacity is disjoint per resource but unrestricted bins' capacity is
+/// shared, summing `storage_free_capacity` across several contending
+/// resources can double-count shared bins; this is the safety net used by
+/// `resource::distribute_incoming_resources` to cap that sum.
+pub fn storage_overall_free_capacity(cw: &ConstructedCity) -> f32 {
+    storage_ids(cw)
+        .into_iter()
+        .map(|id| cw.placed_places[id].contents.remaining_capacity())
+        .sum()
+}
+
+/// Deposits `qty` of `res`, spreading it across storage places' free
+/// capacity for `res` (mirrors `consume_uniform`'s spreading pattern), which
+/// honors each bin's individual resource restriction so a resource is never
+/// deposited into a bin restricted to a different one. Returns the amount
+/// actually stored, which may be less than `qty` if free capacity runs out.
 pub fn deposit_uniform_with_capacity(
     cw: &mut ConstructedCity,
     res: UniformResource,
@@ -939,7 +989,7 @@ pub fn deposit_uniform_with_capacity(
         if remaining == 0 {
             break;
         }
-        let free = cw.placed_places[id].contents.remaining_capacity();
+        let free = place_free_capacity_for(cw, &cw.placed_places[id], res);
         let take = (free.floor().max(0.0) as u32).min(remaining);
         if take > 0 {
             cw.placed_places[id].contents.add_uniform(res, take as u16);
@@ -1234,7 +1284,7 @@ mod tests {
 
     // ── storage capacity helpers ────────────────────────────────────────────
 
-    fn storage_place_def(just_one_kind: bool) -> Place {
+    fn storage_place_def() -> Place {
         Place {
             name: "storage room".to_string(),
             requirements: vec![PlaceReq {
@@ -1245,7 +1295,6 @@ mod tests {
                 worker_visit_duration: 1.0,
             }],
             storage: Some(PlaceStorageSpec {
-                just_one_kind,
                 accounting: Approximation {
                     digits: 2,
                     max: 999,
@@ -1256,24 +1305,28 @@ mod tests {
         }
     }
 
-    fn grid_with_storage(def: Place, inv: Inventory) -> ConstructedCity {
+    fn grid_with_storage_bins(def: Place, bins: &[IVec3], inv: Inventory) -> ConstructedCity {
         let mut cw = ConstructedCity::new(bin_structures());
         cw.road_forbidden_zone = false;
         cw.places = vec![def];
         cw.placed_places.insert(ParticularPlace {
             place: 0,
-            fulfillments: vec![f(b(0, 0))],
+            fulfillments: bins.iter().map(|&cube| f(cube)).collect(),
             contents: inv,
             restriction: ParentRestriction::Unrestricted,
         });
         cw
     }
 
+    fn grid_with_storage(def: Place, inv: Inventory) -> ConstructedCity {
+        grid_with_storage_bins(def, &[b(0, 0)], inv)
+    }
+
     #[test]
     fn storage_totals_sums_across_places() {
         let mut inv = Inventory::new(8, 20.0);
         inv.add_uniform(UniformResource::Timber, 5);
-        let cw = grid_with_storage(storage_place_def(false), inv);
+        let cw = grid_with_storage(storage_place_def(), inv);
         assert_eq!(storage_totals(&cw).get(&UniformResource::Timber), Some(&5));
     }
 
@@ -1281,25 +1334,50 @@ mod tests {
     fn storage_free_capacity_reflects_remaining_volume() {
         let mut inv = Inventory::new(8, 20.0);
         inv.add_uniform(UniformResource::Timber, 12);
-        let cw = grid_with_storage(storage_place_def(false), inv);
+        let cw = grid_with_storage(storage_place_def(), inv);
         assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 8.0);
     }
 
     #[test]
     fn deposit_with_capacity_caps_at_remaining_volume() {
         let inv = Inventory::new(8, 5.0);
-        let mut cw = grid_with_storage(storage_place_def(false), inv);
+        let mut cw = grid_with_storage(storage_place_def(), inv);
         let deposited = deposit_uniform_with_capacity(&mut cw, UniformResource::Timber, 12);
         assert_eq!(deposited, 5);
         assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 0.0);
     }
 
     #[test]
-    fn just_one_kind_place_excludes_other_resources_from_capacity() {
+    fn bin_restricted_to_a_resource_excludes_others_from_capacity() {
         let mut inv = Inventory::new(8, 20.0);
         inv.add_uniform(UniformResource::Timber, 5);
-        let cw = grid_with_storage(storage_place_def(true), inv);
+        let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], inv);
+        cw.bin_resource_restrictions
+            .insert(b(0, 0), UniformResource::Timber);
         assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 15.0);
         assert_eq!(storage_free_capacity(&cw, UniformResource::Straw), 0.0);
+    }
+
+    #[test]
+    fn one_restricted_and_one_unrestricted_bin_split_capacity_per_resource() {
+        let inv = Inventory::new(8, 40.0);
+        let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
+        cw.bin_resource_restrictions
+            .insert(b(0, 0), UniformResource::Timber);
+        // b(0, 1) is unrestricted, so it counts toward every resource's
+        // ceiling; b(0, 0) only counts toward Timber's.
+        assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 40.0);
+        assert_eq!(storage_free_capacity(&cw, UniformResource::Straw), 20.0);
+    }
+
+    #[test]
+    fn deposit_with_capacity_refuses_to_overfill_a_restricted_bin() {
+        let inv = Inventory::new(8, 20.0);
+        let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], inv);
+        cw.bin_resource_restrictions
+            .insert(b(0, 0), UniformResource::Timber);
+        let deposited = deposit_uniform_with_capacity(&mut cw, UniformResource::Straw, 10);
+        assert_eq!(deposited, 0);
+        assert_eq!(storage_totals(&cw).get(&UniformResource::Straw), None);
     }
 }

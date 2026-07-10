@@ -440,6 +440,7 @@ pub fn compute_month_effects(
         &incoming_leftover,
         &place::storage_totals(constructed),
         &storage_free_capacity,
+        place::storage_overall_free_capacity(constructed),
         &known_farm_output,
     );
 
@@ -508,7 +509,6 @@ mod tests {
             name: "storage room".to_string(),
             requirements: vec![],
             storage: Some(PlaceStorageSpec {
-                just_one_kind: false,
                 accounting: Approximation {
                     digits: 2,
                     max: 999,

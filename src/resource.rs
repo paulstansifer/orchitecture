@@ -278,19 +278,24 @@ pub struct ResourceFlow {
 /// TravelerVisit, or Construction this month (see `city_effect`) — so this
 /// function only ever handles the "what happens to the rest" question.
 ///
-/// Storage is (today) one physical pool shared across all resource types, so
-/// when combined leftover exceeds capacity, resources are bumped out
-/// starting from the most "plentiful" one — `storage_snapshot[r]` descending,
-/// then `known_farm_output[r]` descending, then `UniformResource`'s `Ord` as
-/// a final deterministic tie-break — so scarce resources keep priority for
-/// the remaining space. `storage_free_capacity` is keyed per resource for
-/// forward compatibility (storage may vary per material later); today all
-/// its entries are equal (see `place::storage_free_capacity`), so the shared
-/// pool size is taken as the max across contending resources.
+/// Bins can be individually restricted to one resource (see
+/// `place::place_capacity_ceiling`), so `storage_free_capacity` entries for
+/// different resources may draw on disjoint dedicated bins *and* on shared
+/// unrestricted bins at the same time. When combined leftover exceeds
+/// capacity, resources are bumped out starting from the most "plentiful"
+/// one — `storage_snapshot[r]` descending, then `known_farm_output[r]`
+/// descending, then `UniformResource`'s `Ord` as a final deterministic
+/// tie-break — so scarce resources keep priority for the remaining space.
+/// The overall budget is the *sum* of each contending resource's free
+/// capacity (dedicated bins are additive), capped by `overall_free_capacity`
+/// — the room-wide, resource-agnostic remaining volume (see
+/// `place::storage_overall_free_capacity`) — so resources sharing the same
+/// unrestricted bins can't have their free capacity double-counted.
 pub fn distribute_incoming_resources(
     incoming: &[(UniformResource, u32)],
     storage_snapshot: &HashMap<UniformResource, u32>,
     storage_free_capacity: &HashMap<UniformResource, f32>,
+    overall_free_capacity: f32,
     known_farm_output: &HashMap<UniformResource, u32>,
 ) -> HashMap<UniformResource, ResourceFlow> {
     let plentifulness_key = |r: &UniformResource| {
@@ -329,17 +334,24 @@ pub fn distribute_incoming_resources(
         }
     };
 
-    // Whatever arrived tries storage, capped by the shared free volume pool.
+    // Whatever arrived tries storage. Each resource's own free capacity is
+    // an upper bound (dedicated bins are additive across resources), but the
+    // combined budget can't exceed the room-wide overall free capacity
+    // (shared, unrestricted bins can't be double-counted across resources).
     let mut stored: HashMap<UniformResource, u32> = incoming
         .iter()
         .filter(|(_, qty)| *qty > 0)
         .map(|(r, qty)| (*r, *qty))
         .collect();
-    let pool_capacity = stored
+    for (r, qty) in stored.iter_mut() {
+        let own_capacity = storage_free_capacity.get(r).copied().unwrap_or(0.0);
+        *qty = (*qty).min(own_capacity.max(0.0).floor() as u32);
+    }
+    let pool_capacity: f32 = stored
         .keys()
         .filter_map(|r| storage_free_capacity.get(r).copied())
-        .fold(0.0_f32, f32::max);
-    let max_storable = pool_capacity.max(0.0).floor() as u32;
+        .sum();
+    let max_storable = pool_capacity.min(overall_free_capacity).max(0.0).floor() as u32;
     cap_total(&mut stored, max_storable);
 
     // Assemble per-resource flows; remainder is lost.
@@ -378,6 +390,7 @@ mod distribute_tests {
             &[(Timber, 10)],
             &m(&[]),
             &cap(&[(Timber, 30.0)]),
+            30.0,
             &m(&[]),
         );
         assert_eq!(
@@ -395,6 +408,7 @@ mod distribute_tests {
             &[(Timber, 10)],
             &m(&[]),
             &cap(&[(Timber, 3.0)]),
+            3.0,
             &m(&[]),
         );
         assert_eq!(flows[&Timber], ResourceFlow { stored: 3, lost: 7 });
@@ -402,10 +416,14 @@ mod distribute_tests {
 
     #[test]
     fn storage_contention_discards_most_plentiful_first() {
+        // Both resources draw on the same shared (unrestricted) pool, so the
+        // overall budget (25) is well below the sum of their individual caps
+        // (50) -- this is the "one shared pool" case.
         let flows = distribute_incoming_resources(
             &[(Timber, 20), (Straw, 20)],
             &m(&[(Timber, 100), (Straw, 10)]), // Timber more plentiful in storage
             &cap(&[(Timber, 25.0), (Straw, 25.0)]),
+            25.0,
             &m(&[]),
         );
         // Timber is most plentiful -> discarded first from storage.
@@ -420,6 +438,7 @@ mod distribute_tests {
             &[(Timber, 20), (Straw, 20)],
             &m(&[(Timber, 5), (Straw, 5)]), // tied storage
             &cap(&[(Timber, 25.0), (Straw, 25.0)]),
+            25.0,
             &m(&[(Timber, 20), (Straw, 1)]), // Timber more plentiful via farm output
         );
         assert_eq!(flows[&Straw].stored, 20);
@@ -428,7 +447,7 @@ mod distribute_tests {
 
     #[test]
     fn no_storage_places_loses_everything() {
-        let flows = distribute_incoming_resources(&[(Potato, 5)], &m(&[]), &cap(&[]), &m(&[]));
+        let flows = distribute_incoming_resources(&[(Potato, 5)], &m(&[]), &cap(&[]), 0.0, &m(&[]));
         assert_eq!(flows[&Potato], ResourceFlow { stored: 0, lost: 5 });
     }
 
@@ -438,12 +457,58 @@ mod distribute_tests {
             &[(Timber, 17), (Potato, 8)],
             &m(&[(Timber, 2)]),
             &cap(&[(Timber, 4.0), (Potato, 4.0)]),
+            4.0,
             &m(&[]),
         );
         let t = flows[&Timber];
         assert_eq!(t.stored + t.lost, 17);
         let p = flows[&Potato];
         assert_eq!(p.stored + p.lost, 8);
+    }
+
+    #[test]
+    fn dedicated_bins_let_multiple_resources_store_simultaneously() {
+        // Timber and Straw each have their own dedicated 20-unit bin, so the
+        // room-wide overall capacity (40) allows both to fully store, unlike
+        // the shared-pool case above where a single 25-unit budget forces
+        // contention between them.
+        let flows = distribute_incoming_resources(
+            &[(Timber, 20), (Straw, 20)],
+            &m(&[]),
+            &cap(&[(Timber, 20.0), (Straw, 20.0)]),
+            40.0,
+            &m(&[]),
+        );
+        assert_eq!(
+            flows[&Timber],
+            ResourceFlow {
+                stored: 20,
+                lost: 0
+            }
+        );
+        assert_eq!(
+            flows[&Straw],
+            ResourceFlow {
+                stored: 20,
+                lost: 0
+            }
+        );
+    }
+
+    #[test]
+    fn overall_free_capacity_prevents_double_counting_a_shared_bin() {
+        // Both resources are only eligible for the same single unrestricted
+        // 20-unit bin, so each is independently reported as having 20 free
+        // -- but the combined budget must stay at 20, not 40.
+        let flows = distribute_incoming_resources(
+            &[(Timber, 20), (Straw, 20)],
+            &m(&[(Timber, 5), (Straw, 5)]), // tied storage
+            &cap(&[(Timber, 20.0), (Straw, 20.0)]),
+            20.0,
+            &m(&[(Timber, 1), (Straw, 1)]), // tied farm output
+        );
+        let total_stored = flows[&Timber].stored + flows[&Straw].stored;
+        assert_eq!(total_stored, 20);
     }
 }
 

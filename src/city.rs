@@ -287,6 +287,12 @@ pub struct ConstructedCity {
     /// `set_cell`/`take_cell` whenever the furniture there is overwritten or
     /// removed, since the restriction belongs to that specific placement.
     pub furniture_restrictions: HashMap<IVec3, crate::place::ParentRestriction>,
+    /// Per-bin `UniformResource` restriction, keyed by the cube the bin is
+    /// placed at. Set in the UI; absent means unrestricted (any resource may
+    /// be stored there). Cleared via `set_cell`/`take_cell` whenever the
+    /// furniture there is overwritten or removed, since the restriction
+    /// belongs to that specific placement.
+    pub bin_resource_restrictions: HashMap<IVec3, UniformResource>,
 }
 
 impl ConstructedCity {
@@ -298,22 +304,25 @@ impl ConstructedCity {
             placed_places: crate::place::PlacedPlaces::default(),
             road_forbidden_zone: true,
             furniture_restrictions: HashMap::new(),
+            bin_resource_restrictions: HashMap::new(),
         }
     }
 
-    /// Sets a cell, clearing any furniture restriction recorded for the cube
-    /// it occupied (the restriction belongs to the previous occupant).
+    /// Sets a cell, clearing any furniture/bin restriction recorded for the
+    /// cube it occupied (the restriction belongs to the previous occupant).
     pub fn set_cell(&mut self, loc: SlotCoord, cell: Cell) {
         if loc.slot == Slot::Room {
             self.furniture_restrictions.remove(&loc.cube);
+            self.bin_resource_restrictions.remove(&loc.cube);
         }
         self.contents.set(loc, cell);
     }
 
-    /// Removes a cell, clearing any furniture restriction recorded for it.
+    /// Removes a cell, clearing any furniture/bin restriction recorded for it.
     pub fn take_cell(&mut self, loc: SlotCoord) -> Option<Cell> {
         if loc.slot == Slot::Room {
             self.furniture_restrictions.remove(&loc.cube);
+            self.bin_resource_restrictions.remove(&loc.cube);
         }
         self.contents.take(loc)
     }

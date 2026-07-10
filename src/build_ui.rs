@@ -679,6 +679,16 @@ pub fn build_ui_system(
                                 &eligible,
                             );
                         }
+
+                        if crate::place::cube_is_storage_bin(&world.constructed, cube) {
+                            ui.label("Restricted to:");
+                            bin_restriction_dropdown(
+                                ui,
+                                ("bin-restriction", eorf_idx),
+                                cube,
+                                &mut world.constructed.bin_resource_restrictions,
+                            );
+                        }
                     }
                     }
                 }
@@ -947,6 +957,39 @@ fn restriction_dropdown(
                 );
             }
         });
+}
+
+/// Dropdown for a bin's `UniformResource` restriction: "Any resource", or one
+/// specific resource. Absence from `restrictions` means unrestricted.
+fn bin_restriction_dropdown(
+    ui: &mut egui::Ui,
+    id_source: impl std::hash::Hash,
+    cube: bevy::math::IVec3,
+    restrictions: &mut std::collections::HashMap<
+        bevy::math::IVec3,
+        crate::resource::UniformResource,
+    >,
+) {
+    use crate::resource::UniformResource;
+
+    let mut current = restrictions.get(&cube).copied();
+    let current_label = current.map(|r| r.label()).unwrap_or("Any resource");
+    egui::ComboBox::from_id_salt(id_source)
+        .selected_text(current_label)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut current, None, "Any resource");
+            for &res in UniformResource::ALL {
+                ui.selectable_value(&mut current, Some(res), res.label());
+            }
+        });
+    match current {
+        Some(res) => {
+            restrictions.insert(cube, res);
+        }
+        None => {
+            restrictions.remove(&cube);
+        }
+    }
 }
 
 fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {
