@@ -32,7 +32,7 @@ use crate::place;
 use crate::population::{Individual, Population};
 use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResource};
 use crate::surroundings::farmstead::{
-    known_farm_plentifulness, FarmProduction, FarmsResource, MarketModeEffect,
+    known_farm_plentifulness, FarmId, FarmProduction, FarmsResource, MarketModeEffect,
 };
 use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 
@@ -268,7 +268,7 @@ impl Eat {
 /// `Market` variant carries everything a farm's effect needs directly.
 pub enum CityEffect {
     Market {
-        farm_idx: usize,
+        farm_idx: FarmId,
         travel_cost: u32,
         potato_contributed: u32,
         wanted_resource: UniformResource,
@@ -293,21 +293,18 @@ impl CityEffect {
             } => {
                 let i = *farm_idx;
                 match effect {
-                    MarketModeEffect::Boost { granted, .. } => {
-                        ctx.farms.farms[i].boost = *granted as i32
-                    }
+                    MarketModeEffect::Boost { granted, .. } => ctx.farms[i].boost = *granted as i32,
                     MarketModeEffect::Adopt => {
-                        ctx.farms.farms[i].boost -= 10;
+                        ctx.farms[i].boost -= 10;
                         ctx.population.individuals.push(Individual::default());
                     }
                     MarketModeEffect::Reroll { paid } => {
-                        ctx.farms.farms[i].boost = 0;
+                        ctx.farms[i].boost = 0;
                         if *paid > 0 {
-                            if let FarmProduction::Specialized(prev) = ctx.farms.farms[i].production
-                            {
+                            if let FarmProduction::Specialized(prev) = ctx.farms[i].production {
                                 place::deposit_tool(ctx.constructed, prev);
                             }
-                            let current = ctx.farms.farms[i].produced_resource();
+                            let current = ctx.farms[i].produced_resource();
                             let options: Vec<UniformResource> =
                                 UniformResource::inedible_farmables()
                                     .iter()
@@ -315,25 +312,24 @@ impl CityEffect {
                                     .filter(|&r| r != current)
                                     .collect();
                             use rand::Rng as _;
-                            ctx.farms.farms[i].production = FarmProduction::Regular(
+                            ctx.farms[i].production = FarmProduction::Regular(
                                 options[ctx.rng.random_range(0..options.len())],
                             );
                         }
                     }
                     MarketModeEffect::Specialize { paid, tool } => {
-                        ctx.farms.farms[i].boost = 0;
+                        ctx.farms[i].boost = 0;
                         if *paid > 0 {
-                            if let FarmProduction::Specialized(prev) = ctx.farms.farms[i].production
-                            {
+                            if let FarmProduction::Specialized(prev) = ctx.farms[i].production {
                                 place::deposit_tool(ctx.constructed, prev);
                             }
-                            ctx.farms.farms[i].production = FarmProduction::Specialized(*tool);
+                            ctx.farms[i].production = FarmProduction::Specialized(*tool);
                         }
                     }
                 }
                 // Invited farms sold their stockpiles into the pool.
-                ctx.farms.farms[i].potato_stockpile = 0;
-                ctx.farms.farms[i].inedible_stockpile = 0;
+                ctx.farms[i].potato_stockpile = 0;
+                ctx.farms[i].inedible_stockpile = 0;
             }
             CityEffect::Eat(e) => e.apply(ctx),
             CityEffect::TravelerVisit(t) => t.apply(ctx.constructed, ctx.farms),
@@ -660,7 +656,7 @@ mod tests {
             .expect("a TravelerVisit effect should be present")
     }
 
-    fn market_boost_granted(effects: &MonthEffects, idx: usize) -> u32 {
+    fn market_boost_granted(effects: &MonthEffects, idx: FarmId) -> u32 {
         effects
             .effects
             .iter()
@@ -722,7 +718,7 @@ mod tests {
             "traveler's full demand should be granted from inflow"
         );
         assert_eq!(
-            market_boost_granted(&effects, 1),
+            market_boost_granted(&effects, FarmId::new(1)),
             5,
             "farm 1 should only get the 5 Straw left over after the traveler's claim"
         );

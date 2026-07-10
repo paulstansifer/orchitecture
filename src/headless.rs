@@ -40,7 +40,7 @@ use crate::population::{assign_places, sync_assignments, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::surroundings::farmstead::{farm_breakdown, FarmEvent, FarmsResource, GameClock};
+use crate::surroundings::farmstead::{farm_breakdown, FarmEvent, FarmId, FarmsResource, GameClock};
 use crate::surroundings::map::generate_farms;
 use crate::traveler::{setup_travelers, TravelerState};
 
@@ -364,7 +364,7 @@ impl HeadlessSession {
                     return Err(format!("no such farm: {idx}"));
                 }
                 farms.ensure_adjacency();
-                farms.set_farm_event(idx, event);
+                farms.set_farm_event(FarmId::new(idx), event);
                 Ok(vec!["ok".to_string()])
             }
 
@@ -766,10 +766,11 @@ fn query_farm_system(
     if idx >= farms.farms.len() {
         return Err(format!("no such farm: {idx}"));
     }
+    let id = FarmId::new(idx);
     farms.ensure_adjacency();
-    let event = farms.farm_event(idx);
+    let event = farms.farm_event(id);
     let mut lines = vec![format!("farm {idx}")];
-    lines.extend(farm_breakdown(&mut farms, idx, event, None));
+    lines.extend(farm_breakdown(&mut farms, id, event, None));
     Ok(lines)
 }
 

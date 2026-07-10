@@ -6,8 +6,8 @@ use crate::ui_util::FontSizes;
 use crate::{col_format, label};
 
 use super::farmstead::{
-    compute_market, farm_breakdown, market_effect, FarmEvent, FarmProduction, FarmsResource,
-    MarketModeEffect, SurroundingsState,
+    compute_market, farm_breakdown, market_effect, FarmEvent, FarmId, FarmProduction,
+    FarmsResource, MarketModeEffect, SurroundingsState,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
 use crate::city_effect::CityEffect;
@@ -123,8 +123,8 @@ pub fn surroundings_ui_system(
     farms.ensure_adjacency();
     let preview = compute_market(&*farms);
     // Predicted boost for a farm, if it is invited in `Market` mode.
-    let predicted_boost = |i: usize| -> u32 {
-        match preview.farm_effects.get(&i) {
+    let predicted_boost = |id: FarmId| -> u32 {
+        match preview.farm_effects.get(&id) {
             Some(CityEffect::Market {
                 effect: MarketModeEffect::Boost { granted, .. },
                 ..
@@ -136,8 +136,8 @@ pub fn surroundings_ui_system(
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_build = false;
 
-    // Collect revealed farm indices and their screen centroids.
-    let mut revealed: Vec<(usize, egui::Pos2)> = Vec::new();
+    // Collect revealed farm ids and their screen centroids.
+    let mut revealed: Vec<(FarmId, egui::Pos2)> = Vec::new();
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
@@ -173,7 +173,7 @@ pub fn surroundings_ui_system(
                 if fog_alpha_at(map_centroid, &farms.traveler_reveals) < REVEAL_THRESHOLD {
                     let centroid = map_to_screen(map_centroid);
                     if panel_rect.contains(centroid) {
-                        revealed.push((i, centroid));
+                        revealed.push((FarmId::new(i), centroid));
                     }
                 }
             }
@@ -224,11 +224,11 @@ pub fn surroundings_ui_system(
     let invited_count = farms.farms.iter().filter(|f| f.invited).count();
     let invite_limit_reached = invited_count >= market_stand_count;
 
-    for (i, centroid) in revealed {
-        let current_event = farms.farm_event(i);
-        let farm = &mut farms.farms[i];
+    for (id, centroid) in revealed {
+        let current_event = farms.farm_event(id);
+        let farm = &mut farms[id];
 
-        egui::Area::new(egui::Id::new(("farm_panel", i)))
+        egui::Area::new(egui::Id::new(("farm_panel", id)))
             .fixed_pos(egui::Pos2::new(centroid.x - PANEL_W / 2.0, centroid.y))
             .show(ctx, |ui| {
                 egui::Frame::new()
@@ -244,10 +244,10 @@ pub fn surroundings_ui_system(
                                 ui,
                                 format!("{:.0} ac", farm.area),
                                 (farm.boost != 0).then_some(format!("{:+}", farm.boost)),
-                                (farm.invited && predicted_boost(i) > 0).then_some(col_format!(
+                                (farm.invited && predicted_boost(id) > 0).then_some(col_format!(
                                     preview,
                                     "+ {}",
-                                    predicted_boost(i)
+                                    predicted_boost(id)
                                 ))
                             );
                         });
@@ -298,7 +298,7 @@ pub fn surroundings_ui_system(
                                 .add_enabled(farm.invited, egui::Button::new("…"))
                                 .clicked()
                             {
-                                state.open_farm_menu = Some(i);
+                                state.open_farm_menu = Some(id);
                             }
                         });
                     });
@@ -307,14 +307,11 @@ pub fn surroundings_ui_system(
 
     // ── Farm configuration ("…") popup ────────────────────────────────────────
     if let Some(menu_i) = state.open_farm_menu {
-        if menu_i >= farms.farms.len() || !farms.farms[menu_i].invited {
+        if menu_i.index() >= farms.farms.len() || !farms[menu_i].invited {
             state.open_farm_menu = None;
         } else {
             let current_event = farms.farm_event(menu_i);
-            let is_specialized = matches!(
-                farms.farms[menu_i].production,
-                FarmProduction::Specialized(_)
-            );
+            let is_specialized = matches!(farms[menu_i].production, FarmProduction::Specialized(_));
             let whipsaw_in_storage =
                 crate::place::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
 
@@ -334,7 +331,7 @@ pub fn surroundings_ui_system(
                 Some(MarketModeEffect::Reroll { paid }) if paid > 0
             );
             let can_specialize = !is_specialized && whipsaw_in_storage;
-            let can_adopt = farms.farms[menu_i].can_adopt();
+            let can_adopt = farms[menu_i].can_adopt();
 
             let render_event_option = |ui: &mut egui::Ui,
                                        chosen: &mut Option<FarmEvent>,
