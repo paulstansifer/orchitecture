@@ -483,17 +483,9 @@ pub fn compute_month_effects(
 
     // 3. Market: farms' own Boost/Reroll/Specialize/Adopt participation,
     // against whatever's left of the pool's inflow after Eat and the traveler.
-    let mut farm_effects: Vec<CityEffect> = resolve_market(farms, &invited, &mut pool)
-        .into_values()
-        .collect();
-    // `resolve_market` returns a `HashMap`, whose default hasher reseeds on
-    // every instantiation — sort here so the tooltip/execution order is
-    // canonical (by farm id) rather than shuffling from frame to frame.
-    farm_effects.sort_by_key(|e| match e {
-        CityEffect::Market { farm_idx, .. } => *farm_idx,
-        _ => unreachable!("only Market variants exist at this point"),
-    });
-    effects.extend(farm_effects);
+    // `resolve_market` returns a `BTreeMap`, so this is already in canonical
+    // (by farm id) order rather than shuffling from frame to frame.
+    effects.extend(resolve_market(farms, &invited, &mut pool).into_values());
 
     // Whatever inflow farms left in the pool is the player's gains, and this
     // month's inflow for Construction and the leftover-distribution pass below.

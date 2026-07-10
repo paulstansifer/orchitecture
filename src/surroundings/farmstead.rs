@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -274,7 +274,7 @@ pub enum MarketModeEffect {
 /// given the current state.
 pub struct MarketOutcome {
     /// Per invited farm index: its `CityEffect::Market`.
-    pub farm_effects: HashMap<FarmId, crate::city_effect::CityEffect>,
+    pub farm_effects: BTreeMap<FarmId, crate::city_effect::CityEffect>,
     /// Resources the player will gain (resource, quantity).
     pub player_gains: Vec<(UniformResource, u32)>,
 }
@@ -342,8 +342,8 @@ pub fn resolve_market(
     fr: &FarmsResource,
     invited: &[(FarmId, u32)],
     pool: &mut Pool,
-) -> HashMap<FarmId, CityEffect> {
-    let mut farm_effects = HashMap::new();
+) -> BTreeMap<FarmId, CityEffect> {
+    let mut farm_effects = BTreeMap::new();
     for &(id, cost) in invited {
         let farm = &fr[id];
         // Reroll/Specialize pay a fixed reconfigure cost from the pool if it's
@@ -445,10 +445,10 @@ pub fn reset_farm_events(fr: &mut FarmsResource) {
 pub struct ProductionPlan {
     /// Per farm: potatoes to add to its stockpile.
     pub potato_add: Vec<u32>,
-    /// Per farm: inedible units to add (the farm's tool output if specialized).
+    /// Per farm: inedible units to add. For a specialized farm this is its
+    /// tool's output, which (until a tool has a non-1:1 conversion ratio)
+    /// equals how much input it consumed from its neighbours.
     pub inedible_add: Vec<u32>,
-    /// Per specialized farm: (output produced, input consumed from neighbours).
-    pub specialize_info: HashMap<FarmId, (u32, u32)>,
 }
 
 /// Compute this month's production for all farms. Specialized farms convert their
@@ -462,7 +462,6 @@ pub fn compute_production(fr: &FarmsResource, rng: &mut impl rand::Rng) -> Produ
     let cap: Vec<u32> = fr.farms.iter().map(|f| f.production_capacity()).collect();
     let potato_add = cap.clone();
     let mut inedible_add = cap.clone();
-    let mut specialize_info = HashMap::new();
 
     for s in (0..n).map(FarmId::new) {
         let Some(tool) = fr[s].specialized_tool() else {
@@ -490,13 +489,11 @@ pub fn compute_production(fr: &FarmsResource, rng: &mut impl rand::Rng) -> Produ
         }
         // A specialized farm banks its tool's output instead of its own resource.
         inedible_add[s.index()] = consumed;
-        specialize_info.insert(s, (consumed, consumed));
     }
 
     ProductionPlan {
         potato_add,
         inedible_add,
-        specialize_info,
     }
 }
 
@@ -616,13 +613,15 @@ fn describe_farm_effect(fr: &FarmsResource, idx: FarmId) -> Vec<String> {
     if let Some(tool) = farm.specialized_tool() {
         let spec = tool.specialization();
         let plan = compute_production(fr, &mut rand::rng());
-        let (output, consumed) = plan.specialize_info.get(&idx).copied().unwrap_or((0, 0));
+        // Output produced always equals input consumed (until a tool has a
+        // non-1:1 conversion ratio) -- see `ProductionPlan::inedible_add`.
+        let output = plan.inedible_add[idx.index()];
         if output > 0 {
             lines.push(format!(
                 "Produces {} {} from {} {} taken from adjacent farms (cap {})",
                 output,
                 spec.output.label(),
-                consumed,
+                output,
                 spec.input.label(),
                 farm.production_capacity()
             ));
@@ -766,7 +765,6 @@ mod tests {
         assert_eq!(plan.inedible_add[0], 7);
         assert_eq!(plan.inedible_add[1], 0);
         assert_eq!(plan.inedible_add[2], 0);
-        assert_eq!(plan.specialize_info[&FarmId::new(0)], (7, 7));
     }
 
     #[test]
@@ -785,7 +783,6 @@ mod tests {
         // 17 timber available but capacity caps output at 10; 7 timber survives somewhere.
         assert_eq!(plan.inedible_add[0], 10);
         assert_eq!(plan.inedible_add[1] + plan.inedible_add[2], 7);
-        assert_eq!(plan.specialize_info[&FarmId::new(0)], (10, 10));
     }
 
     #[test]

@@ -489,14 +489,6 @@ pub struct Construction {
 }
 
 impl Construction {
-    pub fn possible(&self) -> bool {
-        true
-    }
-
-    pub fn apply_resource(&self, res: UniformResource) -> i16 {
-        -(self.applied.get(&res).copied().unwrap_or(0) as i16)
-    }
-
     pub fn apply(&self, pending: &mut ProposedCity, constructed: &mut ConstructedCity) {
         for (&res, &qty) in &self.applied {
             if qty > 0 {
@@ -508,10 +500,6 @@ impl Construction {
                 crate::place::consume_uniform(constructed, res, qty);
             }
         }
-    }
-
-    pub fn effect_name(&self) -> String {
-        "construction".to_string()
     }
 
     pub fn describe(&self) -> String {
