@@ -303,15 +303,44 @@ fn gains_from_pool(
     gains
 }
 
-/// Compute what the next market run would do, without mutating state or using RNG.
-/// Shared by the preview UI, the "…" breakdown, and real execution (via
-/// `city_effect::compute_month_effects`, which applies each `CityEffect::Market`).
-pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
+/// Raw per-resource pool from invited farms' stockpiles, before any farm
+/// event (Boost/Reroll/Specialize/Adopt) or outside claim (Eat, a
+/// traveler's visit) consumes from it.
+pub struct MarketPool {
+    /// `(farm_idx, travel_cost)`, as computed from each invited farm's
+    /// distance to the market.
+    pub invited: Vec<(usize, u32)>,
+    pub potato: u32,
+    pub inedible: HashMap<UniformResource, u32>,
+}
+
+/// Pools invited farms' stockpiles, before anything (farms' own market
+/// events included) has claimed from it. Letting a caller (e.g. Eat or a
+/// traveler's visit, in `city_effect::compute_month_effects`) claim against
+/// this pool before calling `resolve_market` gives that claim first dibs
+/// ahead of farms' own market participation.
+pub fn market_pool(fr: &FarmsResource) -> MarketPool {
+    let invited = invited_with_costs(&fr.farms, fr.circle_pos);
+    let (potato, inedible) = pool_totals(&fr.farms, &invited);
+    MarketPool {
+        invited,
+        potato,
+        inedible,
+    }
+}
+
+/// Resolves farm events (Boost/Reroll/Specialize/Adopt) against `pool`,
+/// consuming from it as it goes; whatever's left becomes `player_gains`.
+/// Pass a `pool` whose amounts already reflect any higher-priority claims
+/// (see `market_pool`) if those should be deducted before farms get theirs.
+pub fn resolve_market(fr: &FarmsResource, pool: MarketPool) -> MarketOutcome {
     use crate::city_effect::CityEffect;
 
-    let invited = invited_with_costs(&fr.farms, fr.circle_pos);
-    // TODO: copy-and-mutate inside a simulation
-    let (mut potato_pool, mut inedible_pool) = pool_totals(&fr.farms, &invited);
+    let MarketPool {
+        invited,
+        potato: mut potato_pool,
+        inedible: mut inedible_pool,
+    } = pool;
 
     let mut farm_effects = HashMap::new();
     for &(i, cost) in &invited {
@@ -382,6 +411,15 @@ pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
         farm_effects,
         player_gains,
     }
+}
+
+/// Compute what the next market run would do, without mutating state or using RNG.
+/// Shared by the preview UI, the "…" breakdown, and (via `market_pool` +
+/// `resolve_market` directly) real execution in
+/// `city_effect::compute_month_effects`, which lets Eat and a traveler's
+/// visit claim from the pool ahead of farms' own market participation.
+pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
+    resolve_market(fr, market_pool(fr))
 }
 
 /// Thin wrapper kept for call sites that only need a read-only preview.

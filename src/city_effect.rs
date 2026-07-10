@@ -7,11 +7,16 @@
 //!
 //! ## Sequencing
 //! Two pools are tracked per resource for the month: `inflow` (this month's
-//! fresh market delivery) and `storage` (pre-existing stock). Ordered
-//! consumers claim from `inflow` first, then (if storage-eligible) from
-//! what's left of `storage`: Eat, then TravelerVisit, then Construction.
-//! Whatever's left of `inflow` after that goes through the existing
-//! capacity-contention storage-fill/loss logic
+//! fresh delivery) and `storage` (pre-existing stock). Ordered consumers
+//! claim from `inflow` first, then (if storage-eligible) from what's left of
+//! `storage`: Eat, then TravelerVisit, then farms' own market participation
+//! (Boost/Reroll/Specialize/Adopt), then Construction. Eat and TravelerVisit
+//! claim directly against the raw pool of invited farms' stockpiles (see
+//! `surroundings::farmstead::market_pool`), ahead of farms' own
+//! participation, so population feeding and a traveler's demands (and its
+//! reward, which joins the same pool) take priority over what farms get to
+//! do with their own harvest. Whatever's left of `inflow` after that goes
+//! through the existing capacity-contention storage-fill/loss logic
 //! (`resource::distribute_incoming_resources`).
 
 use std::collections::HashMap;
@@ -24,7 +29,7 @@ use crate::place;
 use crate::population::{Individual, Population};
 use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResource};
 use crate::surroundings::farmstead::{
-    compute_market, known_farm_plentifulness, FarmProduction, FarmsResource, MarketModeEffect,
+    known_farm_plentifulness, FarmProduction, FarmsResource, MarketModeEffect,
 };
 use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 
@@ -339,10 +344,16 @@ fn claim(
 }
 
 /// Computes the full set of this month's effects, in claim-priority order:
-/// market delivery, then Eat, then TravelerVisit, then Construction, each
-/// claiming from this month's inflow first and pre-existing storage second;
-/// whatever's left of the inflow goes through the existing storage-fill/loss
-/// logic. Pure — takes everything by shared reference, mutates nothing.
+/// Eat, then TravelerVisit, then market delivery (farms' own participation),
+/// then Construction, each claiming from this month's inflow first and
+/// pre-existing storage second; whatever's left of the inflow goes through
+/// the existing storage-fill/loss logic. Eat and a traveler's visit claim
+/// directly against the raw pool of invited farms' stockpiles (see
+/// `market_pool`), ahead of farms' own Boost/Reroll/Specialize/Adopt
+/// participation, so population feeding and a traveler's demands (and its
+/// reward, which joins the same pool) take priority over what farms get to
+/// do with their own harvest. Pure — takes everything by shared reference,
+/// mutates nothing.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_month_effects(
     farms: &FarmsResource,
@@ -353,18 +364,14 @@ pub fn compute_month_effects(
     material_list: &MaterialList,
     sandbox_enabled: bool,
 ) -> MonthEffects {
-    let market = compute_market(farms);
-    let mut inflow: HashMap<UniformResource, u32> = market.player_gains.iter().copied().collect();
+    use crate::surroundings::farmstead::{market_pool, resolve_market, MarketPool};
+
+    let pool = market_pool(farms);
+    let mut inflow: HashMap<UniformResource, u32> = pool.inedible.clone();
+    inflow.insert(UniformResource::Potato, pool.potato);
     let mut storage: HashMap<UniformResource, u32> = place::storage_totals(constructed);
 
-    let mut effects: Vec<CityEffect> = market.farm_effects.into_values().collect();
-    // `farm_effects` is a `HashMap`, whose default hasher reseeds on every
-    // instantiation — sort here so the tooltip/execution order is canonical
-    // (by farm id) rather than shuffling from frame to frame.
-    effects.sort_by_key(|e| match e {
-        CityEffect::Market { farm_idx, .. } => *farm_idx,
-        _ => unreachable!("only Market variants exist at this point"),
-    });
+    let mut effects: Vec<CityEffect> = Vec::new();
 
     // 1. Eat.
     let desired_potato = population.individuals.len() as u32 * POTATOES_PER_INDIVIDUAL;
@@ -401,13 +408,13 @@ pub fn compute_month_effects(
                 }
             })
             .collect();
-        // A `Resource` reward joins this month's inflow (rather than being
-        // deposited directly) so Construction -- computed next -- can spend
-        // it right away, and any remainder falls through to the normal
-        // storage-fill/loss handling below. This also means a reward is
-        // never silently lost for lack of a storage room to receive it: it
-        // either gets used immediately or is accounted as lost like any
-        // other leftover.
+        // A `Resource` reward joins the same pool (rather than being
+        // deposited directly), so it's available -- ahead of farms' own
+        // market participation -- to Construction, and any remainder falls
+        // through to the normal storage-fill/loss handling below. This also
+        // means a reward is never silently lost for lack of a storage room
+        // to receive it: it either gets used immediately or is accounted as
+        // lost like any other leftover.
         if invited && affordable {
             if let ResolvedReward::Resource(res, qty) = &offer.reward {
                 *inflow.entry(*res).or_insert(0) += *qty as u32;
@@ -422,7 +429,32 @@ pub fn compute_month_effects(
         }));
     }
 
-    // 3. Construction: inflow first, then leftover storage.
+    // 3. Market: farms' own Boost/Reroll/Specialize/Adopt participation,
+    // against whatever's left of the pool after Eat and a traveler's visit.
+    let potato_after = inflow.remove(&UniformResource::Potato).unwrap_or(0);
+    let market = resolve_market(
+        farms,
+        MarketPool {
+            invited: pool.invited,
+            potato: potato_after,
+            inedible: inflow,
+        },
+    );
+    let mut farm_effects: Vec<CityEffect> = market.farm_effects.into_values().collect();
+    // `farm_effects` is a `HashMap`, whose default hasher reseeds on every
+    // instantiation — sort here so the tooltip/execution order is canonical
+    // (by farm id) rather than shuffling from frame to frame.
+    farm_effects.sort_by_key(|e| match e {
+        CityEffect::Market { farm_idx, .. } => *farm_idx,
+        _ => unreachable!("only Market variants exist at this point"),
+    });
+    effects.extend(farm_effects);
+
+    // Whatever's left after farms took their share becomes this month's
+    // inflow for Construction and the leftover-distribution pass below.
+    let mut inflow: HashMap<UniformResource, u32> = market.player_gains.iter().copied().collect();
+
+    // 4. Construction: inflow first, then leftover storage.
     if pending.num_changes() > 0 {
         let remaining_need: HashMap<UniformResource, u32> = if sandbox_enabled {
             HashMap::new()
@@ -436,7 +468,7 @@ pub fn compute_month_effects(
         effects.push(CityEffect::Construction(construction));
     }
 
-    // 4/5. Leftover inflow -> storage contention -> loss.
+    // 5/6. Leftover inflow -> storage contention -> loss.
     let incoming_leftover: Vec<(UniformResource, u32)> =
         inflow.into_iter().filter(|&(_, q)| q > 0).collect();
     let known_farm_output = known_farm_plentifulness(farms);
@@ -554,6 +586,74 @@ mod tests {
                 _ => None,
             })
             .expect("a TravelerVisit effect should be present")
+    }
+
+    fn market_boost_granted(effects: &MonthEffects, idx: usize) -> u32 {
+        effects
+            .effects
+            .iter()
+            .find_map(|e| match e {
+                CityEffect::Market {
+                    farm_idx,
+                    effect: MarketModeEffect::Boost { granted, .. },
+                    ..
+                } if *farm_idx == idx => Some(*granted),
+                _ => None,
+            })
+            .expect("farm should have a Boost market effect")
+    }
+
+    #[test]
+    fn traveler_outranks_farms_own_market_participation() {
+        // Farm 0 produces Straw and contributes 10 to the shared pool. Farm 1
+        // wants Straw and would happily Boost with all 10 if nothing else
+        // claimed it first. A traveler also wants 5 Straw -- it should get
+        // its full demand, leaving only the remainder (5) for farm 1's own
+        // Boost, even though farms are resolved as `CityEffect::Market`.
+        let mut supplier = mk_farm(0);
+        supplier.production = FarmProduction::Regular(Straw);
+        supplier.inedible_stockpile = 10;
+        let mut wanter = mk_farm(0);
+        wanter.wanted_resource = Straw;
+        wanter.want_max = 10;
+
+        let farms = farms_with(vec![supplier, wanter]);
+        let cw = ConstructedCity::new(Vec::new());
+        let pending = ProposedCity::new();
+        let pop = population(0);
+
+        let mut traveler_state = no_traveler();
+        traveler_state.invited = true;
+        traveler_state.current_offer = Some(IndividualTraveler {
+            config_index: 0,
+            demands: vec![(Straw, 5)],
+            reward: ResolvedReward::Resource(Potato, 1),
+            path: Vec::new(),
+        });
+
+        let material_list = MaterialList::default();
+        let effects = compute_month_effects(
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &traveler_state,
+            &material_list,
+            false,
+        );
+
+        let t = traveler_of(&effects);
+        assert!(t.affordable, "traveler should get first dibs on Straw");
+        assert_eq!(
+            t.demands,
+            vec![(Straw, 5, 5, 0)],
+            "traveler's full demand should be granted from inflow"
+        );
+        assert_eq!(
+            market_boost_granted(&effects, 1),
+            5,
+            "farm 1 should only get the 5 Straw left over after the traveler's claim"
+        );
     }
 
     #[test]
