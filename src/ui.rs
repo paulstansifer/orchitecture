@@ -1,11 +1,11 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-use crate::city::{CityMut, ViewableWorld};
+use crate::city::City;
 use crate::city_effect::{compute_month_effects, LedgerSource};
-use crate::eorf::EorfList;
 use crate::game_mode::{GameMode, SandboxMode};
 use crate::materials::MaterialList;
+use crate::month::AdvanceMonthRequested;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
@@ -15,25 +15,23 @@ use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
     mut contexts: EguiContexts,
-    mut clock: ResMut<GameClock>,
-    mut farms: ResMut<FarmsResource>,
-    world: CityMut,
+    clock: Res<GameClock>,
+    farms: Res<FarmsResource>,
+    world: City,
     resource_icons: Res<ResourceIcons>,
     mut next_game_mode: ResMut<NextState<GameMode>>,
     current_mode: Res<State<GameMode>>,
-    mut commands: Commands,
-    mut viewable: ResMut<ViewableWorld>,
-    structure_list: Res<EorfList>,
+    mut advance_month: MessageWriter<AdvanceMonthRequested>,
     mut traveler_state: ResMut<TravelerState>,
-    mut population: ResMut<Population>,
+    population: Res<Population>,
     sandbox: Res<SandboxMode>,
     material_list: Res<MaterialList>,
 ) {
     use egui::Color32;
-    let CityMut {
-        mut constructed,
-        mut pending,
-        mut assembled,
+    let City {
+        constructed,
+        pending,
+        assembled: _,
     } = world;
 
     let icon_textures_lg = resource_icons.texture_ids_large(&mut contexts);
@@ -366,27 +364,8 @@ pub fn shared_ui_system(
 
     // ── Apply deferred actions ────────────────────────────────────────────────
     if go_advance_month {
-        let mut rng = rand::rng();
-        let outcome = crate::month::advance_month(
-            &mut clock,
-            &mut farms,
-            &mut constructed,
-            &mut pending,
-            &mut population,
-            &mut traveler_state,
-            &material_list,
-            sandbox.enabled,
-            &mut rng,
-        );
-        if let Some(real_changes) = outcome.construction_changes {
-            crate::construction::apply_construction_completion(
-                &mut commands,
-                &mut assembled,
-                &mut viewable,
-                &structure_list,
-                real_changes,
-            );
-        }
+        // The actual simulation runs in `month::advance_month_system`.
+        advance_month.write(AdvanceMonthRequested);
         ctx.data_mut(|d| d.remove::<bool>(wait_id));
     }
     if go_walk {

@@ -35,6 +35,7 @@ use orchitecture_lib::{
         update_room_cursor_mesh, BuildState, CursorEntities,
     },
     materials::MaterialList,
+    month::{advance_month_system, AdvanceMonthRequested},
     orc::{
         despawn_orc, draw_debug_nav_gizmos, orc_click_to_move_system, orc_input_system,
         setup_orc_animation, spawn_orc, DebugNav,
@@ -119,6 +120,7 @@ fn main() {
         .insert_resource(GameClock::default())
         .insert_resource(MaterialList::load())
         .insert_resource(DebugNav::default())
+        .add_message::<AdvanceMonthRequested>()
         .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))
         .add_systems(OnExit(GameMode::Walk), despawn_orc)
         .add_systems(OnEnter(GameMode::Build), enter_build_mode)
@@ -188,6 +190,7 @@ fn main() {
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))
+        .add_systems(Update, advance_month_system)
         .add_systems(
             EguiPrimaryContextPass,
             (

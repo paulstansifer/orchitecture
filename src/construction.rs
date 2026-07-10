@@ -461,6 +461,21 @@ pub fn apply_construction_completion(
     apply_changes(commands, assembled, structure_list, real_changes);
 }
 
+/// Commits all pending proposals immediately (bypassing the monthly payment
+/// schedule) and reflects them into the ECS — e.g. when switching into
+/// sandbox mode, whose edits are always committed.
+pub fn commit_pending_construction(
+    commands: &mut Commands,
+    constructed: &mut ConstructedCity,
+    pending: &mut ProposedCity,
+    assembled: &mut AssembledCity,
+    viewable: &mut ViewableWorld,
+    structure_list: &EorfList,
+) {
+    let real_changes = construct(constructed, pending);
+    apply_construction_completion(commands, assembled, viewable, structure_list, real_changes);
+}
+
 /// Loads a new building, replacing contents and clearing all history.
 /// Entity cleanup is the caller's responsibility.
 pub fn load_from_offline(

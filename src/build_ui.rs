@@ -6,7 +6,7 @@ use crate::city::{
     apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
     AssembledCity, CityMut, ConstructedCity, ProposalOverlayAssets, ProposedCity, ViewableWorld,
 };
-use crate::construction::{construct, load_from_offline};
+use crate::construction::{commit_pending_construction, load_from_offline};
 use crate::cutaway::CutawayMode;
 use crate::eorf::sorted_structure_indices;
 use crate::eorf::EorfList;
@@ -264,14 +264,13 @@ pub fn build_ui_system(
             ui.checkbox(&mut sandbox.enabled, "Sandbox");
             if sandbox.enabled && !was_sandbox {
                 // Switching into sandbox commits any pending proposals immediately.
-                let real_changes = construct(&mut world.constructed, &mut world.pending);
-                clear_proposal_entities(&mut commands, &mut world.assembled);
-                clear_proposed_cut_entities(&mut commands, &mut viewable);
-                apply_changes(
+                commit_pending_construction(
                     &mut commands,
+                    &mut world.constructed,
+                    &mut world.pending,
                     &mut world.assembled,
+                    &mut viewable,
                     &structure_list,
-                    real_changes,
                 );
             }
 
