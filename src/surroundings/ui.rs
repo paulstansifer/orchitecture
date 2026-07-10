@@ -6,7 +6,7 @@ use crate::ui_util::FontSizes;
 use crate::{col_format, label};
 
 use super::farmstead::{
-    farm_breakdown, market_effect, preview_market, FarmEvent, FarmProduction, FarmsResource,
+    compute_market, farm_breakdown, market_effect, FarmEvent, FarmProduction, FarmsResource,
     MarketModeEffect, SurroundingsState,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
@@ -121,7 +121,7 @@ pub fn surroundings_ui_system(
 
     // Market preview for farm boost display.
     farms.ensure_adjacency();
-    let preview = preview_market(&*farms);
+    let preview = compute_market(&*farms);
     // Predicted boost for a farm, if it is invited in `Market` mode.
     let predicted_boost = |i: usize| -> u32 {
         match preview.farm_effects.get(&i) {

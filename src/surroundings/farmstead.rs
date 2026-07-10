@@ -379,11 +379,6 @@ pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
     }
 }
 
-/// Thin wrapper kept for call sites that only need a read-only preview.
-pub fn preview_market(fr: &FarmsResource) -> MarketOutcome {
-    compute_market(fr)
-}
-
 /// Sums `production_capacity()` per produced resource across farms the
 /// player currently knows about (fog alpha below `REVEAL_THRESHOLD` at the
 /// farm's centroid). Used as a discard-priority tie-break in
