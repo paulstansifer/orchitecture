@@ -1113,7 +1113,7 @@ pub(crate) fn construction_progress_fraction(
     }
 
     let time_cost = |res: crate::resource::UniformResource, qty: u32| -> f32 {
-        qty as f32 / res.construct_per_month()
+        qty as f32 / res.construct_per_month() as f32
     };
 
     let total_time: f32 = total_cost

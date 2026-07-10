@@ -52,6 +52,15 @@ impl FarmProduction {
     }
 }
 
+/// What a farm's production becomes as a result of a `FarmEvent::Reconfigure`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum NewProduction {
+    /// Re-roll to a random inedible resource, decided when time advances.
+    RandomRegular,
+    /// Switch to producing via the given tool.
+    Tool(ToolKind),
+}
+
 /// Per-cycle market instruction: what an invited farm does at this month's market.
 /// Stored on `FarmData::event`, `#[serde(skip)]` since it resets every advance
 /// (see `reset_farm_events`).
@@ -61,10 +70,8 @@ pub enum FarmEvent {
     #[default]
     Market,
     /// Spend `RECONFIGURE_COST` of the wanted resource from the pool to permanently
-    /// switch the farm's produced resource to a random one (decided when time advances).
-    RerollResource,
-    /// Spend `RECONFIGURE_COST` to permanently switch to using the given tool for production
-    Specialize(ToolKind),
+    /// switch the farm's production to `new_production`.
+    Reconfigure(NewProduction),
     /// Take on a -10 declining production penalty in exchange for growing the
     /// city's population by one individual.
     Adopt,
@@ -74,8 +81,8 @@ impl FarmEvent {
     pub fn checkbox_label(self) -> &'static str {
         match self {
             FarmEvent::Market => "Invite",
-            FarmEvent::RerollResource => "Change",
-            FarmEvent::Specialize { .. } => "Specialize",
+            FarmEvent::Reconfigure(NewProduction::RandomRegular) => "Change",
+            FarmEvent::Reconfigure(NewProduction::Tool(_)) => "Specialize",
             FarmEvent::Adopt => "Adopt",
         }
     }
@@ -261,11 +268,12 @@ pub enum MarketModeEffect {
     /// `Market` event: the farm's wanted resource was filled by `granted` units,
     /// funded by `potatoes_spent` potatoes from the pool.
     Boost { granted: u32, potatoes_spent: u32 },
-    /// `RerollResource` event: paid this much of the wanted resource to re-roll.
-    Reroll { paid: u32 },
-    /// `Specialize` event: paid this much of the wanted resource to switch to
-    /// using the given tool.
-    Specialize { paid: u32, tool: ToolKind },
+    /// `Reconfigure` event: paid this much of the wanted resource to switch
+    /// production to `new_production`.
+    Reconfigure {
+        paid: u32,
+        new_production: NewProduction,
+    },
     /// `Adopt` event: population grows by one, production takes a -10 declining penalty.
     Adopt,
 }
@@ -346,33 +354,21 @@ pub fn resolve_market(
     let mut farm_effects = BTreeMap::new();
     for &(id, cost) in invited {
         let farm = &fr[id];
-        // Reroll/Specialize pay a fixed reconfigure cost from the pool if it's
-        // there; otherwise they fall back to a normal boost.
-        let reconfigure = |pool: &mut Pool, made: MarketModeEffect| -> Option<MarketModeEffect> {
-            if pool.inflow_available(farm.wanted_resource) >= RECONFIGURE_COST {
-                pool.claim_inflow(LedgerSource::Market, farm.wanted_resource, RECONFIGURE_COST);
-                Some(made)
-            } else {
-                None
-            }
-        };
         let effect = match fr.farm_event(id) {
             FarmEvent::Market => take_boost(farm, pool),
-            FarmEvent::RerollResource => reconfigure(
-                pool,
-                MarketModeEffect::Reroll {
-                    paid: RECONFIGURE_COST,
-                },
-            )
-            .unwrap_or_else(|| take_boost(farm, pool)),
-            FarmEvent::Specialize(tool) => reconfigure(
-                pool,
-                MarketModeEffect::Specialize {
-                    paid: RECONFIGURE_COST,
-                    tool,
-                },
-            )
-            .unwrap_or_else(|| take_boost(farm, pool)),
+            // Pay a fixed reconfigure cost from the pool if it's there;
+            // otherwise fall back to a normal boost.
+            FarmEvent::Reconfigure(new_production) => {
+                if pool.inflow_available(farm.wanted_resource) >= RECONFIGURE_COST {
+                    pool.claim_inflow(LedgerSource::Market, farm.wanted_resource, RECONFIGURE_COST);
+                    MarketModeEffect::Reconfigure {
+                        paid: RECONFIGURE_COST,
+                        new_production,
+                    }
+                } else {
+                    take_boost(farm, pool)
+                }
+            }
             FarmEvent::Adopt => MarketModeEffect::Adopt,
         };
         farm_effects.insert(
@@ -584,19 +580,19 @@ fn describe_farm_effect(fr: &FarmsResource, idx: FarmId) -> Vec<String> {
                     lines.push(format!("No {} in the marketplace", wanted));
                 }
             }
-            MarketModeEffect::Reroll { paid } => {
-                lines.push(format!(
-                    "Spends {paid} {wanted} to switch its resource to a different one"
-                ));
-                if let FarmProduction::Specialized(tool) = farm.production {
-                    lines.push(format!("Returns the {} to storage", tool.label()));
+            MarketModeEffect::Reconfigure {
+                paid,
+                new_production,
+            } => {
+                match new_production {
+                    NewProduction::RandomRegular => lines.push(format!(
+                        "Spends {paid} {wanted} to switch its resource to a different one"
+                    )),
+                    NewProduction::Tool(tool) => lines.push(format!(
+                        "Spends {paid} {wanted} to switch to using a {} on nearby resources",
+                        tool.label()
+                    )),
                 }
-            }
-            MarketModeEffect::Specialize { paid, tool } => {
-                lines.push(format!(
-                    "Spends {paid} {wanted} to switch to using a {} on nearby resources",
-                    tool.label()
-                ));
                 if let FarmProduction::Specialized(old_tool) = farm.production {
                     lines.push(format!("Returns the {} to storage", old_tool.label()));
                 }
@@ -793,7 +789,7 @@ mod tests {
             let a = mk_farm(FarmProduction::Regular(Straw), Timber, 5.0, 0);
             let b = mk_farm(FarmProduction::Regular(Timber), Straw, 5.0, timber_supply);
             let mut fr = farms_with(vec![a, b], vec![vec![], vec![]]);
-            fr.farms[0].event = FarmEvent::RerollResource;
+            fr.farms[0].event = FarmEvent::Reconfigure(NewProduction::RandomRegular);
             fr
         };
 
@@ -802,7 +798,10 @@ mod tests {
         assert!(matches!(
             outcome.farm_effects[&FarmId::new(0)],
             crate::city_effect::CityEffect::Market {
-                effect: MarketModeEffect::Reroll { paid },
+                effect: MarketModeEffect::Reconfigure {
+                    paid,
+                    new_production: NewProduction::RandomRegular,
+                },
                 ..
             } if paid == RECONFIGURE_COST
         ));

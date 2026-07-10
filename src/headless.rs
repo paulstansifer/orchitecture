@@ -40,7 +40,9 @@ use crate::population::{assign_places, sync_assignments, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::surroundings::farmstead::{farm_breakdown, FarmEvent, FarmId, FarmsResource, GameClock};
+use crate::surroundings::farmstead::{
+    farm_breakdown, FarmEvent, FarmId, FarmsResource, GameClock, NewProduction,
+};
 use crate::surroundings::map::generate_farms;
 use crate::traveler::{setup_travelers, TravelerState};
 
@@ -350,8 +352,10 @@ impl HeadlessSession {
                 let idx = parse_usize(args.first().copied().unwrap_or(""))?;
                 let event = match args.get(1).copied() {
                     Some("market") => FarmEvent::Market,
-                    Some("reroll") => FarmEvent::RerollResource,
-                    Some("specialize") => FarmEvent::Specialize(ToolKind::Whipsaw),
+                    Some("reroll") => FarmEvent::Reconfigure(NewProduction::RandomRegular),
+                    Some("specialize") => {
+                        FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::Whipsaw))
+                    }
                     Some("adopt") => FarmEvent::Adopt,
                     _ => {
                         return Err(

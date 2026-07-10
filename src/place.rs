@@ -633,7 +633,7 @@ pub fn commit_assignment(cw: &mut ConstructedCity, cube: IVec3, place_idx: usize
     cw.placed_places.insert(ParticularPlace {
         place: place_idx,
         fulfillments: plan.chosen,
-        contents: Inventory::new(8, max_volume),
+        contents: Inventory::new(max_volume),
         restriction: ParentRestriction::Unrestricted,
     });
 }
@@ -1156,7 +1156,7 @@ mod tests {
         let donor = grid.placed_places.insert(ParticularPlace {
             place: 0,
             fulfillments: vec![f(b(0, 1)), f(b(0, 2))],
-            contents: Inventory::new(8, 40.0),
+            contents: Inventory::new(40.0),
             restriction: ParentRestriction::Unrestricted,
         });
 
@@ -1187,7 +1187,7 @@ mod tests {
         let id = grid.placed_places.insert(ParticularPlace {
             place: 0,
             fulfillments: vec![f(b(0, 0))],
-            contents: Inventory::new(8, 20.0),
+            contents: Inventory::new(20.0),
             restriction: ParentRestriction::Unrestricted,
         });
         assert_eq!(place_id_at(&grid, b(0, 0)), Some(id));
@@ -1324,7 +1324,7 @@ mod tests {
 
     #[test]
     fn storage_totals_sums_across_places() {
-        let mut inv = Inventory::new(8, 20.0);
+        let mut inv = Inventory::new(20.0);
         inv.add_uniform(UniformResource::Timber, 5);
         let cw = grid_with_storage(storage_place_def(), inv);
         assert_eq!(storage_totals(&cw).get(&UniformResource::Timber), Some(&5));
@@ -1332,7 +1332,7 @@ mod tests {
 
     #[test]
     fn storage_free_capacity_reflects_remaining_volume() {
-        let mut inv = Inventory::new(8, 20.0);
+        let mut inv = Inventory::new(20.0);
         inv.add_uniform(UniformResource::Timber, 12);
         let cw = grid_with_storage(storage_place_def(), inv);
         assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 8.0);
@@ -1340,7 +1340,7 @@ mod tests {
 
     #[test]
     fn deposit_with_capacity_caps_at_remaining_volume() {
-        let inv = Inventory::new(8, 5.0);
+        let inv = Inventory::new(5.0);
         let mut cw = grid_with_storage(storage_place_def(), inv);
         let deposited = deposit_uniform_with_capacity(&mut cw, UniformResource::Timber, 12);
         assert_eq!(deposited, 5);
@@ -1349,7 +1349,7 @@ mod tests {
 
     #[test]
     fn bin_restricted_to_a_resource_excludes_others_from_capacity() {
-        let mut inv = Inventory::new(8, 20.0);
+        let mut inv = Inventory::new(20.0);
         inv.add_uniform(UniformResource::Timber, 5);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], inv);
         cw.bin_resource_restrictions
@@ -1360,7 +1360,7 @@ mod tests {
 
     #[test]
     fn one_restricted_and_one_unrestricted_bin_split_capacity_per_resource() {
-        let inv = Inventory::new(8, 40.0);
+        let inv = Inventory::new(40.0);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
         cw.bin_resource_restrictions
             .insert(b(0, 0), UniformResource::Timber);
@@ -1372,7 +1372,7 @@ mod tests {
 
     #[test]
     fn deposit_with_capacity_refuses_to_overfill_a_restricted_bin() {
-        let inv = Inventory::new(8, 20.0);
+        let inv = Inventory::new(20.0);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], inv);
         cw.bin_resource_restrictions
             .insert(b(0, 0), UniformResource::Timber);

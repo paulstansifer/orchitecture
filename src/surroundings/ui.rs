@@ -7,7 +7,7 @@ use crate::{col_format, label};
 
 use super::farmstead::{
     compute_market, farm_breakdown, market_effect, FarmEvent, FarmId, FarmProduction,
-    FarmsResource, MarketModeEffect, SurroundingsState,
+    FarmsResource, MarketModeEffect, NewProduction, SurroundingsState,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
 use crate::city_effect::CityEffect;
@@ -317,7 +317,12 @@ pub fn surroundings_ui_system(
 
             // Breakdowns via the same shared compute path.
             let market_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::Market, None);
-            let change_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::RerollResource, None);
+            let change_lines = farm_breakdown(
+                &mut farms,
+                menu_i,
+                FarmEvent::Reconfigure(NewProduction::RandomRegular),
+                None,
+            );
             let spec_lines = farm_breakdown(
                 &mut farms,
                 menu_i,
@@ -327,8 +332,12 @@ pub fn surroundings_ui_system(
             let adopt_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::Adopt, None);
 
             let can_change = matches!(
-                market_effect(&mut farms, menu_i, FarmEvent::RerollResource),
-                Some(MarketModeEffect::Reroll { paid }) if paid > 0
+                market_effect(
+                    &mut farms,
+                    menu_i,
+                    FarmEvent::Reconfigure(NewProduction::RandomRegular),
+                ),
+                Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
             );
             let can_specialize = !is_specialized && whipsaw_in_storage;
             let can_adopt = farms[menu_i].can_adopt();
@@ -371,7 +380,7 @@ pub fn surroundings_ui_system(
                     render_event_option(
                         ui,
                         &mut chosen_event,
-                        FarmEvent::RerollResource,
+                        FarmEvent::Reconfigure(NewProduction::RandomRegular),
                         can_change,
                         "Select a different secondary resource",
                         &change_lines,
@@ -379,7 +388,7 @@ pub fn surroundings_ui_system(
                     render_event_option(
                         ui,
                         &mut chosen_event,
-                        FarmEvent::Specialize(ToolKind::Whipsaw),
+                        FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::Whipsaw)),
                         can_specialize,
                         "Process nearby timber into beams",
                         &spec_lines,

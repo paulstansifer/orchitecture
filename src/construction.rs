@@ -525,7 +525,7 @@ pub fn compute_construction_absorption(
     let mut applied = HashMap::new();
     let mut from_storage = HashMap::new();
     for (&res, &need) in remaining_need {
-        let rate = res.construct_per_month().floor().max(0.0) as u32;
+        let rate = res.construct_per_month();
         let want = need.min(rate);
 
         let have_inflow = inflow_available.get(&res).copied().unwrap_or(0);
@@ -947,7 +947,7 @@ mod tests {
 
     #[test]
     fn construction_rate_caps_absorption_independently_per_resource() {
-        // construct_per_month() is 50.0 for everything currently; demand above
+        // construct_per_month() is 50 for everything currently; demand above
         // that rate can't be applied even if fully needed and available.
         let mut inflow = m(&[(UniformResource::Timber, 80)]);
         let mut storage = m(&[]);

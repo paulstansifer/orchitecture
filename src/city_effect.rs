@@ -33,6 +33,7 @@ use crate::population::{Individual, Population};
 use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResource};
 use crate::surroundings::farmstead::{
     known_farm_plentifulness, FarmId, FarmProduction, FarmsResource, MarketModeEffect,
+    NewProduction,
 };
 use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 
@@ -298,32 +299,31 @@ impl CityEffect {
                         ctx.farms[i].boost -= 10;
                         ctx.population.individuals.push(Individual::default());
                     }
-                    MarketModeEffect::Reroll { paid } => {
+                    MarketModeEffect::Reconfigure {
+                        paid,
+                        new_production,
+                    } => {
                         ctx.farms[i].boost = 0;
                         if *paid > 0 {
                             if let FarmProduction::Specialized(prev) = ctx.farms[i].production {
                                 place::deposit_tool(ctx.constructed, prev);
                             }
-                            let current = ctx.farms[i].produced_resource();
-                            let options: Vec<UniformResource> =
-                                UniformResource::inedible_farmables()
-                                    .iter()
-                                    .copied()
-                                    .filter(|&r| r != current)
-                                    .collect();
-                            use rand::Rng as _;
-                            ctx.farms[i].production = FarmProduction::Regular(
-                                options[ctx.rng.random_range(0..options.len())],
-                            );
-                        }
-                    }
-                    MarketModeEffect::Specialize { paid, tool } => {
-                        ctx.farms[i].boost = 0;
-                        if *paid > 0 {
-                            if let FarmProduction::Specialized(prev) = ctx.farms[i].production {
-                                place::deposit_tool(ctx.constructed, prev);
-                            }
-                            ctx.farms[i].production = FarmProduction::Specialized(*tool);
+                            ctx.farms[i].production = match new_production {
+                                NewProduction::RandomRegular => {
+                                    let current = ctx.farms[i].produced_resource();
+                                    let options: Vec<UniformResource> =
+                                        UniformResource::inedible_farmables()
+                                            .iter()
+                                            .copied()
+                                            .filter(|&r| r != current)
+                                            .collect();
+                                    use rand::Rng as _;
+                                    FarmProduction::Regular(
+                                        options[ctx.rng.random_range(0..options.len())],
+                                    )
+                                }
+                                NewProduction::Tool(tool) => FarmProduction::Specialized(*tool),
+                            };
                         }
                     }
                 }
@@ -346,12 +346,14 @@ impl CityEffect {
                 MarketModeEffect::Boost { .. } => {
                     "A farm found none of its wanted resource at market.".to_string()
                 }
-                MarketModeEffect::Reroll { .. } => {
-                    "A farm re-rolls its produced resource.".to_string()
-                }
-                MarketModeEffect::Specialize { tool, .. } => {
-                    format!("A farm specializes using a {}.", tool.label())
-                }
+                MarketModeEffect::Reconfigure {
+                    new_production: NewProduction::RandomRegular,
+                    ..
+                } => "A farm re-rolls its produced resource.".to_string(),
+                MarketModeEffect::Reconfigure {
+                    new_production: NewProduction::Tool(tool),
+                    ..
+                } => format!("A farm specializes using a {}.", tool.label()),
                 MarketModeEffect::Adopt => {
                     "A farm adopts a family, growing the population.".to_string()
                 }
@@ -823,7 +825,7 @@ mod tests {
         farm.inedible_stockpile = 8; // produces Straw (see `mk_farm`)
         let farms = farms_with(vec![farm]);
 
-        let mut inv = Inventory::new(8, 100.0);
+        let mut inv = Inventory::new(100.0);
         inv.add_uniform(Potato, 20);
         let cw = grid_with_storage(inv);
         let pending = ProposedCity::new();
@@ -869,7 +871,7 @@ mod tests {
     #[test]
     fn eat_falls_back_to_pre_existing_storage_when_inflow_short() {
         let farms = farms_with(vec![]); // no inflow at all
-        let mut inv = Inventory::new(8, 100.0);
+        let mut inv = Inventory::new(100.0);
         inv.add_uniform(Potato, 20);
         let cw = grid_with_storage(inv);
         let pending = ProposedCity::new();

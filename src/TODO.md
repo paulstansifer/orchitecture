@@ -26,8 +26,7 @@
     file's four consts only serve this unused path.
   * `src/qnn/translate.rs` — several large commented-out blocks (debug prints, a disabled test
     at 499-516, alternate augmentation code at 143-147).
-  * `src/resource.rs:44` `UniformResource::farmable()` and `:183-185` `Inventory::may_add`
-    (a `todo!()` stub) — no callers found for either.
+  * `src/resource.rs:44` `UniformResource::farmable()` — no callers found.
   * `src/structure.rs:73` `StructureList::find_by_name` — no callers (everything uses the free
     function or `ConstructedCity::find_structure_by_name` instead).
   * `src/bin/sprite_sheet.rs:59` `BULK_WORLD_UNITS = 0.0` permanently disables ~30 lines of
