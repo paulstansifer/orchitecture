@@ -53,7 +53,8 @@ impl FarmProduction {
 }
 
 /// Per-cycle market instruction: what an invited farm does at this month's market.
-/// Not stored on `FarmData`; lives in `FarmsResource::farm_events` and resets each advance.
+/// Stored on `FarmData::event`, `#[serde(skip)]` since it resets every advance
+/// (see `reset_farm_events`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
 pub enum FarmEvent {
     /// Participate normally: contribute stockpiles, receive wanted resource for a boost.
@@ -94,6 +95,10 @@ pub struct FarmData {
     pub inedible_stockpile: u32,
     pub boost: i32,
     pub invited: bool,
+    /// This month's market instruction, if invited. Resets to `Market` every
+    /// advance (see `reset_farm_events`), so it isn't worth persisting.
+    #[serde(skip)]
+    pub event: FarmEvent,
 }
 
 impl FarmData {
@@ -136,9 +141,6 @@ pub struct FarmsResource {
     /// Rebuilt from polygons when empty (covers fresh generation and loaded saves).
     #[serde(skip)]
     pub neighbors: Vec<Vec<usize>>,
-    /// Per-cycle market event, parallel to `farms`. Defaults to Market; reset by `reset_farm_events`.
-    #[serde(skip)]
-    pub farm_events: Vec<FarmEvent>,
 }
 
 /// Two polygon vertices are "the same" corner if within this map-unit distance.
@@ -171,13 +173,10 @@ pub fn build_adjacency(farms: &[FarmData]) -> Vec<Vec<usize>> {
 }
 
 impl FarmsResource {
-    /// Ensure the adjacency cache and `farm_events` vec are populated (no-op once built).
+    /// Ensure the adjacency cache is populated (no-op once built).
     pub fn ensure_adjacency(&mut self) {
         if self.neighbors.len() != self.farms.len() {
             self.neighbors = build_adjacency(&self.farms);
-        }
-        if self.farm_events.len() != self.farms.len() {
-            self.farm_events.resize(self.farms.len(), FarmEvent::Market);
         }
     }
 
@@ -186,11 +185,11 @@ impl FarmsResource {
     }
 
     pub fn farm_event(&self, i: usize) -> FarmEvent {
-        self.farm_events[i]
+        self.farms[i].event
     }
 
     pub fn set_farm_event(&mut self, i: usize, event: FarmEvent) {
-        self.farm_events[i] = event;
+        self.farms[i].event = event;
     }
 }
 
@@ -403,8 +402,8 @@ pub fn known_farm_plentifulness(fr: &FarmsResource) -> HashMap<UniformResource, 
 
 /// Reset per-cycle farm events for the next month (invited or not).
 pub fn reset_farm_events(fr: &mut FarmsResource) {
-    for event in fr.farm_events.iter_mut() {
-        *event = FarmEvent::Market;
+    for farm in fr.farms.iter_mut() {
+        farm.event = FarmEvent::Market;
     }
 }
 
@@ -671,17 +670,16 @@ mod tests {
             inedible_stockpile: inedible,
             boost: 0,
             invited: true,
+            event: FarmEvent::Market,
         }
     }
 
     fn farms_with(farms: Vec<FarmData>, neighbors: Vec<Vec<usize>>) -> FarmsResource {
-        let n = farms.len();
         FarmsResource {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
             neighbors,
-            farm_events: vec![FarmEvent::Market; n],
         }
     }
 
@@ -761,7 +759,7 @@ mod tests {
             let a = mk_farm(FarmProduction::Regular(Straw), Timber, 5.0, 0);
             let b = mk_farm(FarmProduction::Regular(Timber), Straw, 5.0, timber_supply);
             let mut fr = farms_with(vec![a, b], vec![vec![], vec![]]);
-            fr.farm_events[0] = FarmEvent::RerollResource;
+            fr.farms[0].event = FarmEvent::RerollResource;
             fr
         };
 
@@ -808,7 +806,7 @@ mod tests {
 
         let a = mk_farm(FarmProduction::Regular(Straw), Straw, 20.0, 0);
         let mut fr = farms_with(vec![a], vec![vec![]]);
-        fr.farm_events[0] = FarmEvent::Adopt;
+        fr.farms[0].event = FarmEvent::Adopt;
 
         let effect = compute_market(&fr).farm_effects.remove(&0).unwrap();
 

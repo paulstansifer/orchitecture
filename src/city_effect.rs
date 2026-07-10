@@ -587,6 +587,7 @@ mod tests {
             inedible_stockpile: 0,
             boost: 0,
             invited: true,
+            event: FarmEvent::Market,
         }
     }
 
@@ -597,7 +598,6 @@ mod tests {
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
             neighbors: vec![Vec::new(); n],
-            farm_events: vec![FarmEvent::Market; n],
         }
     }
 

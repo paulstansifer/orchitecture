@@ -254,6 +254,7 @@ pub fn generate_farms(mut commands: Commands) {
             inedible_stockpile: initial_stockpiles,
             boost: 0,
             invited: false,
+            event: crate::surroundings::farmstead::FarmEvent::Market,
         });
     }
 
@@ -270,12 +271,10 @@ pub fn generate_farms(mut commands: Commands) {
     }
 
     let neighbors = crate::surroundings::farmstead::build_adjacency(&farms);
-    let n = farms.len();
     commands.insert_resource(FarmsResource {
         farms,
         circle_pos,
         traveler_reveals: Vec::new(),
         neighbors,
-        farm_events: vec![crate::surroundings::farmstead::FarmEvent::Market; n],
     });
 }
