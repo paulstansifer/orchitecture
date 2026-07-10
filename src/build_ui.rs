@@ -10,6 +10,7 @@ use crate::construction::{construct, load_from_offline};
 use crate::cutaway::CutawayMode;
 use crate::eorf::sorted_structure_indices;
 use crate::eorf::EorfList;
+use crate::game_mode::SandboxMode;
 use crate::input::BuildState;
 use crate::materials::MaterialList;
 use crate::population::Population;
@@ -159,20 +160,6 @@ pub struct UiState {
 /// and consumed by `ui_system` to open the place panel.
 #[derive(Resource, Default)]
 pub struct FurnitureRightClick(pub Option<SlotCoord>);
-
-/// When enabled, construction edits commit immediately instead of becoming
-/// proposals, and (eventually) edits are free. Loading structures is only
-/// available in sandbox mode. Enabled on startup.
-#[derive(Resource)]
-pub struct SandboxMode {
-    pub enabled: bool,
-}
-
-impl Default for SandboxMode {
-    fn default() -> Self {
-        SandboxMode { enabled: true }
-    }
-}
 
 pub fn enable_ui_input_absorption(mut egui_settings: ResMut<EguiGlobalSettings>) {
     egui_settings.enable_absorb_bevy_input_system = true;
@@ -997,143 +984,4 @@ fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {
         ui.label(label);
         ui.add(egui::ProgressBar::new(value / 1.2));
     });
-}
-
-/// Totals of all resources across every storage place, sorted for display.
-/// Returns `(resource, total_quantity, precision)`.
-pub(crate) fn place_resource_totals(
-    constructed: &ConstructedCity,
-) -> Vec<(
-    crate::resource::UniformResource,
-    u32,
-    crate::resource::Precision,
-)> {
-    use crate::resource::{round, Precision, UniformResource};
-    use std::collections::HashMap;
-
-    let mut map: HashMap<UniformResource, (u32, Precision)> = HashMap::new();
-    for (_, place) in constructed.placed_places.iter() {
-        let Some(info) = constructed.places.get(place.place) else {
-            continue;
-        };
-        let Some(spec) = &info.storage else {
-            continue;
-        };
-        for (res, qty) in place.contents.uniform_totals() {
-            let (rounded, precision) = round(qty, spec.accounting);
-            let entry = map.entry(res).or_insert((0, Precision::Exact));
-            entry.0 += rounded as u32;
-            if precision != Precision::Exact {
-                entry.1 = precision;
-            }
-        }
-    }
-    let mut result: Vec<_> = map.into_iter().map(|(r, (q, p))| (r, q, p)).collect();
-    result.sort_by_key(|(r, _, _)| *r);
-    result
-}
-
-/// Total resource cost to complete the current proposed construction.
-/// Only counts `Proposal::Place` entries; removals are free. Furniture has a
-/// fixed cost independent of the selected build material.
-/// Returns sorted `(resource, quantity)` pairs; empty when cost is zero.
-pub(crate) fn construction_cost(
-    proposed: &crate::sparse3d::Sparse3D<crate::city::Proposal>,
-    structure_infos: &[crate::eorf::EorfInfo],
-    material_list: &crate::materials::MaterialList,
-) -> Vec<(crate::resource::UniformResource, u32)> {
-    use crate::city::Proposal;
-    use crate::resource::UniformResource;
-    use std::collections::HashMap;
-
-    let mut totals: HashMap<UniformResource, u32> = HashMap::new();
-
-    for (_, proposal) in proposed.iter() {
-        let Proposal::Place(cell) = proposal else {
-            continue;
-        };
-        let info = &structure_infos[cell.id.as_usize()];
-        let cost = if let Some(furniture_cost) = info.furniture_cost() {
-            furniture_cost.clone()
-        } else {
-            let Some(build_mat) = material_list.materials.get(cell.build_material.0 as usize)
-            else {
-                continue;
-            };
-            let Some(element_type) = info.element_type() else {
-                continue;
-            };
-            let Some(cost) = build_mat.costs.get(&element_type) else {
-                continue;
-            };
-            cost.clone()
-        };
-        for (res, qty) in cost {
-            *totals.entry(res).or_insert(0) += qty as u32;
-        }
-    }
-
-    let mut result: Vec<_> = totals.into_iter().collect();
-    result.sort_by_key(|(r, _)| *r);
-    result
-}
-
-/// Resource cost still owed to complete the current proposed construction:
-/// `construction_cost(...)` (unchanged, total cost) minus
-/// `pending.resource_progress` already applied, floored at zero. Drops zero
-/// entries. Empty when there's nothing pending.
-pub(crate) fn remaining_construction_need(
-    pending: &crate::city::ProposedCity,
-    structure_infos: &[crate::eorf::EorfInfo],
-    material_list: &crate::materials::MaterialList,
-) -> Vec<(crate::resource::UniformResource, u32)> {
-    construction_cost(&pending.proposed_changes, structure_infos, material_list)
-        .into_iter()
-        .filter_map(|(res, total)| {
-            let progress = pending.resource_progress.get(&res).copied().unwrap_or(0);
-            let remaining = total.saturating_sub(progress.min(total));
-            (remaining > 0).then_some((res, remaining))
-        })
-        .collect()
-}
-
-/// Fraction (0.0–1.0) of the current pending construction's total material
-/// cost that's already been paid off, weighted by each material's time cost
-/// (`1 / UniformResource::construct_per_month()`) so materials that are
-/// slower to deliver count for more of the bar. `None` when there's no
-/// pending construction (or its cost is zero).
-pub(crate) fn construction_progress_fraction(
-    pending: &crate::city::ProposedCity,
-    structure_infos: &[crate::eorf::EorfInfo],
-    material_list: &crate::materials::MaterialList,
-) -> Option<f32> {
-    let total_cost = construction_cost(&pending.proposed_changes, structure_infos, material_list);
-    if total_cost.is_empty() {
-        return None;
-    }
-
-    let time_cost = |res: crate::resource::UniformResource, qty: u32| -> f32 {
-        qty as f32 / res.construct_per_month() as f32
-    };
-
-    let total_time: f32 = total_cost
-        .iter()
-        .map(|(res, qty)| time_cost(*res, *qty))
-        .sum();
-    if total_time <= 0.0 {
-        return Some(1.0);
-    }
-    let paid_time: f32 = total_cost
-        .iter()
-        .map(|(res, qty)| {
-            let progress = pending
-                .resource_progress
-                .get(res)
-                .copied()
-                .unwrap_or(0)
-                .min(*qty);
-            time_cost(*res, progress)
-        })
-        .sum();
-    Some((paid_time / total_time).clamp(0.0, 1.0))
 }

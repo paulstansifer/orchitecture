@@ -24,9 +24,10 @@
 
 use std::collections::HashMap;
 
-use crate::build_ui::remaining_construction_need;
 use crate::city::{ConstructedCity, ProposedCity};
-use crate::construction::{compute_construction_absorption, Construction};
+use crate::construction::{
+    compute_construction_absorption, remaining_construction_need, Construction,
+};
 use crate::materials::MaterialList;
 use crate::place;
 use crate::population::{Individual, Population};
@@ -398,6 +399,20 @@ impl MonthEffects {
             .map(|f| f.stored as i64)
             .unwrap_or(0);
         stored - self.ledger.storage_draw_for(res) as i64
+    }
+
+    /// This month's traveler visit, if a traveler is offering one.
+    pub fn traveler_visit(&self) -> Option<&TravelerVisit> {
+        self.effects.iter().find_map(|e| match e {
+            CityEffect::TravelerVisit(t) => Some(t),
+            _ => None,
+        })
+    }
+
+    /// Whether the traveler's demands can be met from this month's pool.
+    /// `false` when there is no traveler this month.
+    pub fn traveler_affordable(&self) -> bool {
+        self.traveler_visit().is_some_and(|t| t.affordable)
     }
 }
 
@@ -989,7 +1004,7 @@ mod tests {
         );
         let material_list = MaterialList::default();
         assert_eq!(
-            crate::build_ui::remaining_construction_need(&pending, &cw.eorfs, &material_list),
+            crate::construction::remaining_construction_need(&pending, &cw.eorfs, &material_list),
             vec![(Plank, 3)],
             "a bin costs exactly 3 plank"
         );
@@ -1031,10 +1046,12 @@ mod tests {
         assert_eq!(construction.from_storage.get(&Plank), None);
 
         construction.apply(&mut pending, &mut cw);
-        assert!(
-            crate::build_ui::remaining_construction_need(&pending, &cw.eorfs, &material_list)
-                .is_empty()
-        );
+        assert!(crate::construction::remaining_construction_need(
+            &pending,
+            &cw.eorfs,
+            &material_list
+        )
+        .is_empty());
 
         // The 2 leftover reward units (5 - 3) were lost, not deposited,
         // since there's still no storage room -- but that's now accounted

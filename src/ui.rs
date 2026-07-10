@@ -1,11 +1,10 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-use crate::build_ui::SandboxMode;
 use crate::city::{CityMut, ViewableWorld};
-use crate::city_effect::{compute_month_effects, CityEffect, LedgerSource};
+use crate::city_effect::{compute_month_effects, LedgerSource};
 use crate::eorf::EorfList;
-use crate::game_mode::GameMode;
+use crate::game_mode::{GameMode, SandboxMode};
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource::UniformResource;
@@ -56,23 +55,26 @@ pub fn shared_ui_system(
         &material_list,
         sandbox.enabled,
     );
-    let station_totals = crate::build_ui::place_resource_totals(&constructed);
+    let station_totals = crate::place::place_resource_totals(&constructed);
 
     // Remaining construction need (non-sandbox only).
-    let remaining_need: Vec<(UniformResource, u32)> = if pending.num_changes() > 0
-        && !sandbox.enabled
-    {
-        crate::build_ui::remaining_construction_need(&pending, &constructed.eorfs, &material_list)
-    } else {
-        vec![]
-    };
+    let remaining_need: Vec<(UniformResource, u32)> =
+        if pending.num_changes() > 0 && !sandbox.enabled {
+            crate::construction::remaining_construction_need(
+                &pending,
+                &constructed.eorfs,
+                &material_list,
+            )
+        } else {
+            vec![]
+        };
     let remaining_need_map: std::collections::HashMap<UniformResource, u32> =
         remaining_need.iter().copied().collect();
 
     let has_storage = !crate::place::storage_ids(&constructed).is_empty();
 
     // Hard block: too much unpaid construction cost.
-    let blocked_construction = remaining_need.iter().any(|(_, qty)| *qty > 100);
+    let blocked_construction = crate::construction::construction_blocked(&remaining_need);
 
     let mut rhs_resources: Vec<UniformResource> =
         station_totals.iter().map(|(r, _, _)| *r).collect();
@@ -90,27 +92,19 @@ pub fn shared_ui_system(
 
     // Construction status.
     let has_project = pending.num_changes() > 0;
-    let construction_progress = crate::build_ui::construction_progress_fraction(
+    let construction_progress = crate::construction::construction_progress_fraction(
         &pending,
         &constructed.eorfs,
         &material_list,
     );
 
     // Farm/market status.
-    let market_stand_count =
-        crate::place::count_furniture_named_in_places(&constructed, "market stand", "market");
-    let invited_count = farms.farms.iter().filter(|f| f.invited).count();
+    let market_stand_count = crate::place::market_stand_count(&constructed);
+    let invited_count = farms.invited_count();
     let has_farms_invited = invited_count > 0;
     let has_traveler_invited = traveler_state.invited;
 
-    let can_afford_traveler = effects
-        .effects
-        .iter()
-        .find_map(|e| match e {
-            CityEffect::TravelerVisit(t) => Some(t.affordable),
-            _ => None,
-        })
-        .unwrap_or(false);
+    let can_afford_traveler = effects.traveler_affordable();
 
     let wait_id = egui::Id::new("wait_confirmation");
 
@@ -290,17 +284,7 @@ pub fn shared_ui_system(
                 });
 
             // Tools count (UniqueResource — tracked separately from uniform resources).
-            let total_tools: usize = constructed
-                .placed_places
-                .iter()
-                .filter(|(_, ps)| {
-                    constructed
-                        .places
-                        .get(ps.place)
-                        .is_some_and(|info| info.storage.is_some())
-                })
-                .map(|(_, ps)| ps.contents.tool_count())
-                .sum();
+            let total_tools = crate::place::total_tool_count(&constructed);
             if total_tools > 0 {
                 ui.horizontal(|ui| {
                     label!(ui, format!("Tools: {}", total_tools));

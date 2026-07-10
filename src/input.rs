@@ -3,7 +3,6 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
-use crate::build_ui::SandboxMode;
 use crate::camera::{cursor_to_viewport, GameCamera};
 use crate::city::{
     apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
@@ -13,6 +12,7 @@ use crate::city::{
 use crate::construction::construct;
 use crate::cutaway::{CutCellMarker, CutawayMode};
 use crate::eorf::{EorfId, EorfList, PlacementStyle};
+use crate::game_mode::SandboxMode;
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 

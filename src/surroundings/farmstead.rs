@@ -234,6 +234,11 @@ impl FarmsResource {
         self[id].event
     }
 
+    /// How many farms are currently invited to the next market.
+    pub fn invited_count(&self) -> usize {
+        self.farms.iter().filter(|f| f.invited).count()
+    }
+
     pub fn set_farm_event(&mut self, id: FarmId, event: FarmEvent) {
         self[id].event = event;
     }

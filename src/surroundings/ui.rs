@@ -219,10 +219,8 @@ pub fn surroundings_ui_system(
 
     // Maximum invitees = number of market stand furniture placed across all
     // market places.
-    let market_stand_count =
-        crate::place::count_furniture_named_in_places(&constructed, "market stand", "market");
-    let invited_count = farms.farms.iter().filter(|f| f.invited).count();
-    let invite_limit_reached = invited_count >= market_stand_count;
+    let invite_limit_reached =
+        farms.invited_count() >= crate::place::market_stand_count(&constructed);
 
     for (id, centroid) in revealed {
         let current_event = farms.farm_event(id);

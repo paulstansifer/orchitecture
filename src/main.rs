@@ -11,7 +11,7 @@ use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
     build_ui::{
         build_ui_system, discover_user_files, enable_ui_input_absorption, handle_file_load,
-        handle_file_save, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
+        handle_file_save, FurnitureRightClick, LoadDialog, SaveDialog, UiState,
     },
     camera::{
         camera_input_system, disable_auto_egui_primary_context, spawn_camera, CameraState,
@@ -26,7 +26,7 @@ use orchitecture_lib::{
         CutawayMode,
     },
     eorf::{spawn_structures, EorfList},
-    game_mode::GameMode,
+    game_mode::{GameMode, SandboxMode},
     gi_material::GiPlugin,
     global_illumination::update_global_illumination,
     grid_preview::GridPreviewPlugin,

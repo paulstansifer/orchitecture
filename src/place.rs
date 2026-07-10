@@ -783,6 +783,14 @@ pub fn total_tools_of(cw: &ConstructedCity, kind: ToolKind) -> u32 {
         .sum()
 }
 
+/// Total number of tools (of any kind) held across all storage places.
+pub fn total_tool_count(cw: &ConstructedCity) -> u32 {
+    storage_ids(cw)
+        .into_iter()
+        .map(|id| cw.placed_places[id].contents.tool_count() as u32)
+        .sum()
+}
+
 /// Remove one tool of `kind` from the first storage place that holds one.
 /// Returns `true` if a tool was removed.
 pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
@@ -861,6 +869,12 @@ pub fn count_furniture_named_in_places(
         .count()
 }
 
+/// Number of market stands placed across all market places — each stand can
+/// host one invited farm per month, so this is the invite capacity.
+pub fn market_stand_count(cw: &ConstructedCity) -> usize {
+    count_furniture_named_in_places(cw, "market stand", "market")
+}
+
 /// Total quantity of `res` held across all storage places.
 pub fn total_uniform(cw: &ConstructedCity, res: UniformResource) -> u32 {
     storage_ids(cw)
@@ -903,7 +917,7 @@ pub fn consume_uniform(cw: &mut ConstructedCity, res: UniformResource, qty: u32)
 
 /// Current per-resource totals held across all storage places (raw,
 /// unrounded — for internal calculations, unlike the display-oriented
-/// `build_ui::place_resource_totals`).
+/// [`place_resource_totals`]).
 pub fn storage_totals(cw: &ConstructedCity) -> HashMap<UniformResource, u32> {
     let mut totals = HashMap::new();
     for id in storage_ids(cw) {
@@ -912,6 +926,36 @@ pub fn storage_totals(cw: &ConstructedCity) -> HashMap<UniformResource, u32> {
         }
     }
     totals
+}
+
+/// Totals of all resources across every storage place, rounded per each
+/// place's accounting precision and sorted for display (unlike the raw
+/// [`storage_totals`]). Returns `(resource, total_quantity, precision)`.
+pub fn place_resource_totals(
+    constructed: &ConstructedCity,
+) -> Vec<(UniformResource, u32, crate::resource::Precision)> {
+    use crate::resource::{round, Precision};
+
+    let mut map: HashMap<UniformResource, (u32, Precision)> = HashMap::new();
+    for (_, place) in constructed.placed_places.iter() {
+        let Some(info) = constructed.places.get(place.place) else {
+            continue;
+        };
+        let Some(spec) = &info.storage else {
+            continue;
+        };
+        for (res, qty) in place.contents.uniform_totals() {
+            let (rounded, precision) = round(qty, spec.accounting);
+            let entry = map.entry(res).or_insert((0, Precision::Exact));
+            entry.0 += rounded as u32;
+            if precision != Precision::Exact {
+                entry.1 = precision;
+            }
+        }
+    }
+    let mut result: Vec<_> = map.into_iter().map(|(r, (q, p))| (r, q, p)).collect();
+    result.sort_by_key(|(r, _, _)| *r);
+    result
 }
 
 /// Per-bin capacity ceiling for `res` within `pp`: 20 units for every bin

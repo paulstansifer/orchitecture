@@ -7,10 +7,9 @@
 //! geometry via [`crate::construction::apply_construction_completion`]) and for
 //! turning the outcome into user-facing text or log lines.
 
-use crate::build_ui::remaining_construction_need;
 use crate::city::{Cell, ConstructedCity, ProposedCity};
-use crate::city_effect::{compute_month_effects, CityEffect, EffectContext};
-use crate::construction::tick_construction;
+use crate::city_effect::{compute_month_effects, EffectContext};
+use crate::construction::{remaining_construction_need, tick_construction};
 use crate::materials::MaterialList;
 use crate::place;
 use crate::population::Population;
@@ -95,10 +94,10 @@ pub fn advance_month(
         farm.invited = false;
     }
 
-    let traveler_accepted = effects.effects.iter().find_map(|e| match e {
-        CityEffect::TravelerVisit(t) if t.invited => Some(t.affordable),
-        _ => None,
-    });
+    let traveler_accepted = effects
+        .traveler_visit()
+        .filter(|t| t.invited)
+        .map(|t| t.affordable);
     traveler_state.invited = false;
     roll_traveler_offer(traveler_state, CIRCLE_REVEAL_RADIUS, rng);
 

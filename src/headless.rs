@@ -641,8 +641,11 @@ impl HeadlessSession {
                 let cw = world.resource::<ConstructedCity>();
                 let material_list = world.resource::<MaterialList>();
                 let pending = world.resource::<ProposedCity>();
-                let need =
-                    crate::build_ui::remaining_construction_need(pending, &cw.eorfs, material_list);
+                let need = crate::construction::remaining_construction_need(
+                    pending,
+                    &cw.eorfs,
+                    material_list,
+                );
                 Ok(vec![format!(
                     "pending_changes={} remaining_need={:?}",
                     pending.num_changes(),

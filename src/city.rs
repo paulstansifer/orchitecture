@@ -370,7 +370,7 @@ pub struct ProposedCity {
     /// Cumulative resource units already applied toward the current pending
     /// construction batch. Reset whenever `proposed_changes` is cleared
     /// (`reset()`) or a batch completes (`construct()`). See
-    /// `build_ui::remaining_construction_need`.
+    /// `construction::remaining_construction_need`.
     pub resource_progress: HashMap<UniformResource, u32>,
 }
 
