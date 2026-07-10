@@ -157,8 +157,12 @@ impl TravelerVisit {
 
     /// Deducts the storage-backed portion of each demand (the inflow-backed
     /// portion needs no physical action — it was simply never deposited),
-    /// deposits the reward into the first storage place, and reveals the
-    /// traveler's path. No-op unless the visit was both affordable and invited.
+    /// deposits a `Tool` reward into the first storage place, and reveals
+    /// the traveler's path. A `Resource` reward needs no action here: it was
+    /// folded into this month's inflow by `compute_month_effects`, so it's
+    /// already been claimed by Construction and/or deposited by the normal
+    /// storage-fill/loss pass. No-op unless the visit was both affordable
+    /// and invited.
     pub fn apply(
         &self,
         constructed: &mut ConstructedCity,
@@ -172,11 +176,11 @@ impl TravelerVisit {
                 crate::place::consume_uniform(constructed, res, from_storage);
             }
         }
-        if let Some(&id) = crate::place::storage_ids(constructed).first() {
-            let contents = &mut constructed.placed_places[id].contents;
-            match &self.reward {
-                ResolvedReward::Tool(kind) => contents.add_unique(UniqueResource::Tool(*kind)),
-                ResolvedReward::Resource(res, qty) => contents.add_uniform(*res, *qty),
+        if let ResolvedReward::Tool(kind) = &self.reward {
+            if let Some(&id) = crate::place::storage_ids(constructed).first() {
+                constructed.placed_places[id]
+                    .contents
+                    .add_unique(UniqueResource::Tool(*kind));
             }
         }
         farms.traveler_reveals.push(self.path.clone());

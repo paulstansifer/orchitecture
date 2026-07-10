@@ -11,7 +11,7 @@ use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::surroundings::farmstead::{FarmsResource, GameClock};
-use crate::traveler::TravelerState;
+use crate::traveler::{ResolvedReward, TravelerState};
 use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
@@ -318,14 +318,16 @@ pub fn shared_ui_system(
 
             ui.separator();
             heading_label!(ui, "Travelers");
-            // Clone demands before the closure to avoid borrow conflict with &mut traveler_state.invited.
-            let offer_demands: Option<Vec<(crate::resource::UniformResource, u16)>> =
-                traveler_state
-                    .current_offer
-                    .as_ref()
-                    .map(|o| o.demands.clone());
+            // Clone demands/reward before the closure to avoid borrow conflict with &mut traveler_state.invited.
+            let offer_demands_reward: Option<(
+                Vec<(crate::resource::UniformResource, u16)>,
+                ResolvedReward,
+            )> = traveler_state
+                .current_offer
+                .as_ref()
+                .map(|o| (o.demands.clone(), o.reward.clone()));
 
-            if let Some(demands) = offer_demands {
+            if let Some((demands, reward)) = offer_demands_reward {
                 egui::Frame::new()
                     .fill(Color32::from_rgba_unmultiplied(20, 20, 30, 200))
                     .inner_margin(egui::Margin::same(4))
@@ -336,7 +338,13 @@ pub fn shared_ui_system(
                         for (res, qty) in &demands {
                             label!(ui, format!("Wants {} {}", qty, res.label()));
                         }
-                        label!(ui, "Brings: 1 Tool + reveals a path");
+                        let reward_desc = match &reward {
+                            ResolvedReward::Tool(kind) => format!("1 {}", kind.label()),
+                            ResolvedReward::Resource(res, qty) => {
+                                format!("{} {}", qty, res.label())
+                            }
+                        };
+                        label!(ui, format!("Brings: {} + reveals a path", reward_desc));
                         ui.add_enabled(
                             can_afford_traveler || traveler_state.invited,
                             egui::Checkbox::new(&mut traveler_state.invited, "Invite"),

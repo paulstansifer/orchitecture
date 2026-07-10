@@ -285,8 +285,9 @@ impl MonthEffects {
     }
 
     /// Net change to the storage pool for `res` this month: leftover inflow
-    /// that gets deposited there, plus a traveler's reward (deposited
-    /// directly, bypassing the leftover pool), minus whatever Eat,
+    /// that gets deposited there (a `Resource` reward joins that same
+    /// inflow pool -- see `compute_month_effects` -- so it's already
+    /// reflected in `leftover` rather than added here), minus whatever Eat,
     /// TravelerVisit, or Construction drew from pre-existing storage to
     /// cover a shortfall. Positive = storage grows; negative = storage
     /// shrinks.
@@ -305,11 +306,6 @@ impl MonthEffects {
                     for &(demand_res, _, _, from_storage) in &t.demands {
                         if demand_res == res {
                             delta -= from_storage as i64;
-                        }
-                    }
-                    if let ResolvedReward::Resource(reward_res, qty) = &t.reward {
-                        if *reward_res == res {
-                            delta += *qty as i64;
                         }
                     }
                 }
@@ -405,6 +401,18 @@ pub fn compute_month_effects(
                 }
             })
             .collect();
+        // A `Resource` reward joins this month's inflow (rather than being
+        // deposited directly) so Construction -- computed next -- can spend
+        // it right away, and any remainder falls through to the normal
+        // storage-fill/loss handling below. This also means a reward is
+        // never silently lost for lack of a storage room to receive it: it
+        // either gets used immediately or is accounted as lost like any
+        // other leftover.
+        if invited && affordable {
+            if let ResolvedReward::Resource(res, qty) = &offer.reward {
+                *inflow.entry(*res).or_insert(0) += *qty as u32;
+            }
+        }
         effects.push(CityEffect::TravelerVisit(TravelerVisit {
             demands,
             reward: offer.reward.clone(),
@@ -581,8 +589,18 @@ mod tests {
 
     #[test]
     fn storage_delta_combines_leftover_reward_and_storage_draws() {
+        // A `Resource` reward joins this month's inflow (see
+        // `compute_month_effects`), so its fate is already folded into
+        // `leftover` by the time `storage_delta` runs -- here, 6 units of
+        // other leftover inflow plus the 7-unit Timber reward, all stored.
         let mut leftover = HashMap::new();
-        leftover.insert(Timber, ResourceFlow { stored: 6, lost: 4 });
+        leftover.insert(
+            Timber,
+            ResourceFlow {
+                stored: 13,
+                lost: 4,
+            },
+        );
 
         let effects = MonthEffects {
             effects: vec![
@@ -607,7 +625,7 @@ mod tests {
             leftover,
         };
 
-        // Timber: leftover deposit (6) + traveler reward (7).
+        // Timber: leftover deposit already includes the traveler reward.
         assert_eq!(effects.storage_delta(Timber), 13);
         // Potato: Eat drew 3 from storage.
         assert_eq!(effects.storage_delta(Potato), -3);
@@ -708,5 +726,85 @@ mod tests {
         assert!(t.affordable);
         assert!(t.possible());
         assert_eq!(t.apply_resource(Potato), 0);
+    }
+
+    /// A brand-new city has no storage room yet (the very first one, "bin",
+    /// itself costs Plank — see `buildables/furniture.ron`). A traveler's
+    /// `Resource` reward must therefore be usable the same month it arrives,
+    /// not just deposited into pre-existing storage: otherwise Plank could
+    /// never be bootstrapped at all. Regression test for a bug where the
+    /// reward was deposited directly into "the first storage place" and
+    /// silently discarded when none existed yet.
+    #[test]
+    fn plank_reward_pays_off_pending_furniture_with_no_storage_room_yet() {
+        use crate::eorf::load_structure_info;
+
+        let infos = load_structure_info();
+        let bin_id = crate::eorf::find_structure_by_name(&infos, "bin").expect("bin exists");
+        let mut cw = ConstructedCity::new(infos);
+        cw.road_forbidden_zone = false;
+        assert!(crate::place::storage_ids(&cw).is_empty(), "no storage yet");
+
+        let mut pending = crate::city::ProposedCity::new();
+        pending.room_plop(
+            &cw,
+            bevy::prelude::Vec3::ZERO,
+            0,
+            Some(bin_id),
+            crate::materials::BuildMaterialId::default(),
+        );
+        let material_list = MaterialList::default();
+        assert_eq!(
+            crate::build_ui::remaining_construction_need(&pending, &cw.eorfs, &material_list),
+            vec![(Plank, 3)],
+            "a bin costs exactly 3 plank"
+        );
+
+        let farms = farms_with(vec![]);
+        let pop = Population {
+            individuals: vec![],
+        };
+        let mut traveler_state = no_traveler();
+        traveler_state.invited = true;
+        traveler_state.current_offer = Some(IndividualTraveler {
+            config_index: 0,
+            demands: vec![], // trivially affordable
+            reward: ResolvedReward::Resource(Plank, 5),
+            path: Vec::new(),
+        });
+
+        let effects = compute_month_effects(
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &traveler_state,
+            &material_list,
+            false,
+        );
+
+        let construction = effects
+            .effects
+            .iter()
+            .find_map(|e| match e {
+                CityEffect::Construction(c) => Some(c.clone()),
+                _ => None,
+            })
+            .expect("a Construction effect should be present");
+        // Absorbed straight from this month's inflow (the reward), with no
+        // storage room to draw from.
+        assert_eq!(construction.applied.get(&Plank), Some(&3));
+        assert_eq!(construction.from_storage.get(&Plank), None);
+
+        construction.apply(&mut pending, &mut cw);
+        assert!(
+            crate::build_ui::remaining_construction_need(&pending, &cw.eorfs, &material_list)
+                .is_empty()
+        );
+
+        // The 2 leftover reward units (5 - 3) were lost, not deposited,
+        // since there's still no storage room -- but that's now accounted
+        // for as a normal loss instead of silently vanishing.
+        assert_eq!(effects.leftover.get(&Plank).map(|f| f.lost), Some(2));
     }
 }
