@@ -10,6 +10,8 @@
   * Return resources (other than lime) for deconstructed buildings.
   * "dining room" doesn't seem to form; why?
   * Wings3D shapes wind up in the wrong spot, relative to their cube.
+  * The headless mode should only show "visible" farms.
+  * The headless mode should be deterministic.
 
 # Walk-around mode:
   * Make textures and try pixel-art texturing

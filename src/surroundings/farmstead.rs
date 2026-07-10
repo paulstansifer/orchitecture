@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::city_effect::{CityEffect, LedgerSource, Pool};
 use crate::resource::{ToolKind, UniformResource};
 
 /// Farms within this map-unit radius are considered neighbours for the purpose
@@ -253,144 +254,87 @@ fn invited_with_costs(farms: &[FarmData], circle_pos: Vec2) -> Vec<(usize, u32)>
         .collect()
 }
 
-fn pool_totals(
-    farms: &[FarmData],
-    invited: &[(usize, u32)],
-) -> (u32, HashMap<UniformResource, u32>) {
-    let mut potato_pool: u32 = 0;
-    let mut inedible_pool: HashMap<UniformResource, u32> = HashMap::new();
-    for &(i, cost) in invited {
-        potato_pool += farms[i].potato_stockpile.saturating_sub(cost);
-        *inedible_pool
-            .entry(farms[i].produced_resource())
-            .or_insert(0) += farms[i].inedible_stockpile;
-    }
-    (potato_pool, inedible_pool)
-}
-
-/// Fill a `Market`-event farm's wanted resource from the pool, consuming an equal
-/// number of potatoes, and return `(granted, potatoes_spent)`.
-fn take_boost(
-    farm: &FarmData,
-    potato_pool: &mut u32,
-    inedible_pool: &mut HashMap<UniformResource, u32>,
-) -> (u32, u32) {
-    let wanted = farm.wanted_resource;
-    let available = *inedible_pool.get(&wanted).unwrap_or(&0);
-    let t = available.min(farm.want_max);
-    let mut potatoes_spent = 0;
-    if t > 0 {
-        *inedible_pool.get_mut(&wanted).unwrap() -= t;
-        potatoes_spent = (*potato_pool).min(t);
-        *potato_pool -= potatoes_spent;
-    }
-    (t, potatoes_spent)
-}
-
-fn gains_from_pool(
-    potato_pool: u32,
-    inedible_pool: HashMap<UniformResource, u32>,
-) -> Vec<(UniformResource, u32)> {
-    let mut gains = Vec::new();
-    if potato_pool > 0 {
-        gains.push((UniformResource::Potato, potato_pool));
-    }
-    for (res, qty) in inedible_pool {
-        if qty > 0 {
-            gains.push((res, qty));
-        }
-    }
-    gains
-}
-
-/// Raw per-resource pool from invited farms' stockpiles, before any farm
-/// event (Boost/Reroll/Specialize/Adopt) or outside claim (Eat, a
-/// traveler's visit) consumes from it.
-pub struct MarketPool {
-    /// `(farm_idx, travel_cost)`, as computed from each invited farm's
-    /// distance to the market.
-    pub invited: Vec<(usize, u32)>,
-    pub potato: u32,
-    pub inedible: HashMap<UniformResource, u32>,
-}
-
-/// Pools invited farms' stockpiles, before anything (farms' own market
-/// events included) has claimed from it. Letting a caller (e.g. Eat or a
-/// traveler's visit, in `city_effect::compute_month_effects`) claim against
-/// this pool before calling `resolve_market` gives that claim first dibs
-/// ahead of farms' own market participation.
-pub fn market_pool(fr: &FarmsResource) -> MarketPool {
+/// Seeds `pool` with every invited farm's stockpiles as this month's market
+/// inflow (attributed to `LedgerSource::Market`), and returns each invited
+/// farm's `(index, travel_cost)`. The travel cost's worth of potatoes is spent
+/// getting to market, so only the remainder is contributed. Seeding happens
+/// before any outside claim (Eat, a traveler's visit) so those can take from
+/// the pool ahead of farms' own market participation in `resolve_market`.
+pub fn seed_market(fr: &FarmsResource, pool: &mut Pool) -> Vec<(usize, u32)> {
     let invited = invited_with_costs(&fr.farms, fr.circle_pos);
-    let (potato, inedible) = pool_totals(&fr.farms, &invited);
-    MarketPool {
-        invited,
-        potato,
-        inedible,
-    }
-}
-
-/// Resolves farm events (Boost/Reroll/Specialize/Adopt) against `pool`,
-/// consuming from it as it goes; whatever's left becomes `player_gains`.
-/// Pass a `pool` whose amounts already reflect any higher-priority claims
-/// (see `market_pool`) if those should be deducted before farms get theirs.
-pub fn resolve_market(fr: &FarmsResource, pool: MarketPool) -> MarketOutcome {
-    use crate::city_effect::CityEffect;
-
-    let MarketPool {
-        invited,
-        potato: mut potato_pool,
-        inedible: mut inedible_pool,
-    } = pool;
-
-    let mut farm_effects = HashMap::new();
     for &(i, cost) in &invited {
         let farm = &fr.farms[i];
-        let event = fr.farm_event(i);
-        let effect = match event {
-            FarmEvent::Market => {
-                let (granted, potatoes_spent) =
-                    take_boost(farm, &mut potato_pool, &mut inedible_pool);
-                MarketModeEffect::Boost {
-                    granted,
-                    potatoes_spent,
-                }
+        pool.contribute(
+            LedgerSource::Market,
+            UniformResource::Potato,
+            farm.potato_stockpile.saturating_sub(cost),
+        );
+        pool.contribute(
+            LedgerSource::Market,
+            farm.produced_resource(),
+            farm.inedible_stockpile,
+        );
+    }
+    invited
+}
+
+/// Fill a `Market`-event farm's wanted resource from the pool's inflow,
+/// spending an equal number of potatoes, and return the resulting `Boost`.
+fn take_boost(farm: &FarmData, pool: &mut Pool) -> MarketModeEffect {
+    let wanted = farm.wanted_resource;
+    let want = pool.inflow_available(wanted).min(farm.want_max);
+    let granted = pool.claim_inflow(LedgerSource::Market, wanted, want);
+    let potatoes_spent = if granted > 0 {
+        pool.claim_inflow(LedgerSource::Market, UniformResource::Potato, granted)
+    } else {
+        0
+    };
+    MarketModeEffect::Boost {
+        granted,
+        potatoes_spent,
+    }
+}
+
+/// Resolves each invited farm's event (Boost/Reroll/Specialize/Adopt) against
+/// `pool`'s inflow, claiming from it as it goes and recording the claims in the
+/// pool's ledger. `invited` comes from `seed_market`, which must already have
+/// contributed the farms' stockpiles (and any higher-priority claimant must
+/// have taken its share) before this runs. Returns each farm's `CityEffect::Market`.
+pub fn resolve_market(
+    fr: &FarmsResource,
+    invited: &[(usize, u32)],
+    pool: &mut Pool,
+) -> HashMap<usize, CityEffect> {
+    let mut farm_effects = HashMap::new();
+    for &(i, cost) in invited {
+        let farm = &fr.farms[i];
+        // Reroll/Specialize pay a fixed reconfigure cost from the pool if it's
+        // there; otherwise they fall back to a normal boost.
+        let reconfigure = |pool: &mut Pool, made: MarketModeEffect| -> Option<MarketModeEffect> {
+            if pool.inflow_available(farm.wanted_resource) >= RECONFIGURE_COST {
+                pool.claim_inflow(LedgerSource::Market, farm.wanted_resource, RECONFIGURE_COST);
+                Some(made)
+            } else {
+                None
             }
-            FarmEvent::RerollResource => {
-                let wanted = farm.wanted_resource;
-                if *inedible_pool.get(&wanted).unwrap_or(&0) >= RECONFIGURE_COST {
-                    *inedible_pool.get_mut(&wanted).unwrap() -= RECONFIGURE_COST;
-                    MarketModeEffect::Reroll {
-                        paid: RECONFIGURE_COST,
-                    }
-                } else {
-                    // Can't afford the re-roll: fall back to a normal boost.
-                    let (granted, potatoes_spent) =
-                        take_boost(farm, &mut potato_pool, &mut inedible_pool);
-                    MarketModeEffect::Boost {
-                        granted,
-                        potatoes_spent,
-                    }
-                }
-            }
-            FarmEvent::Specialize(tool) => {
-                let wanted = farm.wanted_resource;
-                if *inedible_pool.get(&wanted).unwrap_or(&0) >= RECONFIGURE_COST {
-                    *inedible_pool.get_mut(&wanted).unwrap() -= RECONFIGURE_COST;
-                    MarketModeEffect::Specialize {
-                        paid: RECONFIGURE_COST,
-                        tool,
-                    }
-                } else {
-                    // Can't afford to specialize: fall back to a normal boost,
-                    // same as RerollResource does.
-                    let (granted, potatoes_spent) =
-                        take_boost(farm, &mut potato_pool, &mut inedible_pool);
-                    MarketModeEffect::Boost {
-                        granted,
-                        potatoes_spent,
-                    }
-                }
-            }
+        };
+        let effect = match fr.farm_event(i) {
+            FarmEvent::Market => take_boost(farm, pool),
+            FarmEvent::RerollResource => reconfigure(
+                pool,
+                MarketModeEffect::Reroll {
+                    paid: RECONFIGURE_COST,
+                },
+            )
+            .unwrap_or_else(|| take_boost(farm, pool)),
+            FarmEvent::Specialize(tool) => reconfigure(
+                pool,
+                MarketModeEffect::Specialize {
+                    paid: RECONFIGURE_COST,
+                    tool,
+                },
+            )
+            .unwrap_or_else(|| take_boost(farm, pool)),
             FarmEvent::Adopt => MarketModeEffect::Adopt,
         };
         farm_effects.insert(
@@ -405,21 +349,35 @@ pub fn resolve_market(fr: &FarmsResource, pool: MarketPool) -> MarketOutcome {
             },
         );
     }
-
-    let player_gains = gains_from_pool(potato_pool, inedible_pool);
-    MarketOutcome {
-        farm_effects,
-        player_gains,
-    }
+    farm_effects
 }
 
-/// Compute what the next market run would do, without mutating state or using RNG.
-/// Shared by the preview UI, the "…" breakdown, and (via `market_pool` +
-/// `resolve_market` directly) real execution in
-/// `city_effect::compute_month_effects`, which lets Eat and a traveler's
-/// visit claim from the pool ahead of farms' own market participation.
+/// Whatever inflow is left in the pool becomes the player's gains, sorted for a
+/// deterministic order.
+fn gains_from_pool(inflow: &HashMap<UniformResource, u32>) -> Vec<(UniformResource, u32)> {
+    let mut gains: Vec<(UniformResource, u32)> = inflow
+        .iter()
+        .filter(|(_, &qty)| qty > 0)
+        .map(|(&res, &qty)| (res, qty))
+        .collect();
+    gains.sort_by_key(|&(res, _)| res);
+    gains
+}
+
+/// Compute what the next market run would do on its own — no feeding, traveler,
+/// or storage in the mix — without mutating state or using RNG. Used by the
+/// preview UI and the "…" breakdown. Real execution instead threads a shared
+/// `Pool` through `seed_market` + `resolve_market` (see
+/// `city_effect::compute_month_effects`) so Eat and a traveler's visit can claim
+/// ahead of farms' own market participation.
 pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
-    resolve_market(fr, market_pool(fr))
+    let mut pool = Pool::new(HashMap::new());
+    let invited = seed_market(fr, &mut pool);
+    let farm_effects = resolve_market(fr, &invited, &mut pool);
+    MarketOutcome {
+        farm_effects,
+        player_gains: gains_from_pool(&pool.inflow),
+    }
 }
 
 /// Thin wrapper kept for call sites that only need a read-only preview.
@@ -549,8 +507,6 @@ pub fn market_effect(
     idx: usize,
     event: FarmEvent,
 ) -> Option<MarketModeEffect> {
-    use crate::city_effect::CityEffect;
-
     fr.ensure_adjacency();
     let saved = fr.farm_event(idx);
     fr.set_farm_event(idx, event);
@@ -566,8 +522,6 @@ pub fn market_effect(
 }
 
 fn describe_farm_effect(fr: &FarmsResource, idx: usize) -> Vec<String> {
-    use crate::city_effect::CityEffect;
-
     let mut lines = Vec::new();
     let outcome = compute_market(fr);
     let farm = &fr.farms[idx];
@@ -847,7 +801,7 @@ mod tests {
     #[test]
     fn adopt_grows_population_and_applies_declining_penalty() {
         use crate::city::{ConstructedCity, ProposedCity};
-        use crate::city_effect::{Effect, EffectContext};
+        use crate::city_effect::EffectContext;
         use crate::population::Population;
         use rand::SeedableRng;
         use UniformResource::Straw;

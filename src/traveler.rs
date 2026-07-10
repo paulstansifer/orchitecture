@@ -129,30 +129,8 @@ pub struct TravelerVisit {
 }
 
 impl TravelerVisit {
-    /// Whether the "Invite" checkbox should be enabled.
-    pub fn possible(&self) -> bool {
-        self.affordable
-    }
-
     fn active(&self) -> bool {
         self.affordable && self.invited
-    }
-
-    pub fn apply_resource(&self, res: UniformResource) -> i16 {
-        if !self.active() {
-            return 0;
-        }
-        let demand: i16 = self
-            .demands
-            .iter()
-            .filter(|(r, ..)| *r == res)
-            .map(|(_, _, granted, _)| *granted as i16)
-            .sum();
-        let reward = match &self.reward {
-            ResolvedReward::Resource(r, qty) if *r == res => *qty as i16,
-            _ => 0,
-        };
-        reward - demand
     }
 
     /// Deducts the storage-backed portion of each demand (the inflow-backed
@@ -184,10 +162,6 @@ impl TravelerVisit {
             }
         }
         farms.traveler_reveals.push(self.path.clone());
-    }
-
-    pub fn effect_name(&self) -> String {
-        "traveler".to_string()
     }
 
     pub fn describe(&self) -> String {

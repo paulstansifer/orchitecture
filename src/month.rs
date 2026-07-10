@@ -9,7 +9,7 @@
 
 use crate::build_ui::remaining_construction_need;
 use crate::city::{Cell, ConstructedCity, ProposedCity};
-use crate::city_effect::{compute_month_effects, CityEffect, Effect, EffectContext};
+use crate::city_effect::{compute_month_effects, CityEffect, EffectContext};
 use crate::construction::tick_construction;
 use crate::materials::MaterialList;
 use crate::place;

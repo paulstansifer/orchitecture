@@ -1,23 +1,26 @@
 //! Unifies everything that touches the shared monthly resource pool — the
-//! per-farm market participation, population feeding, a traveler's visit,
-//! and construction's material absorption — behind one small `Effect`
-//! vocabulary (`possible`/`apply`/`apply_resource`/`effect_name`/`describe`),
-//! so both real execution (`month::advance_month`) and the UI's preview/
-//! tooltip can share one computation.
+//! per-farm market participation, population feeding, a traveler's visit, and
+//! construction's material absorption — by threading a single [`Pool`] through
+//! them and recording every movement in one [`MonthLedger`]. That ledger is the
+//! single source of truth behind the UI's per-resource tooltip and
+//! [`MonthEffects::storage_delta`]; the `CityEffect`s themselves only carry out
+//! the structural side effects a ledger entry can't express (setting a boost,
+//! growing the population, rerolling production, committing construction). Both
+//! real execution (`month::advance_month`) and the UI preview share the one
+//! `compute_month_effects` computation.
 //!
 //! ## Sequencing
-//! Two pools are tracked per resource for the month: `inflow` (this month's
-//! fresh delivery) and `storage` (pre-existing stock). Ordered consumers
-//! claim from `inflow` first, then (if storage-eligible) from what's left of
-//! `storage`: Eat, then TravelerVisit, then farms' own market participation
-//! (Boost/Reroll/Specialize/Adopt), then Construction. Eat and TravelerVisit
-//! claim directly against the raw pool of invited farms' stockpiles (see
-//! `surroundings::farmstead::market_pool`), ahead of farms' own
-//! participation, so population feeding and a traveler's demands (and its
-//! reward, which joins the same pool) take priority over what farms get to
-//! do with their own harvest. Whatever's left of `inflow` after that goes
-//! through the existing capacity-contention storage-fill/loss logic
-//! (`resource::distribute_incoming_resources`).
+//! The [`Pool`] tracks two amounts per resource for the month: `inflow` (this
+//! month's fresh delivery — invited farms' stockpiles up front, plus a
+//! traveler's reward) and `storage` (a snapshot of pre-existing stock). Ordered
+//! claimants take from `inflow` first, then (if storage-eligible) from what's
+//! left of `storage`: Eat, then TravelerVisit, then farms' own market
+//! participation (Boost/Reroll/Specialize/Adopt), then Construction. Because Eat
+//! and the traveler claim before farms resolve their own boosts, population
+//! feeding and a traveler's demands (and its reward, which joins the same pool)
+//! take priority over what farms get to do with their own harvest. Whatever's
+//! left of `inflow` after that goes through the existing capacity-contention
+//! storage-fill/loss logic (`resource::distribute_incoming_resources`).
 
 use std::collections::HashMap;
 
@@ -36,6 +39,185 @@ use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 /// Number of potatoes each individual eats per month.
 pub const POTATOES_PER_INDIVIDUAL: u32 = 5;
 
+/// Which monthly actor a resource movement is attributed to. Drives the
+/// tooltip's per-line tag (formerly `Effect::effect_name`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LedgerSource {
+    Market,
+    Eat,
+    Traveler,
+    Construction,
+}
+
+impl LedgerSource {
+    pub fn tag(self) -> &'static str {
+        match self {
+            LedgerSource::Market => "market",
+            LedgerSource::Eat => "eat",
+            LedgerSource::Traveler => "traveler",
+            LedgerSource::Construction => "construction",
+        }
+    }
+}
+
+/// Display order for the per-resource tooltip: the same order the effects are
+/// resolved in (Eat and the traveler get first dibs, then farms' own market
+/// participation, then construction).
+const LEDGER_SOURCE_ORDER: [LedgerSource; 4] = [
+    LedgerSource::Eat,
+    LedgerSource::Traveler,
+    LedgerSource::Market,
+    LedgerSource::Construction,
+];
+
+/// One resource movement this month. `net` is the signed change to the
+/// player's economy (+ gained / joined the pool, − consumed); `storage_draw`
+/// is how much of a consumption came out of *pre-existing* storage (as opposed
+/// to this month's inflow, which needs no physical withdrawal).
+pub struct LedgerEntry {
+    pub source: LedgerSource,
+    pub resource: UniformResource,
+    pub net: i32,
+    pub storage_draw: u32,
+}
+
+/// The single accounting record of a month's resource movements — the one
+/// source of truth behind the tooltip deltas and `MonthEffects::storage_delta`,
+/// built as `compute_month_effects` threads claims through a [`Pool`].
+#[derive(Default)]
+pub struct MonthLedger {
+    pub entries: Vec<LedgerEntry>,
+}
+
+impl MonthLedger {
+    fn record(
+        &mut self,
+        source: LedgerSource,
+        resource: UniformResource,
+        net: i32,
+        storage_draw: u32,
+    ) {
+        if net != 0 || storage_draw != 0 {
+            self.entries.push(LedgerEntry {
+                source,
+                resource,
+                net,
+                storage_draw,
+            });
+        }
+    }
+
+    /// Net economic change `source` made to `res` this month (the old
+    /// per-effect `apply_resource`).
+    pub fn net_for(&self, source: LedgerSource, res: UniformResource) -> i32 {
+        self.entries
+            .iter()
+            .filter(|e| e.source == source && e.resource == res)
+            .map(|e| e.net)
+            .sum()
+    }
+
+    /// Total of `res` drawn from pre-existing storage across all sources.
+    pub fn storage_draw_for(&self, res: UniformResource) -> u32 {
+        self.entries
+            .iter()
+            .filter(|e| e.resource == res)
+            .map(|e| e.storage_draw)
+            .sum()
+    }
+
+    /// Each source that moved `res` this month and its net, in display order —
+    /// drives the per-resource tooltip lines.
+    pub fn sources_touching(
+        &self,
+        res: UniformResource,
+    ) -> impl Iterator<Item = (LedgerSource, i32)> + '_ {
+        LEDGER_SOURCE_ORDER
+            .into_iter()
+            .map(move |source| (source, self.net_for(source, res)))
+            .filter(|&(_, net)| net != 0)
+    }
+}
+
+/// This month's resource flow: `inflow` is fresh delivery (farm stockpiles,
+/// then a traveler's reward), `storage` is a snapshot of pre-existing stock.
+/// Ordered claimants take from `inflow` first and `storage` second; every
+/// movement is recorded in `ledger`. Folds together the old `MarketPool`
+/// pass-through and the separate potato/inedible pool threading.
+pub struct Pool {
+    pub inflow: HashMap<UniformResource, u32>,
+    pub storage: HashMap<UniformResource, u32>,
+    pub ledger: MonthLedger,
+}
+
+impl Pool {
+    pub fn new(storage: HashMap<UniformResource, u32>) -> Self {
+        Pool {
+            inflow: HashMap::new(),
+            storage,
+            ledger: MonthLedger::default(),
+        }
+    }
+
+    /// Add fresh delivery to the inflow pool, attributed to `source`.
+    pub fn contribute(&mut self, source: LedgerSource, res: UniformResource, qty: u32) {
+        if qty == 0 {
+            return;
+        }
+        *self.inflow.entry(res).or_insert(0) += qty;
+        self.ledger.record(source, res, qty as i32, 0);
+    }
+
+    /// Inflow available for `res` right now (not counting pre-existing storage).
+    pub fn inflow_available(&self, res: UniformResource) -> u32 {
+        self.inflow.get(&res).copied().unwrap_or(0)
+    }
+
+    /// Everything available for `res` right now, inflow plus pre-existing storage.
+    pub fn available(&self, res: UniformResource) -> u32 {
+        self.inflow_available(res) + self.storage.get(&res).copied().unwrap_or(0)
+    }
+
+    /// Claim up to `desired` of `res`, from inflow first then storage, recording
+    /// the consumption. Returns `(granted, granted_from_storage)`.
+    pub fn claim(
+        &mut self,
+        source: LedgerSource,
+        res: UniformResource,
+        desired: u32,
+    ) -> (u32, u32) {
+        let from_inflow = desired.min(self.inflow_available(res));
+        if from_inflow > 0 {
+            *self.inflow.get_mut(&res).unwrap() -= from_inflow;
+        }
+        let from_storage =
+            (desired - from_inflow).min(self.storage.get(&res).copied().unwrap_or(0));
+        if from_storage > 0 {
+            *self.storage.get_mut(&res).unwrap() -= from_storage;
+        }
+        let granted = from_inflow + from_storage;
+        self.ledger
+            .record(source, res, -(granted as i32), from_storage);
+        (granted, from_storage)
+    }
+
+    /// Claim up to `desired` of `res` from inflow only (market boosts never
+    /// touch pre-existing storage), recording it. Returns the amount granted.
+    pub fn claim_inflow(
+        &mut self,
+        source: LedgerSource,
+        res: UniformResource,
+        desired: u32,
+    ) -> u32 {
+        let take = desired.min(self.inflow_available(res));
+        if take > 0 {
+            *self.inflow.get_mut(&res).unwrap() -= take;
+            self.ledger.record(source, res, -(take as i32), 0);
+        }
+        take
+    }
+}
+
 /// Everything an `Effect::apply()` might need to mutate. Bundled so the
 /// trait's `apply()` signature stays uniform across effects with very
 /// different needs (a farm's own fields vs. `ProposedCity::resource_progress`
@@ -49,28 +231,8 @@ pub struct EffectContext<'a> {
     pub rng: &'a mut dyn rand::RngCore,
 }
 
-/// Something that happens during month-advance and has a resource footprint.
-/// `apply_resource` must be a pure read of fields baked in at construction
-/// time (by `compute_month_effects`) — no live computation, no side effects —
-/// so the same value backs both the read-only preview/tooltip and the real
-/// `apply()` mutation.
-pub trait Effect {
-    /// Whether the relevant checkbox/affordance should be enabled. Not an
-    /// "did this succeed" flag — precomputed once, read back here.
-    fn possible(&self) -> bool;
-    /// Real execution: mutates city state.
-    fn apply(&self, ctx: &mut EffectContext);
-    /// This effect's net effect on `res` this month. Positive = gained,
-    /// negative = consumed.
-    fn apply_resource(&self, res: UniformResource) -> i16;
-    /// Short tag for the tooltip, e.g. "market", "eat", "traveler", "construction".
-    fn effect_name(&self) -> String;
-    /// One-line human summary.
-    fn describe(&self) -> String;
-}
-
-/// Population feeding. Always `possible()`, since it does as much as it can
-/// rather than requiring an all-or-nothing affordance.
+/// Population feeding. Does as much as it can rather than requiring an
+/// all-or-nothing affordance.
 pub struct Eat {
     pub desired_potato: u32,
     pub granted_potato: u32,
@@ -78,18 +240,6 @@ pub struct Eat {
 }
 
 impl Eat {
-    pub fn possible(&self) -> bool {
-        true
-    }
-
-    pub fn apply_resource(&self, res: UniformResource) -> i16 {
-        if res == UniformResource::Potato {
-            -(self.granted_potato as i16)
-        } else {
-            0
-        }
-    }
-
     pub fn apply(&self, ctx: &mut EffectContext) {
         if self.from_storage > 0 {
             place::consume_uniform(ctx.constructed, UniformResource::Potato, self.from_storage);
@@ -103,10 +253,6 @@ impl Eat {
                 individual.fed_this_month = false;
             }
         }
-    }
-
-    pub fn effect_name(&self) -> String {
-        "eat".to_string()
     }
 
     pub fn describe(&self) -> String {
@@ -134,17 +280,13 @@ pub enum CityEffect {
     Construction(Construction),
 }
 
-impl Effect for CityEffect {
-    fn possible(&self) -> bool {
-        match self {
-            CityEffect::Market { .. } => true,
-            CityEffect::Eat(e) => e.possible(),
-            CityEffect::TravelerVisit(t) => t.possible(),
-            CityEffect::Construction(c) => c.possible(),
-        }
-    }
-
-    fn apply(&self, ctx: &mut EffectContext) {
+impl CityEffect {
+    /// Real execution: mutates city state. The resource accounting lives in the
+    /// [`MonthLedger`] instead (built by `compute_month_effects`); this only
+    /// carries out the structural side effects a ledger entry can't express
+    /// (setting a boost, growing the population, rerolling production, depositing
+    /// a tool, committing construction, zeroing sold stockpiles).
+    pub fn apply(&self, ctx: &mut EffectContext) {
         match self {
             CityEffect::Market {
                 farm_idx, effect, ..
@@ -199,52 +341,7 @@ impl Effect for CityEffect {
         }
     }
 
-    fn apply_resource(&self, res: UniformResource) -> i16 {
-        match self {
-            CityEffect::Market {
-                potato_contributed,
-                wanted_resource,
-                inedible_contributed,
-                effect,
-                ..
-            } => {
-                let mut delta: i32 = 0;
-                if res == UniformResource::Potato {
-                    delta += *potato_contributed as i32;
-                    if let MarketModeEffect::Boost { potatoes_spent, .. } = effect {
-                        delta -= *potatoes_spent as i32;
-                    }
-                }
-                let (produced, qty) = *inedible_contributed;
-                if res == produced {
-                    delta += qty as i32;
-                }
-                if res == *wanted_resource {
-                    delta -= match effect {
-                        MarketModeEffect::Boost { granted, .. } => *granted as i32,
-                        MarketModeEffect::Reroll { paid } => *paid as i32,
-                        MarketModeEffect::Specialize { paid, .. } => *paid as i32,
-                        MarketModeEffect::Adopt => 0,
-                    };
-                }
-                delta.clamp(i16::MIN as i32, i16::MAX as i32) as i16
-            }
-            CityEffect::Eat(e) => e.apply_resource(res),
-            CityEffect::TravelerVisit(t) => t.apply_resource(res),
-            CityEffect::Construction(c) => c.apply_resource(res),
-        }
-    }
-
-    fn effect_name(&self) -> String {
-        match self {
-            CityEffect::Market { .. } => "market".to_string(),
-            CityEffect::Eat(e) => e.effect_name(),
-            CityEffect::TravelerVisit(t) => t.effect_name(),
-            CityEffect::Construction(c) => c.effect_name(),
-        }
-    }
-
-    fn describe(&self) -> String {
+    pub fn describe(&self) -> String {
         match self {
             CityEffect::Market { effect, .. } => match effect {
                 MarketModeEffect::Boost { granted, .. } if *granted > 0 => {
@@ -282,6 +379,8 @@ pub struct MonthEffects {
     /// Whatever's left of `player_gains` after every effect above has
     /// claimed what it needs: stored (if capacity allows) or lost.
     pub leftover: HashMap<UniformResource, ResourceFlow>,
+    /// The single accounting record of every resource movement this month.
+    pub ledger: MonthLedger,
 }
 
 impl MonthEffects {
@@ -290,70 +389,30 @@ impl MonthEffects {
     }
 
     /// Net change to the storage pool for `res` this month: leftover inflow
-    /// that gets deposited there (a `Resource` reward joins that same
-    /// inflow pool -- see `compute_month_effects` -- so it's already
-    /// reflected in `leftover` rather than added here), minus whatever Eat,
-    /// TravelerVisit, or Construction drew from pre-existing storage to
-    /// cover a shortfall. Positive = storage grows; negative = storage
-    /// shrinks.
+    /// that gets deposited there (a `Resource` reward joins that same inflow
+    /// pool -- see `compute_month_effects` -- so it's already reflected in
+    /// `leftover`), minus whatever any source drew from pre-existing storage to
+    /// cover a shortfall. Positive = storage grows; negative = storage shrinks.
     pub fn storage_delta(&self, res: UniformResource) -> i64 {
-        let mut delta = self
+        let stored = self
             .leftover
             .get(&res)
             .map(|f| f.stored as i64)
             .unwrap_or(0);
-        for effect in &self.effects {
-            match effect {
-                CityEffect::Eat(e) if res == UniformResource::Potato => {
-                    delta -= e.from_storage as i64;
-                }
-                CityEffect::TravelerVisit(t) if t.affordable && t.invited => {
-                    for &(demand_res, _, _, from_storage) in &t.demands {
-                        if demand_res == res {
-                            delta -= from_storage as i64;
-                        }
-                    }
-                }
-                CityEffect::Construction(c) => {
-                    delta -= *c.from_storage.get(&res).unwrap_or(&0) as i64;
-                }
-                _ => {}
-            }
-        }
-        delta
+        stored - self.ledger.storage_draw_for(res) as i64
     }
-}
-
-/// Claims up to `desired` of `res`, from `inflow` first and `storage` second,
-/// mutating both to subtract what's claimed. Returns `(granted, granted_from_storage)`.
-fn claim(
-    res: UniformResource,
-    desired: u32,
-    inflow: &mut HashMap<UniformResource, u32>,
-    storage: &mut HashMap<UniformResource, u32>,
-) -> (u32, u32) {
-    let from_inflow = desired.min(inflow.get(&res).copied().unwrap_or(0));
-    if from_inflow > 0 {
-        *inflow.get_mut(&res).unwrap() -= from_inflow;
-    }
-    let from_storage = (desired - from_inflow).min(storage.get(&res).copied().unwrap_or(0));
-    if from_storage > 0 {
-        *storage.get_mut(&res).unwrap() -= from_storage;
-    }
-    (from_inflow + from_storage, from_storage)
 }
 
 /// Computes the full set of this month's effects, in claim-priority order:
 /// Eat, then TravelerVisit, then market delivery (farms' own participation),
-/// then Construction, each claiming from this month's inflow first and
-/// pre-existing storage second; whatever's left of the inflow goes through
-/// the existing storage-fill/loss logic. Eat and a traveler's visit claim
-/// directly against the raw pool of invited farms' stockpiles (see
-/// `market_pool`), ahead of farms' own Boost/Reroll/Specialize/Adopt
-/// participation, so population feeding and a traveler's demands (and its
-/// reward, which joins the same pool) take priority over what farms get to
-/// do with their own harvest. Pure — takes everything by shared reference,
-/// mutates nothing.
+/// then Construction. Every resource movement is threaded through a single
+/// [`Pool`] — claimants take from this month's inflow first and pre-existing
+/// storage second, and each claim/contribution is recorded in the pool's
+/// [`MonthLedger`]. Eat and a traveler's visit claim ahead of farms' own
+/// Boost/Reroll/Specialize/Adopt participation, so population feeding and a
+/// traveler's demands (and its reward, which joins the same pool) take priority
+/// over what farms get to do with their own harvest. Pure — takes everything by
+/// shared reference, mutates nothing outside its own `Pool`.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_month_effects(
     farms: &FarmsResource,
@@ -364,23 +423,19 @@ pub fn compute_month_effects(
     material_list: &MaterialList,
     sandbox_enabled: bool,
 ) -> MonthEffects {
-    use crate::surroundings::farmstead::{market_pool, resolve_market, MarketPool};
+    use crate::surroundings::farmstead::{resolve_market, seed_market};
 
-    let pool = market_pool(farms);
-    let mut inflow: HashMap<UniformResource, u32> = pool.inedible.clone();
-    inflow.insert(UniformResource::Potato, pool.potato);
-    let mut storage: HashMap<UniformResource, u32> = place::storage_totals(constructed);
+    let mut pool = Pool::new(place::storage_totals(constructed));
+    // Invited farms deliver their stockpiles into the pool up front, so the
+    // claimants below can take from that inflow in priority order.
+    let invited = seed_market(farms, &mut pool);
 
     let mut effects: Vec<CityEffect> = Vec::new();
 
     // 1. Eat.
     let desired_potato = population.individuals.len() as u32 * POTATOES_PER_INDIVIDUAL;
-    let (granted_potato, potato_from_storage) = claim(
-        UniformResource::Potato,
-        desired_potato,
-        &mut inflow,
-        &mut storage,
-    );
+    let (granted_potato, potato_from_storage) =
+        pool.claim(LedgerSource::Eat, UniformResource::Potato, desired_potato);
     effects.push(CityEffect::Eat(Eat {
         desired_potato,
         granted_potato,
@@ -391,33 +446,34 @@ pub fn compute_month_effects(
     // drives the "Invite" checkbox), but resources are only actually claimed
     // when the visit is both affordable and invited.
     if let Some(offer) = &traveler_state.current_offer {
-        let affordable = offer.demands.iter().all(|&(res, qty)| {
-            inflow.get(&res).copied().unwrap_or(0) + storage.get(&res).copied().unwrap_or(0)
-                >= qty as u32
-        });
-        let invited = traveler_state.invited;
+        let affordable = offer
+            .demands
+            .iter()
+            .all(|&(res, qty)| pool.available(res) >= qty as u32);
+        let invited_traveler = traveler_state.invited;
         let demands = offer
             .demands
             .iter()
             .map(|&(res, qty)| {
-                if invited && affordable {
-                    let (granted, from_storage) = claim(res, qty as u32, &mut inflow, &mut storage);
+                if invited_traveler && affordable {
+                    let (granted, from_storage) =
+                        pool.claim(LedgerSource::Traveler, res, qty as u32);
                     (res, qty as u32, granted, from_storage)
                 } else {
                     (res, qty as u32, 0, 0)
                 }
             })
             .collect();
-        // A `Resource` reward joins the same pool (rather than being
-        // deposited directly), so it's available -- ahead of farms' own
-        // market participation -- to Construction, and any remainder falls
-        // through to the normal storage-fill/loss handling below. This also
-        // means a reward is never silently lost for lack of a storage room
-        // to receive it: it either gets used immediately or is accounted as
-        // lost like any other leftover.
-        if invited && affordable {
+        // A `Resource` reward joins the same pool (rather than being deposited
+        // directly), so it's available -- ahead of farms' own market
+        // participation -- to Construction, and any remainder falls through to
+        // the normal storage-fill/loss handling below. This also means a reward
+        // is never silently lost for lack of a storage room to receive it: it
+        // either gets used immediately or is accounted as lost like any other
+        // leftover.
+        if invited_traveler && affordable {
             if let ResolvedReward::Resource(res, qty) = &offer.reward {
-                *inflow.entry(*res).or_insert(0) += *qty as u32;
+                pool.contribute(LedgerSource::Traveler, *res, *qty as u32);
             }
         }
         effects.push(CityEffect::TravelerVisit(TravelerVisit {
@@ -425,34 +481,36 @@ pub fn compute_month_effects(
             reward: offer.reward.clone(),
             path: offer.path.clone(),
             affordable,
-            invited,
+            invited: invited_traveler,
         }));
     }
 
     // 3. Market: farms' own Boost/Reroll/Specialize/Adopt participation,
-    // against whatever's left of the pool after Eat and a traveler's visit.
-    let potato_after = inflow.remove(&UniformResource::Potato).unwrap_or(0);
-    let market = resolve_market(
-        farms,
-        MarketPool {
-            invited: pool.invited,
-            potato: potato_after,
-            inedible: inflow,
-        },
-    );
-    let mut farm_effects: Vec<CityEffect> = market.farm_effects.into_values().collect();
-    // `farm_effects` is a `HashMap`, whose default hasher reseeds on every
-    // instantiation — sort here so the tooltip/execution order is canonical
-    // (by farm id) rather than shuffling from frame to frame.
+    // against whatever's left of the pool's inflow after Eat and the traveler.
+    let mut farm_effects: Vec<CityEffect> = resolve_market(farms, &invited, &mut pool)
+        .into_values()
+        .collect();
+    // `resolve_market` returns a `HashMap`, whose default hasher reseeds on
+    // every instantiation — sort here so the tooltip/execution order is
+    // canonical (by farm id) rather than shuffling from frame to frame.
     farm_effects.sort_by_key(|e| match e {
         CityEffect::Market { farm_idx, .. } => *farm_idx,
         _ => unreachable!("only Market variants exist at this point"),
     });
     effects.extend(farm_effects);
 
-    // Whatever's left after farms took their share becomes this month's
-    // inflow for Construction and the leftover-distribution pass below.
-    let mut inflow: HashMap<UniformResource, u32> = market.player_gains.iter().copied().collect();
+    // Whatever inflow farms left in the pool is the player's gains, and this
+    // month's inflow for Construction and the leftover-distribution pass below.
+    let player_gains: Vec<(UniformResource, u32)> = {
+        let mut gains: Vec<(UniformResource, u32)> = pool
+            .inflow
+            .iter()
+            .filter(|(_, &q)| q > 0)
+            .map(|(&r, &q)| (r, q))
+            .collect();
+        gains.sort_by_key(|&(r, _)| r);
+        gains
+    };
 
     // 4. Construction: inflow first, then leftover storage.
     if pending.num_changes() > 0 {
@@ -464,13 +522,26 @@ pub fn compute_month_effects(
                 .collect()
         };
         let construction =
-            compute_construction_absorption(&remaining_need, &mut inflow, &mut storage);
+            compute_construction_absorption(&remaining_need, &mut pool.inflow, &mut pool.storage);
+        for (&res, &applied) in &construction.applied {
+            let from_storage = construction.from_storage.get(&res).copied().unwrap_or(0);
+            pool.ledger.record(
+                LedgerSource::Construction,
+                res,
+                -(applied as i32),
+                from_storage,
+            );
+        }
         effects.push(CityEffect::Construction(construction));
     }
 
     // 5/6. Leftover inflow -> storage contention -> loss.
-    let incoming_leftover: Vec<(UniformResource, u32)> =
-        inflow.into_iter().filter(|&(_, q)| q > 0).collect();
+    let incoming_leftover: Vec<(UniformResource, u32)> = pool
+        .inflow
+        .iter()
+        .filter(|(_, &q)| q > 0)
+        .map(|(&r, &q)| (r, q))
+        .collect();
     let known_farm_output = known_farm_plentifulness(farms);
     let storage_free_capacity: HashMap<UniformResource, f32> = incoming_leftover
         .iter()
@@ -486,8 +557,9 @@ pub fn compute_month_effects(
 
     MonthEffects {
         effects,
-        player_gains: market.player_gains,
+        player_gains,
         leftover,
+        ledger: pool.ledger,
     }
 }
 
@@ -702,27 +774,43 @@ mod tests {
             },
         );
 
-        let effects = MonthEffects {
-            effects: vec![
-                CityEffect::Eat(Eat {
-                    desired_potato: 10,
-                    granted_potato: 10,
-                    from_storage: 3,
-                }),
-                CityEffect::TravelerVisit(TravelerVisit {
-                    demands: vec![(Straw, 5, 5, 2)],
-                    reward: ResolvedReward::Resource(Timber, 7),
-                    path: Vec::new(),
-                    affordable: true,
-                    invited: true,
-                }),
-                CityEffect::Construction(crate::construction::Construction {
-                    applied: HashMap::from([(Straw, 4)]),
-                    from_storage: HashMap::from([(Straw, 1)]),
-                }),
+        // The ledger records each source's storage draw: Eat drew 3 Potato,
+        // the traveler drew 2 Straw for its demand (and its 7-Timber reward
+        // joined the inflow, hence the Timber leftover above), and Construction
+        // drew 1 Straw. `storage_delta` is `leftover.stored − storage_draw`.
+        let ledger = MonthLedger {
+            entries: vec![
+                LedgerEntry {
+                    source: LedgerSource::Eat,
+                    resource: Potato,
+                    net: -10,
+                    storage_draw: 3,
+                },
+                LedgerEntry {
+                    source: LedgerSource::Traveler,
+                    resource: Straw,
+                    net: -5,
+                    storage_draw: 2,
+                },
+                LedgerEntry {
+                    source: LedgerSource::Traveler,
+                    resource: Timber,
+                    net: 7,
+                    storage_draw: 0,
+                },
+                LedgerEntry {
+                    source: LedgerSource::Construction,
+                    resource: Straw,
+                    net: -4,
+                    storage_draw: 1,
+                },
             ],
+        };
+        let effects = MonthEffects {
+            effects: vec![],
             player_gains: Vec::new(),
             leftover,
+            ledger,
         };
 
         // Timber: leftover deposit already includes the traveler reward.
@@ -733,6 +821,61 @@ mod tests {
         assert_eq!(effects.storage_delta(Straw), -3);
         // Untouched resource.
         assert_eq!(effects.storage_delta(Fieldstone), 0);
+    }
+
+    #[test]
+    fn ledger_conserves_resources() {
+        // A farm delivers 10 potato + 8 straw; the city holds 20 potato in
+        // storage and has 3 mouths to feed (needs 15). Eat drains the 10 potato
+        // of inflow and tops up 5 from storage; the straw falls through to
+        // storage. For every resource, the ledger's net inflow change plus what
+        // was drawn from pre-existing storage must equal what ended up in
+        // leftover (stored + lost) — nothing is created or destroyed.
+        let mut farm = mk_farm(10);
+        farm.inedible_stockpile = 8; // produces Straw (see `mk_farm`)
+        let farms = farms_with(vec![farm]);
+
+        let mut inv = Inventory::new(8, 100.0);
+        inv.add_uniform(Potato, 20);
+        let cw = grid_with_storage(inv);
+        let pending = ProposedCity::new();
+        let pop = population(3); // desired = 15 potatoes
+
+        let material_list = MaterialList::default();
+        let effects = compute_month_effects(
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &no_traveler(),
+            &material_list,
+            false,
+        );
+
+        for &res in UniformResource::ALL {
+            let net: i64 = effects
+                .ledger
+                .entries
+                .iter()
+                .filter(|e| e.resource == res)
+                .map(|e| e.net as i64)
+                .sum();
+            let storage_draw = effects.ledger.storage_draw_for(res) as i64;
+            let leftover = effects
+                .leftover
+                .get(&res)
+                .map(|f| (f.stored + f.lost) as i64)
+                .unwrap_or(0);
+            assert_eq!(
+                net + storage_draw,
+                leftover,
+                "conservation failed for {res:?}"
+            );
+        }
+
+        // Spot-check the interesting flows.
+        assert_eq!(effects.ledger.net_for(LedgerSource::Eat, Potato), -15);
+        assert_eq!(effects.ledger.storage_draw_for(Potato), 5);
     }
 
     #[test]
@@ -791,7 +934,8 @@ mod tests {
         let t = traveler_of(&effects);
         assert!(!t.affordable);
         assert!(t.demands.iter().all(|&(_, _, granted, _)| granted == 0));
-        assert_eq!(t.apply_resource(Timber), 0);
+        // A declined traveler touches nothing in the ledger.
+        assert_eq!(effects.ledger.net_for(LedgerSource::Traveler, Timber), 0);
     }
 
     #[test]
@@ -822,10 +966,10 @@ mod tests {
         );
 
         let t = traveler_of(&effects);
-        // Affordable (drives the checkbox), but inactive since it wasn't invited.
+        // Affordable (drives the checkbox), but inactive since it wasn't invited,
+        // so it claimed nothing from the pool.
         assert!(t.affordable);
-        assert!(t.possible());
-        assert_eq!(t.apply_resource(Potato), 0);
+        assert_eq!(effects.ledger.net_for(LedgerSource::Traveler, Potato), 0);
     }
 
     /// A brand-new city has no storage room yet (the very first one, "bin",

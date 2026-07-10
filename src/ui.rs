@@ -3,7 +3,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::build_ui::SandboxMode;
 use crate::city::{CityMut, ViewableWorld};
-use crate::city_effect::{compute_month_effects, CityEffect, Effect};
+use crate::city_effect::{compute_month_effects, CityEffect, LedgerSource};
 use crate::eorf::EorfList;
 use crate::game_mode::GameMode;
 use crate::materials::MaterialList;
@@ -107,7 +107,7 @@ pub fn shared_ui_system(
         .effects
         .iter()
         .find_map(|e| match e {
-            CityEffect::TravelerVisit(t) => Some(t.possible()),
+            CityEffect::TravelerVisit(t) => Some(t.affordable),
             _ => None,
         })
         .unwrap_or(false);
@@ -197,15 +197,10 @@ pub fn shared_ui_system(
                         let need = *remaining_need_map.get(res).unwrap_or(&0);
                         let lost = effects.leftover.get(res).map(|f| f.lost).unwrap_or(0);
                         let storage_delta = effects.storage_delta(*res);
-                        let applied = effects
-                            .all()
-                            .find_map(|e| match e {
-                                CityEffect::Construction(c) => {
-                                    Some(*c.applied.get(res).unwrap_or(&0))
-                                }
-                                _ => None,
-                            })
-                            .unwrap_or(0);
+                        // Construction consumes (negative net); flip its sign
+                        // for the "applied this month" figure.
+                        let applied =
+                            (-effects.ledger.net_for(LedgerSource::Construction, *res)).max(0) as u32;
 
                         // Icon cell.
                         if let Some(&tex) = icon_textures_lg.get(res) {
@@ -249,25 +244,21 @@ pub fn shared_ui_system(
                             label!(ui, quantity_str)
                         };
 
-                        // Tooltip: one colored line per contributing effect,
+                        // Tooltip: one colored line per contributing source,
                         // e.g. "+10 (market)" or "-7 (traveler)".
                         storage_resp.on_hover_ui(|ui| {
                             let mut any = false;
-                            for effect in effects.all() {
-                                let delta = effect.apply_resource(*res);
-                                if delta == 0 {
-                                    continue;
-                                }
+                            for (source, delta) in effects.ledger.sources_touching(*res) {
                                 any = true;
                                 if delta > 0 {
                                     label!(
                                         ui,
-                                        col_format!(preview, "+{} ({})", delta, effect.effect_name())
+                                        col_format!(preview, "+{} ({})", delta, source.tag())
                                     );
                                 } else {
                                     label!(
                                         ui,
-                                        col_format!(problem, "{} ({})", delta, effect.effect_name())
+                                        col_format!(problem, "{} ({})", delta, source.tag())
                                     );
                                 }
                             }
