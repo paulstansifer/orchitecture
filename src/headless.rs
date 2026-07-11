@@ -75,8 +75,10 @@ Commands (space-separated tokens, one per line):
   dump                                              print the city as the on-disk text format
   save <path> / load <path>                        save/load the city to/from a text file
   reset [seed]                                      start a brand-new session
+  more <start>-<end>                                re-show lines start..end of the last long output
   help                                              this text
   quit / exit                                       end the session
+Long responses are truncated to the first few lines; use `more` (e.g. `more 21-40`) to read on.
 Slots: room|floor|xwall|zwall. Facings: negx|negz|posx|posz (or 0-3). Eorf names use
 underscores for spaces (e.g. market_stand). Pathfinding queries read `NavigationGrid`, which
 is only rebuilt by a `tick` after the city changes.";
@@ -877,6 +879,97 @@ fn parse_facing(s: &str) -> Result<i32, String> {
     }
 }
 
+/// How many lines a response may have before the pager truncates it to a prefix.
+const PAGE_LINES: usize = 20;
+
+/// Presentation-layer pager for the REPL. A long response is truncated to a
+/// prefix plus a hint, and the full text is remembered so a follow-up
+/// `more <start>-<end>` can retrieve later lines. This only affects what gets
+/// printed -- [`HeadlessSession::dispatch`] still returns the full output, which
+/// the tests depend on.
+struct Pager {
+    page: usize,
+    last: Vec<String>,
+}
+
+impl Pager {
+    fn new(page: usize) -> Self {
+        Pager {
+            page,
+            last: Vec::new(),
+        }
+    }
+
+    /// Records `lines` as the most recent output and returns what to print: the
+    /// whole thing when it fits, otherwise the first `page` lines followed by a
+    /// hint describing how to see the rest.
+    fn present(&mut self, lines: Vec<String>) -> Vec<String> {
+        self.last = lines;
+        if self.last.len() <= self.page {
+            return self.last.clone();
+        }
+        let mut shown = self.last[..self.page].to_vec();
+        shown.push(page_hint(1, self.page, self.last.len(), self.page));
+        shown
+    }
+
+    /// Handles `more <start>-<end>` (1-indexed, inclusive) against the last
+    /// output. A bare `more <start>` shows one page starting at `start`.
+    fn more(&self, args: &[&str]) -> Result<Vec<String>, String> {
+        if self.last.is_empty() {
+            return Err("no previous output to page through".to_string());
+        }
+        let total = self.last.len();
+        let (start, end) = parse_more_range(args, self.page, total)?;
+        let mut shown = self.last[start - 1..end].to_vec();
+        shown.push(page_hint(start, end, total, self.page));
+        Ok(shown)
+    }
+}
+
+/// Builds the "M-N of T lines shown" footer, suggesting the next page when
+/// there's more to see and marking the end of output otherwise.
+fn page_hint(start: usize, end: usize, total: usize, page: usize) -> String {
+    if end >= total {
+        format!("[{start}-{end} of {total} lines shown -- end of output.]")
+    } else {
+        let next_start = end + 1;
+        let next_end = (end + page).min(total);
+        format!(
+            "[{start}-{end} of {total} lines shown. Say 'more {next_start}-{next_end}', \
+             for example, to view the next {} lines.]",
+            next_end - end
+        )
+    }
+}
+
+/// Parses a `more` range argument: `"6-20"` -> (6, 20), or a bare `"6"` ->
+/// (6, 6 + page - 1). Bounds are 1-indexed and inclusive; `end` is clamped to
+/// `total` (and to at least `start`), while a `start` past the end is an error.
+fn parse_more_range(args: &[&str], page: usize, total: usize) -> Result<(usize, usize), String> {
+    let spec = args
+        .first()
+        .ok_or("usage: more <start>-<end> (e.g. more 6-20)")?;
+    let (start, end) = match spec.split_once('-') {
+        Some((a, b)) => (parse_line_no(a)?, parse_line_no(b)?),
+        None => {
+            let start = parse_line_no(spec)?;
+            (start, start + page - 1)
+        }
+    };
+    if start == 0 {
+        return Err("line numbers start at 1".to_string());
+    }
+    if start > total {
+        return Err(format!("only {total} lines available"));
+    }
+    Ok((start, end.clamp(start, total)))
+}
+
+fn parse_line_no(s: &str) -> Result<usize, String> {
+    s.parse().map_err(|_| format!("not a line number: {s}"))
+}
+
 /// Runs the headless REPL against stdin/stdout until EOF, `quit`, or `exit`.
 pub fn run() {
     let seed: u64 = std::env::args()
@@ -886,6 +979,7 @@ pub fn run() {
         .unwrap_or_else(rand::random);
 
     let mut session = HeadlessSession::new(seed);
+    let mut pager = Pager::new(PAGE_LINES);
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -903,7 +997,16 @@ pub fn run() {
             break;
         }
 
-        match session.dispatch(trimmed) {
+        // `more` pages through the previous response, so it's handled by the
+        // pager rather than dispatched against the game state.
+        let mut tokens = trimmed.split_whitespace();
+        let response = if tokens.next() == Some("more") {
+            pager.more(&tokens.collect::<Vec<_>>())
+        } else {
+            session.dispatch(trimmed).map(|lines| pager.present(lines))
+        };
+
+        match response {
             Ok(lines) => {
                 writeln!(out, "OK").ok();
                 for l in lines {
@@ -927,6 +1030,63 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `"1".."n"` as owned strings, so pager tests read as line numbers.
+    fn numbered(n: usize) -> Vec<String> {
+        (1..=n).map(|i| i.to_string()).collect()
+    }
+
+    #[test]
+    fn pager_passes_short_output_through_unchanged() {
+        let mut pager = Pager::new(5);
+        assert_eq!(pager.present(numbered(3)), vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn pager_truncates_long_output_and_hints_the_next_page() {
+        let mut pager = Pager::new(3);
+        let out = pager.present(numbered(10));
+        assert_eq!(&out[..3], ["1", "2", "3"]);
+        assert_eq!(out.len(), 4, "3 lines + one hint line");
+        assert!(out[3].contains("1-3 of 10 lines shown"), "{}", out[3]);
+        assert!(out[3].contains("more 4-6"), "{}", out[3]);
+    }
+
+    #[test]
+    fn more_returns_the_requested_range_and_continues_the_hint() {
+        let mut pager = Pager::new(3);
+        pager.present(numbered(10));
+        let out = pager.more(&["4-6"]).unwrap();
+        assert_eq!(&out[..3], ["4", "5", "6"]);
+        assert!(out[3].contains("4-6 of 10 lines shown"), "{}", out[3]);
+        assert!(out[3].contains("more 7-9"), "{}", out[3]);
+    }
+
+    #[test]
+    fn more_clamps_past_the_end_and_marks_end_of_output() {
+        let mut pager = Pager::new(3);
+        pager.present(numbered(10));
+        let out = pager.more(&["8-99"]).unwrap();
+        assert_eq!(&out[..3], ["8", "9", "10"]);
+        assert!(out[3].contains("end of output"), "{}", out[3]);
+    }
+
+    #[test]
+    fn more_with_a_bare_start_shows_one_page() {
+        let mut pager = Pager::new(4);
+        pager.present(numbered(20));
+        let out = pager.more(&["5"]).unwrap();
+        assert_eq!(&out[..4], ["5", "6", "7", "8"]);
+    }
+
+    #[test]
+    fn more_rejects_missing_or_out_of_range_requests() {
+        let mut pager = Pager::new(3);
+        assert!(pager.more(&["1-5"]).is_err(), "no previous output yet");
+        pager.present(numbered(10));
+        assert!(pager.more(&["99-100"]).is_err(), "start past the end");
+        assert!(pager.more(&["oops"]).is_err(), "non-numeric range");
+    }
 
     /// Dispatches `cmd`, panicking with the session's error on failure -- test
     /// bodies read as the command script they are.
