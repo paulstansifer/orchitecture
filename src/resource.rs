@@ -111,6 +111,33 @@ impl ToolKind {
     }
 }
 
+/// The *type* of a `UniqueResource`, ignoring its particulars (a book's title,
+/// a rug's colour). Storability is decided per kind: a place either stores a
+/// kind or it doesn't (see `place::Place::stores_unique`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+pub enum UniqueResourceKind {
+    Book,
+    Rug,
+    Tool,
+}
+
+impl UniqueResourceKind {
+    pub const ALL: &'static [UniqueResourceKind] = &[
+        UniqueResourceKind::Book,
+        UniqueResourceKind::Rug,
+        UniqueResourceKind::Tool,
+    ];
+
+    /// Plural label, used as a section header in the resource panel.
+    pub fn label(self) -> &'static str {
+        match self {
+            UniqueResourceKind::Book => "Books",
+            UniqueResourceKind::Rug => "Rugs",
+            UniqueResourceKind::Tool => "Tools",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum UniqueResource {
     Book { title: String },
@@ -119,11 +146,23 @@ pub enum UniqueResource {
 }
 
 impl UniqueResource {
-    pub fn volume(&self) -> f32 {
+    /// The type of this resource, discarding its particulars.
+    pub fn kind(&self) -> UniqueResourceKind {
         match self {
-            UniqueResource::Book { .. } => 0.05,
-            UniqueResource::Rug { .. } => 1.0,
-            UniqueResource::Tool(_) => 0.5,
+            UniqueResource::Book { .. } => UniqueResourceKind::Book,
+            UniqueResource::Rug { .. } => UniqueResourceKind::Rug,
+            UniqueResource::Tool(_) => UniqueResourceKind::Tool,
+        }
+    }
+
+    /// A short human label identifying this individual item (its particulars).
+    pub fn describe(&self) -> String {
+        match self {
+            UniqueResource::Book { title } => title.clone(),
+            UniqueResource::Rug { color } => {
+                format!("Rug #{:02x}{:02x}{:02x}", color.r, color.g, color.b)
+            }
+            UniqueResource::Tool(kind) => kind.label().to_string(),
         }
     }
 }
@@ -174,13 +213,16 @@ impl Inventory {
             .collect()
     }
 
+    /// Total volume consumed by *uniform* resources. Unique resources are
+    /// volume-free (a place either stores their kind or it doesn't -- see
+    /// `place::Place::stores_unique`), so they never count against capacity.
     pub fn total_volume(&self) -> f32 {
         let mut res = 0.0;
         for entry in &self.contents {
             use crate::resource::InventoryEntry::*;
             match entry {
                 Uniform(_, item_qty) => res += *item_qty as f32,
-                Collection(items) => res += items.iter().map(|i| i.volume()).sum::<f32>(),
+                Collection(_) => {}
             }
         }
         res
@@ -200,7 +242,7 @@ impl Inventory {
         })
     }
 
-    fn unique_items(&self) -> impl Iterator<Item = &UniqueResource> {
+    pub fn unique_items(&self) -> impl Iterator<Item = &UniqueResource> {
         self.contents
             .iter()
             .filter_map(|entry| match entry {
@@ -577,5 +619,23 @@ mod tests {
     fn round_truncates_significant_digits() {
         // Under the cap but more than one significant digit: 47 -> 40.
         assert_eq!(round(47, ACCT), (40, Precision::Approximate));
+    }
+
+    /// Unique resources no longer count against inventory volume, so they never
+    /// crowd out uniform resources and can be added without limit.
+    #[test]
+    fn unique_items_are_volume_free() {
+        let mut inv = Inventory::new(10.0);
+        inv.add_uniform(UniformResource::Timber, 3);
+        let capacity_before = inv.remaining_capacity();
+        for _ in 0..1000 {
+            inv.add_unique(UniqueResource::Tool(ToolKind::Whipsaw));
+        }
+        inv.add_unique(UniqueResource::Book {
+            title: "Big Book".to_string(),
+        });
+        assert_eq!(inv.total_volume(), 3.0);
+        assert_eq!(inv.remaining_capacity(), capacity_before);
+        assert_eq!(inv.tool_count(), 1000);
     }
 }

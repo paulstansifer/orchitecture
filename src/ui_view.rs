@@ -7,11 +7,12 @@
 use std::collections::HashMap;
 
 use crate::city::{ConstructedCity, ProposedCity};
-use crate::city_effect::{compute_month_effects, LedgerSource};
+use crate::city_effect::{compute_month_effects, CityEffect, LedgerSource, MonthEffects};
 use crate::materials::MaterialList;
+use crate::place::PlacedPlaceId;
 use crate::population::Population;
-use crate::resource::{Precision, UniformResource};
-use crate::surroundings::farmstead::FarmsResource;
+use crate::resource::{Precision, UniformResource, UniqueResource, UniqueResourceKind};
+use crate::surroundings::farmstead::{FarmProduction, FarmsResource, MarketModeEffect, NewProduction};
 use crate::traveler::{ResolvedReward, TravelerState};
 
 /// Whether "Advance Month" is offered, and if so, whether it's currently
@@ -49,6 +50,45 @@ pub struct TravelerOfferView {
     pub affordable: bool,
 }
 
+/// How a single unique item is expected to change this month.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UniqueChange {
+    /// Held now, with no expected change.
+    Present,
+    /// Expected to arrive this month (rendered in the prediction colour).
+    Arriving,
+    /// Held now but expected to leave this month (rendered struck-through).
+    Departing,
+}
+
+/// One individual unique item in the resource panel.
+#[derive(Clone, Debug)]
+pub struct UniqueItemView {
+    pub label: String,
+    pub change: UniqueChange,
+}
+
+/// The unique items of one kind held at one location, with a summary of the
+/// current count and this month's net change.
+#[derive(Clone, Debug)]
+pub struct UniqueLocationGroup {
+    pub location: String,
+    /// Items physically present now (`Present` + `Departing`).
+    pub present: u32,
+    /// Net expected change this month (`+arriving − departing`).
+    pub delta: i32,
+    pub items: Vec<UniqueItemView>,
+}
+
+/// All unique items of one kind, grouped by location, with kind-wide totals.
+#[derive(Clone, Debug)]
+pub struct UniqueTypeGroup {
+    pub kind: UniqueResourceKind,
+    pub present: u32,
+    pub delta: i32,
+    pub locations: Vec<UniqueLocationGroup>,
+}
+
 /// Everything the shared resource panel needs to render, computed once per
 /// frame from the game resources.
 pub struct MonthPanelView {
@@ -60,7 +100,9 @@ pub struct MonthPanelView {
     pub invited_count: usize,
     pub has_storage: bool,
     pub rows: Vec<ResourceRow>,
-    pub tool_count: u32,
+    /// Unique resources, grouped type → location → items, with predicted
+    /// arrivals/departures for this month.
+    pub unique_groups: Vec<UniqueTypeGroup>,
     pub traveler: Option<TravelerOfferView>,
 }
 
@@ -188,9 +230,176 @@ pub fn month_panel_view(
         invited_count: farms.invited_count(),
         has_storage,
         rows,
-        tool_count: crate::place::total_tool_count(constructed),
+        unique_groups: build_unique_groups(constructed, farms, &effects),
         traveler,
     }
+}
+
+/// Builds the unique-resource sections: current holdings grouped by kind then
+/// location, overlaid with this month's predicted arrivals (prediction colour)
+/// and departures (struck-through), derived from `effects`. Pure.
+fn build_unique_groups(
+    constructed: &ConstructedCity,
+    farms: &FarmsResource,
+    effects: &MonthEffects,
+) -> Vec<UniqueTypeGroup> {
+    // kind -> (location id -> its items)
+    let mut by_kind: HashMap<UniqueResourceKind, HashMap<PlacedPlaceId, Vec<UniqueItemView>>> =
+        HashMap::new();
+
+    // Current holdings.
+    for (id, item) in crate::place::stored_unique_items(constructed) {
+        by_kind
+            .entry(item.kind())
+            .or_default()
+            .entry(id)
+            .or_default()
+            .push(UniqueItemView {
+                label: item.describe(),
+                change: UniqueChange::Present,
+            });
+    }
+
+    // Collect this month's predicted unique-item movements. Both arrivals and
+    // departures land in / draw from the first place storing that kind, matching
+    // `place::deposit_tool` / `consume_tool`.
+    let mut arrivals: Vec<(UniqueResourceKind, String)> = Vec::new();
+    let mut departures: Vec<(UniqueResourceKind, String)> = Vec::new();
+    for effect in effects.all() {
+        match effect {
+            CityEffect::TravelerVisit(t) if t.affordable && t.invited => {
+                if let ResolvedReward::Tool(kind) = &t.reward {
+                    arrivals.push((
+                        UniqueResourceKind::Tool,
+                        UniqueResource::Tool(*kind).describe(),
+                    ));
+                }
+            }
+            CityEffect::Market {
+                farm_idx,
+                effect:
+                    MarketModeEffect::Reconfigure {
+                        paid,
+                        new_production,
+                    },
+                ..
+            } if *paid > 0 => {
+                // A specialized farm hands its current tool back.
+                if let FarmProduction::Specialized(prev) = farms[*farm_idx].production {
+                    arrivals.push((
+                        UniqueResourceKind::Tool,
+                        UniqueResource::Tool(prev).describe(),
+                    ));
+                }
+                // Specializing consumes a tool.
+                if let NewProduction::Tool(kind) = new_production {
+                    departures.push((
+                        UniqueResourceKind::Tool,
+                        UniqueResource::Tool(*kind).describe(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (kind, label) in arrivals {
+        if let Some(&id) = crate::place::unique_storage_ids(constructed, kind).first() {
+            by_kind
+                .entry(kind)
+                .or_default()
+                .entry(id)
+                .or_default()
+                .push(UniqueItemView {
+                    label,
+                    change: UniqueChange::Arriving,
+                });
+        }
+    }
+
+    for (kind, label) in departures {
+        let locs = crate::place::unique_storage_ids(constructed, kind);
+        let loc_map = by_kind.entry(kind).or_default();
+        // Prefer to strike a currently-present matching item, in storage order.
+        let struck = locs.iter().find_map(|id| {
+            loc_map.get_mut(id).and_then(|items| {
+                items
+                    .iter_mut()
+                    .find(|it| it.label == label && it.change == UniqueChange::Present)
+                    .map(|it| it.change = UniqueChange::Departing)
+            })
+        });
+        // Nothing present to strike: a same-month arrival is consumed again, so
+        // just cancel one arrival (net zero, shown as nothing).
+        if struck.is_none() {
+            for id in &locs {
+                if let Some(items) = loc_map.get_mut(id) {
+                    if let Some(pos) = items
+                        .iter()
+                        .position(|it| it.label == label && it.change == UniqueChange::Arriving)
+                    {
+                        items.remove(pos);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Emit in a stable order: kinds by `ALL`, locations by placement order (id).
+    let mut out = Vec::new();
+    for &kind in UniqueResourceKind::ALL {
+        let Some(loc_map) = by_kind.get(&kind) else {
+            continue;
+        };
+        let mut loc_ids: Vec<PlacedPlaceId> = loc_map.keys().copied().collect();
+        loc_ids.sort();
+
+        let mut locations = Vec::new();
+        let mut type_present = 0u32;
+        let mut type_delta = 0i32;
+        for id in loc_ids {
+            let items = &loc_map[&id];
+            if items.is_empty() {
+                continue;
+            }
+            let arriving = items
+                .iter()
+                .filter(|it| it.change == UniqueChange::Arriving)
+                .count() as i32;
+            let departing = items
+                .iter()
+                .filter(|it| it.change == UniqueChange::Departing)
+                .count() as i32;
+            let present = items.len() as u32 - arriving as u32;
+            let delta = arriving - departing;
+            type_present += present;
+            type_delta += delta;
+            locations.push(UniqueLocationGroup {
+                location: location_label(constructed, id),
+                present,
+                delta,
+                items: items.clone(),
+            });
+        }
+        if !locations.is_empty() {
+            out.push(UniqueTypeGroup {
+                kind,
+                present: type_present,
+                delta: type_delta,
+                locations,
+            });
+        }
+    }
+    out
+}
+
+/// A location label for a unique-resource group: the place kind's name plus its
+/// grid coordinate, to disambiguate multiple places of the same kind.
+fn location_label(constructed: &ConstructedCity, id: PlacedPlaceId) -> String {
+    let name = crate::place::place_name(constructed, id);
+    let loc = crate::place::place_location(constructed, id);
+    format!("{name} ({}, {}, {})", loc.x, loc.y, loc.z)
 }
 
 #[cfg(test)]
@@ -299,5 +508,86 @@ mod tests {
         // No storage places exist, so nothing is retained; the row for the
         // farm's wanted/produced resources should still show up.
         assert!(view.rows.iter().any(|r| r.resource == Straw));
+    }
+
+    /// A market holding one tool, plus an invited traveler bringing another,
+    /// yields one `Tool` group: present 1, delta +1, with an `Arriving` item.
+    #[test]
+    fn market_tool_holdings_and_incoming() {
+        use crate::place::{FulfilledPorf, ParentRestriction, ParticularPlace, Place};
+        use crate::resource::{Inventory, ToolKind, UniqueResource, UniqueResourceKind};
+        use crate::traveler::{IndividualTraveler, ResolvedReward};
+        use bevy::math::IVec3;
+
+        let mut cw = ConstructedCity::new(Vec::new());
+        cw.places = vec![Place {
+            name: "market".to_string(),
+            requirements: vec![],
+            storage: None,
+            stores_unique: vec![UniqueResourceKind::Tool],
+            quality_factors: vec![],
+            assignable_for: None,
+        }];
+        let mut inv = Inventory::new(0.0);
+        inv.add_unique(UniqueResource::Tool(ToolKind::Whipsaw));
+        cw.placed_places.insert(ParticularPlace {
+            place: 0,
+            fulfillments: vec![FulfilledPorf::Furniture(IVec3::ZERO)],
+            contents: inv,
+            restriction: ParentRestriction::Unrestricted,
+        });
+
+        let traveler_state = TravelerState {
+            configs: Vec::new(),
+            current_offer: Some(IndividualTraveler {
+                config_index: 0,
+                demands: Vec::new(),
+                reward: ResolvedReward::Tool(ToolKind::Whipsaw),
+                path: Vec::new(),
+            }),
+            invited: true,
+        };
+
+        let farms = farms_with(vec![]);
+        let pending = crate::city::ProposedCity::new();
+        let pop = Population {
+            individuals: vec![],
+        };
+        let material_list = MaterialList::default();
+
+        let view = month_panel_view(
+            1,
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &traveler_state,
+            &material_list,
+            false,
+        );
+
+        assert_eq!(view.unique_groups.len(), 1);
+        let group = &view.unique_groups[0];
+        assert_eq!(group.kind, UniqueResourceKind::Tool);
+        assert_eq!(group.present, 1);
+        assert_eq!(group.delta, 1);
+        assert_eq!(group.locations.len(), 1);
+        let loc = &group.locations[0];
+        assert_eq!(loc.present, 1);
+        assert_eq!(loc.delta, 1);
+        assert_eq!(
+            loc.items
+                .iter()
+                .filter(|i| i.change == UniqueChange::Arriving)
+                .count(),
+            1
+        );
+        assert_eq!(
+            loc.items
+                .iter()
+                .filter(|i| i.change == UniqueChange::Present)
+                .count(),
+            1
+        );
     }
 }

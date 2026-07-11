@@ -165,6 +165,7 @@ mod tests {
                 worker_visit_duration: 1.0,
             }],
             storage: None,
+            stores_unique: vec![],
             quality_factors: vec![],
             assignable_for: Some(AssignmentFlavor::Sleep),
         }

@@ -287,6 +287,7 @@ mod tests {
                 worker_visit_duration: 1.0,
             }],
             storage: None,
+            stores_unique: vec![],
             quality_factors,
             assignable_for: None,
         }

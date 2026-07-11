@@ -1,7 +1,9 @@
 use crate::city::{apply_changes, AssembledCity, Cell, ConstructedCity};
 use crate::eorf::EorfList;
 use crate::materials::BuildMaterialId;
-use crate::resource::{Approximation, Inventory, ToolKind, UniformResource, UniqueResource};
+use crate::resource::{
+    Approximation, Inventory, ToolKind, UniformResource, UniqueResource, UniqueResourceKind,
+};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use bevy::math::IVec3;
 use bevy::prelude::{Commands, DetectChangesMut, Res, ResMut};
@@ -185,6 +187,12 @@ pub struct Place {
     // First requirement is the core.
     pub requirements: Vec<PlaceReq>,
     pub storage: Option<PlaceStorageSpec>,
+    /// Unique-resource kinds this place stores, without limit. A kind is either
+    /// storable here or not, regardless of an item's particulars. Independent
+    /// of `storage` (which governs volume-limited *uniform* storage): e.g. the
+    /// market stores unique resources but no uniform ones.
+    #[serde(default)]
+    pub stores_unique: Vec<UniqueResourceKind>,
     #[serde(default)]
     pub quality_factors: Vec<QualityFactor>,
     /// If set, individuals may be assigned to placed instances of this kind
@@ -775,26 +783,26 @@ pub fn sync_places_system(mut constructed: ResMut<ConstructedCity>) {
     }
 }
 
-/// Total number of tools of `kind` held across all storage places.
+/// Total number of tools of `kind` held across all tool-storing places.
 pub fn total_tools_of(cw: &ConstructedCity, kind: ToolKind) -> u32 {
-    storage_ids(cw)
+    unique_storage_ids(cw, UniqueResourceKind::Tool)
         .into_iter()
         .map(|id| cw.placed_places[id].contents.tool_count_of(kind) as u32)
         .sum()
 }
 
-/// Total number of tools (of any kind) held across all storage places.
+/// Total number of tools (of any kind) held across all tool-storing places.
 pub fn total_tool_count(cw: &ConstructedCity) -> u32 {
-    storage_ids(cw)
+    unique_storage_ids(cw, UniqueResourceKind::Tool)
         .into_iter()
         .map(|id| cw.placed_places[id].contents.tool_count() as u32)
         .sum()
 }
 
-/// Remove one tool of `kind` from the first storage place that holds one.
+/// Remove one tool of `kind` from the first tool-storing place that holds one.
 /// Returns `true` if a tool was removed.
 pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
-    for id in storage_ids(cw) {
+    for id in unique_storage_ids(cw, UniqueResourceKind::Tool) {
         if cw.placed_places[id]
             .contents
             .remove_unique(&UniqueResource::Tool(kind))
@@ -805,10 +813,10 @@ pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
     false
 }
 
-/// Deposit one tool of `kind` into the first storage place. Returns `true` on
-/// success (`false` if there is no storage place to receive it).
+/// Deposit one tool of `kind` into the first tool-storing place (e.g. the
+/// market). Returns `true` on success (`false` if no place stores tools).
 pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
-    if let Some(&id) = storage_ids(cw).first() {
+    if let Some(&id) = unique_storage_ids(cw, UniqueResourceKind::Tool).first() {
         cw.placed_places[id]
             .contents
             .add_unique(UniqueResource::Tool(kind));
@@ -816,6 +824,47 @@ pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
     } else {
         false
     }
+}
+
+/// Whether `pp`'s place kind stores unique resources of `kind`.
+fn place_stores_unique(cw: &ConstructedCity, pp: &ParticularPlace, kind: UniqueResourceKind) -> bool {
+    cw.places
+        .get(pp.place)
+        .is_some_and(|info| info.stores_unique.contains(&kind))
+}
+
+/// Every place that stores unique resources of `kind`, in placement order.
+pub fn unique_storage_ids(cw: &ConstructedCity, kind: UniqueResourceKind) -> Vec<PlacedPlaceId> {
+    cw.placed_places
+        .iter()
+        .filter(|(_, pp)| place_stores_unique(cw, pp, kind))
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Every stored unique item paired with the place holding it, across all places
+/// that store that item's kind. Placement order, then insertion order within a
+/// place. Backs the resource panel's unique-resource sections.
+pub fn stored_unique_items(cw: &ConstructedCity) -> Vec<(PlacedPlaceId, UniqueResource)> {
+    let mut out = Vec::new();
+    for (id, pp) in cw.placed_places.iter() {
+        for item in pp.contents.unique_items() {
+            if place_stores_unique(cw, pp, item.kind()) {
+                out.push((id, item.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// The display name of a placed place (its `Place` kind's name), or `"?"` if
+/// the id is stale.
+pub fn place_name(cw: &ConstructedCity, id: PlacedPlaceId) -> &str {
+    cw.placed_places
+        .get(id)
+        .and_then(|pp| cw.places.get(pp.place))
+        .map(|info| info.name.as_str())
+        .unwrap_or("?")
 }
 
 fn is_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
@@ -1125,6 +1174,7 @@ mod tests {
                 worker_visit_duration: 1.0,
             }],
             storage: None,
+            stores_unique: vec![],
             quality_factors: vec![],
             assignable_for: None,
         }
@@ -1344,6 +1394,7 @@ mod tests {
                     max: 999,
                 },
             }),
+            stores_unique: vec![],
             quality_factors: vec![],
             assignable_for: None,
         }
@@ -1423,5 +1474,58 @@ mod tests {
         let deposited = deposit_uniform_with_capacity(&mut cw, UniformResource::Straw, 10);
         assert_eq!(deposited, 0);
         assert_eq!(storage_totals(&cw).get(&UniformResource::Straw), None);
+    }
+
+    /// A market (`stores_unique: [Tool]`) receives, holds, and yields tools;
+    /// a storage room (which stores no unique kinds) does not.
+    #[test]
+    fn tools_flow_through_market_not_storage_room() {
+        fn place(name: &str, stores_unique: Vec<UniqueResourceKind>) -> Place {
+            Place {
+                name: name.to_string(),
+                requirements: vec![],
+                storage: None,
+                stores_unique,
+                quality_factors: vec![],
+                assignable_for: None,
+            }
+        }
+        let mut cw = ConstructedCity::new(Vec::new());
+        cw.places = vec![
+            place("storage room", vec![]),
+            place("market", vec![UniqueResourceKind::Tool]),
+        ];
+        // A placed storage room (idx 0) and a placed market (idx 1).
+        cw.placed_places.insert(ParticularPlace {
+            place: 0,
+            fulfillments: vec![FulfilledPorf::Furniture(IVec3::ZERO)],
+            contents: Inventory::new(20.0),
+            restriction: ParentRestriction::Unrestricted,
+        });
+        let market = cw.placed_places.insert(ParticularPlace {
+            place: 1,
+            fulfillments: vec![FulfilledPorf::Furniture(IVec3::new(1, 0, 0))],
+            contents: Inventory::new(0.0),
+            restriction: ParentRestriction::Unrestricted,
+        });
+
+        // Deposits land in the market, unbounded (its inventory has 0 volume).
+        assert!(deposit_tool(&mut cw, ToolKind::Whipsaw));
+        assert!(deposit_tool(&mut cw, ToolKind::Whipsaw));
+        assert_eq!(total_tool_count(&cw), 2);
+        assert_eq!(total_tools_of(&cw, ToolKind::Whipsaw), 2);
+        assert_eq!(cw.placed_places[market].contents.tool_count(), 2);
+        // The market is the only unique-Tool store.
+        assert_eq!(
+            unique_storage_ids(&cw, UniqueResourceKind::Tool),
+            vec![market]
+        );
+
+        // Consumption draws them back out.
+        assert!(consume_tool(&mut cw, ToolKind::Whipsaw));
+        assert_eq!(total_tool_count(&cw), 1);
+        assert!(consume_tool(&mut cw, ToolKind::Whipsaw));
+        assert!(!consume_tool(&mut cw, ToolKind::Whipsaw));
+        assert_eq!(total_tool_count(&cw), 0);
     }
 }

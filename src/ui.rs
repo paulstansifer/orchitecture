@@ -10,8 +10,8 @@ use crate::resource::Precision;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::surroundings::farmstead::{FarmsResource, GameClock};
 use crate::traveler::TravelerState;
-use crate::ui_view::{month_panel_view, AdvanceState};
-use crate::{col_format, heading_label, label, note_label};
+use crate::ui_view::{month_panel_view, AdvanceState, UniqueChange};
+use crate::{col_format, heading_label, label, layout_job, note_label, strike_format};
 
 pub fn shared_ui_system(
     mut contexts: EguiContexts,
@@ -212,10 +212,31 @@ pub fn shared_ui_system(
                     }
                 });
 
-            // Tools count (UniqueResource — tracked separately from uniform resources).
-            if view.tool_count > 0 {
-                ui.horizontal(|ui| {
-                    label!(ui, format!("Tools: {}", view.tool_count));
+            // Unique resources (books, rugs, tools), in nested collapsible
+            // sections: type → location → individual items. Expected arrivals
+            // are in the prediction colour, expected departures struck-through,
+            // and each collapsed header carries an "N ±M" summary.
+            for group in &view.unique_groups {
+                let header = unique_header(group.kind.label(), group.present, group.delta);
+                ui.collapsing(header, |ui| {
+                    for loc in &group.locations {
+                        let loc_header = unique_header(&loc.location, loc.present, loc.delta);
+                        ui.collapsing(loc_header, |ui| {
+                            for item in &loc.items {
+                                match item.change {
+                                    UniqueChange::Present => {
+                                        label!(ui, item.label.clone());
+                                    }
+                                    UniqueChange::Arriving => {
+                                        label!(ui, col_format!(preview, "{}", item.label));
+                                    }
+                                    UniqueChange::Departing => {
+                                        label!(ui, strike_format!("{}", item.label));
+                                    }
+                                }
+                            }
+                        });
+                    }
                 });
             }
 
@@ -273,5 +294,19 @@ pub fn shared_ui_system(
     }
     if let Some(mode) = next_mode {
         next_game_mode.set(mode);
+    }
+}
+
+/// A collapsing-header label for a unique-resource section: `"<name>: <count>"`
+/// plus a coloured `+delta` (prediction) or `–delta` (problem) when non-zero —
+/// the "number and a plus-or-minus and a number" format.
+fn unique_header(name: &str, present: u32, delta: i32) -> egui::text::LayoutJob {
+    let base = format!("{name}: {present}");
+    if delta > 0 {
+        layout_job!(base, col_format!(preview, " +{}", delta))
+    } else if delta < 0 {
+        layout_job!(base, col_format!(problem, " –{}", -delta))
+    } else {
+        layout_job!(base)
     }
 }

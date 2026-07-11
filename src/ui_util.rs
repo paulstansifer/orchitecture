@@ -102,6 +102,37 @@ macro_rules! col_format {
     }};
 }
 
+/// Create struck-through text (an item expected to leave), for use in `label!`.
+/// The strikethrough line takes the text's own colour, so this composes with a
+/// colour set separately if needed. Usage: `strike_format!("{}", name)`.
+#[macro_export]
+macro_rules! strike_format {
+    ($text:expr $(, $arg:expr)*) => {{
+        let mut fmt = $crate::ui_util::default_text_format();
+        fmt.strikethrough = ::bevy_egui::egui::Stroke::new(1.0, fmt.color);
+        $crate::ui_util::FormattedText {
+            txt: format!($text, $($arg),*).to_string(),
+            fmt,
+        }
+    }};
+}
+
+/// Builds a body-font `LayoutJob` from `FormattedText` segments and returns it
+/// (rather than rendering), so it can be passed as a coloured widget label —
+/// e.g. a `ui.collapsing` header. Usage: `layout_job!("Tools: 3", col_format!(preview, " +1"))`.
+#[macro_export]
+macro_rules! layout_job {
+    ($($segment:expr),+ $(,)?) => {{
+        let mut lj = ::bevy_egui::egui::text::LayoutJob::default();
+        $(
+            let mut seg: $crate::ui_util::FormattedText = $segment.into();
+            seg.fmt.font_id = $crate::ui_util::FontSizes::body();
+            lj.append(&seg.txt, 0.0, seg.fmt);
+        )+
+        lj
+    }};
+}
+
 /// Builds a `LayoutJob` from `FormattedText` segments — each stamped with the
 /// given font and italics setting — and renders it as a label. Backs the
 /// `label!` / `heading_label!` / `note_label!` macros; not meant to be called

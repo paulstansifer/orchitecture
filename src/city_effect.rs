@@ -323,7 +323,13 @@ impl CityEffect {
                                         options[ctx.rng.random_range(0..options.len())],
                                     )
                                 }
-                                NewProduction::Tool(tool) => FarmProduction::Specialized(*tool),
+                                NewProduction::Tool(tool) => {
+                                    // Specializing draws one tool out of storage
+                                    // (the market); reconfiguring away deposits
+                                    // it back, above.
+                                    place::consume_tool(ctx.constructed, *tool);
+                                    FarmProduction::Specialized(*tool)
+                                }
                             };
                         }
                     }
@@ -631,6 +637,7 @@ mod tests {
                     max: 999,
                 },
             }),
+            stores_unique: vec![],
             quality_factors: vec![],
             assignable_for: None,
         }];

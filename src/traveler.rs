@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::city::ConstructedCity;
-use crate::resource::{ToolKind, UniformResource, UniqueResource};
+use crate::resource::{ToolKind, UniformResource};
 use crate::surroundings::generate_path_from_pos;
 
 pub const TRAVELER_CAPACITY: usize = 1;
@@ -155,11 +155,7 @@ impl TravelerVisit {
             }
         }
         if let ResolvedReward::Tool(kind) = &self.reward {
-            if let Some(&id) = crate::place::storage_ids(constructed).first() {
-                constructed.placed_places[id]
-                    .contents
-                    .add_unique(UniqueResource::Tool(*kind));
-            }
+            crate::place::deposit_tool(constructed, *kind);
         }
         farms.traveler_reveals.push(self.path.clone());
     }
