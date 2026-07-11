@@ -438,7 +438,7 @@ pub fn construct(
 /// after that month's resources have already been applied toward payment.
 ///
 /// `fully_paid` should reflect whether
-/// `build_ui::remaining_construction_need` is empty (or `true`
+/// [`remaining_construction_need`] is empty (or `true`
 /// unconditionally in sandbox mode).
 ///
 /// Returns `Some(real_changes)` if construction completed this month (proposals
@@ -515,14 +515,6 @@ pub struct Construction {
 }
 
 impl Construction {
-    pub fn possible(&self) -> bool {
-        true
-    }
-
-    pub fn apply_resource(&self, res: UniformResource) -> i16 {
-        -(self.applied.get(&res).copied().unwrap_or(0) as i16)
-    }
-
     pub fn apply(&self, pending: &mut ProposedCity, constructed: &mut ConstructedCity) {
         for (&res, &qty) in &self.applied {
             if qty > 0 {
@@ -534,10 +526,6 @@ impl Construction {
                 crate::place::consume_uniform(constructed, res, qty);
             }
         }
-    }
-
-    pub fn effect_name(&self) -> String {
-        "construction".to_string()
     }
 
     pub fn describe(&self) -> String {
@@ -563,7 +551,7 @@ pub fn compute_construction_absorption(
     let mut applied = HashMap::new();
     let mut from_storage = HashMap::new();
     for (&res, &need) in remaining_need {
-        let rate = res.construct_per_month().floor().max(0.0) as u32;
+        let rate = res.construct_per_month();
         let want = need.min(rate);
 
         let have_inflow = inflow_available.get(&res).copied().unwrap_or(0);
@@ -961,7 +949,6 @@ mod tests {
             name: "storage room".to_string(),
             requirements: vec![],
             storage: Some(PlaceStorageSpec {
-                just_one_kind: false,
                 accounting: Approximation {
                     digits: 2,
                     max: 999,
@@ -973,7 +960,7 @@ mod tests {
         cw.placed_places.insert(ParticularPlace {
             place: 0,
             fulfillments: vec![crate::place::FulfilledPorf::Furniture(IVec3::new(5, 0, 5))],
-            contents: Inventory::new(8, 100.0),
+            contents: Inventory::new(100.0),
             restriction: ParentRestriction::Unrestricted,
         });
 
@@ -1189,7 +1176,7 @@ mod tests {
 
     #[test]
     fn construction_rate_caps_absorption_independently_per_resource() {
-        // construct_per_month() is 50.0 for everything currently; demand above
+        // construct_per_month() is 50 for everything currently; demand above
         // that rate can't be applied even if fully needed and available.
         let mut inflow = m(&[(UniformResource::Timber, 80)]);
         let mut storage = m(&[]);

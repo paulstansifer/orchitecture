@@ -9,10 +9,7 @@ use bevy_egui::{
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
-    build_ui::{
-        build_ui_system, discover_user_files, enable_ui_input_absorption, handle_file_load,
-        handle_file_save, FurnitureRightClick, LoadDialog, SandboxMode, SaveDialog, UiState,
-    },
+    build_ui::{build_ui_system, enable_ui_input_absorption, FurnitureRightClick, UiState},
     camera::{
         camera_input_system, disable_auto_egui_primary_context, spawn_camera, CameraState,
         GameCamera,
@@ -26,7 +23,7 @@ use orchitecture_lib::{
         CutawayMode,
     },
     eorf::{spawn_structures, EorfList},
-    game_mode::GameMode,
+    game_mode::{GameMode, SandboxMode},
     gi_material::GiPlugin,
     global_illumination::update_global_illumination,
     grid_preview::GridPreviewPlugin,
@@ -34,7 +31,9 @@ use orchitecture_lib::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
         update_room_cursor_mesh, BuildState, CursorEntities,
     },
+    map_files::{discover_user_files, handle_file_load, handle_file_save, LoadDialog, SaveDialog},
     materials::MaterialList,
+    month::{advance_month_system, AdvanceMonthRequested},
     orc::{
         despawn_orc, draw_debug_nav_gizmos, orc_click_to_move_system, orc_input_system,
         setup_orc_animation, spawn_orc, DebugNav,
@@ -119,6 +118,7 @@ fn main() {
         .insert_resource(GameClock::default())
         .insert_resource(MaterialList::load())
         .insert_resource(DebugNav::default())
+        .add_message::<AdvanceMonthRequested>()
         .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))
         .add_systems(OnExit(GameMode::Walk), despawn_orc)
         .add_systems(OnEnter(GameMode::Build), enter_build_mode)
@@ -188,6 +188,7 @@ fn main() {
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))
+        .add_systems(Update, advance_month_system)
         .add_systems(
             EguiPrimaryContextPass,
             (

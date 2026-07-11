@@ -1,16 +1,20 @@
 //! The month-advance sequence: the single source of truth for what happens when
 //! the player (or the headless harness) advances the game clock by one month.
 //!
-//! This is deliberately ECS-free — it takes and mutates the game resources
-//! directly and returns a [`MonthOutcome`] describing what happened. Callers are
-//! responsible for any ECS follow-up (reflecting completed construction into
-//! geometry via [`crate::construction::apply_construction_completion`]) and for
-//! turning the outcome into user-facing text or log lines.
+//! [`advance_month`] is deliberately ECS-free — it takes and mutates the game
+//! resources directly and returns a [`MonthOutcome`] describing what happened.
+//! Callers are responsible for any ECS follow-up (reflecting completed
+//! construction into geometry via
+//! [`crate::construction::apply_construction_completion`]) and for turning the
+//! outcome into user-facing text or log lines. [`advance_month_system`] is the
+//! in-game ECS adapter that does both, driven by [`AdvanceMonthRequested`]
+//! messages from the UI.
 
-use crate::build_ui::remaining_construction_need;
-use crate::city::{Cell, ConstructedCity, ProposedCity};
-use crate::city_effect::{compute_month_effects, CityEffect, Effect, EffectContext};
-use crate::construction::tick_construction;
+use bevy::prelude::{Commands, Message, MessageReader, Res, ResMut};
+
+use crate::city::{Cell, CityMut, ConstructedCity, ProposedCity, ViewableWorld};
+use crate::city_effect::{compute_month_effects, EffectContext};
+use crate::construction::{remaining_construction_need, tick_construction};
 use crate::materials::MaterialList;
 use crate::place;
 use crate::population::Population;
@@ -95,10 +99,10 @@ pub fn advance_month(
         farm.invited = false;
     }
 
-    let traveler_accepted = effects.effects.iter().find_map(|e| match e {
-        CityEffect::TravelerVisit(t) if t.invited => Some(t.affordable),
-        _ => None,
-    });
+    let traveler_accepted = effects
+        .traveler_visit()
+        .filter(|t| t.invited)
+        .map(|t| t.affordable);
     traveler_state.invited = false;
     roll_traveler_offer(traveler_state, CIRCLE_REVEAL_RADIUS, rng);
 
@@ -120,5 +124,58 @@ pub fn advance_month(
         market_gains: effects.player_gains,
         traveler_accepted,
         construction_changes,
+    }
+}
+
+/// Sent by the UI when the player clicks "Advance Month".
+#[derive(Message)]
+pub struct AdvanceMonthRequested;
+
+/// ECS adapter for [`advance_month`]: consumes [`AdvanceMonthRequested`]
+/// (advancing at most one month per frame, however many messages arrived) and
+/// performs the construction follow-up that `advance_month` leaves to its
+/// caller.
+pub fn advance_month_system(
+    mut requests: MessageReader<AdvanceMonthRequested>,
+    mut commands: Commands,
+    mut clock: ResMut<GameClock>,
+    mut farms: ResMut<FarmsResource>,
+    world: CityMut,
+    mut viewable: ResMut<ViewableWorld>,
+    structure_list: Res<crate::eorf::EorfList>,
+    mut population: ResMut<Population>,
+    mut traveler_state: ResMut<TravelerState>,
+    material_list: Res<MaterialList>,
+    sandbox: Res<crate::game_mode::SandboxMode>,
+) {
+    if requests.read().count() == 0 {
+        return;
+    }
+    let CityMut {
+        mut constructed,
+        mut pending,
+        mut assembled,
+    } = world;
+
+    let mut rng = rand::rng();
+    let outcome = advance_month(
+        &mut clock,
+        &mut farms,
+        &mut constructed,
+        &mut pending,
+        &mut population,
+        &mut traveler_state,
+        &material_list,
+        sandbox.enabled,
+        &mut rng,
+    );
+    if let Some(real_changes) = outcome.construction_changes {
+        crate::construction::apply_construction_completion(
+            &mut commands,
+            &mut assembled,
+            &mut viewable,
+            &structure_list,
+            real_changes,
+        );
     }
 }

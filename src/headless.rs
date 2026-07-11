@@ -40,7 +40,9 @@ use crate::population::{assign_places, sync_assignments, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::surroundings::farmstead::{farm_breakdown, FarmEvent, FarmsResource, GameClock};
+use crate::surroundings::farmstead::{
+    farm_breakdown, FarmEvent, FarmId, FarmsResource, GameClock, NewProduction,
+};
 use crate::surroundings::map::generate_farms;
 use crate::traveler::{setup_travelers, TravelerState};
 
@@ -350,8 +352,10 @@ impl HeadlessSession {
                 let idx = parse_usize(args.first().copied().unwrap_or(""))?;
                 let event = match args.get(1).copied() {
                     Some("market") => FarmEvent::Market,
-                    Some("reroll") => FarmEvent::RerollResource,
-                    Some("specialize") => FarmEvent::Specialize(ToolKind::Whipsaw),
+                    Some("reroll") => FarmEvent::Reconfigure(NewProduction::RandomRegular),
+                    Some("specialize") => {
+                        FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::Whipsaw))
+                    }
                     Some("adopt") => FarmEvent::Adopt,
                     _ => {
                         return Err(
@@ -364,7 +368,7 @@ impl HeadlessSession {
                     return Err(format!("no such farm: {idx}"));
                 }
                 farms.ensure_adjacency();
-                farms.set_farm_event(idx, event);
+                farms.set_farm_event(FarmId::new(idx), event);
                 Ok(vec!["ok".to_string()])
             }
 
@@ -637,8 +641,11 @@ impl HeadlessSession {
                 let cw = world.resource::<ConstructedCity>();
                 let material_list = world.resource::<MaterialList>();
                 let pending = world.resource::<ProposedCity>();
-                let need =
-                    crate::build_ui::remaining_construction_need(pending, &cw.eorfs, material_list);
+                let need = crate::construction::remaining_construction_need(
+                    pending,
+                    &cw.eorfs,
+                    material_list,
+                );
                 Ok(vec![format!(
                     "pending_changes={} remaining_need={:?}",
                     pending.num_changes(),
@@ -770,10 +777,11 @@ fn query_farm_system(
     if idx >= farms.farms.len() {
         return Err(format!("no such farm: {idx}"));
     }
+    let id = FarmId::new(idx);
     farms.ensure_adjacency();
-    let event = farms.farm_event(idx);
+    let event = farms.farm_event(id);
     let mut lines = vec![format!("farm {idx}")];
-    lines.extend(farm_breakdown(&mut farms, idx, event, None));
+    lines.extend(farm_breakdown(&mut farms, id, event, None));
     Ok(lines)
 }
 
