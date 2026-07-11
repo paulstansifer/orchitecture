@@ -174,7 +174,7 @@ mod tests {
         ParticularPlace {
             place,
             fulfillments: vec![FulfilledPorf::Furniture(IVec3::ZERO)],
-            contents: crate::resource::Inventory::new(1, 1.0),
+            contents: crate::resource::Inventory::new(1.0),
             restriction: crate::place::ParentRestriction::Unrestricted,
         }
     }

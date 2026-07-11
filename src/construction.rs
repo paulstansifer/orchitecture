@@ -429,7 +429,7 @@ pub fn construct(
 /// after that month's resources have already been applied toward payment.
 ///
 /// `fully_paid` should reflect whether
-/// `build_ui::remaining_construction_need` is empty (or `true`
+/// [`remaining_construction_need`] is empty (or `true`
 /// unconditionally in sandbox mode).
 ///
 /// Returns `Some(real_changes)` if construction completed this month (proposals
@@ -461,6 +461,21 @@ pub fn apply_construction_completion(
     apply_changes(commands, assembled, structure_list, real_changes);
 }
 
+/// Commits all pending proposals immediately (bypassing the monthly payment
+/// schedule) and reflects them into the ECS — e.g. when switching into
+/// sandbox mode, whose edits are always committed.
+pub fn commit_pending_construction(
+    commands: &mut Commands,
+    constructed: &mut ConstructedCity,
+    pending: &mut ProposedCity,
+    assembled: &mut AssembledCity,
+    viewable: &mut ViewableWorld,
+    structure_list: &EorfList,
+) {
+    let real_changes = construct(constructed, pending);
+    apply_construction_completion(commands, assembled, viewable, structure_list, real_changes);
+}
+
 /// Loads a new building, replacing contents and clearing all history.
 /// Entity cleanup is the caller's responsibility.
 pub fn load_from_offline(
@@ -489,14 +504,6 @@ pub struct Construction {
 }
 
 impl Construction {
-    pub fn possible(&self) -> bool {
-        true
-    }
-
-    pub fn apply_resource(&self, res: UniformResource) -> i16 {
-        -(self.applied.get(&res).copied().unwrap_or(0) as i16)
-    }
-
     pub fn apply(&self, pending: &mut ProposedCity, constructed: &mut ConstructedCity) {
         for (&res, &qty) in &self.applied {
             if qty > 0 {
@@ -508,10 +515,6 @@ impl Construction {
                 crate::place::consume_uniform(constructed, res, qty);
             }
         }
-    }
-
-    pub fn effect_name(&self) -> String {
-        "construction".to_string()
     }
 
     pub fn describe(&self) -> String {
@@ -537,7 +540,7 @@ pub fn compute_construction_absorption(
     let mut applied = HashMap::new();
     let mut from_storage = HashMap::new();
     for (&res, &need) in remaining_need {
-        let rate = res.construct_per_month().floor().max(0.0) as u32;
+        let rate = res.construct_per_month();
         let want = need.min(rate);
 
         let have_inflow = inflow_available.get(&res).copied().unwrap_or(0);
@@ -562,6 +565,119 @@ pub fn compute_construction_absorption(
         applied,
         from_storage,
     }
+}
+
+/// Total resource cost to complete the current proposed construction.
+/// Only counts `Proposal::Place` entries; removals are free. Furniture has a
+/// fixed cost independent of the selected build material.
+/// Returns sorted `(resource, quantity)` pairs; empty when cost is zero.
+pub fn construction_cost(
+    proposed: &Sparse3D<Proposal>,
+    structure_infos: &[crate::eorf::EorfInfo],
+    material_list: &crate::materials::MaterialList,
+) -> Vec<(UniformResource, u32)> {
+    let mut totals: HashMap<UniformResource, u32> = HashMap::new();
+
+    for (_, proposal) in proposed.iter() {
+        let Proposal::Place(cell) = proposal else {
+            continue;
+        };
+        let info = &structure_infos[cell.id.as_usize()];
+        let cost = if let Some(furniture_cost) = info.furniture_cost() {
+            furniture_cost.clone()
+        } else {
+            let Some(build_mat) = material_list.materials.get(cell.build_material.0 as usize)
+            else {
+                continue;
+            };
+            let Some(element_type) = info.element_type() else {
+                continue;
+            };
+            let Some(cost) = build_mat.costs.get(&element_type) else {
+                continue;
+            };
+            cost.clone()
+        };
+        for (res, qty) in cost {
+            *totals.entry(res).or_insert(0) += qty as u32;
+        }
+    }
+
+    let mut result: Vec<_> = totals.into_iter().collect();
+    result.sort_by_key(|(r, _)| *r);
+    result
+}
+
+/// Resource cost still owed to complete the current proposed construction:
+/// `construction_cost(...)` (unchanged, total cost) minus
+/// `pending.resource_progress` already applied, floored at zero. Drops zero
+/// entries. Empty when there's nothing pending.
+pub fn remaining_construction_need(
+    pending: &ProposedCity,
+    structure_infos: &[crate::eorf::EorfInfo],
+    material_list: &crate::materials::MaterialList,
+) -> Vec<(UniformResource, u32)> {
+    construction_cost(&pending.proposed_changes, structure_infos, material_list)
+        .into_iter()
+        .filter_map(|(res, total)| {
+            let progress = pending.resource_progress.get(&res).copied().unwrap_or(0);
+            let remaining = total.saturating_sub(progress.min(total));
+            (remaining > 0).then_some((res, remaining))
+        })
+        .collect()
+}
+
+/// The most a single resource's unpaid cost can reach before proposing more
+/// construction is blocked (the player must cancel some proposals first).
+pub const MAX_UNPAID_CONSTRUCTION: u32 = 100;
+
+/// Whether the current proposal's unpaid cost exceeds
+/// [`MAX_UNPAID_CONSTRUCTION`] for any resource, hard-blocking the month
+/// advance until some proposed construction is cancelled.
+pub fn construction_blocked(remaining_need: &[(UniformResource, u32)]) -> bool {
+    remaining_need
+        .iter()
+        .any(|(_, qty)| *qty > MAX_UNPAID_CONSTRUCTION)
+}
+
+/// Fraction (0.0–1.0) of the current pending construction's total material
+/// cost that's already been paid off, weighted by each material's time cost
+/// (`1 / UniformResource::construct_per_month()`) so materials that are
+/// slower to deliver count for more of the bar. `None` when there's no
+/// pending construction (or its cost is zero).
+pub fn construction_progress_fraction(
+    pending: &ProposedCity,
+    structure_infos: &[crate::eorf::EorfInfo],
+    material_list: &crate::materials::MaterialList,
+) -> Option<f32> {
+    let total_cost = construction_cost(&pending.proposed_changes, structure_infos, material_list);
+    if total_cost.is_empty() {
+        return None;
+    }
+
+    let time_cost =
+        |res: UniformResource, qty: u32| -> f32 { qty as f32 / res.construct_per_month() as f32 };
+
+    let total_time: f32 = total_cost
+        .iter()
+        .map(|(res, qty)| time_cost(*res, *qty))
+        .sum();
+    if total_time <= 0.0 {
+        return Some(1.0);
+    }
+    let paid_time: f32 = total_cost
+        .iter()
+        .map(|(res, qty)| {
+            let progress = pending
+                .resource_progress
+                .get(res)
+                .copied()
+                .unwrap_or(0)
+                .min(*qty);
+            time_cost(*res, progress)
+        })
+        .sum();
+    Some((paid_time / total_time).clamp(0.0, 1.0))
 }
 
 #[cfg(test)]
@@ -959,7 +1075,7 @@ mod tests {
 
     #[test]
     fn construction_rate_caps_absorption_independently_per_resource() {
-        // construct_per_month() is 50.0 for everything currently; demand above
+        // construct_per_month() is 50 for everything currently; demand above
         // that rate can't be applied even if fully needed and available.
         let mut inflow = m(&[(UniformResource::Timber, 80)]);
         let mut storage = m(&[]);

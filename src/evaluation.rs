@@ -313,7 +313,7 @@ mod tests {
         cw.placed_places.insert(ParticularPlace {
             place,
             fulfillments: vec![FulfilledPorf::Furniture(core)],
-            contents: Inventory::new(8, 20.0),
+            contents: Inventory::new(20.0),
             restriction: crate::place::ParentRestriction::Unrestricted,
         })
     }

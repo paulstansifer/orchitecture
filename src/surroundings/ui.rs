@@ -6,8 +6,8 @@ use crate::ui_util::FontSizes;
 use crate::{col_format, label};
 
 use super::farmstead::{
-    farm_breakdown, market_effect, preview_market, FarmEvent, FarmProduction, FarmsResource,
-    MarketModeEffect, SurroundingsState,
+    compute_market, farm_breakdown, market_effect, FarmEvent, FarmId, FarmProduction,
+    FarmsResource, MarketModeEffect, NewProduction, SurroundingsState,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
 use crate::city_effect::CityEffect;
@@ -53,12 +53,30 @@ fn farm_color(fertility: f32) -> egui::Color32 {
     hsv_to_color32(hue, sat, val)
 }
 
-fn build_fog_mesh(
-    panel_rect: egui::Rect,
+/// The map ↔ screen-pixel projection for the Surroundings panel: map-space
+/// units are scaled by [`PIXELS_PER_UNIT`] and centered on `screen_centre`,
+/// with `offset` panned by dragging; map Y increases upward, screen Y
+/// downward, hence the sign flip in [`Self::to_screen`]/[`Self::to_map`].
+struct MapView {
     screen_centre: egui::Pos2,
-    viewport_offset: Vec2,
-    paths: &[Vec<Vec2>],
-) -> egui::Mesh {
+    offset: Vec2,
+}
+
+impl MapView {
+    fn to_screen(&self, p: Vec2) -> egui::Pos2 {
+        let rel = (p - self.offset) * PIXELS_PER_UNIT;
+        egui::Pos2::new(self.screen_centre.x + rel.x, self.screen_centre.y - rel.y)
+    }
+
+    fn to_map(&self, p: egui::Pos2) -> Vec2 {
+        Vec2::new(
+            (p.x - self.screen_centre.x) / PIXELS_PER_UNIT + self.offset.x,
+            -(p.y - self.screen_centre.y) / PIXELS_PER_UNIT + self.offset.y,
+        )
+    }
+}
+
+fn build_fog_mesh(panel_rect: egui::Rect, view: &MapView, paths: &[Vec<Vec2>]) -> egui::Mesh {
     let cols = (panel_rect.width() / FOG_GRID_STEP_PX).ceil() as usize + 1;
     let rows = (panel_rect.height() / FOG_GRID_STEP_PX).ceil() as usize + 1;
     let mut mesh = egui::Mesh::default();
@@ -69,11 +87,7 @@ fn build_fog_mesh(
         for col in 0..cols {
             let sx = (panel_rect.min.x + col as f32 * FOG_GRID_STEP_PX).min(panel_rect.max.x);
             let sy = (panel_rect.min.y + row as f32 * FOG_GRID_STEP_PX).min(panel_rect.max.y);
-            let map_pos = Vec2::new(
-                (sx - screen_centre.x) / PIXELS_PER_UNIT + viewport_offset.x,
-                -(sy - screen_centre.y) / PIXELS_PER_UNIT + viewport_offset.y,
-            );
-            let alpha = fog_alpha_at(map_pos, paths);
+            let alpha = fog_alpha_at(view.to_map(egui::Pos2::new(sx, sy)), paths);
             mesh.colored_vertex(
                 egui::Pos2::new(sx, sy),
                 egui::Color32::from_rgba_unmultiplied(160, 164, 180, alpha),
@@ -121,10 +135,10 @@ pub fn surroundings_ui_system(
 
     // Market preview for farm boost display.
     farms.ensure_adjacency();
-    let preview = preview_market(&*farms);
+    let preview = compute_market(&*farms);
     // Predicted boost for a farm, if it is invited in `Market` mode.
-    let predicted_boost = |i: usize| -> u32 {
-        match preview.farm_effects.get(&i) {
+    let predicted_boost = |id: FarmId| -> u32 {
+        match preview.farm_effects.get(&id) {
             Some(CityEffect::Market {
                 effect: MarketModeEffect::Boost { granted, .. },
                 ..
@@ -136,8 +150,8 @@ pub fn surroundings_ui_system(
     let mut pan_delta: Option<egui::Vec2> = None;
     let mut go_build = false;
 
-    // Collect revealed farm indices and their screen centroids.
-    let mut revealed: Vec<(usize, egui::Pos2)> = Vec::new();
+    // Collect revealed farm ids and their screen centroids.
+    let mut revealed: Vec<(FarmId, egui::Pos2)> = Vec::new();
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
@@ -148,10 +162,9 @@ pub fn surroundings_ui_system(
 
             painter.rect_filled(panel_rect, 0.0, Color32::from_rgb(30, 30, 30));
 
-            let viewport_offset = state.viewport_offset;
-            let map_to_screen = |p: Vec2| -> Pos2 {
-                let rel = (p - viewport_offset) * PIXELS_PER_UNIT;
-                Pos2::new(screen_centre.x + rel.x, screen_centre.y - rel.y)
+            let view = MapView {
+                screen_centre,
+                offset: state.viewport_offset,
             };
 
             let circle_pos = farms.circle_pos;
@@ -160,7 +173,7 @@ pub fn surroundings_ui_system(
             // ── Pass 1: polygon fills (under fog) ─────────────────────────────
             for (i, farm) in farms.farms.iter().enumerate() {
                 let screen_pts: Vec<Pos2> =
-                    farm.polygon.iter().map(|&p| map_to_screen(p)).collect();
+                    farm.polygon.iter().map(|&p| view.to_screen(p)).collect();
                 if !screen_pts.iter().any(|p| expanded.contains(*p)) {
                     continue;
                 }
@@ -171,24 +184,19 @@ pub fn surroundings_ui_system(
 
                 let map_centroid = farm.centroid();
                 if fog_alpha_at(map_centroid, &farms.traveler_reveals) < REVEAL_THRESHOLD {
-                    let centroid = map_to_screen(map_centroid);
+                    let centroid = view.to_screen(map_centroid);
                     if panel_rect.contains(centroid) {
-                        revealed.push((i, centroid));
+                        revealed.push((FarmId::new(i), centroid));
                     }
                 }
             }
 
             // ── Fog-of-war mesh ───────────────────────────────────────────────
-            let fog_mesh = build_fog_mesh(
-                panel_rect,
-                screen_centre,
-                viewport_offset,
-                &farms.traveler_reveals,
-            );
+            let fog_mesh = build_fog_mesh(panel_rect, &view, &farms.traveler_reveals);
             painter.add(egui::Shape::mesh(fog_mesh));
 
             // ── Navigation circle (above fog) ─────────────────────────────────
-            let cs = map_to_screen(circle_pos);
+            let cs = view.to_screen(circle_pos);
             painter.circle_filled(cs, CIRCLE_RADIUS, Color32::WHITE);
             painter.circle_stroke(cs, CIRCLE_RADIUS, Stroke::new(2.0, Color32::from_gray(40)));
             painter.text(
@@ -219,16 +227,14 @@ pub fn surroundings_ui_system(
 
     // Maximum invitees = number of market stand furniture placed across all
     // market places.
-    let market_stand_count =
-        crate::place::count_furniture_named_in_places(&constructed, "market stand", "market");
-    let invited_count = farms.farms.iter().filter(|f| f.invited).count();
-    let invite_limit_reached = invited_count >= market_stand_count;
+    let invite_limit_reached =
+        farms.invited_count() >= crate::place::market_stand_count(&constructed);
 
-    for (i, centroid) in revealed {
-        let current_event = farms.farm_event(i);
-        let farm = &mut farms.farms[i];
+    for (id, centroid) in revealed {
+        let current_event = farms.farm_event(id);
+        let farm = &mut farms[id];
 
-        egui::Area::new(egui::Id::new(("farm_panel", i)))
+        egui::Area::new(egui::Id::new(("farm_panel", id)))
             .fixed_pos(egui::Pos2::new(centroid.x - PANEL_W / 2.0, centroid.y))
             .show(ctx, |ui| {
                 egui::Frame::new()
@@ -244,10 +250,10 @@ pub fn surroundings_ui_system(
                                 ui,
                                 format!("{:.0} ac", farm.area),
                                 (farm.boost != 0).then_some(format!("{:+}", farm.boost)),
-                                (farm.invited && predicted_boost(i) > 0).then_some(col_format!(
+                                (farm.invited && predicted_boost(id) > 0).then_some(col_format!(
                                     preview,
                                     "+ {}",
-                                    predicted_boost(i)
+                                    predicted_boost(id)
                                 ))
                             );
                         });
@@ -298,7 +304,7 @@ pub fn surroundings_ui_system(
                                 .add_enabled(farm.invited, egui::Button::new("…"))
                                 .clicked()
                             {
-                                state.open_farm_menu = Some(i);
+                                state.open_farm_menu = Some(id);
                             }
                         });
                     });
@@ -307,102 +313,10 @@ pub fn surroundings_ui_system(
 
     // ── Farm configuration ("…") popup ────────────────────────────────────────
     if let Some(menu_i) = state.open_farm_menu {
-        if menu_i >= farms.farms.len() || !farms.farms[menu_i].invited {
+        if menu_i.index() >= farms.farms.len() || !farms[menu_i].invited {
             state.open_farm_menu = None;
         } else {
-            let current_event = farms.farm_event(menu_i);
-            let is_specialized = matches!(
-                farms.farms[menu_i].production,
-                FarmProduction::Specialized(_)
-            );
-            let whipsaw_in_storage =
-                crate::place::total_tools_of(&constructed, ToolKind::Whipsaw) >= 1;
-
-            // Breakdowns via the same shared compute path.
-            let market_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::Market, None);
-            let change_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::RerollResource, None);
-            let spec_lines = farm_breakdown(
-                &mut farms,
-                menu_i,
-                FarmEvent::Market,
-                Some(FarmProduction::Specialized(ToolKind::Whipsaw)),
-            );
-            let adopt_lines = farm_breakdown(&mut farms, menu_i, FarmEvent::Adopt, None);
-
-            let can_change = matches!(
-                market_effect(&mut farms, menu_i, FarmEvent::RerollResource),
-                Some(MarketModeEffect::Reroll { paid }) if paid > 0
-            );
-            let can_specialize = !is_specialized && whipsaw_in_storage;
-            let can_adopt = farms.farms[menu_i].can_adopt();
-
-            let render_event_option = |ui: &mut egui::Ui,
-                                       chosen: &mut Option<FarmEvent>,
-                                       event: FarmEvent,
-                                       enabled: bool,
-                                       title: &str,
-                                       lines: &[String]| {
-                let selected = current_event == event;
-                if ui
-                    .add_enabled(enabled, egui::Button::selectable(selected, title))
-                    .clicked()
-                {
-                    *chosen = Some(event);
-                }
-                for line in lines {
-                    label!(ui, format!("    • {}", line));
-                }
-                ui.add_space(4.0);
-            };
-
-            let mut keep_open = true;
-            let mut chosen_event: Option<FarmEvent> = None;
-            egui::Window::new("Farm options")
-                .id(egui::Id::new(("farm_menu", menu_i)))
-                .collapsible(false)
-                .resizable(false)
-                .open(&mut keep_open)
-                .show(ctx, |ui| {
-                    render_event_option(
-                        ui,
-                        &mut chosen_event,
-                        FarmEvent::Market,
-                        true,
-                        "Participate in the market",
-                        &market_lines,
-                    );
-                    render_event_option(
-                        ui,
-                        &mut chosen_event,
-                        FarmEvent::RerollResource,
-                        can_change,
-                        "Select a different secondary resource",
-                        &change_lines,
-                    );
-                    render_event_option(
-                        ui,
-                        &mut chosen_event,
-                        FarmEvent::Specialize(ToolKind::Whipsaw),
-                        can_specialize,
-                        "Process nearby timber into beams",
-                        &spec_lines,
-                    );
-                    render_event_option(
-                        ui,
-                        &mut chosen_event,
-                        FarmEvent::Adopt,
-                        can_adopt,
-                        "Adopt a family",
-                        &adopt_lines,
-                    );
-                });
-
-            if !keep_open {
-                state.open_farm_menu = None;
-            }
-            if let Some(new_event) = chosen_event {
-                farms.set_farm_event(menu_i, new_event);
-            }
+            farm_menu_ui(ctx, &mut farms, &constructed, menu_i, &mut state);
         }
     }
 
@@ -413,5 +327,115 @@ pub fn surroundings_ui_system(
     }
     if go_build {
         next_game_mode.set(GameMode::Build);
+    }
+}
+
+/// The "Farm options" popup for `menu_i` (already known to be invited): each
+/// possible next-month action, its resource breakdown (via the shared
+/// `farm_breakdown` compute path), and whether it's currently choosable.
+fn farm_menu_ui(
+    ctx: &egui::Context,
+    farms: &mut FarmsResource,
+    constructed: &crate::city::ConstructedCity,
+    menu_i: FarmId,
+    state: &mut SurroundingsState,
+) {
+    let current_event = farms.farm_event(menu_i);
+    let is_specialized = matches!(farms[menu_i].production, FarmProduction::Specialized(_));
+    let whipsaw_in_storage = crate::place::total_tools_of(constructed, ToolKind::Whipsaw) >= 1;
+
+    // Breakdowns via the same shared compute path.
+    let market_lines = farm_breakdown(farms, menu_i, FarmEvent::Market, None);
+    let change_lines = farm_breakdown(
+        farms,
+        menu_i,
+        FarmEvent::Reconfigure(NewProduction::RandomRegular),
+        None,
+    );
+    let spec_lines = farm_breakdown(
+        farms,
+        menu_i,
+        FarmEvent::Market,
+        Some(FarmProduction::Specialized(ToolKind::Whipsaw)),
+    );
+    let adopt_lines = farm_breakdown(farms, menu_i, FarmEvent::Adopt, None);
+
+    let can_change = matches!(
+        market_effect(
+            farms,
+            menu_i,
+            FarmEvent::Reconfigure(NewProduction::RandomRegular),
+        ),
+        Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
+    );
+    let can_specialize = !is_specialized && whipsaw_in_storage;
+    let can_adopt = farms[menu_i].can_adopt();
+
+    let render_event_option = |ui: &mut egui::Ui,
+                               chosen: &mut Option<FarmEvent>,
+                               event: FarmEvent,
+                               enabled: bool,
+                               title: &str,
+                               lines: &[String]| {
+        let selected = current_event == event;
+        if ui
+            .add_enabled(enabled, egui::Button::selectable(selected, title))
+            .clicked()
+        {
+            *chosen = Some(event);
+        }
+        for line in lines {
+            label!(ui, format!("    • {}", line));
+        }
+        ui.add_space(4.0);
+    };
+
+    let mut keep_open = true;
+    let mut chosen_event: Option<FarmEvent> = None;
+    egui::Window::new("Farm options")
+        .id(egui::Id::new(("farm_menu", menu_i)))
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut keep_open)
+        .show(ctx, |ui| {
+            render_event_option(
+                ui,
+                &mut chosen_event,
+                FarmEvent::Market,
+                true,
+                "Participate in the market",
+                &market_lines,
+            );
+            render_event_option(
+                ui,
+                &mut chosen_event,
+                FarmEvent::Reconfigure(NewProduction::RandomRegular),
+                can_change,
+                "Select a different secondary resource",
+                &change_lines,
+            );
+            render_event_option(
+                ui,
+                &mut chosen_event,
+                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::Whipsaw)),
+                can_specialize,
+                "Process nearby timber into beams",
+                &spec_lines,
+            );
+            render_event_option(
+                ui,
+                &mut chosen_event,
+                FarmEvent::Adopt,
+                can_adopt,
+                "Adopt a family",
+                &adopt_lines,
+            );
+        });
+
+    if !keep_open {
+        state.open_farm_menu = None;
+    }
+    if let Some(new_event) = chosen_event {
+        farms.set_farm_event(menu_i, new_event);
     }
 }
