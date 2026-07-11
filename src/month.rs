@@ -147,6 +147,7 @@ pub fn advance_month_system(
     mut traveler_state: ResMut<TravelerState>,
     material_list: Res<MaterialList>,
     sandbox: Res<crate::game_mode::SandboxMode>,
+    mut game_rng: ResMut<crate::rng::GameRng>,
 ) {
     if requests.read().count() == 0 {
         return;
@@ -157,7 +158,6 @@ pub fn advance_month_system(
         mut assembled,
     } = world;
 
-    let mut rng = rand::rng();
     let outcome = advance_month(
         &mut clock,
         &mut farms,
@@ -167,7 +167,7 @@ pub fn advance_month_system(
         &mut traveler_state,
         &material_list,
         sandbox.enabled,
-        &mut rng,
+        &mut game_rng.0,
     );
     if let Some(real_changes) = outcome.construction_changes {
         crate::construction::apply_construction_completion(

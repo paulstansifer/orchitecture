@@ -32,6 +32,7 @@ pub mod population;
 pub mod qnn;
 pub mod resource;
 pub mod resource_icons;
+pub mod rng;
 pub mod road;
 pub mod scene;
 pub mod selection;

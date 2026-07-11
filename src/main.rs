@@ -47,6 +47,7 @@ use orchitecture_lib::{
     population::{spawn_population, sync_assignments, Population},
     qnn::ModelPlugin,
     resource_icons::spawn_resource_icons,
+    rng::GameRng,
     scene::spawn_scene,
     selection::{
         animate_selection_rings, spawn_ring_mesh_assets, update_hover_highlight,
@@ -117,6 +118,9 @@ fn main() {
         .insert_resource(HoveredFurniture::default())
         .insert_resource(GameClock::default())
         .insert_resource(MaterialList::load())
+        // The game's single source of randomness, seeded from OS entropy so each
+        // graphical session is unique. Must exist before `generate_farms` runs.
+        .insert_resource(GameRng::from_entropy())
         .insert_resource(DebugNav::default())
         .add_message::<AdvanceMonthRequested>()
         .add_systems(OnEnter(GameMode::Walk), (enter_walk_mode, spawn_orc))

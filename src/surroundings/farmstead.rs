@@ -612,8 +612,13 @@ fn describe_farm_effect(fr: &FarmsResource, idx: FarmId) -> Vec<String> {
     }
 
     if let Some(tool) = farm.specialized_tool() {
+        use rand::SeedableRng as _;
         let spec = tool.specialization();
-        let plan = compute_production(fr, &mut rand::rng());
+        // A fixed seed keeps this preview deterministic without pulling from the
+        // shared game RNG: the value read below (`inedible_add[idx]` = total
+        // consumed) is `min(demand, sum available)`, independent of the random
+        // supplier order, so the choice of seed can't change the displayed output.
+        let plan = compute_production(fr, &mut rand::rngs::StdRng::seed_from_u64(0));
         // Output produced always equals input consumed (until a tool has a
         // non-1:1 conversion ratio) -- see `ProductionPlan::inedible_add`.
         let output = plan.inedible_add[idx.index()];

@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use super::farmstead::{FarmData, FarmsResource};
 use crate::resource::UniformResource;
+use crate::rng::GameRng;
 
 const NUM_SEEDS: usize = 200;
 const MAP_EXTENT: f32 = 200.0;
@@ -181,9 +182,9 @@ pub fn generate_path_from_pos(start: Vec2, rng: &mut impl rand::Rng) -> Vec<Vec2
     points
 }
 
-pub fn generate_farms(mut commands: Commands) {
+pub fn generate_farms(mut commands: Commands, mut game_rng: ResMut<GameRng>) {
     use rand::Rng as _;
-    let mut rng = rand::rng();
+    let rng = &mut game_rng.0;
 
     let mut seeds: Vec<Vec2> = (0..NUM_SEEDS)
         .map(|_| {
