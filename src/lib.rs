@@ -41,5 +41,6 @@ pub mod surroundings;
 pub mod traveler;
 pub mod ui;
 pub mod ui_util;
+pub mod ui_view;
 pub mod walk_input;
 pub mod walk_ui;

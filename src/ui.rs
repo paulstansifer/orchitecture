@@ -2,15 +2,15 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
 use crate::city::City;
-use crate::city_effect::{compute_month_effects, LedgerSource};
 use crate::game_mode::{GameMode, SandboxMode};
 use crate::materials::MaterialList;
 use crate::month::AdvanceMonthRequested;
 use crate::population::Population;
-use crate::resource::UniformResource;
+use crate::resource::Precision;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::surroundings::farmstead::{FarmsResource, GameClock};
-use crate::traveler::{ResolvedReward, TravelerState};
+use crate::traveler::TravelerState;
+use crate::ui_view::{month_panel_view, AdvanceState};
 use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
@@ -39,12 +39,8 @@ pub fn shared_ui_system(
         return;
     };
 
-    // This month's effects (market participation, feeding, a traveler's
-    // visit, construction absorption) — computed once and shared by the
-    // resource preview, the per-resource tooltip, and the traveler
-    // checkbox's affordability. Same computation `advance_month` uses to
-    // actually apply things, just not mutated here.
-    let effects = compute_month_effects(
+    let view = month_panel_view(
+        clock.month() + 1,
         &farms,
         &constructed,
         &pending,
@@ -53,56 +49,6 @@ pub fn shared_ui_system(
         &material_list,
         sandbox.enabled,
     );
-    let station_totals = crate::place::place_resource_totals(&constructed);
-
-    // Remaining construction need (non-sandbox only).
-    let remaining_need: Vec<(UniformResource, u32)> =
-        if pending.num_changes() > 0 && !sandbox.enabled {
-            crate::construction::remaining_construction_need(
-                &pending,
-                &constructed.eorfs,
-                &material_list,
-            )
-        } else {
-            vec![]
-        };
-    let remaining_need_map: std::collections::HashMap<UniformResource, u32> =
-        remaining_need.iter().copied().collect();
-
-    let has_storage = !crate::place::storage_ids(&constructed).is_empty();
-
-    // Hard block: too much unpaid construction cost.
-    let blocked_construction = crate::construction::construction_blocked(&remaining_need);
-
-    let mut rhs_resources: Vec<UniformResource> =
-        station_totals.iter().map(|(r, _, _)| *r).collect();
-    for (r, _) in &effects.player_gains {
-        if !rhs_resources.contains(r) {
-            rhs_resources.push(*r);
-        }
-    }
-    for (r, _) in &remaining_need {
-        if !rhs_resources.contains(r) {
-            rhs_resources.push(*r);
-        }
-    }
-    rhs_resources.sort();
-
-    // Construction status.
-    let has_project = pending.num_changes() > 0;
-    let construction_progress = crate::construction::construction_progress_fraction(
-        &pending,
-        &constructed.eorfs,
-        &material_list,
-    );
-
-    // Farm/market status.
-    let market_stand_count = crate::place::market_stand_count(&constructed);
-    let invited_count = farms.invited_count();
-    let has_farms_invited = invited_count > 0;
-    let has_traveler_invited = traveler_state.invited;
-
-    let can_afford_traveler = effects.traveler_affordable();
 
     let wait_id = egui::Id::new("wait_confirmation");
 
@@ -112,88 +58,75 @@ pub fn shared_ui_system(
     egui::SidePanel::right("resources")
         .min_width(130.0)
         .show(ctx, |ui| {
-            let month = clock.month() + 1;
-            heading_label!(ui, format!("Month {}", month));
+            heading_label!(ui, format!("Month {}", view.month));
             ui.add_space(2.0);
 
-            if has_project || has_farms_invited || has_traveler_invited {
-                ui.add_enabled_ui(!blocked_construction, |ui| {
-                    if ui.button("Advance Month").clicked() {
-                        go_advance_month = true;
+            match view.advance {
+                AdvanceState::Active { blocked } => {
+                    ui.add_enabled_ui(!blocked, |ui| {
+                        if ui.button("Advance Month").clicked() {
+                            go_advance_month = true;
+                        }
+                    });
+                    if view.has_project && blocked {
+                        note_label!(
+                            ui,
+                            col_format!(
+                                problem,
+                                "Too much unpaid construction cost — cancel some proposed construction."
+                            )
+                        );
                     }
-                });
-                if has_project && blocked_construction {
-                    note_label!(
-                        ui,
-                        col_format!(
-                            problem,
-                            "Too much unpaid construction cost — cancel some proposed construction."
-                        )
-                    );
-                }
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.set_min_width(0.0);
-                        ui.set_max_width(400.0);
-                        if has_project {
-                            ui.add(
-                                egui::ProgressBar::new(construction_progress.unwrap_or(1.0))
-                                .desired_width(100.0)
-                                .show_percentage(),
-                            );
-                        } else {
-                            label!(ui, "No current project");
-                        }
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_min_width(0.0);
+                            ui.set_max_width(400.0);
+                            if view.has_project {
+                                ui.add(
+                                    egui::ProgressBar::new(view.construction_progress.unwrap_or(1.0))
+                                    .desired_width(100.0)
+                                    .show_percentage(),
+                                );
+                            } else {
+                                label!(ui, "No current project");
+                            }
+                        });
+                        ui.vertical(|ui| {
+                            ui.set_min_width(0.0);
+                            if view.market_stand_count == 0 {
+                                label!(ui, "No market stalls");
+                            } else {
+                                label!(ui, format!("{}/{} farms invited", view.invited_count, view.market_stand_count));
+                            }
+                        });
                     });
-                    ui.vertical(|ui| {
-                        ui.set_min_width(0.0);
-                        if market_stand_count == 0 {
-                            label!(ui, "No market stalls");
-                        } else {
-                            label!(ui, format!("{}/{} farms invited", invited_count, market_stand_count));
-                        }
-                    });
-                });
-            } else {
-                let confirmed: bool = ctx.data(|d| d.get_temp(wait_id).unwrap_or(false));
-                if ui.button("Wait?").clicked() {
-                    ctx.data_mut(|d| d.insert_temp(wait_id, true));
                 }
-                if confirmed {
-                    label!(ui, col_format!(problem, "There's no ongoing construction, and no farms are invited to the next market. Wait anyways?"));
-                    if ui.button("Advance Month").clicked() {
-                        go_advance_month = true;
+                AdvanceState::NothingPending => {
+                    let confirmed: bool = ctx.data(|d| d.get_temp(wait_id).unwrap_or(false));
+                    if ui.button("Wait?").clicked() {
+                        ctx.data_mut(|d| d.insert_temp(wait_id, true));
+                    }
+                    if confirmed {
+                        label!(ui, col_format!(problem, "There's no ongoing construction, and no farms are invited to the next market. Wait anyways?"));
+                        if ui.button("Advance Month").clicked() {
+                            go_advance_month = true;
+                        }
                     }
                 }
             }
 
             ui.separator();
             ui.heading("Resources");
-            if rhs_resources.is_empty() {
+            if view.rows.is_empty() {
                 ui.label("(none)");
             }
             egui::Grid::new("resource_grid")
                 .num_columns(3)
                 .spacing([8.0, 4.0])
                 .show(ui, |ui| {
-                    for res in &rhs_resources {
-                        use crate::resource::Precision;
-
-                        let (current, precision) = station_totals
-                            .iter()
-                            .find(|(r, _, _)| r == res)
-                            .map(|(_, q, p)| (*q, *p))
-                            .unwrap_or((0, Precision::Exact));
-                        let need = *remaining_need_map.get(res).unwrap_or(&0);
-                        let lost = effects.leftover.get(res).map(|f| f.lost).unwrap_or(0);
-                        let storage_delta = effects.storage_delta(*res);
-                        // Construction consumes (negative net); flip its sign
-                        // for the "applied this month" figure.
-                        let applied =
-                            (-effects.ledger.net_for(LedgerSource::Construction, *res)).max(0) as u32;
-
+                    for row in &view.rows {
                         // Icon cell.
-                        if let Some(&tex) = icon_textures_lg.get(res) {
+                        if let Some(&tex) = icon_textures_lg.get(&row.resource) {
                             ui.add(egui::Image::new(egui::load::SizedTexture::new(
                                 tex, LARGE_SIZE,
                             )));
@@ -204,32 +137,32 @@ pub fn shared_ui_system(
                         // Storage cell: current amount, plus the net change
                         // to storage this month, plus anything lost to a
                         // full store. Tooltip lives here.
-                        let quantity_str = match precision {
-                            Precision::Exact => format!("{}", current),
-                            Precision::Approximate => format!("~{}", current),
-                            Precision::Conservative => format!(">{}", current),
+                        let quantity_str = match row.precision {
+                            Precision::Exact => format!("{}", row.current),
+                            Precision::Approximate => format!("~{}", row.current),
+                            Precision::Conservative => format!(">{}", row.current),
                         };
-                        let storage_resp = if !has_storage {
-                            if lost > 0 {
-                                label!(ui, format!("({} lost)", lost))
+                        let storage_resp = if !view.has_storage {
+                            if row.lost > 0 {
+                                label!(ui, format!("({} lost)", row.lost))
                             } else {
                                 ui.label("")
                             }
-                        } else if storage_delta > 0 {
-                            if lost > 0 {
+                        } else if row.storage_delta > 0 {
+                            if row.lost > 0 {
                                 label!(
                                     ui,
                                     quantity_str,
-                                    col_format!(preview, " +{}", storage_delta),
-                                    format!(" ({} lost)", lost)
+                                    col_format!(preview, " +{}", row.storage_delta),
+                                    format!(" ({} lost)", row.lost)
                                 )
                             } else {
-                                label!(ui, quantity_str, col_format!(preview, " +{}", storage_delta))
+                                label!(ui, quantity_str, col_format!(preview, " +{}", row.storage_delta))
                             }
-                        } else if storage_delta < 0 {
-                            label!(ui, quantity_str, col_format!(problem, " –{}", -storage_delta))
-                        } else if lost > 0 {
-                            label!(ui, quantity_str, format!(" ({} lost)", lost))
+                        } else if row.storage_delta < 0 {
+                            label!(ui, quantity_str, col_format!(problem, " –{}", -row.storage_delta))
+                        } else if row.lost > 0 {
+                            label!(ui, quantity_str, format!(" ({} lost)", row.lost))
                         } else {
                             label!(ui, quantity_str)
                         };
@@ -238,7 +171,7 @@ pub fn shared_ui_system(
                         // e.g. "+10 (market)" or "-7 (traveler)".
                         storage_resp.on_hover_ui(|ui| {
                             let mut any = false;
-                            for (source, delta) in effects.ledger.sources_touching(*res) {
+                            for &(source, delta) in &row.sources {
                                 any = true;
                                 if delta > 0 {
                                     label!(
@@ -252,8 +185,8 @@ pub fn shared_ui_system(
                                     );
                                 }
                             }
-                            if lost > 0 {
-                                label!(ui, format!("({} lost)", lost));
+                            if row.lost > 0 {
+                                label!(ui, format!("({} lost)", row.lost));
                                 any = true;
                             }
                             if !any {
@@ -264,12 +197,12 @@ pub fn shared_ui_system(
                         // Construction cell: total remaining need, minus
                         // what's being applied this month. Empty if nothing
                         // is needed.
-                        if need > 0 {
+                        if row.need > 0 {
                             label!(
                                 ui,
-                                col_format!(problem, "{}", need),
+                                col_format!(problem, "{}", row.need),
                                 " – ",
-                                col_format!(preview, "{}", applied)
+                                col_format!(preview, "{}", row.applied)
                             );
                         } else {
                             ui.label("");
@@ -280,25 +213,16 @@ pub fn shared_ui_system(
                 });
 
             // Tools count (UniqueResource — tracked separately from uniform resources).
-            let total_tools = crate::place::total_tool_count(&constructed);
-            if total_tools > 0 {
+            if view.tool_count > 0 {
                 ui.horizontal(|ui| {
-                    label!(ui, format!("Tools: {}", total_tools));
+                    label!(ui, format!("Tools: {}", view.tool_count));
                 });
             }
 
             ui.separator();
             heading_label!(ui, "Travelers");
-            // Clone demands/reward before the closure to avoid borrow conflict with &mut traveler_state.invited.
-            let offer_demands_reward: Option<(
-                Vec<(crate::resource::UniformResource, u16)>,
-                ResolvedReward,
-            )> = traveler_state
-                .current_offer
-                .as_ref()
-                .map(|o| (o.demands.clone(), o.reward.clone()));
 
-            if let Some((demands, reward)) = offer_demands_reward {
+            if let Some(traveler) = &view.traveler {
                 egui::Frame::new()
                     .fill(Color32::from_rgba_unmultiplied(20, 20, 30, 200))
                     .inner_margin(egui::Margin::same(4))
@@ -306,21 +230,15 @@ pub fn shared_ui_system(
                     .show(ui, |ui| {
                         ui.set_max_width(ui.available_width());
                         label!(ui, "Traveler");
-                        for (res, qty) in &demands {
+                        for (res, qty) in &traveler.demands {
                             label!(ui, format!("Wants {} {}", qty, res.label()));
                         }
-                        let reward_desc = match &reward {
-                            ResolvedReward::Tool(kind) => format!("1 {}", kind.label()),
-                            ResolvedReward::Resource(res, qty) => {
-                                format!("{} {}", qty, res.label())
-                            }
-                        };
-                        label!(ui, format!("Brings: {} + reveals a path", reward_desc));
+                        label!(ui, format!("Brings: {} + reveals a path", traveler.reward_desc));
                         ui.add_enabled(
-                            can_afford_traveler || traveler_state.invited,
+                            traveler.affordable || traveler_state.invited,
                             egui::Checkbox::new(&mut traveler_state.invited, "Invite"),
                         );
-                        if !can_afford_traveler {
+                        if !traveler.affordable {
                             note_label!(ui, "(insufficient resources)");
                         }
                     });
