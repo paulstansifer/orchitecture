@@ -107,9 +107,7 @@ pub fn shared_ui_system(
     let wait_id = egui::Id::new("wait_confirmation");
 
     let mut go_advance_month = false;
-    let mut go_walk = false;
-    let mut go_build = false;
-    let mut go_surroundings = false;
+    let mut next_mode: Option<GameMode> = None;
 
     egui::SidePanel::right("resources")
         .min_width(130.0)
@@ -330,36 +328,23 @@ pub fn shared_ui_system(
                 label!(ui, "(no traveler this month)");
             }
 
-            // Mode buttons pushed to the bottom of the panel.
-            ui.with_layout(
-                egui::Layout::bottom_up(egui::Align::LEFT),
-                |ui| match *current_mode.get() {
-                    GameMode::Build => {
-                        if ui.button("Surroundings").clicked() {
-                            go_surroundings = true;
-                        }
-                        if ui.button("Walk Around").clicked() {
-                            go_walk = true;
-                        }
+            // Mode buttons pushed to the bottom of the panel: every mode but
+            // the current one, each switchable to directly.
+            const MODE_BUTTONS: [(GameMode, &str); 3] = [
+                (GameMode::Build, "Build"),
+                (GameMode::Walk, "Walk Around"),
+                (GameMode::Surroundings, "Surroundings"),
+            ];
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                for (mode, label) in MODE_BUTTONS {
+                    if mode == *current_mode.get() {
+                        continue;
                     }
-                    GameMode::Walk => {
-                        if ui.button("Surroundings").clicked() {
-                            go_surroundings = true;
-                        }
-                        if ui.button("Build").clicked() {
-                            go_build = true;
-                        }
+                    if ui.button(label).clicked() {
+                        next_mode = Some(mode);
                     }
-                    GameMode::Surroundings => {
-                        if ui.button("Build").clicked() {
-                            go_build = true;
-                        }
-                        if ui.button("Walk Around").clicked() {
-                            go_walk = true;
-                        }
-                    }
-                },
-            );
+                }
+            });
         });
 
     // ── Apply deferred actions ────────────────────────────────────────────────
@@ -368,13 +353,7 @@ pub fn shared_ui_system(
         advance_month.write(AdvanceMonthRequested);
         ctx.data_mut(|d| d.remove::<bool>(wait_id));
     }
-    if go_walk {
-        next_game_mode.set(GameMode::Walk);
-    }
-    if go_build {
-        next_game_mode.set(GameMode::Build);
-    }
-    if go_surroundings {
-        next_game_mode.set(GameMode::Surroundings);
+    if let Some(mode) = next_mode {
+        next_game_mode.set(mode);
     }
 }

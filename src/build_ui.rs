@@ -1,128 +1,21 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
-use bevy_file_dialog::prelude::*;
 
 use crate::city::{
-    apply_changes, apply_proposal_changes, clear_proposal_entities, clear_proposed_cut_entities,
-    AssembledCity, CityMut, ConstructedCity, ProposalOverlayAssets, ProposedCity, ViewableWorld,
+    apply_proposal_changes, clear_proposed_cut_entities, CityMut, ConstructedCity,
+    ProposalOverlayAssets, ViewableWorld,
 };
-use crate::construction::{commit_pending_construction, load_from_offline};
+use crate::construction::commit_pending_construction;
 use crate::cutaway::CutawayMode;
 use crate::eorf::sorted_structure_indices;
 use crate::eorf::EorfList;
 use crate::game_mode::SandboxMode;
 use crate::input::BuildState;
+use crate::map_files::{load_map, map_file_controls_ui, MapLoadRequest};
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
-use crate::serialization;
 use crate::sparse3d::{Slot, SlotCoord};
-
-/// Maps bundled at compile time; always available on all platforms.
-const BUNDLED_MAPS: &[(&str, &str)] = &[
-    (
-        "boring_room",
-        include_str!("../assets/static/training/boring_room.txt"),
-    ),
-    (
-        "boring_room_blob",
-        include_str!("../assets/static/training/boring_room_blob.txt"),
-    ),
-    (
-        "boring_room_tall",
-        include_str!("../assets/static/training/boring_room_tall.txt"),
-    ),
-    (
-        "boring_room_tall_with_boxes",
-        include_str!("../assets/static/training/boring_room_tall_with_boxes.txt"),
-    ),
-    (
-        "boring_room_tiny",
-        include_str!("../assets/static/training/boring_room_tiny.txt"),
-    ),
-    (
-        "boring_room_with_alcove",
-        include_str!("../assets/static/training/boring_room_with_alcove.txt"),
-    ),
-    (
-        "cavern",
-        include_str!("../assets/static/training/cavern.txt"),
-    ),
-    (
-        "chaotic_apartment",
-        include_str!("../assets/static/training/chaotic_apartment.txt"),
-    ),
-    (
-        "corner_in_corner",
-        include_str!("../assets/static/training/corner_in_corner.txt"),
-    ),
-    (
-        "corners",
-        include_str!("../assets/static/training/corners.txt"),
-    ),
-    (
-        "double_balconies",
-        include_str!("../assets/static/training/double_balconies.txt"),
-    ),
-    (
-        "gallery",
-        include_str!("../assets/static/training/gallery.txt"),
-    ),
-    (
-        "hall_turn_fat_pillars",
-        include_str!("../assets/static/training/hall_turn_fat_pillars.txt"),
-    ),
-    (
-        "hall_turn_stations",
-        include_str!("../assets/static/training/hall_turn_stations.txt"),
-    ),
-    (
-        "long_apartment",
-        include_str!("../assets/static/training/long_apartment.txt"),
-    ),
-    (
-        "meta_pillars",
-        include_str!("../assets/static/training/meta_pillars.txt"),
-    ),
-    (
-        "random_but_coherent",
-        include_str!("../assets/static/training/random_but_coherent.txt"),
-    ),
-    (
-        "rotational_apartment",
-        include_str!("../assets/static/training/rotational_apartment.txt"),
-    ),
-    (
-        "sanctuary",
-        include_str!("../assets/static/training/sanctuary.txt"),
-    ),
-    (
-        "simple_apartment",
-        include_str!("../assets/static/training/simple_apartment.txt"),
-    ),
-    (
-        "simple_balcony",
-        include_str!("../assets/static/training/simple_balcony.txt"),
-    ),
-    (
-        "two_level_apartment",
-        include_str!("../assets/static/training/two_level_apartment.txt"),
-    ),
-    (
-        "porches",
-        include_str!("../assets/static/training/porches.txt"),
-    ),
-];
-
-fn find_bundled(name: &str) -> Option<&'static str> {
-    BUNDLED_MAPS
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, c)| *c)
-}
-
-pub struct SaveDialog;
-pub struct LoadDialog;
 
 /// Which tab the left-hand panel shows.
 #[derive(Default, Clone, Copy, PartialEq)]
@@ -165,60 +58,291 @@ pub fn enable_ui_input_absorption(mut egui_settings: ResMut<EguiGlobalSettings>)
     egui_settings.enable_absorb_bevy_input_system = true;
 }
 
-pub fn discover_user_files(mut ui_state: ResMut<UiState>) {
-    // Bundled maps are always available.
-    ui_state.available_files = BUNDLED_MAPS
-        .iter()
-        .map(|(name, _)| name.to_string())
-        .collect();
+/// The bottom control strip: keybinding hint, sandbox toggle, save/load
+/// controls, cutaway-mode picker. Returns any map load the player requested
+/// via [`map_file_controls_ui`], to be resolved and applied after the egui
+/// closure ends.
+#[allow(clippy::too_many_arguments)]
+fn bottom_controls_ui(
+    ctx: &egui::Context,
+    commands: &mut Commands,
+    world: &mut CityMut,
+    viewable: &mut ViewableWorld,
+    structure_list: &EorfList,
+    sandbox: &mut SandboxMode,
+    cutaway_mode: &mut CutawayMode,
+    ui_state: &mut UiState,
+) -> Option<MapLoadRequest> {
+    let mut load_request = None;
+    egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                "Up/Dn=layer  R=rotate  Z=undo  Y=redo  Drag=place  Ctrl+drag=erase  V=evaluate  F1/F2/F3=tabs",
+            );
 
-    // On native, also add any user-created files not already in the bundled list.
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Ok(dir) = std::fs::read_dir(crate::paths::USER_DIR) {
-        let bundled: std::collections::HashSet<&str> =
-            BUNDLED_MAPS.iter().map(|(n, _)| *n).collect();
-        let mut extra: Vec<String> = dir
-            .flatten()
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                if !name.starts_with('.') && !bundled.contains(name.as_str()) {
-                    Some(name)
-                } else {
-                    None
+            ui.separator();
+            let was_sandbox = sandbox.enabled;
+            ui.checkbox(&mut sandbox.enabled, "Sandbox");
+            if sandbox.enabled && !was_sandbox {
+                // Switching into sandbox commits any pending proposals immediately.
+                commit_pending_construction(
+                    commands,
+                    &mut world.constructed,
+                    &mut world.pending,
+                    &mut world.assembled,
+                    viewable,
+                    structure_list,
+                );
+            }
+
+            load_request =
+                map_file_controls_ui(ui, commands, &world.constructed, ui_state, sandbox.enabled);
+
+            ui.separator();
+            ui.label("Cutaway:");
+            egui::ComboBox::from_id_salt("cutaway_mode")
+                .selected_text(match *cutaway_mode {
+                    CutawayMode::FloorEdge => "FloorEdge",
+                    CutawayMode::SimpleOctant => "SimpleOctant",
+                    CutawayMode::FloorEdgePlusOctant => "FloorEdge+Octant",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut *cutaway_mode, CutawayMode::FloorEdge, "FloorEdge");
+                    ui.selectable_value(
+                        &mut *cutaway_mode,
+                        CutawayMode::SimpleOctant,
+                        "SimpleOctant",
+                    );
+                    ui.selectable_value(
+                        &mut *cutaway_mode,
+                        CutawayMode::FloorEdgePlusOctant,
+                        "FloorEdge+Octant",
+                    );
+                });
+        });
+    });
+    load_request
+}
+
+/// The `PlacesView::Hierarchy` panel: the ancestor chain of places containing
+/// the right-clicked furniture (outermost first), each with its quality
+/// breakdown, nesting restriction, contents, and (if assignable) occupant,
+/// followed by the clicked furniture itself. Returns the set of cells to
+/// highlight in 3D (innermost place's furniture, plus the clicked cell).
+fn place_hierarchy_ui(
+    ui: &mut egui::Ui,
+    constructed: &mut ConstructedCity,
+    population: &Population,
+    icon_textures: &std::collections::HashMap<crate::resource::UniformResource, egui::TextureId>,
+    loc: SlotCoord,
+    next_places_view: &mut Option<PlacesView>,
+) -> Vec<SlotCoord> {
+    let cube = loc.cube;
+    let mut highlight = Vec::new();
+
+    ui.heading("Place");
+    ui.separator();
+    if ui.button("← Back").clicked() {
+        *next_places_view = Some(PlacesView::List);
+    }
+    ui.separator();
+    // Places are formed automatically; show the ancestor chain of places
+    // containing the clicked furniture. `containing_chain` returns innermost
+    // first; we display outermost (highest in the hierarchy) first.
+    let chain = crate::place::containing_chain(constructed, cube);
+    if chain.is_empty() {
+        ui.label("Not part of any place.");
+    } else {
+        let outdoorsness =
+            crate::evaluation::compute_outdoorsness(&constructed.contents, &constructed.eorfs);
+        for &idx in chain.iter().rev() {
+            let (place_def_idx, place_name, fulfillments, totals) = {
+                let ps = &constructed.placed_places[idx];
+                let def = &constructed.places[ps.place];
+                (
+                    ps.place,
+                    def.name.clone(),
+                    ps.fulfillments.clone(),
+                    ps.contents.uniform_totals(),
+                )
+            };
+            let (quality, breakdown) =
+                crate::evaluation::evaluate_place_breakdown(constructed, idx, &outdoorsness);
+            ui.label(egui::RichText::new(&place_name).heading());
+            ui.label(format!("Quality: {:.3}", quality));
+            ui.label("Quality breakdown:");
+            for factor in &breakdown {
+                match (factor.raw, factor.normalized) {
+                    (Some(raw), Some(normalized)) => {
+                        ui.label(format!(
+                            "  {}: raw {:.2}, normalized {:.2}, strength {:.2} → ×{:.3}",
+                            factor.aspect.label(),
+                            raw,
+                            normalized,
+                            factor.strength,
+                            factor.contribution
+                        ));
+                    }
+                    _ => {
+                        ui.label(format!(
+                            "  {}: n/a (no contribution)",
+                            factor.aspect.label()
+                        ));
+                    }
                 }
+            }
+
+            let eligible = crate::place::eligible_parent_kinds(
+                &constructed.places,
+                &crate::place::Porf::Place(place_name.clone()),
+            );
+            if !eligible.is_empty() {
+                ui.label("Nestable within:");
+                restriction_dropdown(
+                    ui,
+                    ("place-restriction", idx),
+                    &mut constructed.placed_places[idx].restriction,
+                    &eligible,
+                );
+            }
+
+            let mut counts: std::collections::BTreeMap<String, usize> =
+                std::collections::BTreeMap::new();
+            for f in &fulfillments {
+                if let crate::place::FulfilledPorf::Furniture(loc) = f {
+                    if let Some(cell) = constructed.contents.get(SlotCoord {
+                        cube: *loc,
+                        slot: Slot::Room,
+                    }) {
+                        *counts
+                            .entry(constructed.eorfs[cell.id.as_usize()].name.clone())
+                            .or_default() += 1;
+                    }
+                }
+            }
+            ui.label("Structures:");
+            for (name, c) in &counts {
+                ui.label(format!("  {}: {}", name, c));
+            }
+
+            ui.label("Contents:");
+            if totals.is_empty() {
+                ui.label("  (empty)");
+            }
+            for (res, qty) in totals {
+                ui.horizontal(|ui| {
+                    if let Some(&tex) = icon_textures.get(&res) {
+                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                            tex, LARGE_SIZE,
+                        )));
+                    }
+                    ui.label(format!("{}", qty));
+                });
+            }
+
+            if let Some(flavor) = constructed.places[place_def_idx].assignable_for {
+                let occupant = population
+                    .individuals
+                    .iter()
+                    .position(|ind| ind.assigned(flavor) == Some(idx));
+                ui.label(format!(
+                    "{}: {}",
+                    flavor.label(),
+                    occupant
+                        .map(|i| format!("Individual {}", i + 1))
+                        .unwrap_or_else(|| "(unassigned)".to_string())
+                ));
+            }
+            ui.separator();
+        }
+        // Highlight the innermost place's furniture in 3D. Place fulfillments
+        // are always `Slot::Room` furniture.
+        let innermost = &constructed.placed_places[chain[0]];
+        highlight = innermost
+            .fulfillments
+            .iter()
+            .filter_map(|f| match f {
+                crate::place::FulfilledPorf::Furniture(cube) => Some(SlotCoord {
+                    cube: *cube,
+                    slot: Slot::Room,
+                }),
+                crate::place::FulfilledPorf::Place(_) => None,
             })
             .collect();
-        extra.sort();
-        ui_state.available_files.extend(extra);
     }
-}
 
-pub fn handle_file_save(mut ev_saved: MessageReader<DialogFileSaved<SaveDialog>>) {
-    for ev in ev_saved.read() {
-        if let Err(e) = &ev.result {
-            eprintln!("Failed to save file: {e}");
+    // The clicked furniture itself, at the bottom (below every containing
+    // place, from outermost down to innermost).
+    if let Some(cell) = constructed.contents.get(loc) {
+        // Always highlight the exact clicked cell at its own slot,
+        // independent of place membership -- e.g. `WallPlop` furniture never
+        // fulfills a place (fulfillments are Room-slot only), so it wouldn't
+        // otherwise get a ring.
+        if !highlight.contains(&loc) {
+            highlight.push(loc);
+        }
+        let eorf_idx = cell.id.as_usize();
+        let furniture_name = constructed.eorfs[eorf_idx].name.clone();
+        ui.label(egui::RichText::new(&furniture_name).heading());
+
+        let eligible = crate::place::eligible_parent_kinds(
+            &constructed.places,
+            &crate::place::Porf::Furniture(furniture_name),
+        );
+        if !eligible.is_empty() {
+            ui.label("Nestable within:");
+            let restriction = constructed.furniture_restrictions.entry(cube).or_default();
+            restriction_dropdown(
+                ui,
+                ("furniture-restriction", eorf_idx),
+                restriction,
+                &eligible,
+            );
+        }
+
+        if crate::place::cube_is_storage_bin(constructed, cube) {
+            ui.label("Restricted to:");
+            bin_restriction_dropdown(
+                ui,
+                ("bin-restriction", eorf_idx),
+                cube,
+                &mut constructed.bin_resource_restrictions,
+            );
         }
     }
+
+    highlight
 }
 
-pub fn handle_file_load(
-    mut ev_loaded: MessageReader<DialogFileLoaded<LoadDialog>>,
-    mut commands: Commands,
-    structure_list: Res<EorfList>,
-    mut constructed: ResMut<ConstructedCity>,
-    mut pending: ResMut<ProposedCity>,
-    mut assembled: ResMut<AssembledCity>,
-    mut viewable: ResMut<ViewableWorld>,
-) {
-    for ev in ev_loaded.read() {
-        if let Ok(content) = std::str::from_utf8(&ev.contents) {
-            let new_contents = serialization::load_from_str(content, &constructed.eorfs);
-            clear_proposal_entities(&mut commands, &mut assembled);
-            clear_proposed_cut_entities(&mut commands, &mut viewable);
-            let changes = load_from_offline(&mut constructed, &mut pending, new_contents);
-            apply_changes(&mut commands, &mut assembled, &structure_list, changes);
-        }
-    }
+/// The "Population" window: average morale and each individual's need bars.
+fn population_window(ctx: &egui::Context, ui_state: &mut UiState, population: &Population) {
+    egui::Window::new("Population")
+        .open(&mut ui_state.show_population)
+        .resizable(false)
+        .show(ctx, |ui| {
+            if population.individuals.is_empty() {
+                ui.label("(no individuals)");
+            } else {
+                let avg_morale = population
+                    .individuals
+                    .iter()
+                    .map(|i| i.morale())
+                    .sum::<f32>()
+                    / population.individuals.len() as f32;
+                ui.label(format!("Avg morale: {:.2}", avg_morale));
+                ui.separator();
+                for (i, individual) in population.individuals.iter().enumerate() {
+                    ui.collapsing(
+                        format!("Individual {}  {:.2}", i + 1, individual.morale()),
+                        |ui| {
+                            need_bar(ui, "shelter", individual.shelter());
+                            need_bar(ui, "food", individual.food());
+                            need_bar(ui, "inspire", individual.inspiration());
+                        },
+                    );
+                }
+            }
+        });
 }
 
 pub fn build_ui_system(
@@ -249,145 +373,29 @@ pub fn build_ui_system(
         ui_state.places_view = PlacesView::Hierarchy { loc };
     }
 
-    // Captures a map name selected via the dropdown; handled after the egui block.
-    let mut dropdown_load: Option<String> = None;
-
     // Bottom panel must be added before side panels.
-    egui::TopBottomPanel::bottom("controls_bottom").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                "Up/Dn=layer  R=rotate  Z=undo  Y=redo  Drag=place  Ctrl+drag=erase  V=evaluate  F1/F2/F3=tabs",
-            );
+    let load_request = bottom_controls_ui(
+        ctx,
+        &mut commands,
+        &mut world,
+        &mut viewable,
+        &structure_list,
+        &mut sandbox,
+        &mut cutaway_mode,
+        &mut ui_state,
+    );
 
-            ui.separator();
-            let was_sandbox = sandbox.enabled;
-            ui.checkbox(&mut sandbox.enabled, "Sandbox");
-            if sandbox.enabled && !was_sandbox {
-                // Switching into sandbox commits any pending proposals immediately.
-                commit_pending_construction(
-                    &mut commands,
-                    &mut world.constructed,
-                    &mut world.pending,
-                    &mut world.assembled,
-                    &mut viewable,
-                    &structure_list,
-                );
-            }
-
-            ui.separator();
-            if ui.button("Save").clicked() {
-                let bytes =
-                    serialization::serialize(&world.constructed.contents, &world.constructed.eorfs);
-                commands
-                    .dialog()
-                    .add_filter("Orchitecture Map", &["txt"])
-                    .save_file::<SaveDialog>(bytes);
-            }
-            // Loading structures is only available in sandbox mode.
-            if sandbox.enabled && ui.button("Load").clicked() {
-                commands
-                    .dialog()
-                    .add_filter("Orchitecture Map", &["txt"])
-                    .load_file::<LoadDialog>();
-            }
-
-            ui.separator();
-            ui.label("Cutaway:");
-            egui::ComboBox::from_id_salt("cutaway_mode")
-                .selected_text(match *cutaway_mode {
-                    CutawayMode::FloorEdge => "FloorEdge",
-                    CutawayMode::SimpleOctant => "SimpleOctant",
-                    CutawayMode::FloorEdgePlusOctant => "FloorEdge+Octant",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut *cutaway_mode, CutawayMode::FloorEdge, "FloorEdge");
-                    ui.selectable_value(
-                        &mut *cutaway_mode,
-                        CutawayMode::SimpleOctant,
-                        "SimpleOctant",
-                    );
-                    ui.selectable_value(
-                        &mut *cutaway_mode,
-                        CutawayMode::FloorEdgePlusOctant,
-                        "FloorEdge+Octant",
-                    );
-                });
-
-            if sandbox.enabled && !ui_state.available_files.is_empty() {
-                ui.separator();
-                egui::ComboBox::from_id_salt("file_select")
-                    .selected_text(if ui_state.load_filename.is_empty() {
-                        "Select a map..."
-                    } else {
-                        ui_state.load_filename.as_str()
-                    })
-                    .show_ui(ui, |ui| {
-                        for name in ui_state.available_files.clone() {
-                            let resp = ui.selectable_value(
-                                &mut ui_state.load_filename,
-                                name.clone(),
-                                &name,
-                            );
-                            if resp.clicked() {
-                                dropdown_load = Some(name);
-                            }
-                        }
-                    });
-            }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            if sandbox.enabled {
-                ui.separator();
-                ui.add(egui::TextEdit::singleline(&mut ui_state.example_idx).desired_width(40.0));
-                if ui.button("Load example").clicked() && !ui_state.example_idx.is_empty() {
-                    if let Ok(idx) = ui_state.example_idx.parse::<usize>() {
-                        let examples = crate::example_structures::make_structures();
-                        if let Some(map) = examples.into_iter().nth(idx) {
-                            clear_proposal_entities(&mut commands, &mut world.assembled);
-                            clear_proposed_cut_entities(&mut commands, &mut viewable);
-                            let changes =
-                                load_from_offline(&mut world.constructed, &mut world.pending, map);
-                            apply_changes(
-                                &mut commands,
-                                &mut world.assembled,
-                                &structure_list,
-                                changes,
-                            );
-                        }
-                    }
-                }
-            }
-        });
-    });
-
-    // A dropdown click loads the selected map immediately on all platforms.
-    if let Some(name) = dropdown_load {
-        let new_contents_opt = if let Some(content) = find_bundled(&name) {
-            Some(serialization::load_from_str(
-                content,
-                &world.constructed.eorfs,
-            ))
-        } else {
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let path = std::path::PathBuf::from(crate::paths::USER_DIR).join(&name);
-                Some(serialization::load(&path, &world.constructed.eorfs))
-            }
-            #[cfg(target_arch = "wasm32")]
-            None
-        };
-        if let Some(new_contents) = new_contents_opt {
-            clear_proposal_entities(&mut commands, &mut world.assembled);
-            clear_proposed_cut_entities(&mut commands, &mut viewable);
-            let changes =
-                load_from_offline(&mut world.constructed, &mut world.pending, new_contents);
-            apply_changes(
-                &mut commands,
-                &mut world.assembled,
-                &structure_list,
-                changes,
-            );
-        }
+    // A requested load happens immediately, after the egui closure has ended.
+    if let Some(new_contents) = load_request.and_then(|req| req.resolve(&world.constructed.eorfs)) {
+        load_map(
+            &mut commands,
+            &mut world.constructed,
+            &mut world.pending,
+            &mut world.assembled,
+            &mut viewable,
+            &structure_list,
+            new_contents,
+        );
     }
 
     // Deferred mutations so the panel closure only borrows `ui_state` (and
@@ -418,41 +426,35 @@ pub fn build_ui_system(
             ui.separator();
 
             match tab {
-                LeftTab::Elements => {
-                    structure_list_ui(ui, &world.constructed.eorfs, &mut build_state, false);
+                LeftTab::Elements | LeftTab::Furniture => {
+                    structure_list_ui(
+                        ui,
+                        &world.constructed.eorfs,
+                        &mut build_state,
+                        tab == LeftTab::Furniture,
+                    );
 
-                    // Material picker for the selected structure's type.
-                    let selected_info = &world.constructed.eorfs[build_state.selected_structure];
-                    if let Some(stype) = selected_info.element_type() {
-                        let options = material_list.for_type(stype);
-                        if !options.is_empty() {
-                            ui.separator();
-                            ui.label("Material:");
-                            let current = build_state.material_for_type(stype, &material_list);
-                            let mut chosen = current;
-                            for &(material_id, mat) in options.iter() {
-                                ui.radio_value(&mut chosen, material_id, &mat.name);
-                            }
-                            if chosen != current {
-                                build_state.material_per_type.insert(stype, chosen);
+                    // Material picker for the selected structure's type
+                    // (elements only; furniture has a fixed cost).
+                    if tab == LeftTab::Elements {
+                        let selected_info =
+                            &world.constructed.eorfs[build_state.selected_structure];
+                        if let Some(stype) = selected_info.element_type() {
+                            let options = material_list.for_type(stype);
+                            if !options.is_empty() {
+                                ui.separator();
+                                ui.label("Material:");
+                                let current = build_state.material_for_type(stype, &material_list);
+                                let mut chosen = current;
+                                for &(material_id, mat) in options.iter() {
+                                    ui.radio_value(&mut chosen, material_id, &mat.name);
+                                }
+                                if chosen != current {
+                                    build_state.material_per_type.insert(stype, chosen);
+                                }
                             }
                         }
                     }
-
-                    build_footer(
-                        ui,
-                        &mut commands,
-                        &structure_list,
-                        &mut world,
-                        &mut viewable,
-                        &overlay_assets,
-                        &build_state,
-                        &mut ui_state,
-                        &population,
-                    );
-                }
-                LeftTab::Furniture => {
-                    structure_list_ui(ui, &world.constructed.eorfs, &mut build_state, true);
 
                     build_footer(
                         ui,
@@ -490,225 +492,21 @@ pub fn build_ui_system(
                         }
                     }
                     PlacesView::Hierarchy { loc } => {
-                    let cube = loc.cube;
-                    ui.heading("Place");
-                    ui.separator();
-                    if ui.button("← Back").clicked() {
-                        next_places_view = Some(PlacesView::List);
-                    }
-                    ui.separator();
-                    // Places are formed automatically; show the ancestor chain of
-                    // places containing the clicked furniture. `containing_chain`
-                    // returns innermost first; we display outermost (highest in
-                    // the hierarchy) first.
-                    let chain = crate::place::containing_chain(&world.constructed, cube);
-                    if chain.is_empty() {
-                        ui.label("Not part of any place.");
-                    } else {
-                        let outdoorsness = crate::evaluation::compute_outdoorsness(
-                            &world.constructed.contents,
-                            &world.constructed.eorfs,
+                        highlight = place_hierarchy_ui(
+                            ui,
+                            &mut world.constructed,
+                            &population,
+                            &icon_textures,
+                            loc,
+                            &mut next_places_view,
                         );
-                        for &idx in chain.iter().rev() {
-                            let (place_def_idx, place_name, fulfillments, totals) = {
-                                let ps = &world.constructed.placed_places[idx];
-                                let def = &world.constructed.places[ps.place];
-                                (
-                                    ps.place,
-                                    def.name.clone(),
-                                    ps.fulfillments.clone(),
-                                    ps.contents.uniform_totals(),
-                                )
-                            };
-                            let (quality, breakdown) = crate::evaluation::evaluate_place_breakdown(
-                                &world.constructed,
-                                idx,
-                                &outdoorsness,
-                            );
-                            ui.label(egui::RichText::new(&place_name).heading());
-                            ui.label(format!("Quality: {:.3}", quality));
-                            ui.label("Quality breakdown:");
-                            for factor in &breakdown {
-                                match (factor.raw, factor.normalized) {
-                                    (Some(raw), Some(normalized)) => {
-                                        ui.label(format!(
-                                            "  {}: raw {:.2}, normalized {:.2}, strength {:.2} → ×{:.3}",
-                                            factor.aspect.label(),
-                                            raw,
-                                            normalized,
-                                            factor.strength,
-                                            factor.contribution
-                                        ));
-                                    }
-                                    _ => {
-                                        ui.label(format!(
-                                            "  {}: n/a (no contribution)",
-                                            factor.aspect.label()
-                                        ));
-                                    }
-                                }
-                            }
-
-                            let eligible = crate::place::eligible_parent_kinds(
-                                &world.constructed.places,
-                                &crate::place::Porf::Place(place_name.clone()),
-                            );
-                            if !eligible.is_empty() {
-                                ui.label("Nestable within:");
-                                restriction_dropdown(
-                                    ui,
-                                    ("place-restriction", idx),
-                                    &mut world.constructed.placed_places[idx].restriction,
-                                    &eligible,
-                                );
-                            }
-
-                            let mut counts: std::collections::BTreeMap<String, usize> =
-                                std::collections::BTreeMap::new();
-                            for f in &fulfillments {
-                                if let crate::place::FulfilledPorf::Furniture(loc) = f {
-                                    if let Some(cell) = world.constructed.contents.get(SlotCoord {
-                                        cube: *loc,
-                                        slot: Slot::Room,
-                                    }) {
-                                        *counts
-                                            .entry(
-                                                world.constructed.eorfs[cell.id.as_usize()]
-                                                    .name
-                                                    .clone(),
-                                            )
-                                            .or_default() += 1;
-                                    }
-                                }
-                            }
-                            ui.label("Structures:");
-                            for (name, c) in &counts {
-                                ui.label(format!("  {}: {}", name, c));
-                            }
-
-                            ui.label("Contents:");
-                            if totals.is_empty() {
-                                ui.label("  (empty)");
-                            }
-                            for (res, qty) in totals {
-                                ui.horizontal(|ui| {
-                                    if let Some(&tex) = icon_textures.get(&res) {
-                                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                                            tex, LARGE_SIZE,
-                                        )));
-                                    }
-                                    ui.label(format!("{}", qty));
-                                });
-                            }
-
-                            if let Some(flavor) = world.constructed.places[place_def_idx].assignable_for
-                            {
-                                let occupant = population
-                                    .individuals
-                                    .iter()
-                                    .position(|ind| ind.assigned(flavor) == Some(idx));
-                                ui.label(format!(
-                                    "{}: {}",
-                                    flavor.label(),
-                                    occupant
-                                        .map(|i| format!("Individual {}", i + 1))
-                                        .unwrap_or_else(|| "(unassigned)".to_string())
-                                ));
-                            }
-                            ui.separator();
-                        }
-                        // Highlight the innermost place's furniture in 3D.
-                        // Place fulfillments are always `Slot::Room` furniture.
-                        let innermost = &world.constructed.placed_places[chain[0]];
-                        highlight = innermost
-                            .fulfillments
-                            .iter()
-                            .filter_map(|f| match f {
-                                crate::place::FulfilledPorf::Furniture(cube) => Some(SlotCoord {
-                                    cube: *cube,
-                                    slot: Slot::Room,
-                                }),
-                                crate::place::FulfilledPorf::Place(_) => None,
-                            })
-                            .collect();
                     }
-
-                    // The clicked furniture itself, at the bottom (below every
-                    // containing place, from outermost down to innermost).
-                    if let Some(cell) = world.constructed.contents.get(loc) {
-                        // Always highlight the exact clicked cell at its own slot,
-                        // independent of place membership -- e.g. `WallPlop`
-                        // furniture never fulfills a place (fulfillments are
-                        // Room-slot only), so it wouldn't otherwise get a ring.
-                        if !highlight.contains(&loc) {
-                            highlight.push(loc);
-                        }
-                        let eorf_idx = cell.id.as_usize();
-                        let furniture_name = world.constructed.eorfs[eorf_idx].name.clone();
-                        ui.label(egui::RichText::new(&furniture_name).heading());
-
-                        let eligible = crate::place::eligible_parent_kinds(
-                            &world.constructed.places,
-                            &crate::place::Porf::Furniture(furniture_name),
-                        );
-                        if !eligible.is_empty() {
-                            ui.label("Nestable within:");
-                            let restriction = world
-                                .constructed
-                                .furniture_restrictions
-                                .entry(cube)
-                                .or_default();
-                            restriction_dropdown(
-                                ui,
-                                ("furniture-restriction", eorf_idx),
-                                restriction,
-                                &eligible,
-                            );
-                        }
-
-                        if crate::place::cube_is_storage_bin(&world.constructed, cube) {
-                            ui.label("Restricted to:");
-                            bin_restriction_dropdown(
-                                ui,
-                                ("bin-restriction", eorf_idx),
-                                cube,
-                                &mut world.constructed.bin_resource_restrictions,
-                            );
-                        }
-                    }
-                    }
-                }
+                },
             }
         });
 
     if ui_state.show_population {
-        egui::Window::new("Population")
-            .open(&mut ui_state.show_population)
-            .resizable(false)
-            .show(ctx, |ui| {
-                if population.individuals.is_empty() {
-                    ui.label("(no individuals)");
-                } else {
-                    let avg_morale = population
-                        .individuals
-                        .iter()
-                        .map(|i| i.morale())
-                        .sum::<f32>()
-                        / population.individuals.len() as f32;
-                    ui.label(format!("Avg morale: {:.2}", avg_morale));
-                    ui.separator();
-                    for (i, individual) in population.individuals.iter().enumerate() {
-                        ui.collapsing(
-                            format!("Individual {}  {:.2}", i + 1, individual.morale()),
-                            |ui| {
-                                need_bar(ui, "shelter", individual.shelter());
-                                need_bar(ui, "food", individual.food());
-                                need_bar(ui, "inspire", individual.inspiration());
-                            },
-                        );
-                    }
-                }
-            });
+        population_window(ctx, &mut ui_state, &population);
     }
 
     // Apply the deferred tab-navigation mutations now that the panel closure has ended.

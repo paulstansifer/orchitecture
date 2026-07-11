@@ -9,10 +9,7 @@ use bevy_egui::{
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
     autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
-    build_ui::{
-        build_ui_system, discover_user_files, enable_ui_input_absorption, handle_file_load,
-        handle_file_save, FurnitureRightClick, LoadDialog, SaveDialog, UiState,
-    },
+    build_ui::{build_ui_system, enable_ui_input_absorption, FurnitureRightClick, UiState},
     camera::{
         camera_input_system, disable_auto_egui_primary_context, spawn_camera, CameraState,
         GameCamera,
@@ -34,6 +31,7 @@ use orchitecture_lib::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
         update_room_cursor_mesh, BuildState, CursorEntities,
     },
+    map_files::{discover_user_files, handle_file_load, handle_file_save, LoadDialog, SaveDialog},
     materials::MaterialList,
     month::{advance_month_system, AdvanceMonthRequested},
     orc::{

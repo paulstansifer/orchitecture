@@ -20,6 +20,7 @@ pub mod grid_preview;
 pub mod headless;
 pub mod input;
 pub mod llm_rooms;
+pub mod map_files;
 pub mod materials;
 pub mod month;
 pub mod orc;
