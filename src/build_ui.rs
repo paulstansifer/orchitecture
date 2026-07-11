@@ -69,6 +69,7 @@ fn bottom_controls_ui(
     world: &mut CityMut,
     viewable: &mut ViewableWorld,
     structure_list: &EorfList,
+    material_list: &MaterialList,
     sandbox: &mut SandboxMode,
     cutaway_mode: &mut CutawayMode,
     ui_state: &mut UiState,
@@ -92,6 +93,7 @@ fn bottom_controls_ui(
                     &mut world.assembled,
                     viewable,
                     structure_list,
+                    material_list,
                 );
             }
 
@@ -380,6 +382,7 @@ pub fn build_ui_system(
         &mut world,
         &mut viewable,
         &structure_list,
+        &material_list,
         &mut sandbox,
         &mut cutaway_mode,
         &mut ui_state,

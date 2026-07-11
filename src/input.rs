@@ -231,6 +231,7 @@ fn apply_edit(
     assembled: &mut crate::city::AssembledCity,
     structure_list: &EorfList,
     overlay_assets: &ProposalOverlayAssets,
+    material_list: &crate::materials::MaterialList,
     sandbox_enabled: bool,
     changes: Vec<(SlotCoord, crate::city::ProposalView)>,
 ) {
@@ -238,7 +239,7 @@ fn apply_edit(
         return;
     }
     if sandbox_enabled {
-        let real_changes = construct(constructed, pending);
+        let real_changes = construct(constructed, pending, material_list);
         apply_changes(commands, assembled, structure_list, real_changes);
     } else {
         apply_proposal_changes(commands, assembled, structure_list, overlay_assets, changes);
@@ -388,6 +389,7 @@ pub fn building_input_system(
             &mut assembled,
             &structure_list,
             &overlay_assets,
+            &material_list,
             sandbox.enabled,
             changes,
         );
@@ -462,6 +464,7 @@ pub fn building_input_system(
                 &mut assembled,
                 &structure_list,
                 &overlay_assets,
+                &material_list,
                 sandbox.enabled,
                 changes,
             );

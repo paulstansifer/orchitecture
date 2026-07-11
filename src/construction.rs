@@ -9,7 +9,7 @@ use crate::city::{
     ViewableWorld,
 };
 use crate::eorf::{EorfId, EorfList, PlacementStyle};
-use crate::materials::BuildMaterialId;
+use crate::materials::{BuildMaterialId, Cost};
 use crate::resource::UniformResource;
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 
@@ -397,6 +397,7 @@ impl ProposedCity {
 pub fn construct(
     cw: &mut ConstructedCity,
     pe: &mut ProposedCity,
+    material_list: &crate::materials::MaterialList,
 ) -> Vec<(SlotCoord, Option<Cell>)> {
     let proposals: Vec<(SlotCoord, Proposal)> = pe
         .proposed_changes
@@ -415,7 +416,15 @@ pub fn construct(
                 real_changes.push((loc, Some(cell)));
             }
             Proposal::Remove => {
-                cw.take_cell(loc);
+                if let Some(removed) = cw.take_cell(loc) {
+                    if let Some(cost) = cell_cost(&removed, &cw.eorfs, material_list) {
+                        for (res, qty) in cost {
+                            if res.refundable() && qty > 0 {
+                                crate::place::deposit_uniform_with_capacity(cw, res, qty as u32);
+                            }
+                        }
+                    }
+                }
                 real_changes.push((loc, None));
             }
         }
@@ -439,9 +448,10 @@ pub fn tick_construction(
     pending: &mut ProposedCity,
     constructed: &mut ConstructedCity,
     fully_paid: bool,
+    material_list: &crate::materials::MaterialList,
 ) -> Option<Vec<(SlotCoord, Option<Cell>)>> {
     if pending.num_changes() > 0 && fully_paid {
-        return Some(construct(constructed, pending));
+        return Some(construct(constructed, pending, material_list));
     }
     None
 }
@@ -471,8 +481,9 @@ pub fn commit_pending_construction(
     assembled: &mut AssembledCity,
     viewable: &mut ViewableWorld,
     structure_list: &EorfList,
+    material_list: &crate::materials::MaterialList,
 ) {
-    let real_changes = construct(constructed, pending);
+    let real_changes = construct(constructed, pending, material_list);
     apply_construction_completion(commands, assembled, viewable, structure_list, real_changes);
 }
 
@@ -567,6 +578,26 @@ pub fn compute_construction_absorption(
     }
 }
 
+/// The material cost of a single placed cell: its structure's fixed
+/// furniture cost, or its element's cost for the cell's chosen build
+/// material. `None` if the cost can't be determined (unknown material or
+/// element type).
+fn cell_cost(
+    cell: &Cell,
+    structure_infos: &[crate::eorf::EorfInfo],
+    material_list: &crate::materials::MaterialList,
+) -> Option<Cost> {
+    let info = &structure_infos[cell.id.as_usize()];
+    if let Some(furniture_cost) = info.furniture_cost() {
+        return Some(furniture_cost.clone());
+    }
+    let build_mat = material_list
+        .materials
+        .get(cell.build_material.0 as usize)?;
+    let element_type = info.element_type()?;
+    build_mat.costs.get(&element_type).cloned()
+}
+
 /// Total resource cost to complete the current proposed construction.
 /// Only counts `Proposal::Place` entries; removals are free. Furniture has a
 /// fixed cost independent of the selected build material.
@@ -582,21 +613,8 @@ pub fn construction_cost(
         let Proposal::Place(cell) = proposal else {
             continue;
         };
-        let info = &structure_infos[cell.id.as_usize()];
-        let cost = if let Some(furniture_cost) = info.furniture_cost() {
-            furniture_cost.clone()
-        } else {
-            let Some(build_mat) = material_list.materials.get(cell.build_material.0 as usize)
-            else {
-                continue;
-            };
-            let Some(element_type) = info.element_type() else {
-                continue;
-            };
-            let Some(cost) = build_mat.costs.get(&element_type) else {
-                continue;
-            };
-            cost.clone()
+        let Some(cost) = cell_cost(cell, structure_infos, material_list) else {
+            continue;
         };
         for (res, qty) in cost {
             *totals.entry(res).or_insert(0) += qty as u32;
@@ -888,7 +906,7 @@ mod tests {
         );
         check!(cw.contents.get(loc).is_none());
 
-        let real_changes = construct(&mut cw, &mut pw);
+        let real_changes = construct(&mut cw, &mut pw, &crate::materials::MaterialList::default());
 
         check!(pw.proposed_changes.get(loc).is_none());
         check!(cw.contents.get(loc).is_some());
@@ -910,11 +928,79 @@ mod tests {
             None,
             BuildMaterialId::default(),
         );
-        let real_changes = construct(&mut cw, &mut pw);
+        let real_changes = construct(&mut cw, &mut pw, &crate::materials::MaterialList::default());
 
         check!(cw.contents.get(loc).is_none());
         check!(real_changes.len() == 1);
         check!(real_changes[0].1.is_none());
+    }
+
+    #[test]
+    fn construct_remove_refunds_refundable_resources_but_not_lime() {
+        use crate::materials::{BuildMaterial, ElementType, MaterialList};
+        use crate::place::{ParentRestriction, ParticularPlace, Place, PlaceStorageSpec};
+        use crate::resource::{Approximation, Inventory, UniformResource};
+        use std::collections::BTreeMap;
+
+        let (mut cw, mut pw) = make_world();
+
+        // A storage bin with plenty of room, so the refund has somewhere to land.
+        cw.places = vec![Place {
+            name: "storage room".to_string(),
+            requirements: vec![],
+            storage: Some(PlaceStorageSpec {
+                accounting: Approximation {
+                    digits: 2,
+                    max: 999,
+                },
+            }),
+            quality_factors: vec![],
+            assignable_for: None,
+        }];
+        cw.placed_places.insert(ParticularPlace {
+            place: 0,
+            fulfillments: vec![crate::place::FulfilledPorf::Furniture(IVec3::new(5, 0, 5))],
+            contents: Inventory::new(100.0),
+            restriction: ParentRestriction::Unrestricted,
+        });
+
+        let mut costs = BTreeMap::new();
+        costs.insert(
+            ElementType::WallLike,
+            vec![(UniformResource::Fieldstone, 8), (UniformResource::Lime, 2)],
+        );
+        let material_list = MaterialList {
+            materials: vec![BuildMaterial {
+                name: "Fieldstone".to_string(),
+                costs,
+                fanciness: 0.3,
+            }],
+        };
+
+        let loc = xlowall(0, 0, 0);
+        cw.contents.set(
+            loc,
+            Cell {
+                id: thing(&cw).unwrap(),
+                facing: Facing::NegX,
+                evaluation: None,
+                build_material: BuildMaterialId(0),
+            },
+        );
+
+        pw.propose(
+            &cw,
+            0,
+            (IVec3::ZERO, IVec3::ZERO),
+            Slot::XLoWall,
+            None,
+            BuildMaterialId::default(),
+        );
+        construct(&mut cw, &mut pw, &material_list);
+
+        let totals = crate::place::storage_totals(&cw);
+        check!(totals.get(&UniformResource::Fieldstone) == Some(&8));
+        check!(!totals.contains_key(&UniformResource::Lime));
     }
 
     #[test]
@@ -928,7 +1014,7 @@ mod tests {
             thing(&cw),
             BuildMaterialId::default(),
         );
-        construct(&mut cw, &mut pw);
+        construct(&mut cw, &mut pw, &crate::materials::MaterialList::default());
         // Undo history survives construct so committed changes remain undoable.
         check!(pw.undo_record.len() == 1);
     }
@@ -946,7 +1032,7 @@ mod tests {
         );
         pw.resource_progress
             .insert(crate::resource::UniformResource::Timber, 30);
-        construct(&mut cw, &mut pw);
+        construct(&mut cw, &mut pw, &crate::materials::MaterialList::default());
         check!(pw.resource_progress.is_empty());
     }
 
@@ -962,7 +1048,7 @@ mod tests {
             thing(&cw),
             BuildMaterialId::default(),
         );
-        construct(&mut cw, &mut pw);
+        construct(&mut cw, &mut pw, &crate::materials::MaterialList::default());
         check!(cw.contents.get(loc).is_some());
 
         // Undoing the committed placement proposes its removal (real cell stays put).
@@ -1022,7 +1108,12 @@ mod tests {
             thing(&cw),
             BuildMaterialId::default(),
         );
-        let result = tick_construction(&mut pw, &mut cw, true);
+        let result = tick_construction(
+            &mut pw,
+            &mut cw,
+            true,
+            &crate::materials::MaterialList::default(),
+        );
         check!(result.is_some());
         check!(pw.num_changes() == 0);
     }
@@ -1038,7 +1129,12 @@ mod tests {
             thing(&cw),
             BuildMaterialId::default(),
         );
-        let result = tick_construction(&mut pw, &mut cw, false);
+        let result = tick_construction(
+            &mut pw,
+            &mut cw,
+            false,
+            &crate::materials::MaterialList::default(),
+        );
         check!(result.is_none());
         check!(pw.num_changes() == 1);
     }
@@ -1046,7 +1142,12 @@ mod tests {
     #[test]
     fn tick_construction_no_project_is_a_noop() {
         let (mut cw, mut pw) = make_world();
-        let result = tick_construction(&mut pw, &mut cw, true);
+        let result = tick_construction(
+            &mut pw,
+            &mut cw,
+            true,
+            &crate::materials::MaterialList::default(),
+        );
         check!(result.is_none());
     }
 
@@ -1285,7 +1386,7 @@ mod tests {
         check!(pe.proposed_changes.iter().count() == 2);
 
         // 5. Construct: two new walls land in real contents; proposals clear.
-        let real_changes = construct(&mut cw, &mut pe);
+        let real_changes = construct(&mut cw, &mut pe, &crate::materials::MaterialList::load());
         check!(real_changes.len() == 2);
         check!(pe.proposed_changes.iter().count() == 0);
         // Undo history survives construct (the wall-drag record remains).

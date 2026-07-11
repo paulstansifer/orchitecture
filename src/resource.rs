@@ -53,6 +53,12 @@ impl UniformResource {
         50
     }
 
+    /// Whether tearing down a structure built with this resource returns it
+    /// to storage.
+    pub fn refundable(self) -> bool {
+        !matches!(self, UniformResource::Lime | UniformResource::Straw)
+    }
+
     pub fn farmable(self) -> bool {
         // TODO: add quarries; Lime should not be farmable, and blocks should be getable
         // TODO: add ground-clearing; Fieldstone should not be farmable

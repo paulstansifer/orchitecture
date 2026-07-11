@@ -744,9 +744,13 @@ fn build_box_system(
     n
 }
 
-fn construct_system(mut cw: ResMut<ConstructedCity>, mut pending: ResMut<ProposedCity>) -> usize {
+fn construct_system(
+    mut cw: ResMut<ConstructedCity>,
+    mut pending: ResMut<ProposedCity>,
+    material_list: Res<MaterialList>,
+) -> usize {
     let n = pending.num_changes();
-    construction::construct(&mut cw, &mut pending);
+    construction::construct(&mut cw, &mut pending, &material_list);
     n
 }
 

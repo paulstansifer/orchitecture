@@ -118,7 +118,7 @@ pub fn advance_month(
     // resource requirement, as it always has).
     let fully_paid = sandbox_enabled
         || remaining_construction_need(pending, &constructed.eorfs, material_list).is_empty();
-    let construction_changes = tick_construction(pending, constructed, fully_paid);
+    let construction_changes = tick_construction(pending, constructed, fully_paid, material_list);
 
     MonthOutcome {
         market_gains: effects.player_gains,
