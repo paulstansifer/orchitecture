@@ -277,7 +277,8 @@ pub fn build_ui_system(
             ui.checkbox(&mut sandbox.enabled, "Sandbox");
             if sandbox.enabled && !was_sandbox {
                 // Switching into sandbox commits any pending proposals immediately.
-                let real_changes = construct(&mut world.constructed, &mut world.pending);
+                let real_changes =
+                    construct(&mut world.constructed, &mut world.pending, &material_list);
                 clear_proposal_entities(&mut commands, &mut world.assembled);
                 clear_proposed_cut_entities(&mut commands, &mut viewable);
                 apply_changes(
