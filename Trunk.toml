@@ -1,2 +1,12 @@
 [build]
 cargo_profile = "wasm-dev"
+
+# Trunk's `copy-dir` asset link runs concurrently with the cargo build, but
+# assets/generated/ (autotile meshes, sprite PNGs) is only populated by
+# build.rs as part of that same build. copy-dir can win the race and copy
+# assets/ before build.rs finishes writing to it, so copy it here instead:
+# post_build hooks run after the build (including build.rs) completes.
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "cp -r \"$TRUNK_SOURCE_DIR/assets\" \"$TRUNK_STAGING_DIR/assets\""]
