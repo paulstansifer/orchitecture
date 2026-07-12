@@ -25,13 +25,13 @@
 ~~~~~
  - - - - - - - - - - - - -  
 |                         | 
-                            
-|                         | 
+           P P P            
+|         P     P         | 
              -              
-|           | |           | 
+|         P | | P         | 
              -              
-|                         | 
-                            
+|         P     P         | 
+           P P P            
 |                         | 
                             
 |                         | 
@@ -124,4 +124,4 @@ D# # #|#|# # # # #|#|# # #D
                             
 ~~~~~
 ~*~*~
-(6,0,5,"Room")={"id":8,"facing":"NegX","evaluation":{"coherence":1.0,"interest":1.0}}
+(6,0,5,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":1.0}}

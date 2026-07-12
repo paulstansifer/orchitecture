@@ -64,8 +64,8 @@
                     
 ~~~~~
 ~*~*~
-(3,0,4,"Room")={"id":4,"facing":"PosZ","evaluation":null}
-(1,1,4,"Room")={"id":4,"facing":"PosZ","evaluation":null}
-(5,0,4,"Room")={"id":4,"facing":"NegZ","evaluation":null}
-(7,1,4,"Room")={"id":4,"facing":"NegZ","evaluation":null}
-(4,0,2,"Room")={"id":8,"facing":"NegX","evaluation":{"coherence":1.0,"interest":1.0}}
+(3,0,4,"Room")={"id":3,"facing":"PosZ","evaluation":null}
+(1,1,4,"Room")={"id":3,"facing":"PosZ","evaluation":null}
+(5,0,4,"Room")={"id":3,"facing":"NegZ","evaluation":null}
+(7,1,4,"Room")={"id":3,"facing":"NegZ","evaluation":null}
+(4,0,2,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":1.0}}
