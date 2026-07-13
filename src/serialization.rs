@@ -275,6 +275,7 @@ mod tests {
                     passable: 0.0,
                     decorative: 0.0,
                     striated: 0.0,
+                    temporary: 0.0,
                 },
                 kind: crate::eorf::FurnitureOrElement::Element(
                     crate::materials::ElementType::WallLike,
@@ -291,6 +292,7 @@ mod tests {
                     passable: 1.0,
                     decorative: 0.0,
                     striated: 0.0,
+                    temporary: 0.0,
                 },
                 kind: crate::eorf::FurnitureOrElement::Element(
                     crate::materials::ElementType::GroundFloorLike,

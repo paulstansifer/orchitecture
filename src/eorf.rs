@@ -31,6 +31,21 @@ pub struct StructureEmbedding {
     pub passable: f32,
     pub decorative: f32,
     pub striated: f32,
+    pub temporary: f32,
+}
+
+impl StructureEmbedding {
+    /// Convert embedding to a vector in the canonical order: [tall, decorative, passable, striated, temporary].
+    /// This order must match EMBEDDING_SIZE in qnn/translate.rs.
+    pub fn to_vec(&self) -> Vec<f32> {
+        vec![
+            self.tall,
+            self.decorative,
+            self.passable,
+            self.striated,
+            self.temporary,
+        ]
+    }
 }
 
 /// What an `Eorf` is: a piece of Furniture (fixed cost, independent of the

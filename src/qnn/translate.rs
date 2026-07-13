@@ -19,7 +19,7 @@ use rand::rngs::StdRng;
 #[cfg(feature = "training")]
 use std::collections::HashMap;
 
-pub const EMBEDDING_SIZE: usize = 4 + 1; // Keep this in sync with structure.rs (+ 1 for "indoors")
+pub const EMBEDDING_SIZE: usize = 5 + 1; // Keep this in sync with structure.rs (+ 1 for "indoors")
 
 /// How to interpret a score target during training.
 #[cfg(feature = "training")]
@@ -330,9 +330,7 @@ pub fn ground_truth_at_vantage<B: Backend>(
             let (val, constraint) = constrained.disassemble();
 
             let tensor = sparse3d_to_tensor(&data.0, /*center_coord=*/ loc.cube, |cell| {
-                let semb = &structures[cell.id.as_usize()].embedding;
-
-                vec![semb.tall, semb.decorative, semb.passable, semb.striated]
+                structures[cell.id.as_usize()].embedding.to_vec()
             })
             .unwrap();
 
@@ -400,7 +398,8 @@ where
                     for obstacle_collection in obstacles {
                         let mut any_transparent = false;
                         for obstacle in obstacle_collection {
-                            if let [tall, decorative, passable, striated] = &embedding(obstacle)[..]
+                            if let [tall, decorative, passable, striated, ..] =
+                                &embedding(obstacle)[..]
                             {
                                 // HACK! Identify walls and floors:
                                 let opaque = tall + decorative + passable + striated == 1.0
@@ -521,15 +520,13 @@ mod tests {
         sparse_data.set(RelSlotCoord::new(0, 0, 1, RelSlot::ZLoWall), 5);
         sparse_data.set(RelSlotCoord::new(3, 0, 0, RelSlot::XLoWall), 6);
 
-        let embedding = |id: &usize| vec![*id as f32, 0.0, 0.0, 0.0];
+        let embedding = |id: &usize| vec![*id as f32, 0.0, 0.0, 0.0, 0.0];
 
         // Convert a region around (0, 0, 0) to a tensor
         let center_coord = IVec3::new(0, 0, 0);
         // TODO: there's a bunch of stuff that needs to stay in sync here!
         let tensor = sparse3d_to_tensor::<B, _, _>(&sparse_data, center_coord, |id| {
-            let semb = &si[*id].embedding;
-
-            vec![semb.tall, semb.decorative, semb.passable, semb.striated]
+            si[*id].embedding.to_vec()
         })?;
 
         let expected_shape = Shape::new([1, EMBEDDING_SIZE, 23, 12, 23]);

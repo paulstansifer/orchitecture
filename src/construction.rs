@@ -723,6 +723,7 @@ mod tests {
                 passable: 0.0,
                 decorative: 0.0,
                 striated: 0.0,
+                temporary: 0.0,
             },
             kind: crate::eorf::FurnitureOrElement::Element(crate::materials::ElementType::WallLike),
             vantage_evaluated: false,
@@ -1342,8 +1343,8 @@ mod tests {
 
         // 1. Load a saved building: one z-wall ('-') at (0,0,0).
         let saved = " -\n  \n~~~~~\n~*~*~\n";
-        let loaded = load_from_str(saved, &structures);
-        let load_changes = load_from_offline(&mut cw, &mut pe, loaded).unwrap();
+        let loaded = load_from_str(saved, &structures).unwrap();
+        let load_changes = load_from_offline(&mut cw, &mut pe, loaded);
 
         assert!(let [(loaded_loc, loaded_cell)] = load_changes.as_slice());
         check!(loaded_loc.slot == Slot::ZLoWall);

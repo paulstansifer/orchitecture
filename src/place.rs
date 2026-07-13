@@ -1105,6 +1105,7 @@ mod tests {
                 passable: 0.0,
                 decorative: 0.0,
                 striated: 0.0,
+                temporary: 1.0,
             },
             kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
                 crate::resource::UniformResource::Plank,

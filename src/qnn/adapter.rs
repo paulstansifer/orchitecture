@@ -87,8 +87,7 @@ pub fn compute_metrics(
     let pos = location.round().as_ivec3();
     let tensor: burn::tensor::Tensor<AppBackend, 5> =
         super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::city::Cell| {
-            let semb = &structures[cell.id.as_usize()].embedding;
-            vec![semb.tall, semb.decorative, semb.passable, semb.striated]
+            structures[cell.id.as_usize()].embedding.to_vec()
         })
         .unwrap();
 
