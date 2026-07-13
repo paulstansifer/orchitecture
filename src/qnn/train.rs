@@ -63,7 +63,7 @@ fn train<B: Backend>() {
                 if args.fake_data {
                     "fake_training"
                 } else {
-                    "training"
+                    "assets/static/training"
                 },
                 config.seed,
                 metric,

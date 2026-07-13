@@ -7,7 +7,7 @@ use std::error::Error;
 #[cfg(feature = "training")]
 use crate::city::Cell;
 #[cfg(feature = "training")]
-use crate::eorf::{self, EorfInfo};
+use crate::eorf::EorfInfo;
 #[cfg(feature = "training")]
 use burn::backend::Autodiff;
 #[cfg(feature = "training")]
@@ -192,7 +192,7 @@ pub fn load_training_data<B: Backend>(
     let path = Path::new(directory);
     let mut all_sparse_data = Vec::new();
 
-    let structures = structure::load_structure_info();
+    let structures = crate::eorf::load_structure_info();
     let mut structures_by_char = HashMap::new();
     for (id, structure) in structures.iter().enumerate() {
         if let Some(x_char) = structure.x_char {
@@ -218,7 +218,7 @@ pub fn load_training_data<B: Backend>(
                         // The voxel representation doesn't care about orientation:
                         facing: crate::sparse3d::Facing::NegX, // TODO!!!
                         evaluation: None,
-                        material: crate::city::Material::default(),
+                        build_material: crate::materials::BuildMaterialId::default(),
                     })
                 },
                 &structures_by_char,
@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn test_sparse3d_to_tensor() -> Result<(), Box<dyn Error>> {
-        let si = structure::load_structure_info();
+        let si = crate::eorf::load_structure_info();
 
         type B = backend::Autodiff<backend::NdArray<f32, i32>>;
 
