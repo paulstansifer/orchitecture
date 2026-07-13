@@ -287,6 +287,41 @@ mod tests {
     }
 
     #[test]
+    fn extended_section_parses_constrained_score_variants() {
+        use crate::city::{ConstrainedScore, VantageEvaluation};
+        use std::collections::HashMap;
+
+        let structures_by_char: HashMap<char, EorfId> = HashMap::new();
+        let content = "  \n  \n~~~~~\n~*~*~\n(0,0,0,\"Room\")={\"id\":0,\"facing\":\"NegX\",\"evaluation\":{\"coherence\":{\"at_most\":0.5},\"interest\":{\"at_least\":0.2}},\"build_material\":0}\n";
+
+        let grid = super::deserialize_sparse3d::<Cell, _, ()>(
+            content,
+            |c, _slot, map| Ok(deserialize(c, map)).map(|id| cell_with_id(id)),
+            &structures_by_char,
+        )
+        .unwrap();
+
+        let loc = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
+        let evaluation = grid.get(loc).unwrap().evaluation.clone();
+        check!(
+            evaluation
+                == Some(VantageEvaluation {
+                    coherence: Some(ConstrainedScore::AtMost { at_most: 0.5 }),
+                    interest: Some(ConstrainedScore::AtLeast { at_least: 0.2 }),
+                })
+        );
+    }
+
+    fn cell_with_id(id: EorfId) -> Cell {
+        Cell {
+            id,
+            facing: Facing::NegX,
+            evaluation: None,
+            build_material: crate::materials::BuildMaterialId::default(),
+        }
+    }
+
+    #[test]
     fn round_trip_single_zwall() {
         let structures = make_structures();
         let mut grid = super::super::sparse3d::Sparse3D::new();

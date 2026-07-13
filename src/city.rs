@@ -962,6 +962,26 @@ mod tests {
     use super::{ConstrainedScore, ConstrainedScoreExt};
 
     #[test]
+    fn constrained_score_json_roundtrip() {
+        check!(
+            serde_json::from_str::<ConstrainedScore>("1.0").unwrap()
+                == ConstrainedScore::Exact(1.0)
+        );
+        check!(
+            serde_json::from_str::<ConstrainedScore>(r#"{"at_most":1.0}"#).unwrap()
+                == ConstrainedScore::AtMost { at_most: 1.0 }
+        );
+        check!(
+            serde_json::from_str::<ConstrainedScore>(r#"{"at_least":1.0}"#).unwrap()
+                == ConstrainedScore::AtLeast { at_least: 1.0 }
+        );
+        check!(
+            serde_json::to_string(&ConstrainedScore::AtMost { at_most: 2.0 }).unwrap()
+                == r#"{"at_most":2.0}"#
+        );
+    }
+
+    #[test]
     fn constrained_score_add_preserves_variant() {
         check!(ConstrainedScore::Exact(3.0).add(1.5) == ConstrainedScore::Exact(4.5));
         check!(

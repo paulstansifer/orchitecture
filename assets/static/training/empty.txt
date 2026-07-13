@@ -1,0 +1,5 @@
+V 
+  
+~~~~~
+~*~*~
+(0,0,0,"Room")={"id":9,"facing":"NegX","evaluation":{"interest":0.0},"build_material":5}

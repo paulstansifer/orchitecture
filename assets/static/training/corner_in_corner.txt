@@ -10,7 +10,7 @@
 |# #|             
                   
 |# #|             
-     - -          
+     -S-          
 |# # # #|         
                   
 |# # # #|         
@@ -20,20 +20,20 @@
          - - - -  
         |# # # #| 
                   
-        |# # # #| 
+        |# # # #W 
                   
-        |# # # #| 
+        |# # # #W 
                   
         |# # # #| 
  - - - -          
 |   R# # # # # #| 
       V           
-|   R# # # # # #| 
+|   R# # # # # #W 
      R R          
-|       R# # # #| 
+|        # # # #W 
                   
 |       R# # # #| 
- - - - - - - - -  
+ - W W - - W W -  
                   
 ~~~~~
                   
@@ -56,4 +56,5 @@
                   
 ~~~~~
 ~*~*~
-(3,1,5,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":0.9}}
+(3,1,5,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":0.9},"build_material":5}
+(3,0,6,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":5}

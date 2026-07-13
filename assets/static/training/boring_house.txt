@@ -1,0 +1,22 @@
+ - - - - - -  
+|# # #|# # #| 
+  V           
+W# # #D# # #W 
+              
+|# # #|# # #| 
+ - D - - W -  
+              
+~~~~~
+              
+ O O O O O O  
+              
+ O O O O O O  
+              
+ O O O O O O  
+              
+              
+~~~~~
+~*~*~
+(5,0,0,"Room")={"id":13,"facing":"PosZ","evaluation":null,"build_material":5}
+(5,0,1,"Room")={"id":13,"facing":"PosZ","evaluation":null,"build_material":5}
+(1,0,1,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":{"at_most":0.3}},"build_material":5}
