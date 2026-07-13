@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use orchitecture_lib::qnn::translate::{
-    load_training_data, GroundTruth, GroundTruthBatcher, Metric,
+    load_training_data, GroundTruth, GroundTruthBatcher, Metric, ScoreConstraint,
 };
 use orchitecture_lib::qnn::{Args, Cnn};
 
@@ -30,6 +30,25 @@ struct TrainingConfig {
     pub seed: u64,
     #[config(default = 1.0e-5)]
     pub learning_rate: f64,
+}
+
+/// Distance from `pred` to satisfying the constraint: 0 when `pred` is already
+/// on the constraint's satisfied side of `goal`, matching the loss used in training.
+fn constrained_error(pred: f32, goal: f32, constraint: ScoreConstraint) -> f32 {
+    match constraint {
+        ScoreConstraint::Exact => (pred - goal).abs(),
+        ScoreConstraint::AtMost => (pred - goal).max(0.0),
+        ScoreConstraint::AtLeast => (goal - pred).max(0.0),
+    }
+}
+
+/// How to display a target value, so debug output distinguishes exact targets from bounds.
+fn constraint_symbol(constraint: ScoreConstraint) -> &'static str {
+    match constraint {
+        ScoreConstraint::Exact => "=",
+        ScoreConstraint::AtMost => "<=",
+        ScoreConstraint::AtLeast => ">=",
+    }
 }
 
 fn create_artifact_dir(artifact_dir: &str) {
@@ -118,7 +137,7 @@ fn train<B: Backend>() {
 
         {
             let (train_data, test_data) = load_data();
-            let mut errors: Vec<(f32, String, bool, f32, f32)> = Vec::new();
+            let mut errors: Vec<(f32, String, bool, f32, f32, ScoreConstraint)> = Vec::new();
 
             for idx in 0..train_data.len() {
                 let datum = train_data.get(idx).unwrap();
@@ -129,14 +148,21 @@ fn train<B: Backend>() {
                     .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
                 if args.show_scores {
-                    score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, pred, goal);
+                    score_output += &format!(
+                        "{}: {:.2}=>{}{:.1} ",
+                        datum.filename,
+                        pred,
+                        constraint_symbol(datum.constraint),
+                        goal
+                    );
                 }
                 errors.push((
-                    (pred - goal).abs(),
+                    constrained_error(pred, goal, datum.constraint),
                     datum.filename.clone(),
                     false,
                     pred,
                     goal,
+                    datum.constraint,
                 ));
             }
             if args.show_scores {
@@ -151,14 +177,21 @@ fn train<B: Backend>() {
                     .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
                 if args.show_scores {
-                    score_output += &format!("{}: {:.2}=>{:.1} ", datum.filename, pred, goal);
+                    score_output += &format!(
+                        "{}: {:.2}=>{}{:.1} ",
+                        datum.filename,
+                        pred,
+                        constraint_symbol(datum.constraint),
+                        goal
+                    );
                 }
                 errors.push((
-                    (pred - goal).abs(),
+                    constrained_error(pred, goal, datum.constraint),
                     datum.filename.clone(),
                     true,
                     pred,
                     goal,
+                    datum.constraint,
                 ));
             }
             if args.show_scores {
@@ -167,10 +200,12 @@ fn train<B: Backend>() {
 
             errors.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
             score_output += &format!("\nWorst {metric} errors:\n");
-            for (err, filename, is_val, pred, goal) in errors.iter().take(10) {
+            for (err, filename, is_val, pred, goal, constraint) in errors.iter().take(10) {
                 let marker = if *is_val { "*" } else { " " };
-                score_output +=
-                    &format!("  {marker} {filename}: {goal:.1}=>{pred:.2} (err {err:.2})\n");
+                let symbol = constraint_symbol(*constraint);
+                score_output += &format!(
+                    "  {marker} {filename}: {symbol}{goal:.1}=>{pred:.2} (err {err:.2})\n"
+                );
             }
         }
 
