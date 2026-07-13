@@ -4,12 +4,15 @@
 //! actual pickable meshes are descendants; a hit is resolved back to its
 //! owning cell by walking `ChildOf` up to the entity carrying `GridCellMarker`.
 
+use std::collections::HashSet;
+
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
+use bevy_picking::mesh_picking::ray_cast::RayMeshHit;
 use bevy_picking::prelude::{MeshRayCast, MeshRayCastSettings};
 
 use crate::camera::{cursor_to_viewport, GameCamera};
@@ -52,7 +55,7 @@ pub fn raycast_grid_cell(
 ///   `cutaway::sync_cutaway_shadow_material`), so without this exclusion a
 ///   ray would stop on an invisible wall/ceiling instead of reaching the
 ///   furniture the user can actually see and is trying to click.
-type ExcludeFromPickQuery<'w, 's> = Query<
+pub type ExcludeFromPickQuery<'w, 's> = Query<
     'w,
     's,
     (),
@@ -67,7 +70,7 @@ type ExcludeFromPickQuery<'w, 's> = Query<
 /// whether any of them match `ExcludeFromPickQuery` -- `CutawayHidden` in
 /// particular is set on the `GridCellMarker` root, not the mesh leaves a ray
 /// actually hits.
-fn is_pick_excluded(
+pub fn is_pick_excluded(
     entity: Entity,
     exclude_q: &ExcludeFromPickQuery,
     child_of_q: &Query<&ChildOf>,
@@ -82,6 +85,27 @@ fn is_pick_excluded(
             Err(_) => return false,
         }
     }
+}
+
+/// Casts `ray` against real scene geometry, excluding whatever `is_pick_excluded`
+/// would drop (overlay geometry, cutaway-hidden cells) plus every entity in
+/// `extra_excluded` (e.g. the picker's own model, which shouldn't stop its own
+/// click-to-move ray). Returns the closest hit, if any.
+pub fn cast_ray_excluding<'a>(
+    ray: Ray3d,
+    ray_cast: &'a mut MeshRayCast,
+    extra_excluded: &HashSet<Entity>,
+    exclude_q: &ExcludeFromPickQuery,
+    child_of_q: &Query<&ChildOf>,
+) -> Option<&'a RayMeshHit> {
+    let filter = |entity: Entity| {
+        !extra_excluded.contains(&entity) && !is_pick_excluded(entity, exclude_q, child_of_q)
+    };
+    let settings = MeshRayCastSettings::default().with_filter(&filter);
+    ray_cast
+        .cast_ray(ray, &settings)
+        .first()
+        .map(|(_, hit)| hit)
 }
 
 /// Bundles the raycast machinery into a single `SystemParam` so callers (like

@@ -7,11 +7,12 @@ use bevy::prelude::*;
 use bevy::scene::SceneInstanceReady;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
-use bevy_picking::prelude::{MeshRayCast, MeshRayCastSettings};
+use bevy_picking::prelude::MeshRayCast;
 
-use crate::camera::{cursor_to_viewport, GameCamera};
+use crate::camera::GameCamera;
 use crate::ortho_camera::{cam_fwd_xz_base, trimetric_camera_basis, WalkCameraState};
 use crate::pathing::NavigationGrid;
+use crate::selection::{cast_ray_excluding, cursor_ray, ExcludeFromPickQuery};
 
 /// Movement-cost budget within which reachable cubes are highlighted by
 /// `draw_debug_nav_gizmos` when `DebugNav` is enabled. An open horizontal
@@ -221,13 +222,16 @@ fn collect_with_descendants(
 
 /// Left-click in walk mode: ray-casts from the cursor into the scene and, if
 /// it hits something, paths the orc there via the navigation grid. Ignores
-/// hits on the orc's own model, and defers to egui when it wants the click.
+/// hits on the orc's own model and on cutaway-hidden geometry/overlays (see
+/// `selection::is_pick_excluded`), and defers to egui when it wants the click.
 pub fn orc_click_to_move_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     egui_wants_input: Res<EguiWantsInput>,
     children_q: Query<&Children>,
+    child_of_q: Query<&ChildOf>,
+    exclude_q: ExcludeFromPickQuery,
     nav_grid: Option<Res<NavigationGrid>>,
     mut ray_cast: MeshRayCast,
     mut orcs: Query<(Entity, &Transform, &mut Orc)>,
@@ -241,26 +245,14 @@ pub fn orc_click_to_move_system(
     let Ok((orc_entity, transform, mut orc)) = orcs.single_mut() else {
         return;
     };
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Some(cursor) = window.cursor_position() else {
-        return;
-    };
-    let Ok((camera, camera_transform)) = camera_q.single() else {
-        return;
-    };
-    let Ok(ray) =
-        camera.viewport_to_world(camera_transform, cursor_to_viewport(window, camera, cursor))
-    else {
+    let Some(ray) = cursor_ray(&windows, &camera_q) else {
         return;
     };
 
     let mut excluded = HashSet::new();
     collect_with_descendants(orc_entity, &children_q, &mut excluded);
-    let filter = |e: Entity| !excluded.contains(&e);
-    let settings = MeshRayCastSettings::default().with_filter(&filter);
-    let Some((_, hit)) = ray_cast.cast_ray(ray, &settings).first() else {
+    let Some(hit) = cast_ray_excluding(ray, &mut ray_cast, &excluded, &exclude_q, &child_of_q)
+    else {
         return;
     };
 
