@@ -1,0 +1,82 @@
+         - - W - - W - -  
+        |# # # #|# # # #| 
+                          
+        |# # # #|# # # #| 
+         - - D - - D - -  
+        |# # # # # # # #| 
+ - - - -    S     S       
+ # # # #D# # # # # # # #D 
+          V S     S       
+ # # # #D# # # # # # # #D 
+ - - - -                  
+        |# # # # # # # #| 
+         - - D - - D - -  
+        |# # # #|# # # #| 
+                          
+        |# # # #|# # # #| 
+         - - W - - W - -  
+                          
+~~~~~
+         - - - - - - - -  
+        |# # # #|# # # #| 
+         - - D - - D - -  
+        |# # # # # # # #| 
+         R R R     R R R  
+        |     R# #R     W 
+                          
+ # # # #|      # #      W 
+                          
+ # # # #|      # #      W 
+                          
+        |     R# #R     W 
+         R R R     R R R  
+        |# # # # # # # #| 
+         - - D - - D - -  
+        |# # # #|# # # #| 
+         - - - - - - - -  
+                          
+~~~~~
+                          
+         O O O O O O O O  
+                          
+         O O O O O O O O  
+                          
+         O O O O O O O O  
+                          
+         O O O O O O O O  
+                          
+         O O O O O O O O  
+                          
+         O O O O O O O O  
+                          
+         O O O O O O O O  
+                          
+         O O O O O O O O  
+                          
+                          
+~~~~~
+                          
+                          
+                          
+           O O O O O O    
+                          
+           O O O O O O    
+                          
+           O O O O O O    
+                          
+           O O O O O O    
+                          
+           O O O O O O    
+                          
+           O O O O O O    
+                          
+                          
+                          
+                          
+~~~~~
+~*~*~
+(6,0,3,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":5}
+(9,0,3,"Room")={"id":3,"facing":"PosZ","evaluation":null,"build_material":5}
+(5,0,4,"Room")={"id":9,"facing":"PosZ","evaluation":{"coherence":1.0,"interest":{"at_least": 0.7}},"build_material":5}
+(6,0,4,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":5}
+(9,0,4,"Room")={"id":3,"facing":"PosZ","evaluation":null,"build_material":5}

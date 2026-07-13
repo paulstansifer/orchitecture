@@ -4,6 +4,7 @@ use bevy::math::IVec3;
 use enum_derived::Rand;
 
 use crate::city::{ConstrainedScoreExt, VantageEvaluation};
+use crate::eorf::FurnitureOrElement::Furniture;
 use crate::eorf::{EorfId, EorfInfo};
 use crate::materials::BuildMaterialId;
 use crate::sparse3d::{Facing, RelSlot, Rotateable, Rotation};
@@ -319,10 +320,20 @@ pub fn add_noise(
 
         // For each selected dest, pick a replacement (or deletion if present)
         for (dest_loc, slot) in selected.into_iter() {
+            // If something is already present, delete it
+            let existing = new_s.get(dest_loc);
+            if existing.is_some() {
+                new_s.take(dest_loc);
+                continue;
+            }
+
             // Determine candidate structure IDs matching the placement style for this slot
             let mut candidates_ids: Vec<EorfId> = Vec::new();
 
             for (idx, info) in structure_info.iter().enumerate() {
+                if matches!(info.kind, Furniture(_)) {
+                    continue; // Randomly-added furniture is not too abnormal
+                }
                 match slot {
                     Room => {
                         if info.placement_style == crate::eorf::PlacementStyle::RoomPlop {
@@ -345,16 +356,11 @@ pub fn add_noise(
                 }
             }
 
-            // If something is already present, allow deletion as one option
-            let existing = new_s.get(dest_loc);
-            let mut options: Vec<Option<EorfId>> = Vec::new();
-            if existing.is_some() {
-                options.push(None);
-            }
+            let mut options: Vec<EorfId> = Vec::new();
 
             for id in candidates_ids.into_iter() {
                 if existing.map(|c| c.id) != Some(id) {
-                    options.push(Some(id));
+                    options.push(id);
                 }
             }
 
@@ -364,22 +370,15 @@ pub fn add_noise(
             }
 
             let idx = rng.random_range(0..options.len());
-            let choice = options[idx];
+            let id = options[idx];
 
-            match choice {
-                None => {
-                    new_s.take(dest_loc);
-                }
-                Some(id) => {
-                    let new_cell = Cell {
-                        id,
-                        facing: crate::sparse3d::Facing::default(),
-                        evaluation: None,
-                        build_material: BuildMaterialId::default(),
-                    };
-                    new_s.set(dest_loc, new_cell);
-                }
-            }
+            let new_cell = Cell {
+                id,
+                facing: crate::sparse3d::Facing::default(),
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            };
+            new_s.set(dest_loc, new_cell);
         }
 
         // Remove all other vantages (clear evaluations except for this one)

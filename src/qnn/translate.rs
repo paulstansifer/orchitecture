@@ -130,11 +130,9 @@ fn augment_datum(
     let mut res = vec![];
 
     if metric == Metric::Coherence {
-        for _ in 0..3 {
-            let messed_up = crate::build_helpers::add_noise(s.0.clone(), structure_info, rng);
-            for messed in messed_up {
-                res.push((messed, format!("{}-messed", s.1)));
-            }
+        let messed_up = crate::build_helpers::add_noise(s.0.clone(), structure_info, rng);
+        for messed in messed_up {
+            res.push((messed, format!("{}-messed", s.1)));
         }
     }
 
