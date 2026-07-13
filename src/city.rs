@@ -61,10 +61,12 @@ pub trait ConstrainedScoreExt: Sized {
 impl ConstrainedScoreExt for ConstrainedScore {
     fn add(self, delta: f32) -> Self {
         match self {
-            Self::Exact(v) => Self::Exact(v + delta),
-            Self::AtMost { at_most: v } => Self::AtMost { at_most: v + delta },
+            Self::Exact(v) => Self::Exact((v + delta).clamp(0.0, 1.0)),
+            Self::AtMost { at_most: v } => Self::AtMost {
+                at_most: (v + delta).clamp(0.0, 1.0),
+            },
             Self::AtLeast { at_least: v } => Self::AtLeast {
-                at_least: v + delta,
+                at_least: (v + delta).clamp(0.0, 1.0),
             },
         }
     }
@@ -983,23 +985,23 @@ mod tests {
 
     #[test]
     fn constrained_score_add_preserves_variant() {
-        check!(ConstrainedScore::Exact(3.0).add(1.5) == ConstrainedScore::Exact(4.5));
+        check!(ConstrainedScore::Exact(0.3).add(0.1) == ConstrainedScore::Exact(0.4));
         check!(
-            ConstrainedScore::AtMost { at_most: 5.0 }.add(-2.0)
-                == ConstrainedScore::AtMost { at_most: 3.0 }
+            ConstrainedScore::AtMost { at_most: 0.5 }.add(-0.2)
+                == ConstrainedScore::AtMost { at_most: 0.3 }
         );
         check!(
-            ConstrainedScore::AtLeast { at_least: 1.0 }.add(0.5)
-                == ConstrainedScore::AtLeast { at_least: 1.5 }
+            ConstrainedScore::AtLeast { at_least: 0.1 }.add(0.05)
+                == ConstrainedScore::AtLeast { at_least: 0.15 }
         );
     }
 
     #[test]
     fn constrained_score_subtract_is_neg_add() {
-        check!(ConstrainedScore::Exact(5.0).subtract(2.0) == ConstrainedScore::Exact(3.0));
+        check!(ConstrainedScore::Exact(0.5).subtract(0.2) == ConstrainedScore::Exact(0.3));
         check!(
-            ConstrainedScore::AtLeast { at_least: 4.0 }.subtract(1.0)
-                == ConstrainedScore::AtLeast { at_least: 3.0 }
+            ConstrainedScore::AtLeast { at_least: 0.4 }.subtract(0.1)
+                == ConstrainedScore::AtLeast { at_least: 0.3 }
         );
     }
 
@@ -1053,18 +1055,18 @@ mod tests {
 
     #[test]
     fn option_constrained_score_maps_through_some() {
-        let some = Some(ConstrainedScore::Exact(2.0));
-        check!(some.add(3.0) == Some(ConstrainedScore::Exact(5.0)));
-        check!(some.unbound_lower() == Some(ConstrainedScore::AtMost { at_most: 2.0 }));
+        let some = Some(ConstrainedScore::Exact(0.2));
+        check!(some.add(0.3) == Some(ConstrainedScore::Exact(0.5)));
+        check!(some.unbound_lower() == Some(ConstrainedScore::AtMost { at_most: 0.2 }));
     }
 
     #[test]
     fn constrained_score_chained_ops() {
-        let result = ConstrainedScore::Exact(1.0)
-            .add(2.0)
+        let result = ConstrainedScore::Exact(0.1)
+            .add(0.2)
             .unbound_higher()
-            .add(1.0);
-        check!(result == ConstrainedScore::AtLeast { at_least: 4.0 });
+            .add(0.1);
+        check!(result == ConstrainedScore::AtLeast { at_least: 0.4 });
     }
 
     // ── cell_transform wall flip ─────────────────────────────────────────────
