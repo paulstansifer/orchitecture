@@ -7,7 +7,7 @@ Orchitecture uses the Bevy game engine, and uses Burn to the convolutional neura
 
 The player starts with three market stalls at an empty crossroads.
 
-The player makes construction plans, then invites farms from the surrounding countryside to participate in the market; the farms trade for resources they want (temporarily increasing their future surplus); the leftovers go to the player, who can use them to construct buildings. Sometimes "traveler"s come, trading more exotic resources, like tools and planks, for market resources. The population of the city starts at 1, and they need food and shelter
+The player makes construction plans, then invites farms from the surrounding countryside to participate in the market; the farms trade for resources they want (temporarily increasing their future surplus); the leftovers go to the player, who can use them to construct buildings. Sometimes "traveler"s come, trading more exotic resources, like tools and planks, for market resources. The population of the city starts at 1; each occupant needs food and shelter.
 
 The player builds things that can, for example:
   * store excess resources
@@ -15,7 +15,7 @@ The player builds things that can, for example:
   * house additional city inhabitants and meet their needs
   * operate as workshops to process resources
 
-Depending on the kind of place, various aspects of the architecture may matter; almost everything works better indoors, some buildings are more inspiring if built from finer materials or with spacious architecture. Eventually, the crossroads becomes a proper city, with a library, a city hall, a hospital, and schools.
+Depending on the kind of place, various aspects of the architecture may matter; almost everything works better indoors, some buildings are more inspiring if built from finer materials or with spacious architecture, or (this is where the neural nets come in) with more interesting, coherent architecture. Eventually, the crossroads becomes a proper city, with a library, a city hall, a hospital, and schools.
 
 The player can also influence the surrounding farms by changing their specialties, giving them tools (so they can produce more advanced resources).
 
@@ -26,7 +26,7 @@ Game parts:
   * camera.rs: 3rd-person camera
   * ui.rs: UI
   * scene.rs: ground, roads, and exterior lighting
-  * ceiling_lights.rs: Adds lighting inside the city grid
+  * ceiling_lights.rs: Adds lighting inside the city grid (abandoned in favor of global illumination)
 
 City grid and related concepts:
   * city.rs: `ConstructedCity`/`ProposedCity` represent the world as `Sparse3D<Cell>`.

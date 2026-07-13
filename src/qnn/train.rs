@@ -9,6 +9,7 @@ use burn::{
     train::logger::FileMetricLogger,
 };
 use clap::Parser;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -51,6 +52,14 @@ fn constraint_symbol(constraint: ScoreConstraint) -> &'static str {
     }
 }
 
+/// MSE of always predicting the mean of `goals` — the "predict nothing useful" baseline
+/// a skill score is measured against. (Treats every target as `Exact`; a constraint-aware
+/// baseline can wait until we actually need to compare across constraint types.)
+fn baseline_mse(goals: &[f32]) -> f32 {
+    let mean = goals.iter().sum::<f32>() / goals.len() as f32;
+    goals.iter().map(|g| (g - mean).powi(2)).sum::<f32>() / goals.len() as f32
+}
+
 fn create_artifact_dir(artifact_dir: &str) {
     // Remove existing artifacts before to get an accurate learner summary
     //std::fs::remove_dir_all(artifact_dir).unwrap();
@@ -73,6 +82,7 @@ fn train<B: Backend>() {
     B::seed(&device, config.seed);
 
     let mut score_output = String::new();
+    let mut baseline_losses: HashMap<Metric, (f32, f32)> = HashMap::new();
 
     for metric in [Metric::Interest, Metric::Coherence] {
         let batcher = GroundTruthBatcher {};
@@ -198,6 +208,13 @@ fn train<B: Backend>() {
                 score_output += "\n";
             }
 
+            let train_goals: Vec<f32> = errors.iter().filter(|e| !e.2).map(|e| e.4).collect();
+            let valid_goals: Vec<f32> = errors.iter().filter(|e| e.2).map(|e| e.4).collect();
+            baseline_losses.insert(
+                metric,
+                (baseline_mse(&train_goals), baseline_mse(&valid_goals)),
+            );
+
             errors.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
             score_output += &format!("\nWorst {metric} errors:\n");
             for (err, filename, is_val, pred, goal, constraint) in errors.iter().take(10) {
@@ -255,10 +272,15 @@ fn train<B: Backend>() {
 
         use textplots::ColorPlot;
 
+        let final_train_loss = train_curve.last().unwrap().1;
+        let final_valid_loss = valid_curve.last().unwrap().1;
+        let (train_baseline, valid_baseline) = baseline_losses[&metric];
+        let train_skill = 1.0 - final_train_loss / train_baseline;
+        let valid_skill = 1.0 - final_valid_loss / valid_baseline;
+
         println!(
-            "Final {metric} loss (t/v) {:.3} {:.3}",
-            train_curve.last().unwrap().1,
-            valid_curve.last().unwrap().1
+            "Final {metric} loss (t/v) {:.3} {:.3}, skill (t/v) {:.3} {:.3}",
+            final_train_loss, final_valid_loss, train_skill, valid_skill
         );
 
         let plot_file = "/tmp/plot_text";
