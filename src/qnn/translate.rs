@@ -209,12 +209,12 @@ pub fn load_training_data<B: Backend>(
 
         if path.extension().map_or(false, |ext| ext == "txt") {
             let content = fs::read_to_string(&path).expect("Failed to read file");
-            let sparse_data = crate::serialization::deserialize_sparse3d::<Cell, _, ()>(
+            let sparse_data = crate::serialization::deserialize_sparse3d::<Cell, _, anyhow::Error>(
                 &content,
                 |c, _slot, structures_by_char| {
                     let id = crate::serialization::deserialize(c, structures_by_char);
                     Ok(Cell {
-                        id,
+                        id: id.unwrap(),
                         // The voxel representation doesn't care about orientation:
                         facing: crate::sparse3d::Facing::NegX, // TODO!!!
                         evaluation: None,

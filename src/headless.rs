@@ -376,7 +376,8 @@ impl HeadlessSession {
 
             "dump" => {
                 let cw = self.world().resource::<ConstructedCity>();
-                let bytes = serialization::serialize(&cw.contents, &cw.eorfs);
+                let bytes =
+                    serialization::serialize(&cw.contents, &cw.eorfs).map_err(|e| e.to_string())?;
                 let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
                 Ok(text.lines().map(str::to_string).collect())
             }
@@ -384,7 +385,8 @@ impl HeadlessSession {
             "save" => {
                 let path = args.first().ok_or("usage: save <path>")?;
                 let cw = self.world().resource::<ConstructedCity>();
-                serialization::save(&cw.contents, &cw.eorfs, &std::path::PathBuf::from(path));
+                serialization::save(&cw.contents, &cw.eorfs, &std::path::PathBuf::from(path))
+                    .map_err(|e| e.to_string())?;
                 Ok(vec![format!("saved to {path}")])
             }
 
@@ -396,6 +398,7 @@ impl HeadlessSession {
                 let new_contents = {
                     let cw = self.world().resource::<ConstructedCity>();
                     serialization::load(&std::path::PathBuf::from(path), &cw.eorfs)
+                        .map_err(|e| e.to_string())?
                 };
                 self.world()
                     .run_system_once_with(load_system, new_contents)

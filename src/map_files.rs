@@ -64,12 +64,12 @@ fn find_bundled(name: &str) -> Option<&'static str> {
 /// native) a user-created file in `USER_DIR`. `None` if unavailable.
 pub fn load_named_map(name: &str, eorfs: &[EorfInfo]) -> Option<Sparse3D<Cell>> {
     if let Some(content) = find_bundled(name) {
-        return Some(serialization::load_from_str(content, eorfs));
+        return serialization::load_from_str(content, eorfs).ok();
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path = std::path::PathBuf::from(crate::paths::USER_DIR).join(name);
-        Some(serialization::load(&path, eorfs))
+        serialization::load(&path, eorfs).ok()
     }
     #[cfg(target_arch = "wasm32")]
     None
@@ -142,16 +142,17 @@ pub fn handle_file_load(
 ) {
     for ev in ev_loaded.read() {
         if let Ok(content) = std::str::from_utf8(&ev.contents) {
-            let new_contents = serialization::load_from_str(content, &constructed.eorfs);
-            load_map(
-                &mut commands,
-                &mut constructed,
-                &mut pending,
-                &mut assembled,
-                &mut viewable,
-                &structure_list,
-                new_contents,
-            );
+            if let Ok(new_contents) = serialization::load_from_str(content, &constructed.eorfs) {
+                load_map(
+                    &mut commands,
+                    &mut constructed,
+                    &mut pending,
+                    &mut assembled,
+                    &mut viewable,
+                    &structure_list,
+                    new_contents,
+                );
+            }
         }
     }
 }
@@ -192,11 +193,12 @@ pub fn map_file_controls_ui(
 
     ui.separator();
     if ui.button("Save").clicked() {
-        let bytes = serialization::serialize(&constructed.contents, &constructed.eorfs);
-        commands
-            .dialog()
-            .add_filter("Orchitecture Map", &["txt"])
-            .save_file::<SaveDialog>(bytes);
+        if let Ok(bytes) = serialization::serialize(&constructed.contents, &constructed.eorfs) {
+            commands
+                .dialog()
+                .add_filter("Orchitecture Map", &["txt"])
+                .save_file::<SaveDialog>(bytes);
+        }
     }
     // Loading structures is only available in sandbox mode.
     if sandbox_enabled && ui.button("Load").clicked() {

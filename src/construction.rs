@@ -1343,7 +1343,7 @@ mod tests {
         // 1. Load a saved building: one z-wall ('-') at (0,0,0).
         let saved = " -\n  \n~~~~~\n~*~*~\n";
         let loaded = load_from_str(saved, &structures);
-        let load_changes = load_from_offline(&mut cw, &mut pe, loaded);
+        let load_changes = load_from_offline(&mut cw, &mut pe, loaded).unwrap();
 
         assert!(let [(loaded_loc, loaded_cell)] = load_changes.as_slice());
         check!(loaded_loc.slot == Slot::ZLoWall);
