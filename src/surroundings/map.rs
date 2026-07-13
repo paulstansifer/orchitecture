@@ -185,32 +185,49 @@ pub fn generate_farms(mut commands: Commands) {
     use rand::Rng as _;
     let mut rng = rand::rng();
 
-    let mut seeds: Vec<Vec2> = (0..NUM_SEEDS)
-        .map(|_| {
-            Vec2::new(
-                rng.random_range(-MAP_EXTENT..MAP_EXTENT),
-                rng.random_range(-MAP_EXTENT..MAP_EXTENT),
-            )
-        })
-        .collect();
-
-    // One Lloyd step removes degenerate slivers without killing size variance;
-    // more steps converge toward equal-area cells (~6 ac each), which is too uniform.
-    lloyd_relax(&mut seeds, 1);
+    const MIN_REVEALED_FARMS: usize = 7;
 
     // Phase 1: compute Voronoi cells and areas, then sort by distance from
-    // the map centre so resource assignment radiates outward.
-    let mut pre_farms: Vec<(Vec2, Vec<Vec2>, f32)> = seeds
-        .iter()
-        .filter_map(|&seed| {
-            let polygon = voronoi_cell(seed, &seeds);
-            if polygon.is_empty() {
-                return None;
-            }
-            let area = (polygon_area(&polygon) * ACRES_PER_UNIT_SQ).clamp(5.0, 10.0);
-            Some((seed, polygon, area))
-        })
-        .collect();
+    // the map centre so resource assignment radiates outward. Retry with a
+    // fresh seed layout if too few farm centroids fall within the initial
+    // fog reveal (no traveler reveals yet, so this is just the start circle).
+    let mut pre_farms: Vec<(Vec2, Vec<Vec2>, f32)> = loop {
+        let mut seeds: Vec<Vec2> = (0..NUM_SEEDS)
+            .map(|_| {
+                Vec2::new(
+                    rng.random_range(-MAP_EXTENT..MAP_EXTENT),
+                    rng.random_range(-MAP_EXTENT..MAP_EXTENT),
+                )
+            })
+            .collect();
+
+        // One Lloyd step removes degenerate slivers without killing size variance;
+        // more steps converge toward equal-area cells (~6 ac each), which is too uniform.
+        lloyd_relax(&mut seeds, 2);
+
+        let candidate: Vec<(Vec2, Vec<Vec2>, f32)> = seeds
+            .iter()
+            .filter_map(|&seed| {
+                let polygon = voronoi_cell(seed, &seeds);
+                if polygon.is_empty() {
+                    return None;
+                }
+                let area = polygon_area(&polygon) * ACRES_PER_UNIT_SQ;
+                Some((seed, polygon, area))
+            })
+            .collect();
+
+        let revealed_count = candidate
+            .iter()
+            .filter(|(_, polygon, _)| {
+                fog_alpha_at(polygon_centroid(polygon), &[]) < REVEAL_THRESHOLD
+            })
+            .count();
+
+        if revealed_count >= MIN_REVEALED_FARMS {
+            break candidate;
+        }
+    };
     pre_farms.sort_by(|a, b| {
         a.0.length_squared()
             .partial_cmp(&b.0.length_squared())
