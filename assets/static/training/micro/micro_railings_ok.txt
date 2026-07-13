@@ -1,0 +1,9 @@
+ R R  
+R# #R 
+  V   
+R# #R 
+ R R  
+      
+~~~~~
+~*~*~
+(1,0,1,"Room")={"id":9,"facing":"PosZ","evaluation":{"coherence":{"at_least":0.8}},"build_material":5}

@@ -1,0 +1,49 @@
+ R          
+|    #R# #| 
+   W  V     
+|    # #W#| 
+            
+|    # # #| 
+ - R - - -  
+            
+~~~~~
+            
+|         | 
+S      R    
+|         | 
+            
+|         | 
+ - - - - -  
+            
+~~~~~
+    S       
+|         | 
+            
+|         | 
+            
+|         | 
+ - - - - -  
+            
+~~~~~
+            
+|         | 
+            
+|         | 
+            
+|         | 
+ - - - - -  
+            
+~~~~~
+            
+     # # #  
+            
+     # # #  
+            
+     # # #  
+            
+            
+~~~~~
+~*~*~
+(0,1,1,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":2}
+(2,2,0,"Room")={"id":3,"facing":"NegX","evaluation":null,"build_material":2}
+(3,0,1,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":{"at_most":0.3}},"build_material":5}

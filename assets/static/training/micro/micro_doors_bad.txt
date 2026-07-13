@@ -1,0 +1,13 @@
+ - - - -  
+|# # # #| 
+     D    
+|# # # #| 
+ - -   D  
+|# # # #| 
+      V   
+|# #D# #| 
+ - - - -  
+          
+~~~~~
+~*~*~
+(3,0,3,"Room")={"id":9,"facing":"PosZ","evaluation":{"coherence":{"at_most":0.4}},"build_material":5}

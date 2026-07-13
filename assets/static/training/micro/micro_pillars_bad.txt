@@ -1,0 +1,23 @@
+      
+P# #  
+  V   
+ #  P 
+ P P  
+      
+~~~~~
+ P P  
+P   P 
+      
+P     
+ P    
+      
+~~~~~
+      
+      
+      
+   #  
+      
+      
+~~~~~
+~*~*~
+(1,0,1,"Room")={"id":9,"facing":"PosZ","evaluation":{"coherence":{"at_most":0.6}},"build_material":5}
