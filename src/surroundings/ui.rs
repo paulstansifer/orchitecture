@@ -16,6 +16,10 @@ use crate::resource::ToolKind;
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
 const FOG_GRID_STEP_PX: f32 = 20.0;
+const PANEL_W: f32 = 110.0;
+/// Generous upper bound on a farm info panel's rendered height, used only to
+/// decide whether an off-center panel still has a visible sliver on screen.
+const PANEL_H_MAX: f32 = 140.0;
 
 /// HSV (h in degrees, s/v in 0-1) to an sRGB `Color32`, treating the computed
 /// RGB directly as gamma-space bytes. (egui's `Hsva` gamma-encodes instead, which
@@ -152,12 +156,13 @@ pub fn surroundings_ui_system(
 
     // Collect revealed farm ids and their screen centroids.
     let mut revealed: Vec<(FarmId, egui::Pos2)> = Vec::new();
+    let mut panel_rect = egui::Rect::NOTHING;
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
         .show(ctx, |ui| {
             let painter = ui.painter().clone();
-            let panel_rect = ui.max_rect();
+            panel_rect = ui.max_rect();
             let screen_centre = panel_rect.center();
 
             painter.rect_filled(panel_rect, 0.0, Color32::from_rgb(30, 30, 30));
@@ -185,7 +190,11 @@ pub fn surroundings_ui_system(
                 let map_centroid = farm.centroid();
                 if fog_alpha_at(map_centroid, &farms.traveler_reveals) < REVEAL_THRESHOLD {
                     let centroid = view.to_screen(map_centroid);
-                    if panel_rect.contains(centroid) {
+                    // Since the panel is centered on `centroid`, it can still have a
+                    // visible sliver even once `centroid` itself is off-panel.
+                    let panel_reach =
+                        panel_rect.expand2(egui::Vec2::new(PANEL_W / 2.0, PANEL_H_MAX / 2.0));
+                    if panel_reach.contains(centroid) {
                         revealed.push((FarmId::new(i), centroid));
                     }
                 }
@@ -223,7 +232,6 @@ pub fn surroundings_ui_system(
         });
 
     // ── Farm info panels ──────────────────────────────────────────────────────
-    const PANEL_W: f32 = 110.0;
 
     // Maximum invitees = number of market stand furniture placed across all
     // market places.
@@ -235,8 +243,11 @@ pub fn surroundings_ui_system(
         let farm = &mut farms[id];
 
         egui::Area::new(egui::Id::new(("farm_panel", id)))
-            .fixed_pos(egui::Pos2::new(centroid.x - PANEL_W / 2.0, centroid.y))
+            .fixed_pos(centroid)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .constrain(false)
             .show(ctx, |ui| {
+                ui.set_clip_rect(panel_rect);
                 egui::Frame::new()
                     .fill(Color32::from_rgba_unmultiplied(15, 15, 15, 210))
                     .inner_margin(egui::Margin::same(4))
