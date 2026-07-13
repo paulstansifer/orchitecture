@@ -42,10 +42,14 @@ pub struct Orc {
     walk_node: Option<AnimationNodeIndex>,
     /// None = not yet started; Some(false) = idle; Some(true) = walking.
     is_walking: Option<bool>,
-    /// Remaining waypoints (room cubes, including floor/`y`) toward a
-    /// click-to-move destination; drained front-to-back as the orc arrives at
-    /// each one. Cleared by manual (IJKL) movement.
-    nav_path: VecDeque<IVec3>,
+    /// Remaining waypoints (world positions) toward a click-to-move
+    /// destination; drained front-to-back as the orc arrives at each one.
+    /// Ordinary steps are just each room cube's center; a stairs hop is
+    /// expanded (see `expand_path_to_waypoints`) into extra waypoints at the
+    /// stairs cube's near and far edges, so the rise happens smoothly across
+    /// that one tile instead of cutting straight into the next room. Cleared
+    /// by manual (IJKL) movement.
+    nav_path: VecDeque<Vec3>,
 }
 
 pub fn spawn_orc(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -79,6 +83,40 @@ fn cube_center_bottom(cube: IVec3, y_offset: f32) -> Vec3 {
         cube.y as f32 + y_offset,
         cube.z as f32 + 0.5,
     )
+}
+
+/// Expands a `NavigationGrid::find_path` room-cube path into world-space
+/// waypoints for `orc_input_system` to walk toward. Ordinary steps just
+/// become that cube's center-bottom (at constant `y`); a stairs hop (a
+/// consecutive pair whose `y` differs) instead contributes two waypoints, at
+/// the stairs cube's near and far horizontal edges -- one at the entry floor
+/// height, one at the landing's -- in place of the stairs cube's own center,
+/// so the rise is spread smoothly across that single tile's footprint
+/// (entry edge to exit edge) rather than cutting straight across into the
+/// next room while climbing.
+fn expand_path_to_waypoints(path: &[IVec3], y_offset: f32) -> VecDeque<Vec3> {
+    let mut waypoints = VecDeque::new();
+    for pair in path.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let a_center = cube_center_bottom(a, y_offset);
+        if a.y == b.y {
+            waypoints.push_back(a_center);
+        } else {
+            let b_center = cube_center_bottom(b, y_offset);
+            let half_horizontal =
+                Vec3::new(b_center.x - a_center.x, 0.0, b_center.z - a_center.z) * 0.5;
+            waypoints.push_back(a_center - half_horizontal); // Near edge: entry floor height.
+            waypoints.push_back(Vec3::new(
+                a_center.x + half_horizontal.x,
+                b_center.y,
+                a_center.z + half_horizontal.z,
+            )); // Far edge: landing floor height.
+        }
+    }
+    if let Some(&last) = path.last() {
+        waypoints.push_back(cube_center_bottom(last, y_offset));
+    }
+    waypoints
 }
 
 fn on_orc_scene_ready(
@@ -232,7 +270,7 @@ pub fn orc_click_to_move_system(
     let to = hit.point.round().as_ivec3();
     let from = cube_of_center_bottom(transform.translation);
     if let Some(path) = nav_grid.find_path(from, to) {
-        orc.nav_path = path.into();
+        orc.nav_path = expand_path_to_waypoints(&path, 0.1);
     }
 }
 
@@ -282,9 +320,7 @@ pub fn orc_input_system(
 
         transform.translation += rounded_dir * speed * dt;
         transform.look_to(-rounded_dir, Vec3::Y);
-    } else if let Some(&next) = orc.nav_path.front() {
-        // `Orc` walks at `floor_y + 0.1` (see `spawn_orc`), so waypoints keep that offset.
-        let target = cube_center_bottom(next, 0.1);
+    } else if let Some(&target) = orc.nav_path.front() {
         let to_target = target - transform.translation;
         let dist = to_target.length();
         const ARRIVE_EPS: f32 = 0.05;
@@ -386,5 +422,56 @@ pub fn draw_debug_nav_gizmos(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use assert2::check;
+
+    use super::*;
+
+    #[test]
+    fn flat_path_keeps_one_waypoint_per_cube_at_constant_y() {
+        let path = [
+            IVec3::new(0, 0, 0),
+            IVec3::new(1, 0, 0),
+            IVec3::new(1, 0, 1),
+        ];
+        let waypoints = expand_path_to_waypoints(&path, 0.1);
+
+        check!(waypoints.len() == 3);
+        for (waypoint, cube) in waypoints.iter().zip(path.iter()) {
+            check!(*waypoint == cube_center_bottom(*cube, 0.1));
+        }
+    }
+
+    #[test]
+    fn stairs_hop_inserts_near_and_far_edge_waypoints() {
+        // Mirrors a real stairs hop: entry cube (0,0,1) -> stairs cube
+        // (0,0,0) -> landing cube one level up and one step further, (0,1,-1).
+        let path = [
+            IVec3::new(0, 0, 1),
+            IVec3::new(0, 0, 0),
+            IVec3::new(0, 1, -1),
+        ];
+        let waypoints = expand_path_to_waypoints(&path, 0.1);
+
+        // Entry cube, near edge (still at entry floor height), far edge
+        // (already at landing floor height), landing cube: 4 waypoints.
+        check!(waypoints.len() == 4);
+        check!(waypoints[0] == cube_center_bottom(IVec3::new(0, 0, 1), 0.1));
+        check!(waypoints[3] == cube_center_bottom(IVec3::new(0, 1, -1), 0.1));
+
+        // Near edge sits at the boundary between the entry cube and the
+        // stairs cube (z=1.0), still at the entry floor height; far edge
+        // sits at the boundary between the stairs cube and the landing
+        // (z=0.0), already at the landing floor height.
+        check!(waypoints[1].y == 0.1);
+        check!(waypoints[2].y == 1.1);
+        check!(waypoints[1].x == 0.5);
+        check!(waypoints[2].x == 0.5);
+        check!(waypoints[1].z == 1.0);
+        check!(waypoints[2].z == 0.0);
     }
 }

@@ -446,7 +446,11 @@ fn build_navigation_grid(city: &ConstructedCity) -> NavigationGrid {
                         }
                     }
 
-                    let landing_cube = cube + dir + IVec3::Y;
+                    // The landing sits on the *opposite* horizontal side from the
+                    // ground-level entry (`cube + dir`): a straight-run staircase is
+                    // entered walking in `-dir`, ascends, and continues in `-dir` to
+                    // exit past the stairs' own cube, not directly above the entry.
+                    let landing_cube = cube - dir + IVec3::Y;
                     let (Some(&Nav::Passable(stairs_cost)), Some(&Nav::Passable(landing_cost))) =
                         (base_room_nav.get(&cube), base_room_nav.get(&landing_cube))
                     else {
@@ -488,7 +492,7 @@ mod tests {
     use crate::city::{Cell, ConstructedCity};
     use crate::eorf::{find_structure_by_name, load_structure_info};
     use crate::materials::BuildMaterialId;
-    use crate::sparse3d::{Facing, Slot, SlotCoord};
+    use crate::sparse3d::{Facing, Rotateable, Rotation, Slot, SlotCoord};
 
     use super::*;
 
@@ -591,24 +595,20 @@ mod tests {
     }
 
     #[test]
-    fn stairs_connect_two_levels_in_facing_direction() {
+    fn stairs_connect_two_levels_on_opposite_horizontal_sides() {
         let mut city = test_city();
-        // Floors for the cube above the ground-level stairs and its landing.
+        // Floor only above the landing side (opposite the ground-level entry),
+        // so the connectivity check is attributable solely to the landing
+        // being on the correct (opposite) side, not the entry's side.
         place(
             &mut city,
-            IVec3::new(0, 1, 0),
+            IVec3::new(0, 1, 1),
             Slot::Floor,
             "floor",
             Facing::NegX,
         );
-        place(
-            &mut city,
-            IVec3::new(0, 1, -1),
-            Slot::Floor,
-            "floor",
-            Facing::NegX,
-        );
-        // Stairs at (0,0,0), unrotated: connects to (0,0,-1) and up to (0,1,-1).
+        // Stairs at (0,0,0), unrotated (Facing::NegX -> dir = -Z): ground-level
+        // entry is at (0,0,-1); the landing is on the opposite side, (0,1,1).
         place(
             &mut city,
             IVec3::new(0, 0, 0),
@@ -618,7 +618,8 @@ mod tests {
         );
 
         let nav = build_navigation_grid(&city);
-        check!(nav.is_connected(IVec3::new(0, 0, 0), IVec3::new(0, 1, -1)));
+        check!(nav.is_connected(IVec3::new(0, 0, 0), IVec3::new(0, 1, 1)));
+        check!(!nav.is_connected(IVec3::new(0, 0, 0), IVec3::new(0, 1, -1)));
     }
 
     #[test]
@@ -700,6 +701,37 @@ mod tests {
         let mut reachable = nav.reachable_within(IVec3::new(0, 0, 0), 2);
         reachable.sort_by_key(|c| (c.x, c.y, c.z));
         check!(reachable == vec![IVec3::new(0, 0, 0), IVec3::new(1, 0, 0)]);
+    }
+
+    #[test]
+    fn simple_balcony_training_map_stairs_connect_to_the_balcony_floor() {
+        let mut city = test_city();
+        city.contents = crate::map_files::load_named_map("simple_balcony", &city.eorfs).unwrap();
+        let nav = build_navigation_grid(&city);
+        // The two ground-floor stairs (facing PosX, at x=0 and x=4, z=3) should
+        // each land one level up on the opposite (north, -Z) side, at z=2 --
+        // where the upper floor actually has floor tiles -- not doubled back
+        // onto the same (south, +Z) side as their ground-level entry.
+        check!(nav.is_connected(IVec3::new(0, 0, 3), IVec3::new(0, 1, 2)));
+        check!(nav.is_connected(IVec3::new(4, 0, 3), IVec3::new(4, 1, 2)));
+    }
+
+    #[test]
+    fn simple_balcony_training_map_stairs_connect_after_a_90_degree_rotation() {
+        // The un-rotated map's stairs face PosX/NegX (their entry/landing
+        // differ in Z). Rotating the whole map 90 degrees turns them into
+        // PosZ/NegZ-facing stairs (entry/landing differing in X instead),
+        // exercising the other pair of horizontal facings than
+        // `simple_balcony_training_map_stairs_connect_to_the_balcony_floor`
+        // does, with the same real surrounding walls/floors (also rotated).
+        let mut city = test_city();
+        let contents = crate::map_files::load_named_map("simple_balcony", &city.eorfs).unwrap();
+        city.contents = contents.rotate(Rotation::Clockwise);
+        let nav = build_navigation_grid(&city);
+        // Rotating (x,y,z) -> (-z,y,x) carries the original stairs/landing
+        // pairs, (0,0,3)->(0,1,2) and (4,0,3)->(4,1,2), to:
+        check!(nav.is_connected(IVec3::new(-3, 0, 0), IVec3::new(-2, 1, 0)));
+        check!(nav.is_connected(IVec3::new(-3, 0, 4), IVec3::new(-2, 1, 4)));
     }
 
     #[test]
