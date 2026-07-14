@@ -1,0 +1,48 @@
+ -M- -     - - -  
+|# # #|   |# # #| 
+M                 
+|# # #|   |# # #| 
+  M    W W        
+|# # # # # # # #| 
+ - -         - -  
+    D# # # #|     
+      V           
+    D# # # #|     
+ - -         - -  
+|# # # # # # # #| 
+       W W        
+|# # #|   |# # #| 
+                  
+|# # #|   |# # #| 
+ - - -     - - -  
+                  
+~~~~~
+                  
+ # # #     # # #  
+                  
+ # # #     # # #  
+                  
+ # # # # # # # #  
+                  
+     # # # #      
+                  
+     # # # #      
+                  
+ # # # # # # # #  
+                  
+ # # #     # # #  
+                  
+ # # #     # # #  
+                  
+                  
+~~~~~
+~*~*~
+(5,0,0,"Room")={"id":11,"facing":"NegX","evaluation":null,"build_material":5}
+(6,0,0,"Room")={"id":11,"facing":"NegX","evaluation":null,"build_material":5}
+(7,0,0,"Room")={"id":11,"facing":"PosZ","evaluation":null,"build_material":5}
+(7,0,1,"Room")={"id":11,"facing":"PosZ","evaluation":null,"build_material":5}
+(7,0,2,"Room")={"id":11,"facing":"PosZ","evaluation":null,"build_material":5}
+(1,0,0,"Room")={"id":10,"facing":"NegX","evaluation":null,"build_material":5}
+(1,0,2,"Room")={"id":10,"facing":"PosX","evaluation":null,"build_material":5}
+(0,0,1,"Room")={"id":10,"facing":"NegZ","evaluation":null,"build_material":5}
+(3,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":{"at_least":0.5}},"build_material":5}

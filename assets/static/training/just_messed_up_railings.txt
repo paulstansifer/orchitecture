@@ -1,0 +1,47 @@
+   R            
+  R             
+                
+  R             
+ R R            
+  R             
+                
+  R             
+ R R R R R      
+  R             
+    V           
+                
+                
+                
+~~~~~
+   R R          
+  R             
+                
+  R             
+ R R            
+  R  # # #      
+       R        
+  R  # # #    R 
+ R R            
+  R   R R     R 
+     R R R      
+      R R       
+                
+      R         
+~~~~~
+   R R          
+  R             
+                
+  R             
+ R R            
+  R             
+                
+  R             
+ R R            
+                
+                
+                
+                
+                
+~~~~~
+~*~*~
+(2,0,5,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":0.0},"build_material":5}

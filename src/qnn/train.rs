@@ -66,6 +66,32 @@ fn create_artifact_dir(artifact_dir: &str) {
     std::fs::create_dir_all(artifact_dir).unwrap();
 }
 
+fn quintile_histogram(predictions: &[f32]) -> String {
+    if predictions.is_empty() {
+        return "empty".to_string();
+    }
+
+    let min = predictions.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = predictions
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let range = if max > min { max - min } else { 1.0 };
+
+    let mut buckets = [0; 5];
+    for &pred in predictions {
+        let normalized = (pred - min) / range;
+        let bucket = (normalized * 5.0).min(4.0) as usize;
+        buckets[bucket] += 1;
+    }
+
+    let max_count = *buckets.iter().max().unwrap();
+    buckets
+        .iter()
+        .map(|count| (count * 9 / max_count).to_string())
+        .collect()
+}
+
 fn train<B: Backend>() {
     let args = Args::parse();
     let device = B::Device::default();
@@ -148,6 +174,7 @@ fn train<B: Backend>() {
         {
             let (train_data, test_data) = load_data();
             let mut errors: Vec<(f32, String, bool, f32, f32, ScoreConstraint)> = Vec::new();
+            let mut predictions: Vec<f32> = Vec::new();
 
             for idx in 0..train_data.len() {
                 let datum = train_data.get(idx).unwrap();
@@ -166,6 +193,7 @@ fn train<B: Backend>() {
                         goal
                     );
                 }
+                predictions.push(pred);
                 errors.push((
                     constrained_error(pred, goal, datum.constraint),
                     datum.filename.clone(),
@@ -195,6 +223,7 @@ fn train<B: Backend>() {
                         goal
                     );
                 }
+                predictions.push(pred);
                 errors.push((
                     constrained_error(pred, goal, datum.constraint),
                     datum.filename.clone(),
@@ -224,6 +253,9 @@ fn train<B: Backend>() {
                     "  {marker} {filename}: {symbol}{goal:.1}=>{pred:.2} (err {err:.2})\n"
                 );
             }
+
+            let histogram = quintile_histogram(&predictions);
+            score_output += &format!("{metric} score distribution (quintiles): {histogram}\n");
         }
 
         model_trained
