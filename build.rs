@@ -490,17 +490,15 @@ fn warn_unreferenced_scad(buildables: &Path, referenced: &HashSet<PathBuf>) {
 
 // ─── File discovery ───────────────────────────────────────────────────────────
 
+/// Only `structures.autotile` holds mesh-selection rules; other `*.autotile` files (e.g.
+/// `motifs.autotile`) use a different result grammar and aren't mesh manifests.
 fn collect_autotile_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return vec![];
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("autotile"))
-        .collect();
-    paths.sort(); // deterministic order
-    paths
+    let path = dir.join("structures.autotile");
+    if path.exists() {
+        vec![path]
+    } else {
+        vec![]
+    }
 }
 
 fn collect_wings_files(dir: &Path) -> Vec<PathBuf> {

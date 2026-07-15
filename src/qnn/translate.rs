@@ -1,13 +1,15 @@
-use crate::sparse3d::{RelSlot, RelSlotCoord, Sparse3D};
+use crate::autotile::{
+    char_matches_name, collapse_motif_atoms, compile, evaluate_autotile_rules, parse,
+    AutotileOriented, DefectAtom, Motif, MotifAtom, MotifAxis, MotifOccurrence,
+};
+use crate::city::Cell;
+use crate::eorf::{EorfId, EorfInfo};
+use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, SlotCoord, Sparse3D};
 use bevy::math::IVec3;
 use burn::prelude::*;
 use burn::tensor::Float;
 use std::error::Error;
 
-#[cfg(feature = "training")]
-use crate::city::Cell;
-#[cfg(feature = "training")]
-use crate::eorf::EorfInfo;
 #[cfg(feature = "training")]
 use burn::backend::Autodiff;
 #[cfg(feature = "training")]
@@ -464,6 +466,131 @@ where
     }
 
     Ok(voxels)
+}
+
+// ─── Motif visibility translation ─────────────────────────────────────────────
+
+/// Compiled `Motif` rules parsed from `buildables/motifs.autotile`.
+fn motif_rules() -> Vec<AutotileOriented<Motif>> {
+    let src = include_str!("../../buildables/motifs.autotile");
+    let file = parse::<Motif>(src).expect("motifs.autotile parse failed");
+    compile(&file)
+}
+
+/// `'='` matches the anchor's own structure name; other characters use the usual structure-type
+/// predicates. Mirrors `autotile::display`'s `char_matches`.
+fn motif_char_matches(
+    ch: char,
+    id: EorfId,
+    _facing: Facing,
+    anchor_name: &str,
+    names: &[String],
+) -> bool {
+    let name = &names[id.as_usize()];
+    match ch {
+        '=' => name == anchor_name,
+        other => char_matches_name(other, name),
+    }
+}
+
+/// Whether `point` is visible from `vantage`: no opaque obstacle lies strictly between them.
+/// Mirrors the visibility check baked into `sparse3d_to_tensor`'s `.visibility` channel.
+fn point_visible_from(
+    sparse_data: &Sparse3D<Cell>,
+    vantage: RelSlotCoord,
+    point: RelSlotCoord,
+    structures: &[EorfInfo],
+) -> bool {
+    for (t, obstacles) in sparse_data.ray_trace_with_t(vantage, point) {
+        // The endpoints' own contents don't block the view of themselves.
+        if t == 0.0 || t == 1.0 {
+            continue;
+        }
+        let any_transparent = obstacles.iter().any(|obstacle| {
+            let emb = structures[obstacle.id.as_usize()].embedding.to_vec();
+            let [tall, decorative, passable, striated, ..] = emb[..] else {
+                panic!("embedding shorter than expected")
+            };
+            // HACK! Identify walls and floors (see `sparse3d_to_tensor`):
+            let opaque =
+                tall + decorative + passable + striated == 1.0 && (tall == 1.0 || passable == 1.0);
+            let opaque = opaque || decorative == 0.75; // treat windows as opaque too
+            !opaque
+        });
+        if !any_transparent {
+            return false;
+        }
+    }
+    true
+}
+
+/// Every `SlotCoord` a `MotifOccurrence` spans, from `base` to `base + (length - 1)` steps along
+/// its axis (a single point when the axis is `None`).
+fn occurrence_points(occ: &MotifOccurrence) -> impl Iterator<Item = SlotCoord> + '_ {
+    let step = match occ.axis {
+        MotifAxis::X => IVec3::new(1, 0, 0),
+        MotifAxis::Y => IVec3::new(0, 1, 0),
+        MotifAxis::Z => IVec3::new(0, 0, 1),
+        MotifAxis::None => IVec3::ZERO,
+    };
+    let base = occ.base;
+    (0..occ.length).map(move |i| SlotCoord {
+        cube: base.cube + step * i as i32,
+        slot: base.slot,
+    })
+}
+
+/// Runs the Motif autotiler over `sparse_data`, then keeps only the `MotifOccurrence`s and
+/// `DefectAtom`s with at least one point visible from `vantage` (per the raytracer).
+///
+/// TODO: translate the surviving occurrences/defects into whatever representation the QNN
+/// actually consumes.
+pub fn visible_motifs_and_defects(
+    sparse_data: &Sparse3D<Cell>,
+    vantage: RelSlotCoord,
+    structures: &[EorfInfo],
+) -> (Vec<MotifOccurrence>, Vec<DefectAtom>) {
+    let rules = motif_rules();
+    let names: Vec<String> = structures.iter().map(|s| s.name.clone()).collect();
+
+    let mut atoms = Vec::new();
+    for (loc, cell) in sparse_data.iter() {
+        let anchor_name = &names[cell.id.as_usize()];
+        let rel_loc: RelSlotCoord = loc.into();
+        let Some(results) = evaluate_autotile_rules(
+            rel_loc,
+            anchor_name,
+            &rules,
+            |l| sparse_data.get(l).map(|c| (c.id, c.facing)),
+            |ch, id, facing| motif_char_matches(ch, id, facing, anchor_name, &names),
+            |name, id| names[id.as_usize()] == name,
+        ) else {
+            continue;
+        };
+        for motif in results {
+            if matches!(motif, Motif::Discard) {
+                continue;
+            }
+            atoms.push(MotifAtom { motif, loc });
+        }
+    }
+
+    let (occurrences, defects) = collapse_motif_atoms(&atoms);
+
+    let occurrences: Vec<MotifOccurrence> = occurrences
+        .into_iter()
+        .filter(|occ| {
+            occurrence_points(occ)
+                .any(|p| point_visible_from(sparse_data, vantage, p.into(), structures))
+        })
+        .collect();
+
+    let defects: Vec<DefectAtom> = defects
+        .into_iter()
+        .filter(|d| point_visible_from(sparse_data, vantage, d.loc.into(), structures))
+        .collect();
+
+    (occurrences, defects)
 }
 
 #[allow(dead_code)]

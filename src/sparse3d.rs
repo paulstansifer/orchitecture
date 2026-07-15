@@ -275,7 +275,8 @@ impl RelSlotCoord {
         }
     }
 
-    fn get_center(&self) -> (f64, f64, f64) {
+    /// The world-space point at the center of this slot (e.g. a wall's center, not the cube's).
+    pub fn get_center(&self) -> (f64, f64, f64) {
         let base = (
             self.cube.x as f64 + 0.5,
             self.cube.y as f64 + 0.5,

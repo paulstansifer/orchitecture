@@ -1,30 +1,30 @@
-//! Debug overlay: press `X` to toggle a visualization of the QNN voxel
-//! representation (see `qnn/translate.rs`) at the current cursor location,
-//! as if `V` had been pressed at that spot.
+//! Debug overlay: press `X` to toggle a visualization of the Motif autotiler's output (see
+//! `qnn/translate.rs::visible_motifs_and_defects`) at the current cursor location, as if `V`
+//! had been pressed at that spot.
 //!
-//! Each voxel is drawn as a half-sized cube (voxels are twice as wide as the
-//! grid cells they subdivide, so a 0.5-unit cube exactly fills one slot):
-//!   * `.tall` sets the cube's height, scaled from 0.5 (flat) to 1.0 (a full
-//!     grid cell tall).
-//!   * `.passable` sets its alpha, scaled from 1.0 (impassable things are
-//!     fully opaque) to 0.5 (passable things are only half-opaque, so the
-//!     real geometry stays visible underneath).
-//!   * `.decorative`, `.striated`, and `.temporary` become the red, green,
-//!     and blue color channels, respectively.
-//! Voxels the vantage can see as indoor open air (`.visibility == 0.0`,
-//! equivalent to empty space) are skipped entirely; everything else -- real
-//! structure (`.visibility == 0.5`) as well as anything outdoors or occluded
-//! (`.visibility == 1.0`, rendered as a 10%-opaque black cube marking the
-//! edge of what's visible) -- gets a cube.
+//! Defects show up as 0.5-radius red spheres. Motif occurrences show up as 0.5-radius blue
+//! lozenges (a capsule -- a cylinder with hemispherical caps) spanning their length, oriented
+//! along the occurrence's axis; a length-1 (or axis-less) occurrence still renders as a
+//! sphere rather than vanishing, since the capsule's own end caps give it a minimum size.
+//!
+//! This overlay previously visualized the QNN voxel representation directly (see
+//! `spawn_debug_voxels`, kept below as dead code for now).
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+#[allow(unused_imports)]
 use burn::prelude::*;
 
+use crate::autotile::{DefectAtom, MotifAxis, MotifOccurrence};
 use crate::camera::GameCamera;
-use crate::city::{Cell, ConstructedCity};
+#[allow(unused_imports)]
+use crate::city::Cell;
+use crate::city::ConstructedCity;
 use crate::input::{cursor_world_pos, BuildState};
+use crate::qnn::translate::visible_motifs_and_defects;
+#[allow(unused_imports)]
 use crate::qnn::translate::{sparse3d_to_tensor, EMBEDDING_SIZE};
+use crate::sparse3d::{RelSlot, RelSlotCoord, SlotCoord};
 
 // Only used to read back voxel values on the CPU; no model inference happens here.
 type DebugBackend = burn::backend::NdArray<f32>;
@@ -82,7 +82,7 @@ pub fn debug_voxels_system(
     };
     let center = cursor_pos.round().as_ivec3();
 
-    spawn_debug_voxels(
+    spawn_debug_motifs(
         &mut commands,
         &mut meshes,
         &mut materials,
@@ -91,6 +91,109 @@ pub fn debug_voxels_system(
     );
 }
 
+/// The world-space center of a slot (a wall's center, not its cube's).
+fn slot_world_center(loc: SlotCoord) -> Vec3 {
+    let rel: RelSlotCoord = loc.into();
+    let (x, y, z) = rel.get_center();
+    Vec3::new(x as f32, y as f32, z as f32)
+}
+
+fn axis_unit_vector(axis: MotifAxis) -> Vec3 {
+    match axis {
+        // Arbitrary: an axis-less occurrence always has length 1, so it renders as a sphere
+        // regardless of orientation.
+        MotifAxis::None => Vec3::Y,
+        MotifAxis::X => Vec3::X,
+        MotifAxis::Y => Vec3::Y,
+        MotifAxis::Z => Vec3::Z,
+    }
+}
+
+/// Spawns a 0.5-radius red sphere for each defect and a 0.5-radius blue lozenge (a capsule --
+/// a cylinder with hemispherical caps) spanning each motif occurrence's length. A capsule's
+/// caps alone give it a minimum size, so a length-1 (or axis-less) occurrence still shows up as
+/// a sphere rather than vanishing.
+fn spawn_debug_motifs(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    constructed: &ConstructedCity,
+    center: IVec3,
+) {
+    let vantage = RelSlotCoord::new(center.x, center.y, center.z, RelSlot::Room);
+    let (occurrences, defects) =
+        visible_motifs_and_defects(&constructed.contents, vantage, &constructed.eorfs);
+
+    let red = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.0, 0.0),
+        unlit: true,
+        ..Default::default()
+    });
+    let blue = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.0, 0.0, 1.0),
+        unlit: true,
+        ..Default::default()
+    });
+
+    let sphere_mesh = meshes.add(Sphere::new(0.5));
+
+    for defect in &defects {
+        spawn_defect(commands, &sphere_mesh, &red, defect);
+    }
+
+    for occ in &occurrences {
+        spawn_motif_occurrence(commands, meshes, &blue, occ);
+    }
+
+    println!(
+        "debug motifs: {} occurrence(s), {} defect(s)",
+        occurrences.len(),
+        defects.len()
+    );
+}
+
+fn spawn_defect(
+    commands: &mut Commands,
+    sphere_mesh: &Handle<Mesh>,
+    material: &Handle<StandardMaterial>,
+    defect: &DefectAtom,
+) {
+    commands.spawn((
+        Mesh3d(sphere_mesh.clone()),
+        MeshMaterial3d(material.clone()),
+        Transform::from_translation(slot_world_center(defect.loc)),
+        DebugVoxelMarker,
+    ));
+}
+
+fn spawn_motif_occurrence(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    material: &Handle<StandardMaterial>,
+    occ: &MotifOccurrence,
+) {
+    let dir = axis_unit_vector(occ.axis);
+    let base_center = slot_world_center(occ.base);
+    // Atom centers are 1 world unit apart along the axis; the run's midpoint sits half of
+    // that (length - 1) span from the first atom's center.
+    let mid = base_center + dir * ((occ.length as f32 - 1.0) / 2.0);
+
+    // The run's total physical extent is `length` units (one per atom); the capsule's own caps
+    // already contribute 1 unit (its 0.5 radius on each end), so the cylindrical part between
+    // them makes up the rest. This is never negative: `length` is always at least 1.
+    let cylinder_len = (occ.length as f32 - 1.0).max(0.0);
+    let mesh = meshes.add(Capsule3d::new(0.5, cylinder_len));
+    let rotation = Quat::from_rotation_arc(Vec3::Y, dir);
+
+    commands.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(material.clone()),
+        Transform::from_translation(mid).with_rotation(rotation),
+        DebugVoxelMarker,
+    ));
+}
+
+#[allow(dead_code)]
 fn spawn_debug_voxels(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
