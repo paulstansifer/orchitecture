@@ -19,7 +19,7 @@ use rand::rngs::StdRng;
 #[cfg(feature = "training")]
 use std::collections::HashMap;
 
-pub const EMBEDDING_SIZE: usize = 5 + 1; // Keep this in sync with structure.rs (+ 1 for "indoors")
+pub const EMBEDDING_SIZE: usize = 5 + 1; // Keep this in sync with structure.rs (+ 1 for "visibility")
 
 /// How to interpret a score target during training.
 #[cfg(feature = "training")]
@@ -380,6 +380,13 @@ where
         RelSlot::Room,
     );
 
+    // The last channel, `.visibility`, distinguishes indoor open air (0.0) that the
+    // vantage can see, from regular structure (0.5), from anything not reachable from
+    // the vantage without crossing a wall or window (1.0) -- which lumps together
+    // outdoor open air and fully-occluded space, since the window-opacity hack below
+    // already treats "seen through a window" the same as "blocked".
+    let visibility_channel = EMBEDDING_SIZE - 1;
+
     for grid_y in min_coord.y..=max_coord.y {
         for grid_x in min_coord.x..=max_coord.x {
             for grid_z in min_coord.z..=max_coord.z {
@@ -420,12 +427,19 @@ where
                     }
 
                     if view_blocked {
+                        let voxel_slice = grid_coord_to_voxel_coord(
+                            grid_pos,
+                            min_coord,
+                            slot,
+                            visibility_channel,
+                        );
+                        voxels = voxels.slice_fill(voxel_slice, 1.0);
                         continue;
                     }
 
                     if let Some(cell) = sparse_data.get(slot_location) {
                         let mut emb = embedding(cell);
-                        emb.push(1.0); // Window are opaque: if we can see it at all, it's indoors.
+                        emb.push(0.5); // .visibility: regular structure.
 
                         for channel in 0..EMBEDDING_SIZE {
                             let voxel_slice =
@@ -433,6 +447,9 @@ where
                             voxels = voxels.slice_fill(voxel_slice, emb[channel]);
                         }
                     }
+                    // Else: visible open air with nothing placed there, reachable from the
+                    // vantage without crossing a wall or window -- indoor open air.
+                    // `.visibility` stays at its zero default.
                 }
             }
         }
