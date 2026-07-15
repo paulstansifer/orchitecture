@@ -14,7 +14,7 @@ use crate::sparse3d::{Facing, SlotCoord};
 use super::meshes::{AutotileHandles, AutotileRules};
 use super::parser::char_matches_name;
 use super::{
-    evaluate_autotile_rules, slot_to_unoriented, spec_stem, AutotileResult, MeshSpec,
+    evaluate_autotile_rules, slot_to_unoriented, spec_stem, AutotiledMeshes, MeshSpec,
     UnorientedSlot,
 };
 
@@ -65,13 +65,13 @@ fn spawn_entities_from_results(
     autotile_handles: &AutotileHandles,
     loc: SlotCoord,
     facing: Facing,
-    results: &[AutotileResult],
+    results: &[AutotiledMeshes],
     mut spawn_one: impl FnMut(&mut Commands, SceneRoot, Transform) -> Entity,
 ) -> Vec<Entity> {
     let unoriented = slot_to_unoriented(loc.slot);
     let mut entities = Vec::new();
     for result in results {
-        if let AutotileResult::Mesh { spec, .. } = result {
+        if let AutotiledMeshes::Mesh { spec, .. } = result {
             let stem = spec_stem(spec, unoriented);
             if let Some((main_handle, _)) = autotile_handles.handles.get(&stem) {
                 let transform = autotile_transform(loc, facing, spec);
@@ -90,9 +90,9 @@ fn apply_autotile_updates(
     commands: &mut Commands,
     autotile_handles: &AutotileHandles,
     structure_list: &EorfList,
-    updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)>,
+    updates: Vec<(SlotCoord, Cell, Vec<AutotiledMeshes>)>,
     stale_locs: Vec<SlotCoord>,
-    results_cache: &mut HashMap<SlotCoord, Vec<AutotileResult>>,
+    results_cache: &mut HashMap<SlotCoord, Vec<AutotiledMeshes>>,
     entity_cache: &mut HashMap<SlotCoord, Vec<Entity>>,
     use_fallback: bool,
     make_entity: impl Fn(&mut Commands, SceneRoot, Transform, SlotCoord) -> Entity,
@@ -146,7 +146,7 @@ pub fn autotile_update_system(
         .collect();
 
     // Real cells.
-    let real_updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)> = constructed
+    let real_updates: Vec<(SlotCoord, Cell, Vec<AutotiledMeshes>)> = constructed
         .contents
         .iter()
         .filter_map(|(loc, cell)| {
@@ -182,7 +182,7 @@ pub fn autotile_update_system(
         })
         .collect();
 
-    let proposal_updates: Vec<(SlotCoord, Cell, Vec<AutotileResult>)> = proposed_additions
+    let proposal_updates: Vec<(SlotCoord, Cell, Vec<AutotiledMeshes>)> = proposed_additions
         .into_iter()
         .map(|(loc, cell)| {
             let anchor = &struct_names[cell.id.as_usize()];

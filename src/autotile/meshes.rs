@@ -4,10 +4,10 @@ use bevy::asset::{AssetServer, Handle};
 use bevy::prelude::{Commands, Res, Resource};
 use bevy::scene::Scene;
 
-use super::{compile, parse, spec_stem, AutotileOriented, AutotileResult};
+use super::{compile, parse, spec_stem, AutotileOriented, AutotiledMeshes};
 
 #[derive(Resource)]
-pub struct AutotileRules(pub Vec<AutotileOriented>);
+pub struct AutotileRules(pub Vec<AutotileOriented<AutotiledMeshes>>);
 
 #[derive(Resource)]
 pub struct AutotileHandles {
@@ -38,7 +38,7 @@ pub fn load_autotile_handles(asset_server: Res<AssetServer>, mut commands: Comma
     let mut handles: HashMap<String, (Handle<Scene>, Option<Handle<Scene>>)> = HashMap::new();
     for rule in &oriented {
         for case in &rule.cases {
-            if let AutotileResult::Mesh { spec, .. } = &case.result {
+            if let AutotiledMeshes::Mesh { spec, .. } = &case.result {
                 let stem = spec_stem(spec, rule.slot);
                 if handles.contains_key(&stem) {
                     continue;

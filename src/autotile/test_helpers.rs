@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use super::{AutotileResult, MeshSpec};
+use super::{AutotiledMeshes, MeshSpec};
 use crate::city::Cell;
 use crate::eorf::EorfId;
 use crate::sparse3d::Facing;
@@ -77,18 +77,18 @@ pub fn col_cell() -> Cell {
 
 // ── Mesh result extraction helpers ───────────────────────────────────────────
 
-pub fn mesh_rotation(r: &AutotileResult) -> i32 {
+pub fn mesh_rotation(r: &AutotiledMeshes) -> i32 {
     match r {
-        AutotileResult::Mesh { spec, .. } => spec.outer_rotation(),
+        AutotiledMeshes::Mesh { spec, .. } => spec.outer_rotation(),
         other => panic!("expected mesh, got {other:?}"),
     }
 }
 
-pub fn mesh_rotations(results: &[&AutotileResult]) -> Vec<i32> {
+pub fn mesh_rotations(results: &[&AutotiledMeshes]) -> Vec<i32> {
     let mut rs: Vec<i32> = results
         .iter()
         .map(|r| match r {
-            AutotileResult::Mesh { spec, .. } => spec.outer_rotation(),
+            AutotiledMeshes::Mesh { spec, .. } => spec.outer_rotation(),
             other => panic!("expected mesh, got {other:?}"),
         })
         .collect();

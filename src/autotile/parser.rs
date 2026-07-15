@@ -138,9 +138,186 @@ impl MeshSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AutotileResult {
+pub enum AutotiledMeshes {
     None,
     Mesh { spec: MeshSpec },
+}
+
+/// Which of a compiled rule's two orientation lists (see `AutotileOriented`) a case belongs
+/// to. Only `AutotiledMeshes` cares about this — it reproduces a rotation offset needed to
+/// line mesh assets up with `wall_grid::cell_transform`. Other result kinds can ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseList {
+    Base,
+    Plus90,
+}
+
+/// The kind of value an autotile rule case produces. Implemented by `AutotiledMeshes` (mesh
+/// selection, the original use of this file format) and `Motif` (nonmundanity annotations).
+pub trait AutotileResultKind: Clone + std::fmt::Debug {
+    /// Parse the text after `-->`, with any `(multi)` prefix already stripped. `lineno` is the
+    /// 1-based source line of the `-->` line, used by `Motif` to derive a unique id.
+    /// `pattern_type` is the anchor pattern type of the case this result belongs to (or `H` for
+    /// an else-case, which has no pattern); `Motif` uses it to resolve its axis to a concrete
+    /// world axis (see `Pattern::anchor_pattern_type`).
+    fn parse_result(s: &str, lineno: usize, pattern_type: PatternType) -> anyhow::Result<Self>;
+
+    /// Rotate this result to match a case whose checks were rotated `checks_rot` quarter-turns
+    /// (CW) relative to the pattern as authored, for the given case list.
+    fn rotate(&self, checks_rot: u8, list: CaseList) -> Self;
+
+    /// Placeholder to emit when a rule matches no case (and has no else case), so callers can
+    /// tell "the rule applied but chose nothing" apart from "no rule applies at all". `None`
+    /// means don't emit a placeholder in that situation.
+    fn no_match_placeholder() -> Option<Self> {
+        None
+    }
+}
+
+impl AutotileResultKind for AutotiledMeshes {
+    fn parse_result(s: &str, _lineno: usize, _pattern_type: PatternType) -> anyhow::Result<Self> {
+        if s == "none" {
+            return Ok(AutotiledMeshes::None);
+        }
+        let spec = parse_mesh_spec(s).with_context(|| format!("invalid result: {s:?}"))?;
+        Ok(AutotiledMeshes::Mesh { spec })
+    }
+
+    fn rotate(&self, checks_rot: u8, list: CaseList) -> Self {
+        let n = match list {
+            CaseList::Base => checks_rot as i32 + 2,
+            CaseList::Plus90 => checks_rot as i32 - 1,
+        };
+        match self {
+            AutotiledMeshes::None => AutotiledMeshes::None,
+            AutotiledMeshes::Mesh { spec } => AutotiledMeshes::Mesh {
+                spec: spec.clone().rotate(n * 90),
+            },
+        }
+    }
+
+    fn no_match_placeholder() -> Option<Self> {
+        Some(AutotiledMeshes::None)
+    }
+}
+
+// ─── Motifs ───────────────────────────────────────────────────────────────────
+
+/// World cube axis along which adjacent `MotifAtom`s sharing a `MotifId` collapse into a single
+/// `MotifOccurrence`. `None` means the motif never collapses with a neighbor.
+///
+/// Authors write the axis relative to the pattern (`-` for the pattern's column axis, `|` for
+/// its row axis, `.` for the axis perpendicular to the pattern's own plane); `Motif::parse_result`
+/// resolves that immediately to a concrete world axis using the pattern's family: the column
+/// axis is always X; the row axis is Z for the horizontal (H) family or Y for the vertical (V)
+/// family; and the perpendicular axis is therefore Y for H or Z for V (see `grid_pos_to_3d`). A
+/// 90° world rotation (applied while compiling orientations) swaps X and Z, but never touches Y,
+/// so `AutotileResultKind::rotate` only needs to swap `X`/`Z`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotifAxis {
+    None,
+    X,
+    Y,
+    Z,
+}
+
+impl MotifAxis {
+    fn rotated(self) -> Self {
+        match self {
+            MotifAxis::X => MotifAxis::Z,
+            MotifAxis::Z => MotifAxis::X,
+            other => other,
+        }
+    }
+}
+
+/// Uniquely identifies a `Motif`, derived from the source line number of its `-->` result line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MotifId(pub usize);
+
+/// The result of a Motif rule case: either a `defect`, a `discard` (matches but produces
+/// nothing — neither a `MotifOccurrence` nor a `DefectAtom`), or a nonmundanity annotation of
+/// the form `<axis> ok <score>` (e.g. `- ok 0.85`), where `<axis>` is one of `x` (no axis), `-`
+/// (column axis), `|` (row axis), or `.` (the axis perpendicular to the pattern's plane).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Motif {
+    Discard,
+    Defect {
+        id: MotifId,
+    },
+    Nonmundane {
+        axis: MotifAxis,
+        nonmundanity: f64,
+        id: MotifId,
+    },
+}
+
+impl AutotileResultKind for Motif {
+    fn parse_result(s: &str, lineno: usize, pattern_type: PatternType) -> anyhow::Result<Self> {
+        let id = MotifId(lineno);
+        if s == "discard" {
+            return Ok(Motif::Discard);
+        }
+        if s == "defect" {
+            return Ok(Motif::Defect { id });
+        }
+        let mut chars = s.chars();
+        let axis_ch = chars
+            .next()
+            .with_context(|| format!("empty motif result: {s:?}"))?;
+        let axis = match axis_ch {
+            'x' => MotifAxis::None,
+            '-' => MotifAxis::X,
+            // The row axis (see `grid_pos_to_3d`): Z for the H family, Y for the V family. Not
+            // to be confused with `layer_axis`, which is the (different) multi-layer stacking
+            // axis and happens to be the opposite one for each family.
+            '|' => match pattern_type {
+                PatternType::H | PatternType::HNarrow => MotifAxis::Z,
+                PatternType::V | PatternType::VNarrow => MotifAxis::Y,
+            },
+            // The axis perpendicular to the pattern's own plane (i.e. neither the column nor
+            // the row axis) -- the one you'd be looking along to view the pattern face-on: Y
+            // for the H family, Z for the V family.
+            '.' => match pattern_type {
+                PatternType::H | PatternType::HNarrow => MotifAxis::Y,
+                PatternType::V | PatternType::VNarrow => MotifAxis::Z,
+            },
+            other => bail!("invalid motif result {s:?}: unknown axis {other:?}"),
+        };
+        let rest = chars
+            .as_str()
+            .strip_prefix(" ok ")
+            .with_context(|| format!("invalid motif result {s:?}: expected \" ok \" after axis"))?;
+        let nonmundanity: f64 = rest
+            .trim()
+            .parse()
+            .with_context(|| format!("invalid motif result {s:?}: bad nonmundanity score"))?;
+        Ok(Motif::Nonmundane {
+            axis,
+            nonmundanity,
+            id,
+        })
+    }
+
+    fn rotate(&self, checks_rot: u8, _list: CaseList) -> Self {
+        match self {
+            Motif::Discard => Motif::Discard,
+            Motif::Defect { id } => Motif::Defect { id: *id },
+            Motif::Nonmundane {
+                axis,
+                nonmundanity,
+                id,
+            } => Motif::Nonmundane {
+                axis: if checks_rot % 2 == 1 {
+                    axis.rotated()
+                } else {
+                    *axis
+                },
+                nonmundanity: *nonmundanity,
+                id: *id,
+            },
+        }
+    }
 }
 
 // ─── Parsed representation ───────────────────────────────────────────────────
@@ -281,9 +458,9 @@ fn grid_pos_to_3d(pt: PatternType, col: usize, row: usize) -> (i32, i32, i32, Au
 }
 
 #[derive(Debug, Clone)]
-pub struct PatternCase {
+pub struct PatternCase<R> {
     pub pattern: Option<Pattern>,
-    pub result: AutotileResult,
+    pub result: R,
     /// `(multi)`: when one orientation of this case matches, emit the mesh for *every*
     /// matching orientation (rather than just the first). Cases further down are still
     /// skipped once this case matches.
@@ -291,15 +468,15 @@ pub struct PatternCase {
 }
 
 #[derive(Debug, Clone)]
-pub struct AutotileRule {
+pub struct AutotileRule<R> {
     pub structure_name: String,
     pub slot: UnorientedSlot,
-    pub cases: Vec<PatternCase>,
+    pub cases: Vec<PatternCase<R>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct AutotileFile {
-    pub rules: Vec<AutotileRule>,
+pub struct AutotileFile<R> {
+    pub rules: Vec<AutotileRule<R>>,
 }
 
 // ─── Parser ───────────────────────────────────────────────────────────────────
@@ -312,7 +489,7 @@ fn strip_comment(line: &str) -> &str {
     }
 }
 
-pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
+pub fn parse<R: AutotileResultKind>(input: &str) -> anyhow::Result<AutotileFile<R>> {
     let lines: Vec<&str> = input.lines().collect();
     let mut i = 0;
     let mut rules = Vec::new();
@@ -337,7 +514,7 @@ pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
                 other => bail!("line {lineno}: invalid slot: {other:?}"),
             };
             i += 1;
-            let (cases, new_i) = parse_cases(&lines, i, slot)?;
+            let (cases, new_i) = parse_cases::<R>(&lines, i, slot)?;
             i = new_i;
             rules.push(AutotileRule {
                 structure_name,
@@ -352,11 +529,11 @@ pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
     Ok(AutotileFile { rules })
 }
 
-fn parse_cases(
+fn parse_cases<R: AutotileResultKind>(
     lines: &[&str],
     mut i: usize,
     slot: UnorientedSlot,
-) -> anyhow::Result<(Vec<PatternCase>, usize)> {
+) -> anyhow::Result<(Vec<PatternCase<R>>, usize)> {
     let mut cases = Vec::new();
 
     loop {
@@ -374,8 +551,9 @@ fn parse_cases(
         }
 
         if let Some(rest) = line.strip_prefix("-->") {
-            let (multi, result) =
-                parse_result(rest.trim()).with_context(|| format!("line {lineno}"))?;
+            // An else-case has no pattern (and thus no meaningful axis family); default to `H`.
+            let (multi, result) = parse_result_line::<R>(rest.trim(), lineno, PatternType::H)
+                .with_context(|| format!("line {lineno}"))?;
             cases.push(PatternCase {
                 pattern: None,
                 result,
@@ -402,8 +580,9 @@ fn parse_cases(
             if let Some(rest) = pline.strip_prefix("-->") {
                 let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations)
                     .with_context(|| format!("line {plineno}"))?;
-                let (multi, result) =
-                    parse_result(rest.trim()).with_context(|| format!("line {plineno}"))?;
+                let pattern_type = pattern.anchor_pattern_type();
+                let (multi, result) = parse_result_line::<R>(rest.trim(), plineno, pattern_type)
+                    .with_context(|| format!("line {plineno}"))?;
                 cases.push(PatternCase {
                     pattern: Some(pattern),
                     result,
@@ -708,18 +887,20 @@ fn is_dead_slot(pt: &PatternType, col: usize, row: usize) -> bool {
 // ─── Mesh spec parser ─────────────────────────────────────────────────────────
 
 /// Parse a result line, returning `(multi, result)` where `multi` is set by a leading
-/// `(multi)` marker (see [`PatternCase::multi`]).
-fn parse_result(s: &str) -> anyhow::Result<(bool, AutotileResult)> {
-    if s == "none" {
-        return Ok((false, AutotileResult::None));
-    }
+/// `(multi)` marker (see [`PatternCase::multi`]); the rest is delegated to `R::parse_result`.
+fn parse_result_line<R: AutotileResultKind>(
+    s: &str,
+    lineno: usize,
+    pattern_type: PatternType,
+) -> anyhow::Result<(bool, R)> {
     let (multi, rest) = if let Some(r) = s.strip_prefix("(multi)").map(str::trim_start) {
         (true, r)
     } else {
         (false, s)
     };
-    let spec = parse_mesh_spec(rest).with_context(|| format!("invalid result: {s:?}"))?;
-    Ok((multi, AutotileResult::Mesh { spec }))
+    let result = R::parse_result(rest, lineno, pattern_type)
+        .with_context(|| format!("invalid result: {s:?}"))?;
+    Ok((multi, result))
 }
 
 /// Recursive-descent parser for mesh specs.
@@ -936,14 +1117,14 @@ mod tests {
 == wall: wall ==
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         check!(file.rules.len() == 1);
         let rule = &file.rules[0];
         check!(rule.structure_name == "wall");
         check!(rule.slot == UnorientedSlot::Wall);
         check!(rule.cases.len() == 1);
         check!(rule.cases[0].pattern.is_none());
-        check!(rule.cases[0].result == AutotileResult::None);
+        check!(rule.cases[0].result == AutotiledMeshes::None);
     }
 
     #[test]
@@ -954,7 +1135,7 @@ H:
  . @ .
 --> straight
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let rule = &file.rules[0];
         check!(rule.cases.len() == 1);
         let case = &rule.cases[0];
@@ -1022,20 +1203,20 @@ H:
 --> (multi) mesh_a
 --> mesh_b
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let rule = &file.rules[0];
         check!(rule.cases.len() == 2);
         check!(rule.cases[0].multi == true);
         check!(
             rule.cases[0].result
-                == AutotileResult::Mesh {
+                == AutotiledMeshes::Mesh {
                     spec: atom("mesh_a")
                 }
         );
         check!(rule.cases[1].multi == false);
         check!(
             rule.cases[1].result
-                == AutotileResult::Mesh {
+                == AutotiledMeshes::Mesh {
                     spec: atom("mesh_b")
                 }
         );
@@ -1055,7 +1236,7 @@ H:
   .
 --> wall_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         let checks = pat.relative_checks();
         let north = AutotileRelSlotOffset {
@@ -1082,7 +1263,7 @@ H:
 == railing: wall ==
 --> mesh_b
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         check!(file.rules.len() == 2);
         check!(file.rules[0].structure_name == "wall");
         check!(file.rules[1].structure_name == "railing");
@@ -1098,7 +1279,7 @@ V:
 --> rug_with_room
 --> rug_bare
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         check!(file.rules.len() == 1);
         let rule = &file.rules[0];
         check!(rule.structure_name == "rug");
@@ -1137,7 +1318,7 @@ V narrow:
  W
 --> wall_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers[pat.at_layer].pattern_type == PatternType::VNarrow);
         // '@' wall at cube (0,-1,0); 'W' above at (0,0,0) → +Y; 'W' below at (0,-2,0) → -Y.
@@ -1166,7 +1347,7 @@ V narrow:
  @
 --> mesh
 ";
-        check!(parse(input).is_err());
+        check!(parse::<AutotiledMeshes>(input).is_err());
     }
 
     /// `H narrow` is floor-anchored: floors tiling horizontally (XZ plane).
@@ -1178,7 +1359,7 @@ H narrow:
  F @ F
 --> floor_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers[pat.at_layer].pattern_type == PatternType::HNarrow);
         // '@' floor at cube (1,0,0); 'F' west at (0,0,0) → -X; 'F' east at (2,0,0) → +X.
@@ -1211,7 +1392,7 @@ H narrow:
   W
 --> mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers[pat.at_layer].pattern_type == PatternType::HNarrow);
         let checks = pat.relative_checks();
@@ -1253,7 +1434,7 @@ H narrow:
  @
 --> mesh
 ";
-        check!(parse(input).is_err());
+        check!(parse::<AutotiledMeshes>(input).is_err());
     }
 
     // ── Multi-layer rules ─────────────────────────────────────────────────────
@@ -1267,7 +1448,7 @@ H narrow:
 |=|@|
 --> stacked
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers.len() == 2);
         check!(pat.layers[0].t == 0);
@@ -1293,7 +1474,7 @@ H narrow:
 |=|F|@|
 --> stacked
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers.len() == 3);
         check!(pat.layers[1].t == 0); // narrow shares the upper regular's coord
@@ -1324,7 +1505,7 @@ H narrow:
 |=|W|@|
 --> stacked
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers.len() == 3);
         check!(pat.layers[0].t == 0);
@@ -1356,7 +1537,7 @@ H narrow:
 |@|=|
 --> m
 ";
-        check!(parse(input).is_err());
+        check!(parse::<AutotiledMeshes>(input).is_err());
     }
 
     /// Consecutive narrow layers are allowed (e.g. stacked floor-anchored roofs); each
@@ -1369,7 +1550,7 @@ H narrow:
 | @ | F |
 --> stacked
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers.len() == 2);
         check!(pat.layers[0].t == 0);
@@ -1398,7 +1579,7 @@ H: 1=stairs:90
  @1
 --> stair_railing:90
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.annotations.len() == 1);
         let ann = pat.annotations.get(&'1').unwrap();
@@ -1415,7 +1596,7 @@ H: 1=railing
  @1
 --> railing_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         let ann = pat.annotations.get(&'1').unwrap();
         check!(ann.name == "railing");
@@ -1431,7 +1612,7 @@ H: 1=stairs:90 2=stairs:0
  @1
 --> stair_railing:90
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.annotations.len() == 2);
         check!(pat.annotations.get(&'1').unwrap().orientation == Some(90));
@@ -1490,8 +1671,168 @@ H:
  @
 --> mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.annotations.is_empty());
+    }
+
+    // ── Motif parsing ─────────────────────────────────────────────────────────
+
+    /// `-` is always the column axis (X); `|` is the row axis, which is Z for the H family.
+    #[test]
+    fn motif_row_axis_is_z_for_h_family() {
+        let input = "\
+== column: wall ==
+H:
+ @
+--> | ok 1.0
+";
+        let file = parse::<Motif>(input).unwrap();
+        let result = &file.rules[0].cases[0].result;
+        check!(
+            matches!(
+                result,
+                Motif::Nonmundane {
+                    axis: MotifAxis::Z,
+                    ..
+                }
+            ),
+            "expected Z axis, got {result:?}"
+        );
+    }
+
+    /// `|` is the row axis, which is Y (vertical) for the V family.
+    #[test]
+    fn motif_row_axis_is_y_for_v_family() {
+        let input = "\
+== column: wall ==
+V:
+ @
+--> | ok 1.0
+";
+        let file = parse::<Motif>(input).unwrap();
+        let result = &file.rules[0].cases[0].result;
+        check!(
+            matches!(
+                result,
+                Motif::Nonmundane {
+                    axis: MotifAxis::Y,
+                    ..
+                }
+            ),
+            "expected Y axis, got {result:?}"
+        );
+    }
+
+    /// `-` (column axis, X) is unaffected by pattern family.
+    #[test]
+    fn motif_column_axis_is_x_for_both_families() {
+        let h = "\
+== column: wall ==
+H:
+ @
+--> - ok 1.0
+";
+        let v = "\
+== column: wall ==
+V:
+ @
+--> - ok 1.0
+";
+        for input in [h, v] {
+            let file = parse::<Motif>(input).unwrap();
+            let result = &file.rules[0].cases[0].result;
+            check!(
+                matches!(
+                    result,
+                    Motif::Nonmundane {
+                        axis: MotifAxis::X,
+                        ..
+                    }
+                ),
+                "expected X axis, got {result:?}"
+            );
+        }
+    }
+
+    /// `.` is the axis perpendicular to the pattern's plane: Y (vertical) for the H family.
+    #[test]
+    fn motif_perpendicular_axis_is_y_for_h_family() {
+        let input = "\
+== column: wall ==
+H:
+ @
+--> . ok 1.0
+";
+        let file = parse::<Motif>(input).unwrap();
+        let result = &file.rules[0].cases[0].result;
+        check!(
+            matches!(
+                result,
+                Motif::Nonmundane {
+                    axis: MotifAxis::Y,
+                    ..
+                }
+            ),
+            "expected Y axis, got {result:?}"
+        );
+    }
+
+    /// `.` is the axis perpendicular to the pattern's plane: Z for the V family.
+    #[test]
+    fn motif_perpendicular_axis_is_z_for_v_family() {
+        let input = "\
+== column: wall ==
+V:
+ @
+--> . ok 1.0
+";
+        let file = parse::<Motif>(input).unwrap();
+        let result = &file.rules[0].cases[0].result;
+        check!(
+            matches!(
+                result,
+                Motif::Nonmundane {
+                    axis: MotifAxis::Z,
+                    ..
+                }
+            ),
+            "expected Z axis, got {result:?}"
+        );
+    }
+
+    /// `x` means no axis at all (never collapses with a neighbor).
+    #[test]
+    fn motif_x_means_no_axis() {
+        let input = "\
+== column: wall ==
+H:
+ @
+--> x ok 1.0
+";
+        let file = parse::<Motif>(input).unwrap();
+        let result = &file.rules[0].cases[0].result;
+        check!(
+            matches!(
+                result,
+                Motif::Nonmundane {
+                    axis: MotifAxis::None,
+                    ..
+                }
+            ),
+            "expected no axis, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn motif_discard_parses_and_rotates_to_itself() {
+        let input = "\
+== column: wall ==
+H:
+ @ =
+--> discard
+";
+        let file = parse::<Motif>(input).unwrap();
+        check!(file.rules[0].cases[0].result == Motif::Discard);
     }
 }

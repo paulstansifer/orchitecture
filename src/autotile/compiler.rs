@@ -27,11 +27,11 @@ pub enum Condition {
 }
 
 #[derive(Debug, Clone)]
-pub struct OrientedCase {
+pub struct OrientedCase<R> {
     pub pattern_type: PatternType,
     /// Non-wildcard checks relative to @ (the "anchor"). Empty = else/fallback case.
     pub checks: Vec<Condition>,
-    pub result: AutotileResult,
+    pub result: R,
     /// Labeled character → compiled annotation (empty when the pattern has no annotations).
     pub char_annotations: HashMap<char, AnnotatedMatcher>,
     /// Index of the source (parser) case this orientation was expanded from. All orientations
@@ -43,14 +43,14 @@ pub struct OrientedCase {
 }
 
 #[derive(Debug, Clone)]
-pub struct AutotileOriented {
+pub struct AutotileOriented<R> {
     pub structure_name: String,
     pub slot: UnorientedSlot,
     /// Cases in priority order; else case (empty checks) is last.
-    pub cases: Vec<OrientedCase>,
+    pub cases: Vec<OrientedCase<R>>,
     // If `slot` is Wall, this will be 90-degree-rotated versions of `cases`.
     // Otherwise, it'll be empty
-    pub cases_plus_90: Vec<OrientedCase>,
+    pub cases_plus_90: Vec<OrientedCase<R>>,
 }
 
 // ─── Rotation helpers ─────────────────────────────────────────────────────────
@@ -163,23 +163,14 @@ fn rotate_annotations(
         .collect()
 }
 
-fn rotate_result(result: &AutotileResult, rot: u8) -> AutotileResult {
-    match result {
-        AutotileResult::None => AutotileResult::None,
-        AutotileResult::Mesh { spec } => AutotileResult::Mesh {
-            spec: spec.clone().rotate(rot as i32 * 90),
-        },
-    }
-}
-
 // ─── Compiler ────────────────────────────────────────────────────────────────
 
-pub fn compile(file: &AutotileFile) -> Vec<AutotileOriented> {
+pub fn compile<R: AutotileResultKind>(file: &AutotileFile<R>) -> Vec<AutotileOriented<R>> {
     file.rules.iter().map(compile_rule).collect()
 }
 
 /// Extract all mesh names (stems) from the compiled rules, organized by structure name.
-pub fn structure_to_meshes(file: &AutotileFile) -> HashMap<String, Vec<String>> {
+pub fn structure_to_meshes(file: &AutotileFile<AutotiledMeshes>) -> HashMap<String, Vec<String>> {
     let mut mapping: HashMap<String, Vec<String>> = HashMap::new();
 
     for rule in &file.rules {
@@ -187,7 +178,7 @@ pub fn structure_to_meshes(file: &AutotileFile) -> HashMap<String, Vec<String>> 
         let meshes = mapping.entry(structure_name).or_insert_with(Vec::new);
 
         for case in &rule.cases {
-            if let AutotileResult::Mesh { spec } = &case.result {
+            if let AutotiledMeshes::Mesh { spec } = &case.result {
                 let mesh_name = spec_stem(spec, rule.slot);
                 if !meshes.contains(&mesh_name) {
                     meshes.push(mesh_name);
@@ -202,7 +193,7 @@ pub fn structure_to_meshes(file: &AutotileFile) -> HashMap<String, Vec<String>> 
 /// Generate structure_categories.json, mapping all mesh names (both standalone and
 /// from autotile rules) to their category (elements or furniture).
 pub fn generate_structure_categories_json(
-    file: &AutotileFile,
+    file: &AutotileFile<AutotiledMeshes>,
     elements: &[StructureInfo],
     furniture: &[StructureInfo],
 ) -> String {
@@ -255,7 +246,7 @@ pub fn generate_structure_categories_json(
     json
 }
 
-pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
+pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOriented<R> {
     let mut cases = Vec::new();
     let mut cases_plus_90 = Vec::new();
 
@@ -289,15 +280,15 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                         // patterns are constructed for X walls.)
                         continue;
                     }
-                    // The rotation of `result` in these is kind of bizarre; it's just how to make this match up correctly with
-                    // `wall_grid::cell_transform`.
+                    // The rotation passed to `result.rotate` for `cases` (vs. `cases_plus_90`) below
+                    // is kind of bizarre; see `AutotileResultKind::rotate`'s doc comment.
                     let rotated = rotate_checks(&base_checks, rot);
                     if !seen.iter().any(|s| s == &rotated) {
                         seen.push(rotated.clone());
                         cases.push(OrientedCase {
                             pattern_type: pt,
                             checks: checks_to_conditions(&rotated),
-                            result: rotate_result(&case.result, rot + 2),
+                            result: case.result.rotate(rot, CaseList::Base),
                             char_annotations: rotate_annotations(base_annotations, rot),
                             group,
                             multi: case.multi,
@@ -308,7 +299,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
                             cases_plus_90.push(OrientedCase {
                                 pattern_type: pt,
                                 checks: checks_to_conditions(&rotated_plus_90),
-                                result: rotate_result(&case.result, rot),
+                                result: case.result.rotate(rot + 1, CaseList::Plus90),
                                 char_annotations: rotate_annotations(base_annotations, rot + 1),
                                 group,
                                 multi: case.multi,
@@ -347,7 +338,7 @@ H:
  @
 --> mesh_a
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         // All 4 rotations produce the same empty check-set, so only 1 is kept.
         check!(oriented.cases.len() == 1);
@@ -362,7 +353,7 @@ H:
  @ =
 --> mesh_a
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         check!(oriented.cases.len() == 4);
     }
@@ -378,7 +369,7 @@ H:
 |=|@|
 --> mesh_a
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         check!(oriented.cases.len() == 1);
     }
@@ -393,7 +384,7 @@ H:
 |   |@ =|
 --> mesh_a
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         check!(oriented.cases.len() == 4);
     }
@@ -409,7 +400,7 @@ H:
  = @ =
 --> mesh_a
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         check!(oriented.cases.len() == 2);
     }
@@ -422,14 +413,14 @@ H:
  @ =
 --> my_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         // All 4 orientations must carry distinct mesh rotations covering {0,90,180,270}.
         let mut rotations: Vec<i32> = oriented
             .cases
             .iter()
             .map(|c| match &c.result {
-                AutotileResult::Mesh { spec, .. } => spec.outer_rotation(),
+                AutotiledMeshes::Mesh { spec, .. } => spec.outer_rotation(),
                 other => panic!("expected Mesh, got {other:?}"),
             })
             .collect();
@@ -517,7 +508,7 @@ H: 1=stairs:90
  @1
 --> stair_railing:90
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
         let orientations_in_cases: Vec<Option<Facing>> = oriented
@@ -562,7 +553,7 @@ H: 1=stairs
  @1
 --> stair_railing:90
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
         for case in oriented.cases.iter().chain(oriented.cases_plus_90.iter()) {

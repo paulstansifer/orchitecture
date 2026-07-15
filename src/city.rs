@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 #[cfg(autotile_matching)]
-use crate::autotile::AutotileResult;
+use crate::autotile::AutotiledMeshes;
 use bevy::ecs::system::SystemParam;
 use bevy::math::{IVec3, Quat, Vec3};
 use bevy::prelude::{
@@ -419,12 +419,12 @@ pub struct AssembledCity {
     /// Entities spawned for each placed (real) cell (may be multiple for autotile cells).
     pub cell_entities: HashMap<SlotCoord, Vec<Entity>>,
     /// Last-rendered autotile results per location (one per matching rule), for change detection.
-    pub autotile_results: HashMap<SlotCoord, Vec<crate::autotile::AutotileResult>>,
+    pub autotile_results: HashMap<SlotCoord, Vec<crate::autotile::AutotiledMeshes>>,
     /// Entities spawned to visually preview proposals (ghosts + X/ring overlays).
     pub proposal_entities: HashMap<SlotCoord, Vec<Entity>>,
     /// Last-rendered autotile results per proposed-addition location, for change detection.
     #[cfg(autotile_matching)]
-    pub proposal_autotile_results: HashMap<SlotCoord, Vec<AutotileResult>>,
+    pub proposal_autotile_results: HashMap<SlotCoord, Vec<AutotiledMeshes>>,
 }
 
 impl Default for AssembledCity {

@@ -2,7 +2,7 @@ use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::autotile::{spec_stem, AutotileHandles, AutotileResult, AutotileRules};
+use crate::autotile::{spec_stem, AutotileHandles, AutotileRules, AutotiledMeshes};
 use crate::camera::GameCamera;
 use crate::city::{
     apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
@@ -524,7 +524,7 @@ pub fn update_room_cursor_mesh(
             .find(|rule| &rule.structure_name == name)
             .and_then(|rule| {
                 rule.cases.last().and_then(|case| {
-                    if let AutotileResult::Mesh { spec, .. } = &case.result {
+                    if let AutotiledMeshes::Mesh { spec, .. } = &case.result {
                         let stem = spec_stem(spec, rule.slot);
                         autotile_handles.handles.get(&stem).map(|(h, _)| h.clone())
                     } else {

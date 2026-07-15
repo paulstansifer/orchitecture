@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::autotile::display::autotile_transform;
-use crate::autotile::{slot_to_unoriented, spec_stem, AutotileHandles, AutotileResult};
+use crate::autotile::{slot_to_unoriented, spec_stem, AutotileHandles, AutotiledMeshes};
 use crate::camera::GameCamera;
 use crate::city::{
     cell_transform, get_real_and_proposed, get_real_or_proposed, AssembledCity, City,
@@ -34,7 +34,7 @@ fn get_cuts(
         results
             .iter()
             .filter_map(|result| {
-                if let AutotileResult::Mesh { spec, .. } = result {
+                if let AutotiledMeshes::Mesh { spec, .. } = result {
                     let stem = spec_stem(spec, slot_to_unoriented(loc.slot));
                     autotile_handles
                         .handles

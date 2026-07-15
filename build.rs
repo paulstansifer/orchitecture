@@ -10,7 +10,7 @@ mod autotile {
     include!("src/autotile/parser.rs");
 }
 
-use autotile::{spec_stem, AutotileFile, AutotileResult, MeshSpec, UnorientedSlot};
+use autotile::{spec_stem, AutotileFile, AutotiledMeshes, MeshSpec, UnorientedSlot};
 
 fn main() {
     // Register and set `autotile_matching` so the main crate can gate
@@ -239,7 +239,9 @@ fn extract_atomic_meshes(spec: &MeshSpec, meshes: &mut Vec<String>) {
 }
 
 /// Extract atomic mesh inputs from autotile rules, organized by structure name.
-fn extract_structure_atomic_meshes(file: &autotile::AutotileFile) -> HashMap<String, Vec<String>> {
+fn extract_structure_atomic_meshes(
+    file: &autotile::AutotileFile<autotile::AutotiledMeshes>,
+) -> HashMap<String, Vec<String>> {
     let mut mapping: HashMap<String, Vec<String>> = HashMap::new();
 
     for rule in &file.rules {
@@ -248,7 +250,7 @@ fn extract_structure_atomic_meshes(file: &autotile::AutotileFile) -> HashMap<Str
             .or_insert_with(Vec::new);
 
         for case in &rule.cases {
-            if let autotile::AutotileResult::Mesh { spec } = &case.result {
+            if let autotile::AutotiledMeshes::Mesh { spec } = &case.result {
                 let mut atomic_names = Vec::new();
                 extract_atomic_meshes(spec, &mut atomic_names);
                 for name in atomic_names {
@@ -626,13 +628,13 @@ fn collect_wings_atoms(spec: &MeshSpec, wings_stems: &HashSet<String>, found: &m
 // ─── Spec collection ──────────────────────────────────────────────────────────
 
 fn collect_result_specs(
-    file: &AutotileFile,
+    file: &AutotileFile<AutotiledMeshes>,
     map: &mut HashMap<String, (MeshSpec, UnorientedSlot)>,
 ) {
     for rule in &file.rules {
         let slot = rule.slot;
         for case in &rule.cases {
-            if let AutotileResult::Mesh { spec, .. } = &case.result {
+            if let AutotiledMeshes::Mesh { spec, .. } = &case.result {
                 map.insert(spec_stem(spec, slot), (spec.clone(), slot));
             }
         }

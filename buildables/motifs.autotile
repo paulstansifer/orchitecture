@@ -1,0 +1,44 @@
+==column:wall==
+V:
+ F
+  @
+--> discard
+V:
+  =
+ . .
+  @
+--> discard
+--> defect
+
+==column:wall==
+V:
+  @
+ F
+--> discard
+V:
+  @
+ . .
+  =
+--> discard
+--> defect
+
+==column:wall==
+V:
+  @
+--> | ok 1.0  # tall columns
+
+==doorway:wall==
+# TODO: those `.`s should be changed to something that expresses "no element is here" (allowing furniture).
+H:
+  .
+ . .
+  @ 
+--> defect  # you could just walk around the doorway
+
+
+==wall:wall==
+H:
+  .
+ w .
+  @ 
+--> . ok 0.0  # normal corners 

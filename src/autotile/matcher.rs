@@ -94,13 +94,13 @@ where
 /// (used for annotation-style labeled matchers like `1=stairs:90`).
 /// This does not match the anchor itself! It's expected that we will look at every structure, see
 /// which rules use that structure as the anchor, and then call `match_pattern` on them.
-pub fn match_pattern<'a>(
-    oriented: &'a AutotileOriented,
+pub fn match_pattern<'a, R: AutotileResultKind>(
+    oriented: &'a AutotileOriented<R>,
     get_cell: impl Fn(RelSlotCoord) -> Option<(EorfId, Facing)>,
     anchor: RelSlotCoord,
     char_matches_id: impl Fn(char, EorfId, Facing) -> bool,
     name_matches_id: impl Fn(&str, EorfId) -> bool,
-) -> Vec<&'a AutotileResult> {
+) -> Vec<&'a R> {
     let turn_90 = matches!(anchor.rel_slot, RelSlot::ZLoWall | RelSlot::ZHiWall);
     let cases = if turn_90 {
         &oriented.cases_plus_90
@@ -108,7 +108,7 @@ pub fn match_pattern<'a>(
         &oriented.cases
     };
 
-    let case_matches = |case: &OrientedCase| {
+    let case_matches = |case: &OrientedCase<R>| {
         case.checks.iter().all(|cond| {
             check_condition(
                 cond,
@@ -125,7 +125,7 @@ pub fn match_pattern<'a>(
     while i < cases.len() {
         let group = cases[i].group;
         let multi = cases[i].multi;
-        let mut matched: Vec<&'a AutotileResult> = Vec::new();
+        let mut matched: Vec<&'a R> = Vec::new();
         while i < cases.len() && cases[i].group == group {
             if case_matches(&cases[i]) {
                 matched.push(&cases[i].result);
@@ -161,7 +161,7 @@ pub fn slot_to_unoriented(slot: Slot) -> UnorientedSlot {
 }
 
 /// Apply every autotile rule that matches `cell_name` and the slot implied by `loc`,
-/// returning one `AutotileResult` per rule (first-match-wins within each rule).
+/// returning one `AutotiledMeshes` per rule (first-match-wins within each rule).
 ///
 /// `get_cell` maps a slot location to `(EorfId, Facing)`; pass
 /// `|loc| grid.get(loc).map(|c| (c.id, c.facing))` for real cells, or a closure over
@@ -169,14 +169,14 @@ pub fn slot_to_unoriented(slot: Slot) -> UnorientedSlot {
 ///
 /// Returns `None` when no rules apply to this structure at all (so the caller can
 /// fall back to the default mesh).
-pub fn evaluate_autotile_rules(
+pub fn evaluate_autotile_rules<R: AutotileResultKind>(
     loc: RelSlotCoord,
     cell_name: &str,
-    rules: &[AutotileOriented],
+    rules: &[AutotileOriented<R>],
     get_cell: impl Fn(RelSlotCoord) -> Option<(EorfId, Facing)>,
     char_matches: impl Fn(char, EorfId, Facing) -> bool,
     name_matches: impl Fn(&str, EorfId) -> bool,
-) -> Option<Vec<AutotileResult>> {
+) -> Option<Vec<R>> {
     let unoriented = rel_slot_to_unoriented(loc.rel_slot);
     let matching: Vec<_> = rules
         .iter()
@@ -190,13 +190,14 @@ pub fn evaluate_autotile_rules(
             .iter()
             .flat_map(|rule| {
                 let results = match_pattern(rule, &get_cell, loc, &char_matches, &name_matches);
-                if results.is_empty() {
-                    // A rule with no matching case (and no else) still occupies a "slot";
-                    // emit a single `None` so callers see the rule applied (no fallback mesh).
-                    vec![AutotileResult::None]
+                let results: Vec<R> = if results.is_empty() {
+                    // A rule with no matching case (and no else) still occupies a "slot"; emit a
+                    // placeholder (if any) so callers see the rule applied (no fallback mesh).
+                    R::no_match_placeholder().into_iter().collect()
                 } else {
                     results.into_iter().cloned().collect()
-                }
+                };
+                results
             })
             .collect(),
     )
@@ -230,7 +231,7 @@ mod tests {
 == wall: wall ==
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         let grid: Sparse3D<Cell> = Sparse3D::new();
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
@@ -241,7 +242,7 @@ mod tests {
             test_char_matches,
             no_name_match,
         );
-        check!(result == vec![&AutotileResult::None]);
+        check!(result == vec![&AutotiledMeshes::None]);
     }
 
     #[test]
@@ -254,7 +255,7 @@ H:
 --> wall_across
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
 
@@ -271,7 +272,7 @@ H:
 
         check!(
             result
-                == vec![&AutotileResult::Mesh {
+                == vec![&AutotiledMeshes::Mesh {
                     spec: atom("wall_across").rotate(180)
                 }]
         );
@@ -285,7 +286,7 @@ H:
             test_char_matches,
             no_name_match,
         );
-        check!(result2 == vec![&AutotileResult::None]);
+        check!(result2 == vec![&AutotiledMeshes::None]);
     }
 
     /// Verify that `rotate_autotile_rel_slot` agrees with sparse3d's slot rotation:
@@ -301,7 +302,7 @@ H:
 --> wall_across
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
         let anchor_x = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
@@ -318,7 +319,7 @@ H:
             no_name_match,
         )[0];
         check!(
-            r_x == &AutotileResult::Mesh {
+            r_x == &AutotiledMeshes::Mesh {
                 spec: atom("wall_across").rotate(180)
             }
         );
@@ -336,7 +337,7 @@ H:
             no_name_match,
         )[0];
         check!(
-            r_z == &AutotileResult::Mesh {
+            r_z == &AutotiledMeshes::Mesh {
                 spec: atom("wall_across")
             },
             "ZLoWall anchor with ZLoWall neighbor at (0,0,1): expected wall_across, got {r_z:?}"
@@ -354,7 +355,7 @@ H:
             test_char_matches,
             no_name_match,
         )[0];
-        if let AutotileResult::Mesh { spec, .. } = r_z_back {
+        if let AutotiledMeshes::Mesh { spec, .. } = r_z_back {
             check!(
                 spec.outer_rotation() == 180 && spec_stem(spec, UnorientedSlot::Wall) == "wall_across",
                 "ZLoWall neighbor at (0,0,-1): expected wall_across with rotation 180, got {spec:?}"
@@ -379,7 +380,7 @@ H:
  @ =
 --> my_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
         fn is_table(ch: char, id: EorfId, _facing: Facing) -> bool {
@@ -486,7 +487,7 @@ H:
  @ =
 --> (multi) my_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
@@ -517,7 +518,7 @@ H:
  @ =
 --> my_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
@@ -549,7 +550,7 @@ H:
 --> (multi) my_mesh
 --> fallback
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
 
@@ -569,7 +570,7 @@ H:
             "expected only the multi result; got {results:?}"
         );
         check!(
-            matches!(results[0], AutotileResult::Mesh { spec } if spec_stem(spec, UnorientedSlot::Room) == "my_mesh"),
+            matches!(results[0], AutotiledMeshes::Mesh { spec } if spec_stem(spec, UnorientedSlot::Room) == "my_mesh"),
             "expected my_mesh, got {:?}",
             results[0]
         );
@@ -577,16 +578,16 @@ H:
 
     // ── Column autotile tests ─────────────────────────────────────────────────
 
-    fn all_rules() -> Vec<AutotileOriented> {
+    fn all_rules() -> Vec<AutotileOriented<AutotiledMeshes>> {
         let src = include_str!("../../buildables/structures.autotile");
         compile(&parse(src).unwrap())
     }
 
-    fn stems_from_results(results: &[AutotileResult]) -> Vec<String> {
+    fn stems_from_results(results: &[AutotiledMeshes]) -> Vec<String> {
         results
             .iter()
             .filter_map(|r| {
-                if let AutotileResult::Mesh { spec, .. } = r {
+                if let AutotiledMeshes::Mesh { spec, .. } = r {
                     Some(spec_stem(spec, UnorientedSlot::Wall))
                 } else {
                     None
@@ -739,7 +740,7 @@ H:
 --> hit
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
         let wall_loc = RelSlotCoord::new(-1, 0, 0, RelSlot::XLoWall);
@@ -763,7 +764,7 @@ H:
             no_name_match,
         );
         check!(
-            matches!(result[0], AutotileResult::Mesh { .. }),
+            matches!(result[0], AutotiledMeshes::Mesh { .. }),
             "wall present should match; got {result:?}"
         );
 
@@ -778,7 +779,7 @@ H:
             no_name_match,
         );
         check!(
-            matches!(result2[0], AutotileResult::Mesh { .. }),
+            matches!(result2[0], AutotiledMeshes::Mesh { .. }),
             "roof in far floor should match; got {result2:?}"
         );
 
@@ -793,7 +794,7 @@ H:
             no_name_match,
         );
         check!(
-            result3 == vec![&AutotileResult::None],
+            result3 == vec![&AutotiledMeshes::None],
             "roof in near floor should not match; got {result3:?}"
         );
 
@@ -806,7 +807,7 @@ H:
             no_name_match,
         );
         check!(
-            result4 == vec![&AutotileResult::None],
+            result4 == vec![&AutotiledMeshes::None],
             "neither wall nor roof should fall through; got {result4:?}"
         );
     }
@@ -826,7 +827,7 @@ H narrow:
 --> hit
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Floor);
         let wall_loc = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
@@ -849,7 +850,7 @@ H narrow:
             no_name_match,
         );
         check!(
-            matches!(result[0], AutotileResult::Mesh { .. }),
+            matches!(result[0], AutotiledMeshes::Mesh { .. }),
             "wall present should match; got {result:?}"
         );
 
@@ -864,7 +865,7 @@ H narrow:
             no_name_match,
         );
         check!(
-            matches!(result2[0], AutotileResult::Mesh { .. }),
+            matches!(result2[0], AutotiledMeshes::Mesh { .. }),
             "roof on far floor should match; got {result2:?}"
         );
 
@@ -877,7 +878,7 @@ H narrow:
             no_name_match,
         );
         check!(
-            result3 == vec![&AutotileResult::None],
+            result3 == vec![&AutotiledMeshes::None],
             "neither wall nor roof should fall through; got {result3:?}"
         );
     }
@@ -898,7 +899,7 @@ H: 1=stairs:90
 --> stair_railing:90
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
 
         let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
@@ -921,7 +922,7 @@ H: 1=stairs:90
             name_is_stairs,
         );
         check!(
-            matches!(result[0], AutotileResult::Mesh { .. }),
+            matches!(result[0], AutotiledMeshes::Mesh { .. }),
             "stairs facing PosZ should match; got {result:?}"
         );
 
@@ -936,7 +937,7 @@ H: 1=stairs:90
             name_is_stairs,
         );
         check!(
-            result2 == vec![&AutotileResult::None],
+            result2 == vec![&AutotiledMeshes::None],
             "stairs facing NegX should not match annotation; got {result2:?}"
         );
 
@@ -950,7 +951,7 @@ H: 1=stairs:90
             name_is_stairs,
         );
         check!(
-            result3 == vec![&AutotileResult::None],
+            result3 == vec![&AutotiledMeshes::None],
             "empty room should not match annotation; got {result3:?}"
         );
     }
@@ -969,7 +970,7 @@ H: 1=stairs:90 2=stairs
 --> stair_railing:90
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
 
         check!(pat.annotations.len() == 2);
