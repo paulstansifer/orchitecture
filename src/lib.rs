@@ -9,6 +9,7 @@ pub mod city;
 pub mod city_effect;
 pub mod construction;
 pub mod cutaway;
+pub mod debug_voxels;
 pub mod eorf;
 pub mod evaluation;
 pub mod example_structures;

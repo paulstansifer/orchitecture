@@ -22,6 +22,7 @@ use orchitecture_lib::{
         propagate_render_layers_system, sync_cutaway_shadow_material, update_cutaway_system,
         CutawayMode,
     },
+    debug_voxels::{debug_voxels_system, DebugVoxelsPlugin},
     eorf::{spawn_structures, EorfList},
     game_mode::{GameMode, SandboxMode},
     gi_material::GiPlugin,
@@ -103,6 +104,7 @@ fn main() {
         .add_plugins(GridPreviewPlugin)
         .add_plugins(GiPlugin)
         .add_plugins(ModelPlugin)
+        .add_plugins(DebugVoxelsPlugin)
         .add_plugins(MaterialPlugin::<RingMaterial>::default())
         .init_state::<GameMode>()
         .insert_resource(CameraState::default())
@@ -155,6 +157,7 @@ fn main() {
             (
                 camera_input_system.run_if(in_state(GameMode::Build)),
                 building_input_system.run_if(in_state(GameMode::Build)),
+                debug_voxels_system.run_if(in_state(GameMode::Build)),
                 cursor_system.run_if(in_state(GameMode::Build)),
                 update_room_cursor_mesh.run_if(in_state(GameMode::Build)),
                 walk_input_system.run_if(in_state(GameMode::Walk)),
