@@ -247,7 +247,7 @@ pub fn load_training_data<B: Backend>(
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
     if metric == Metric::Interest {
-        for _ in 0..25 {
+        for _ in 0..10 {
             all_sparse_data.push(crate::build_helpers::make_boring_room(
                 &structures,
                 &mut rng,
