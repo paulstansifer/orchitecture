@@ -399,10 +399,18 @@ where
                     let grid_pos = IVec3::new(grid_x, grid_y, grid_z);
                     let slot_location = RelSlotCoord::new(grid_x, grid_y, grid_z, slot);
 
-                    let obstacles = sparse_data.ray_trace(vantage, slot_location);
+                    let obstacles = sparse_data.ray_trace_with_t(vantage, slot_location);
 
                     let mut view_blocked = false;
-                    for obstacle_collection in obstacles {
+                    for (t, obstacle_collection) in obstacles {
+                        // `ray_trace_with_t` reports the contents of both endpoints too
+                        // (see its test in sparse3d.rs), but a voxel's own contents --
+                        // or the vantage's -- shouldn't count as blocking the view of
+                        // itself; only genuine obstacles strictly between the two count.
+                        if t == 0.0 || t == 1.0 {
+                            continue;
+                        }
+
                         let mut any_transparent = false;
                         for obstacle in obstacle_collection {
                             if let [tall, decorative, passable, striated, ..] =

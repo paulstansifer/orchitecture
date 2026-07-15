@@ -225,4 +225,52 @@ mod tests {
         let world_center = min_coord.as_vec3() + Vec3::new(ix as f32, iy as f32, iz as f32) * 0.5;
         assert_eq!(world_center, cube.as_vec3() + Vec3::splat(0.5));
     }
+
+    // A wall (tall == 1.0, opaque per the ray-trace hack) is its own destination in the
+    // ray trace to its own slot; it must not count as blocking the view of itself, or
+    // every wall/floor would appear as occluded (`.visibility == 1.0`) instead of
+    // structure (`.visibility == 0.5`).
+    #[test]
+    fn wall_is_not_self_occluding() {
+        let mut sparse_data: Sparse3D<u32> = Sparse3D::new();
+        let cube = IVec3::new(1, 0, 0);
+        sparse_data.set(RelSlotCoord::new(0, 0, 0, RelSlot::Room), 0u32);
+        sparse_data.set(
+            RelSlotCoord::new(cube.x, cube.y, cube.z, RelSlot::XLoWall),
+            1u32,
+        );
+
+        let center = IVec3::new(0, 0, 0);
+        // tall == 1.0 for id 1 (the wall), matching the "opaque" hack in translate.rs.
+        let tensor: Tensor<DebugBackend, 5, burn::tensor::Float> =
+            sparse3d_to_tensor(&sparse_data, center, |id: &u32| {
+                if *id == 1 {
+                    vec![1.0, 0.0, 0.0, 0.0, 0.0]
+                } else {
+                    vec![0.0, 0.0, 0.0, 0.0, 0.0]
+                }
+            })
+            .unwrap();
+
+        let [_, _channels, size_x, size_y, size_z] = tensor.dims();
+        let mut visibilities = Vec::new();
+        for ix in 0..size_x {
+            for iy in 0..size_y {
+                for iz in 0..size_z {
+                    let voxel = tensor
+                        .clone()
+                        .slice(s![0, .., ix, iy, iz])
+                        .into_data()
+                        .to_vec::<f32>()
+                        .unwrap();
+                    if voxel[0] == 1.0 {
+                        visibilities.push(voxel[5]);
+                    }
+                }
+            }
+        }
+
+        assert!(!visibilities.is_empty());
+        assert!(visibilities.iter().all(|&v| v == 0.5), "{visibilities:?}");
+    }
 }
