@@ -41,4 +41,4 @@
                   
 ~~~~~
 ~*~*~
-(3,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":0.9,"interest":{"at_most":0.7}}}
+(3,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":0.9,"interest":{"at_most":0.5}}}

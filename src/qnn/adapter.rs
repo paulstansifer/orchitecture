@@ -1,3 +1,4 @@
+#![allow(unused)]
 use super::model::Cnn;
 use bevy::asset::{Asset, AssetLoader, Assets, Handle, LoadContext};
 use bevy::prelude::*;
@@ -144,7 +145,7 @@ impl Plugin for ModelPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<ModelBytes>()
             .register_asset_loader(ModelBytesLoader)
-            .add_systems(Startup, setup_model_loading)
-            .add_systems(Update, build_model_when_ready);
+            .add_systems(Startup, setup_model_loading);
+            //.add_systems(Update, build_model_when_ready);
     }
 }

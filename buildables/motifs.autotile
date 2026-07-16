@@ -42,3 +42,23 @@ H:
  w .
   @ 
 --> . ok 0.0  # normal corners 
+==floor:floor==
+V:
+   w
+  @
+--> . ok 0.0
+
+==railing:wall==
+V:
+   @
+  F .
+--> . ok 0.5 
+V:
+   @
+  . F
+--> . ok 0.5   # TODO: do we need to flip ourselves?
+V:
+   @
+  F F
+--> . ok 0.0
+--> defect

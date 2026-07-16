@@ -75,4 +75,4 @@
                 
 ~~~~~
 ~*~*~
-(3,0,4,"Room")={"id":9,"facing":"PosX","evaluation":{"coherence":0.9,"interest":1.0}}
+(3,0,4,"Room")={"id":9,"facing":"PosX","evaluation":{"coherence":0.9,"interest":0.7}}
