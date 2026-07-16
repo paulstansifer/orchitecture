@@ -935,7 +935,10 @@ fn convert_sprites(manifest: &Path) {
         for path in &svgs {
             let stem = path.file_stem().unwrap().to_str().unwrap();
             let out = out_dir.join(format!("{stem}.png"));
-            println!("cargo:rerun-if-changed={}", out.display());
+            println!("cargo:rerun-if-changed={}", path.display());
+            if !needs_rebuild(&out, &[path.as_path()]) {
+                continue;
+            }
             match Command::new("rsvg-convert")
                 .args(["-w", &w.to_string(), "-h", &h.to_string()])
                 .arg(path)
