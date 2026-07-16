@@ -16,7 +16,9 @@ use std::sync::Arc;
 use orchitecture_lib::qnn::translate::{
     load_training_data, GroundTruth, GroundTruthBatcher, Metric, ScoreConstraint,
 };
-use orchitecture_lib::qnn::{Args, Cnn};
+#[cfg(feature = "old_qnn")]
+use orchitecture_lib::qnn::Cnn;
+use orchitecture_lib::qnn::{Args, MotifNn};
 
 #[derive(Config, Debug)]
 struct TrainingConfig {
@@ -58,6 +60,67 @@ fn constraint_symbol(constraint: ScoreConstraint) -> &'static str {
 fn baseline_mse(goals: &[f32]) -> f32 {
     let mean = goals.iter().sum::<f32>() / goals.len() as f32;
     goals.iter().map(|g| (g - mean).powi(2)).sum::<f32>() / goals.len() as f32
+}
+
+/// Reads a metric's per-epoch loss curve back from `FileMetricLogger`'s CSVs (written to
+/// `{log_dir}/{train,valid}/epoch-N/Loss.log`), prints its final loss/skill line, and renders
+/// train+valid ascii charts onto `plots` (later shown side-by-side with any others).
+fn report_loss_curve(
+    label: impl std::fmt::Display,
+    log_dir: impl std::fmt::Display,
+    num_epochs: usize,
+    baseline: (f32, f32),
+    plots: &mut Vec<String>,
+) {
+    let mut train_curve = vec![];
+    let mut valid_curve = vec![];
+
+    for epoch in 1..=num_epochs {
+        for mode in ["train", "valid"] {
+            let csv_path = PathBuf::from(format!("{log_dir}/{mode}/epoch-{epoch}/Loss.log"));
+            let mut rdr = csv::Reader::from_path(csv_path).unwrap();
+            let mut total_loss = 0.0;
+            let mut count = 0;
+            for result in rdr.records() {
+                let record = result.unwrap();
+                let loss: f32 = record.get(0).unwrap().parse().unwrap();
+                total_loss += loss;
+                count += 1;
+            }
+            let average_loss = total_loss / count as f32;
+
+            if mode == "train" {
+                train_curve.push((epoch as f32, average_loss));
+            } else {
+                valid_curve.push((epoch as f32, average_loss));
+            }
+        }
+    }
+
+    use textplots::ColorPlot;
+
+    let final_train_loss = train_curve.last().unwrap().1;
+    let final_valid_loss = valid_curve.last().unwrap().1;
+    let (train_baseline, valid_baseline) = baseline;
+    let train_skill = 1.0 - final_train_loss / train_baseline;
+    let valid_skill = 1.0 - final_valid_loss / valid_baseline;
+
+    println!(
+        "Final {label} loss (t/v) {:.3} {:.3}, skill (t/v) {:.3} {:.3}",
+        final_train_loss, final_valid_loss, train_skill, valid_skill
+    );
+
+    let plot_file = "/tmp/plot_text";
+
+    for curve in &[train_curve, valid_curve] {
+        let _guard = stdio_override::StdoutOverride::from_file(plot_file).unwrap();
+
+        textplots::Chart::new_with_y_range(100, 35, 0.0, num_epochs as f32, 0.0, 0.2)
+            .linecolorplot(&textplots::Shape::Lines(curve), rgb::RGB::new(255, 0, 0))
+            .nice();
+
+        plots.push(std::fs::read_to_string(plot_file).unwrap());
+    }
 }
 
 fn create_artifact_dir(artifact_dir: &str) {
@@ -108,8 +171,11 @@ fn train<B: Backend>() {
     B::seed(&device, config.seed);
 
     let mut score_output = String::new();
+    #[cfg(feature = "old_qnn")]
     let mut baseline_losses: HashMap<Metric, (f32, f32)> = HashMap::new();
+    let mut motif_baseline_losses: HashMap<Metric, (f32, f32)> = HashMap::new();
 
+    #[cfg(feature = "old_qnn")]
     for metric in [Metric::Interest, Metric::Coherence] {
         let batcher = GroundTruthBatcher {};
 
@@ -270,63 +336,171 @@ fn train<B: Backend>() {
         std::fs::write(format!("{artifact_dir}/model_args.ron"), args_ron).unwrap();
     }
 
-    println!("Parameters: {:?}", Args::parse());
-    let mut plots = vec![];
+    // MotifNn: same score target as the Cnn loop above, but scored purely from visible motifs
+    // (see MotifNn's doc comment). Coherence has no motif ground truth yet, so this only trains
+    // on Interest.
+    for metric in [Metric::Interest] {
+        let batcher = GroundTruthBatcher {};
 
-    // Gotta let the trainer go out of scope to get access to the terminal back?
-
-    for metric in [Metric::Interest, Metric::Coherence] {
-        let mut train_curve = vec![];
-        let mut valid_curve = vec![];
-
-        for epoch in 1..=config.num_epochs {
-            for mode in ["train", "valid"] {
-                let csv_path =
-                    PathBuf::from(format!("/tmp/logs/{metric}/{mode}/epoch-{epoch}/Loss.log"));
-                let mut rdr = csv::Reader::from_path(csv_path).unwrap();
-                let mut total_loss = 0.0;
-                let mut count = 0;
-                for result in rdr.records() {
-                    let record = result.unwrap();
-                    let loss: f32 = record.get(0).unwrap().parse().unwrap();
-                    total_loss += loss;
-                    count += 1;
-                }
-                let average_loss = total_loss / count as f32;
-
-                if mode == "train" {
-                    train_curve.push((epoch as f32, average_loss));
+        let load_data = || {
+            load_training_data::<B>(
+                if args.fake_data {
+                    "fake_training"
                 } else {
-                    valid_curve.push((epoch as f32, average_loss));
-                }
-            }
-        }
+                    "assets/static/training"
+                },
+                config.seed,
+                metric,
+            )
+        };
 
-        use textplots::ColorPlot;
+        let (train_data, test_data) = load_data();
+        let data_size = (train_data.len(), test_data.len());
 
-        let final_train_loss = train_curve.last().unwrap().1;
-        let final_valid_loss = valid_curve.last().unwrap().1;
-        let (train_baseline, valid_baseline) = baseline_losses[&metric];
-        let train_skill = 1.0 - final_train_loss / train_baseline;
-        let valid_skill = 1.0 - final_valid_loss / valid_baseline;
+        // Each room contributes a different number of occurrence/pair rows (see
+        // `GroundTruthBatcher::batch`'s doc comment), so batching more than one room together
+        // would silently merge unrelated rooms' rows into a single set. Force batch_size=1 here,
+        // regardless of `config.batch_size`.
+        let dataloader_train: Arc<dyn DataLoader<Autodiff<B>, GroundTruth<Autodiff<B>>>> =
+            burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
+                .batch_size(1)
+                .shuffle(config.seed)
+                .num_workers(config.num_workers)
+                .build(train_data);
 
+        let dataloader_test: Arc<dyn DataLoader<B, GroundTruth<B>>> =
+            burn::data::dataloader::DataLoaderBuilder::new(batcher)
+                .batch_size(1)
+                .shuffle(config.seed)
+                .num_workers(config.num_workers)
+                .build(test_data);
+
+        let model = MotifNn::<Autodiff<B>>::new(&device, &args);
         println!(
-            "Final {metric} loss (t/v) {:.3} {:.3}, skill (t/v) {:.3} {:.3}",
-            final_train_loss, final_valid_loss, train_skill, valid_skill
+            "MotifNn params: {}. Training items: {}. Test items: {}",
+            model.num_params(),
+            data_size.0,
+            data_size.1
         );
 
-        let plot_file = "/tmp/plot_text";
+        let motif_artifact_dir = format!("{artifact_dir}/motif");
+        create_artifact_dir(&motif_artifact_dir);
 
-        for curve in &[train_curve, valid_curve] {
-            let _guard = stdio_override::StdoutOverride::from_file(plot_file).unwrap();
+        let model_trained = burn::train::SupervisedTraining::new(
+            &motif_artifact_dir,
+            dataloader_train,
+            dataloader_test,
+        )
+        .metric_train_numeric(burn::train::metric::LossMetric::new())
+        .metric_valid_numeric(burn::train::metric::LossMetric::new())
+        .num_epochs(config.num_epochs)
+        .with_metric_logger(FileMetricLogger::new(format!("/tmp/logs/motif-{metric}/")))
+        .launch(burn::train::Learner::new(
+            model,
+            config.optimizer.init(),
+            config.learning_rate,
+        ));
 
-            // println!("{metric} {name}: {:.3}", curve.last().unwrap().1);
-            textplots::Chart::new_with_y_range(100, 35, 0.0, config.num_epochs as f32, 0.0, 0.2)
-                .linecolorplot(&textplots::Shape::Lines(&curve), rgb::RGB::new(255, 0, 0))
-                .nice();
+        {
+            let (train_data, test_data) = load_data();
+            let mut errors: Vec<(f32, String, bool, f32, f32, ScoreConstraint)> = Vec::new();
+            let mut predictions: Vec<f32> = Vec::new();
 
-            plots.push(std::fs::read_to_string(plot_file).unwrap());
+            for idx in 0..train_data.len() {
+                let datum = train_data.get(idx).unwrap();
+                let pred: f32 = model_trained
+                    .model
+                    .forward(datum.motif_interest.inner(), datum.motif_order.inner())
+                    .into_scalar()
+                    .elem();
+                let goal: f32 = datum.scores.into_scalar().elem();
+                predictions.push(pred);
+                errors.push((
+                    constrained_error(pred, goal, datum.constraint),
+                    datum.filename.clone(),
+                    false,
+                    pred,
+                    goal,
+                    datum.constraint,
+                ));
+            }
+            for idx in 0..test_data.len() {
+                let datum = test_data.get(idx).unwrap();
+                let pred: f32 = model_trained
+                    .model
+                    .forward(datum.motif_interest, datum.motif_order)
+                    .into_scalar()
+                    .elem();
+                let goal: f32 = datum.scores.into_scalar().elem();
+                predictions.push(pred);
+                errors.push((
+                    constrained_error(pred, goal, datum.constraint),
+                    datum.filename.clone(),
+                    true,
+                    pred,
+                    goal,
+                    datum.constraint,
+                ));
+            }
+
+            let train_goals: Vec<f32> = errors.iter().filter(|e| !e.2).map(|e| e.4).collect();
+            let valid_goals: Vec<f32> = errors.iter().filter(|e| e.2).map(|e| e.4).collect();
+            motif_baseline_losses.insert(
+                metric,
+                (baseline_mse(&train_goals), baseline_mse(&valid_goals)),
+            );
+
+            errors.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            score_output += &format!("\nWorst motif-{metric} errors:\n");
+            for (err, filename, is_val, pred, goal, constraint) in errors.iter().take(10) {
+                let marker = if *is_val { "*" } else { " " };
+                let symbol = constraint_symbol(*constraint);
+                score_output += &format!(
+                    "  {marker} {filename}: {symbol}{goal:.1}=>{pred:.2} (err {err:.2})\n"
+                );
+            }
+
+            let histogram = quintile_histogram(&predictions);
+            score_output +=
+                &format!("motif-{metric} score distribution (quintiles): {histogram}\n");
         }
+
+        model_trained
+            .model
+            .save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
+                format!("{artifact_dir}/motif_{metric}_model"),
+                &burn::record::CompactRecorder::new(),
+            )
+            .expect("Trained MotifNn model should be saved successfully");
+    }
+
+    println!("Parameters: {:?}", Args::parse());
+
+    // Gotta let the trainer go out of scope to get access to the terminal back?
+    let mut plots: Vec<String> = Vec::new();
+
+    // Cnn's per-epoch loss curves, read back from the logger's CSVs -- only meaningful when the
+    // Cnn loop above actually ran.
+    #[cfg(feature = "old_qnn")]
+    for metric in [Metric::Interest, Metric::Coherence] {
+        report_loss_curve(
+            metric,
+            format!("/tmp/logs/{metric}"),
+            config.num_epochs,
+            baseline_losses[&metric],
+            &mut plots,
+        );
+    }
+
+    // MotifNn's per-epoch loss curves, same as above.
+    for metric in [Metric::Interest] {
+        report_loss_curve(
+            format!("motif-{metric}"),
+            format!("/tmp/logs/motif-{metric}"),
+            config.num_epochs,
+            motif_baseline_losses[&metric],
+            &mut plots,
+        );
     }
 
     // Display the plots side-by-side:

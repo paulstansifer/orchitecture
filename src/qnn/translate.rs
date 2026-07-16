@@ -1,21 +1,19 @@
 use crate::autotile::{
     char_matches_name, collapse_motif_atoms, compile, evaluate_autotile_rules, parse,
-    AutotileOriented, DefectAtom, Motif, MotifAtom, MotifAxis, MotifOccurrence,
+    AutotileOriented, DefectAtom, Motif, MotifAtom, MotifAxis, MotifOccurrence, OrientedCase,
 };
 use crate::city::Cell;
 use crate::eorf::{EorfId, EorfInfo};
 use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, SlotCoord, Sparse3D};
 use bevy::math::IVec3;
 use burn::prelude::*;
-use burn::tensor::Float;
+use burn::tensor::{Float, TensorData};
 use std::error::Error;
 
 #[cfg(feature = "training")]
 use burn::backend::Autodiff;
 #[cfg(feature = "training")]
 use burn::data::dataset::InMemDataset;
-#[cfg(feature = "training")]
-use burn::tensor::TensorData;
 #[cfg(feature = "training")]
 use rand::rngs::StdRng;
 #[cfg(feature = "training")]
@@ -102,6 +100,10 @@ fn grid_coord_to_voxel_coord(
 #[derive(Clone, Debug)]
 pub struct GroundTruth<B: Backend> {
     pub voxels: Tensor<B, 5, Float>,
+    /// See `motif_occurrences_to_tensors`; computed unconditionally (cheap, and reused once a
+    /// metric other than `Interest` gets its own motif training data).
+    pub motif_interest: Tensor<B, 2, Float>,
+    pub motif_order: Tensor<B, 2, Float>,
     pub scores: Tensor<B, 1, Float>,
     pub constraint: ScoreConstraint,
     pub filename: String,
@@ -111,6 +113,8 @@ pub struct GroundTruth<B: Backend> {
 fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTruth<Autodiff<B>> {
     GroundTruth {
         voxels: Tensor::from_inner(gt.voxels),
+        motif_interest: Tensor::from_inner(gt.motif_interest),
+        motif_order: Tensor::from_inner(gt.motif_order),
         scores: Tensor::from_inner(gt.scores),
         constraint: gt.constraint,
         filename: gt.filename,
@@ -157,6 +161,12 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
 {
     fn batch(&self, ds: Vec<GroundTruth<B>>, _device: &B::Device) -> GroundTruth<B> {
         let mut voxels: Vec<Tensor<B, 5, Float>> = Vec::new();
+        // Concatenating these along the row dimension is only meaningful when every item in the
+        // batch is the same room (batch_size=1): each room contributes a different number of
+        // rows, and unlike `voxels`, nothing here marks where one room's rows end and the next
+        // begin. MotifNn's dataloader enforces batch_size=1 for exactly this reason.
+        let mut motif_interest: Vec<Tensor<B, 2, Float>> = Vec::new();
+        let mut motif_order: Vec<Tensor<B, 2, Float>> = Vec::new();
         let mut scores: Vec<Tensor<B, 1, Float>> = Vec::new();
         let mut files: Vec<String> = Vec::new();
         // batch_size=1; all items in a batch should have the same constraint
@@ -164,14 +174,20 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
 
         for gt in ds {
             voxels.push(gt.voxels);
+            motif_interest.push(gt.motif_interest);
+            motif_order.push(gt.motif_order);
             scores.push(gt.scores);
             files.push(gt.filename);
         }
 
         let voxels = Tensor::cat(voxels, 0);
+        let motif_interest = Tensor::cat(motif_interest, 0);
+        let motif_order = Tensor::cat(motif_order, 0);
         let scores = Tensor::cat(scores, 0);
         GroundTruth {
             voxels,
+            motif_interest,
+            motif_order,
             scores,
             constraint,
             filename: files.join("/"),
@@ -338,8 +354,14 @@ pub fn ground_truth_at_vantage<B: Backend>(
 
             // print_voxels(&tensor);
 
+            let vantage = RelSlotCoord::new(loc.cube.x, loc.cube.y, loc.cube.z, RelSlot::Room);
+            let (occurrences, _defects) = visible_motifs_and_defects(&data.0, vantage, structures);
+            let (motif_interest, motif_order) = motif_occurrences_to_tensors(&occurrences);
+
             return Some(GroundTruth {
                 voxels: tensor,
+                motif_interest,
+                motif_order,
                 scores: Tensor::from_data(TensorData::from([val]), &Default::default()),
                 constraint,
                 filename: data.1.clone(),
@@ -591,6 +613,121 @@ pub fn visible_motifs_and_defects(
         .collect();
 
     (occurrences, defects)
+}
+
+/// Row width of `motif_occurrences_to_tensors`'s `interest` tensor: one-hot id, nonmundanity,
+/// one-hot axis.
+pub fn motif_interest_width() -> usize {
+    motif_id_slots() + 1 + 4
+}
+
+/// Row width of `motif_occurrences_to_tensors`'s `order` tensor: `motif_interest_width` plus the
+/// 3 distance fields.
+pub fn motif_order_width() -> usize {
+    motif_interest_width() + 3
+}
+
+/// Number of one-hot slots for a `MotifId`: sized to the largest source line number seen among
+/// `motif_rules()`'s results. `MotifId`s are currently just line numbers (see `motif_rules`'s doc
+/// comment), so this over-allocates rather than tracking a separate compact remapping.
+fn motif_id_slots() -> usize {
+    fn max_case_id(cases: &[OrientedCase<Motif>]) -> Option<usize> {
+        cases
+            .iter()
+            .filter_map(|c| match &c.result {
+                Motif::Discard => None,
+                Motif::Defect { id } => Some(id.0),
+                Motif::Nonmundane { id, .. } => Some(id.0),
+            })
+            .max()
+    }
+    motif_rules()
+        .iter()
+        .filter_map(|rule| max_case_id(&rule.cases).max(max_case_id(&rule.cases_plus_90)))
+        .max()
+        .map_or(0, |max_id| max_id + 1)
+}
+
+fn motif_axis_index(axis: MotifAxis) -> usize {
+    match axis {
+        MotifAxis::None => 0,
+        MotifAxis::X => 1,
+        MotifAxis::Y => 2,
+        MotifAxis::Z => 3,
+    }
+}
+
+/// The features shared by every occurrence of a given `MotifId`: a one-hot `id` (see
+/// `motif_id_slots`), the `nonmundanity` score, then a one-hot `axis` (`None`/`X`/`Y`/`Z`).
+fn motif_occurrence_features(occ: &MotifOccurrence, id_slots: usize) -> Vec<f32> {
+    let mut row = vec![0.0; id_slots + 1 + 4];
+    row[occ.id.0] = 1.0;
+    row[id_slots] = occ.nonmundanity as f32;
+    row[id_slots + 1 + motif_axis_index(occ.axis)] = 1.0;
+    row
+}
+
+/// The grid-cell distance between two same-`MotifId` occurrences' `base` cubes, with the pair
+/// ordered so the first nonzero of `(dx, dy, dz)` (in x, y, z priority) is positive.
+fn canonical_occurrence_distance(a: &MotifOccurrence, b: &MotifOccurrence) -> IVec3 {
+    let delta = b.base.cube - a.base.cube;
+    let flip = match (delta.x, delta.y, delta.z) {
+        (x, _, _) if x != 0 => x < 0,
+        (_, y, _) if y != 0 => y < 0,
+        (_, _, z) => z < 0,
+    };
+    if flip {
+        -delta
+    } else {
+        delta
+    }
+}
+
+/// Translates `MotifOccurrence`s (e.g. from `visible_motifs_and_defects`) into the two tensors
+/// the QNN's motif branch consumes:
+///
+/// - `interest`: one row per occurrence: `[one-hot id, nonmundanity, one-hot axis]` (see
+///   `motif_occurrence_features`).
+/// - `order`: one row per unordered pair of occurrences sharing a `MotifId` -- and therefore
+///   identical id/nonmundanity/axis, since those are assigned per-`MotifId` -- so a pair can only
+///   differ in location. Each row holds that one copy of the shared features, followed by the
+///   `(dx, dy, dz)` distance between the pair (see `canonical_occurrence_distance`).
+pub fn motif_occurrences_to_tensors<B: Backend>(
+    occurrences: &[MotifOccurrence],
+) -> (Tensor<B, 2, Float>, Tensor<B, 2, Float>) {
+    let device = Default::default();
+    let id_slots = motif_id_slots();
+    let interest_width = id_slots + 1 + 4;
+    let order_width = interest_width + 3;
+
+    let mut interest_data = Vec::with_capacity(occurrences.len() * interest_width);
+    for occ in occurrences {
+        interest_data.extend(motif_occurrence_features(occ, id_slots));
+    }
+    let interest = Tensor::from_data(
+        TensorData::new(interest_data, [occurrences.len(), interest_width]),
+        &device,
+    );
+
+    let mut order_data = Vec::new();
+    let mut num_pairs = 0_usize;
+    for (i, a) in occurrences.iter().enumerate() {
+        for b in &occurrences[i + 1..] {
+            if a.id != b.id {
+                continue;
+            }
+            let distance = canonical_occurrence_distance(a, b);
+            order_data.extend(motif_occurrence_features(a, id_slots));
+            order_data.extend([distance.x as f32, distance.y as f32, distance.z as f32]);
+            num_pairs += 1;
+        }
+    }
+    let order = Tensor::from_data(
+        TensorData::new(order_data, [num_pairs, order_width]),
+        &device,
+    );
+
+    (interest, order)
 }
 
 #[allow(dead_code)]
