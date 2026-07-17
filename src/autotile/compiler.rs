@@ -283,42 +283,58 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                 let base_annotations = &pattern.annotations;
                 let pt = pattern.anchor_pattern_type();
 
+                // H/H-narrow patterns have two wall positions per tile (`ZLoWall`/`XLoWall`).
+                // Ordinary rules always land their anchor on `XLoWall` (via `offset()`'s
+                // padding), but an empty-anchored rule's `dispatch_anchor` isn't padded that way
+                // and may land on either -- so route each orientation by the *actual* resulting
+                // family (checked fresh per rotation) rather than assuming `rule.slot == Wall`
+                // means "anchor starts X-family". `cases` (X-family/non-wall) and `cases_plus_90`
+                // (Z-family) are deduplicated independently, since a symmetric pattern can still
+                // need one entry in each.
+                let anchor_origin_slot = pattern.anchor_origin_slot();
+                let anchor_is_wall = matches!(
+                    anchor_origin_slot,
+                    AutotileRelSlot::XLoWall
+                        | AutotileRelSlot::XHiWall
+                        | AutotileRelSlot::ZLoWall
+                        | AutotileRelSlot::ZHiWall
+                );
+
                 let mut seen: Vec<HashMap<AutotileRelSlotOffset, char>> = Vec::new();
+                let mut seen_plus_90: Vec<HashMap<AutotileRelSlotOffset, char>> = Vec::new();
                 for rot in 0u8..4 {
-                    if rule.slot == UnorientedSlot::Wall && rot % 2 == 1 {
-                        // A particular wall is only symmetric in 180 degrees, not 90
-                        // (But we need to store a 90-offset rotation for Z walls; the
-                        // patterns are constructed for X walls.)
-                        continue;
-                    }
-                    // The rotation passed to `result.rotate` for `cases` (vs. `cases_plus_90`) below
-                    // is kind of bizarre; see `AutotileResultKind::rotate`'s doc comment.
                     let rotated = rotate_checks(&base_checks, rot);
-                    if !seen.iter().any(|s| s == &rotated) {
-                        seen.push(rotated.clone());
-                        cases.push(OrientedCase {
+                    let is_z_family = anchor_is_wall
+                        && matches!(
+                            rotate_autotile_rel_slot(anchor_origin_slot, rot),
+                            AutotileRelSlot::ZLoWall | AutotileRelSlot::ZHiWall
+                        );
+
+                    if !is_z_family {
+                        if !seen.iter().any(|s| s == &rotated) {
+                            seen.push(rotated.clone());
+                            cases.push(OrientedCase {
+                                pattern_type: pt,
+                                checks: checks_to_conditions(&rotated),
+                                result: case.result.rotate(rot, CaseList::Base),
+                                char_annotations: rotate_annotations(base_annotations, rot),
+                                group,
+                                multi: case.multi,
+                                output_offset: base_output_offset
+                                    .map(|o| rotate_slot_offset(o, rot)),
+                            });
+                        }
+                    } else if !seen_plus_90.iter().any(|s| s == &rotated) {
+                        seen_plus_90.push(rotated.clone());
+                        cases_plus_90.push(OrientedCase {
                             pattern_type: pt,
                             checks: checks_to_conditions(&rotated),
-                            result: case.result.rotate(rot, CaseList::Base),
+                            result: case.result.rotate(rot, CaseList::Plus90),
                             char_annotations: rotate_annotations(base_annotations, rot),
                             group,
                             multi: case.multi,
                             output_offset: base_output_offset.map(|o| rotate_slot_offset(o, rot)),
                         });
-
-                        if rule.slot == UnorientedSlot::Wall {
-                            let rotated_plus_90 = rotate_checks(&base_checks, rot + 1);
-                            cases_plus_90.push(OrientedCase {
-                                pattern_type: pt,
-                                checks: checks_to_conditions(&rotated_plus_90),
-                                result: case.result.rotate(rot + 1, CaseList::Plus90),
-                                char_annotations: rotate_annotations(base_annotations, rot + 1),
-                                group,
-                                multi: case.multi,
-                                output_offset: base_output_offset
-                                    .map(|o| rotate_slot_offset(o, rot + 1)),
-                            });
-                        }
                     }
                 }
             }

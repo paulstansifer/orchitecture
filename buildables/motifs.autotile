@@ -36,11 +36,11 @@ H:
 --> defect  # you could just walk around the doorway
 
 
-==wall:wall==
+==empty:room==
 H:
-  .
+  .@
  w .
-  @ 
+  w 
 --> . 'v_corner' 0.0  # normal corners 
 ==floor:floor==
 V:

@@ -489,6 +489,21 @@ impl Pattern {
         self.layers[self.at_layer].pattern_type
     }
 
+    /// The canonical `AutotileRelSlot` of this pattern's effective anchor for rotation purposes:
+    /// `dispatch_anchor`'s position for `==empty:...==` patterns, or `@`'s position otherwise.
+    /// H/H-narrow patterns have two wall positions per tile (`ZLoWall` and `XLoWall`); ordinary
+    /// (named) rules always land `@` on the `XLoWall` one via `offset()`'s padding, but an
+    /// empty-anchored rule's `dispatch_anchor` isn't padded that way and may land on either --
+    /// `compile_rule` uses this (rather than assuming `XLoWall`) to route each orientation to the
+    /// correct one of `cases`/`cases_plus_90`.
+    pub fn anchor_origin_slot(&self) -> AutotileRelSlot {
+        let (layer, col, row) =
+            self.dispatch_anchor
+                .unwrap_or((self.at_layer, self.at_col, self.at_row));
+        let (_, _, _, origin_slot) = anchor_frame(&self.layers, layer, col, row);
+        origin_slot
+    }
+
     /// Returns non-wildcard, non-@ cells as AutotileRelSlotOffset → char, across all layers.
     pub fn relative_checks(&self) -> HashMap<AutotileRelSlotOffset, char> {
         let (ax, ay, az, origin_slot) =

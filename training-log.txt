@@ -1576,3 +1576,14 @@ Final motif-interest loss (t/v) 0.033 0.036, skill (t/v) 0.697 0.489  score hist
 Final motif-order loss (t/v) 0.067 0.158, skill (t/v) 0.290 -0.175  score hist: [91000]
 Final motif-interest loss (t/v) 0.022 0.044, skill (t/v) 0.742 0.638  score hist: [96500]
 Final motif-order loss (t/v) 0.075 0.092, skill (t/v) 0.317 0.079  score hist: [64193]
+---
+Made the corner rule symmetrical:
+
+Final motif-interest loss (t/v) 0.042 0.020, skill (t/v) 0.530 0.816  score hist: [95421]
+Final motif-order loss (t/v) 0.073 0.144, skill (t/v) 0.157 -0.162  score hist: [90000]
+Final motif-interest loss (t/v) 0.050 0.054, skill (t/v) 0.452 0.537  score hist: [99100]
+Final motif-order loss (t/v) 0.092 0.093, skill (t/v) 0.255 -0.632  score hist: [92342]
+Final motif-interest loss (t/v) 0.039 0.030, skill (t/v) 0.639 0.574  score hist: [91821]
+Final motif-order loss (t/v) 0.064 0.189, skill (t/v) 0.260 -0.409  score hist: [90101]
+Final motif-interest loss (t/v) 0.018 0.053, skill (t/v) 0.788 0.562  score hist: [96500]
+Final motif-order loss (t/v) 0.085 0.112, skill (t/v) 0.135 -0.128  score hist: [90002]

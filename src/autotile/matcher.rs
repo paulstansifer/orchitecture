@@ -672,6 +672,69 @@ H:
         check!(none_results.is_empty());
     }
 
+    /// Regression test: an empty-anchored rule's `dispatch_anchor` can land on the "other" wall
+    /// slot within an H tile (`ZLoWall`, e.g. a room's north wall) while `@` sits on the
+    /// canonical `XLoWall` slot (e.g. the same room's east wall). `compile_rule` used to assume
+    /// every wall-family anchor started out `XLoWall`-canonical (guaranteed for named rules, since
+    /// `offset()` pads `@` there, but never enforced for `dispatch_anchor`), which crashed
+    /// `RelSlotCoord::apply_offset` with a "slot type mismatch" panic once a real Z-wall anchor
+    /// was matched against.
+    #[test]
+    fn empty_anchor_landing_on_the_other_wall_slot_does_not_panic() {
+        let input = "\
+== empty: wall ==
+H:
+ W
+  @
+--> hit
+";
+        let file = parse::<AutotiledMeshes>(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        // Confirm the reproduction: '@' canonically lands on XLoWall, but the dispatch anchor
+        // ('W') is on the OTHER wall slot of the tile (ZLoWall).
+        check!(pat.anchor_origin_slot() == AutotileRelSlot::ZLoWall);
+
+        let oriented = compile_rule(&file.rules[0]);
+        let names = vec!["wall".to_string()];
+        let index =
+            build_empty_anchor_index(std::slice::from_ref(&oriented), &names, test_char_matches);
+
+        // A wall placed at a Z-oriented slot must be found via `cases_plus_90` without panicking.
+        let anchor_loc_z = RelSlotCoord::new(0, 0, 0, RelSlot::ZLoWall);
+        let mut grid_z: Sparse3D<Cell> = Sparse3D::new();
+        grid_z.set(anchor_loc_z, wall_cell());
+        let results_z = evaluate_empty_anchor_rules(
+            anchor_loc_z,
+            "wall",
+            &index,
+            |loc| grid_z.get(loc).map(|c| (c.id, c.facing)),
+            test_char_matches,
+            no_name_match,
+        );
+        check!(
+            !results_z.is_empty(),
+            "expected the Z-wall anchor to match; got none"
+        );
+
+        // The same rule must still work when the anchor is found as an X-oriented wall instead
+        // (via `cases`).
+        let anchor_loc_x = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
+        let mut grid_x: Sparse3D<Cell> = Sparse3D::new();
+        grid_x.set(anchor_loc_x, wall_cell());
+        let results_x = evaluate_empty_anchor_rules(
+            anchor_loc_x,
+            "wall",
+            &index,
+            |loc| grid_x.get(loc).map(|c| (c.id, c.facing)),
+            test_char_matches,
+            no_name_match,
+        );
+        check!(
+            !results_x.is_empty(),
+            "expected the X-wall anchor to match; got none"
+        );
+    }
+
     // ── (multi) tests ─────────────────────────────────────────────────────────
 
     fn is_table(ch: char, id: EorfId, _facing: Facing) -> bool {

@@ -139,6 +139,82 @@ mod tests {
         check!(file.rules.len() > 0);
     }
 
+    /// Regression test for a real rule from `motifs.autotile` (`empty:room`'s `v_corner` case)
+    /// whose `dispatch_anchor` lands on `ZLoWall` (an H tile's "other" wall slot) while `@` sits
+    /// on the canonical `XLoWall` slot. `compile_rule` used to assume every wall-family anchor
+    /// started `XLoWall`-canonical, which crashed `RelSlotCoord::apply_offset` with a "slot type
+    /// mismatch" panic as soon as a real Z-wall structure was matched against this rule.
+    #[test]
+    fn empty_room_v_corner_rule_does_not_panic_on_z_wall_anchor() {
+        use super::super::{
+            build_empty_anchor_index, char_matches_name, compile_rule, evaluate_empty_anchor_rules,
+        };
+        use crate::city::Cell;
+        use crate::eorf::EorfId;
+        use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, RelSlotCoordOffset, Sparse3D};
+        use bevy::math::IVec3;
+
+        let input = "\
+==empty:room==
+H:
+  .@
+ w .
+  w
+--> . 'v_corner' 0.0
+";
+        let file = super::super::parse::<Motif>(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.anchor_origin_slot() == super::super::AutotileRelSlot::ZLoWall);
+
+        let oriented = compile_rule(&file.rules[0]);
+        let names = vec!["wall".to_string()];
+        fn char_matches(ch: char, id: EorfId, _facing: Facing) -> bool {
+            char_matches_name(ch, ["wall"][id.0 as usize])
+        }
+        fn no_name_match(_name: &str, _id: EorfId) -> bool {
+            false
+        }
+        let index = build_empty_anchor_index(std::slice::from_ref(&oriented), &names, char_matches);
+
+        fn wall_cell() -> Cell {
+            Cell {
+                id: EorfId(0),
+                facing: Facing::default(),
+                evaluation: None,
+                build_material: Default::default(),
+            }
+        }
+
+        // The full "v_corner" pattern needs a second wall (the room's other side) in addition to
+        // the dispatch anchor itself, at offset (1,0,0) from the anchor (ZLoWall -> XLoWall).
+        let second_wall_offset = RelSlotCoordOffset {
+            origin_slot: RelSlot::ZLoWall,
+            cube_offset: IVec3::new(1, 0, 0),
+            dest_slot: RelSlot::XLoWall,
+        };
+
+        // A wall found in a Z-oriented slot must dispatch via `cases_plus_90` without panicking
+        // (this used to crash inside `apply_offset` before the fix).
+        let anchor_z = RelSlotCoord::new(0, 0, 0, RelSlot::ZLoWall);
+        let mut grid_z: Sparse3D<Cell> = Sparse3D::new();
+        grid_z.set(anchor_z, wall_cell());
+        grid_z.set(anchor_z.apply_offset(second_wall_offset), wall_cell());
+        let results_z = evaluate_empty_anchor_rules(
+            anchor_z,
+            "wall",
+            &index,
+            |loc| grid_z.get(loc).map(|c| (c.id, c.facing)),
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            !results_z.is_empty(),
+            "expected the Z-wall anchor to match; got none"
+        );
+        // (The X-wall-anchor orientation of this same `cases`/`cases_plus_90` split is already
+        // exercised generically by `matcher::tests::empty_anchor_landing_on_the_other_wall_slot_does_not_panic`.)
+    }
+
     fn atom(id: usize, axis: MotifAxis, nonmundanity: f64, cube: (i32, i32, i32)) -> MotifAtom {
         MotifAtom {
             motif: Motif::Nonmundane {
