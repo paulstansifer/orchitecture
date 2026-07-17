@@ -45,10 +45,15 @@ pub fn collapse_motif_atoms(atoms: &[MotifAtom]) -> (Vec<MotifOccurrence>, Vec<D
     let mut defects = Vec::new();
     let mut occurrences = Vec::new();
 
-    // (id, slot, coordinates transverse to the axis) → axis coordinates seen.
-    let mut groups: HashMap<(MotifId, Slot, i32, i32), Vec<i32>> = HashMap::new();
+    // (id, slot, axis, coordinates transverse to the axis) → axis coordinates seen. `axis` is
+    // part of the key (not looked up separately per id) because a single `MotifId` can carry
+    // different axes on different atoms -- e.g. `h_corner` fires with axis `Z` alongside one wall
+    // of a room corner and axis `X` alongside the other, both sharing the same id. Keying only by
+    // id (as a prior version of this function did) let a same-id atom with a *different* axis
+    // overwrite which axis a given transverse-coordinate group gets reconstructed with,
+    // scrambling that group's cube coordinates.
+    let mut groups: HashMap<(MotifId, Slot, MotifAxis, i32, i32), Vec<i32>> = HashMap::new();
     let mut nonmundanity_by_id: HashMap<MotifId, f64> = HashMap::new();
-    let mut axis_by_id: HashMap<MotifId, MotifAxis> = HashMap::new();
 
     for atom in atoms {
         match &atom.motif {
@@ -64,7 +69,6 @@ pub fn collapse_motif_atoms(atoms: &[MotifAtom]) -> (Vec<MotifOccurrence>, Vec<D
                 ..
             } => {
                 nonmundanity_by_id.insert(*id, *nonmundanity);
-                axis_by_id.insert(*id, *axis);
                 let cube = atom.loc.cube;
                 match axis {
                     MotifAxis::None => occurrences.push(MotifOccurrence {
@@ -75,15 +79,15 @@ pub fn collapse_motif_atoms(atoms: &[MotifAtom]) -> (Vec<MotifOccurrence>, Vec<D
                         nonmundanity: *nonmundanity,
                     }),
                     MotifAxis::X => groups
-                        .entry((*id, atom.loc.slot, cube.y, cube.z))
+                        .entry((*id, atom.loc.slot, *axis, cube.y, cube.z))
                         .or_default()
                         .push(cube.x),
                     MotifAxis::Y => groups
-                        .entry((*id, atom.loc.slot, cube.x, cube.z))
+                        .entry((*id, atom.loc.slot, *axis, cube.x, cube.z))
                         .or_default()
                         .push(cube.y),
                     MotifAxis::Z => groups
-                        .entry((*id, atom.loc.slot, cube.x, cube.y))
+                        .entry((*id, atom.loc.slot, *axis, cube.x, cube.y))
                         .or_default()
                         .push(cube.z),
                 }
@@ -91,10 +95,9 @@ pub fn collapse_motif_atoms(atoms: &[MotifAtom]) -> (Vec<MotifOccurrence>, Vec<D
         }
     }
 
-    for ((id, slot, t0, t1), mut coords) in groups {
+    for ((id, slot, axis, t0, t1), mut coords) in groups {
         coords.sort_unstable();
         coords.dedup();
-        let axis = axis_by_id[&id];
         let nonmundanity = nonmundanity_by_id[&id];
 
         let mut run_start = 0;

@@ -1609,3 +1609,13 @@ Final motif-interest loss (t/v) 0.030 0.050, skill (t/v) 0.650 0.587  score hist
 Final motif-order loss (t/v) 0.128 0.164, skill (t/v) -0.007 -0.649  score hist: [00009]
 
 No luck!
+
+Fixed another motif issue.
+Final motif-interest loss (t/v) 0.041 0.015, skill (t/v) 0.551 0.870  score hist: [95421]
+Final motif-order loss (t/v) 0.102 0.133, skill (t/v) 0.139 0.091  score hist: [00009]
+Final motif-interest loss (t/v) 0.044 0.049, skill (t/v) 0.524 0.580  score hist: [93000]
+Final motif-order loss (t/v) 0.125 0.142, skill (t/v) 0.014 -0.187  score hist: [92113]
+Final motif-interest loss (t/v) 0.037 0.040, skill (t/v) 0.660 0.446  score hist: [93532]
+Final motif-order loss (t/v) 0.090 0.203, skill (t/v) 0.213 -0.435  score hist: [20935]
+Final motif-interest loss (t/v) 0.022 0.039, skill (t/v) 0.740 0.680  score hist: [97500]
+Final motif-order loss (t/v) 0.151 0.096, skill (t/v) -0.199 0.037  score hist: [69732]

@@ -255,7 +255,7 @@ impl AutotileResultKind for AutotiledMeshes {
 /// family; and the perpendicular axis is therefore Y for H or Z for V (see `grid_pos_to_3d`). A
 /// 90° world rotation (applied while compiling orientations) swaps X and Z, but never touches Y,
 /// so `AutotileResultKind::rotate` only needs to swap `X`/`Z`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotifAxis {
     None,
     X,

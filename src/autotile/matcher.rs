@@ -1381,4 +1381,137 @@ H: 1=stairs:90 2=stairs
             rotated_defects.len()
         );
     }
+
+    /// Every `SlotCoord` a `MotifOccurrence` spans, from `base` to `base + (length-1)` steps
+    /// along its axis (mirrors `qnn::translate::occurrence_points`, which isn't `pub`).
+    fn occurrence_footprint(
+        occ: &crate::autotile::MotifOccurrence,
+    ) -> Vec<crate::sparse3d::SlotCoord> {
+        use crate::sparse3d::SlotCoord;
+        let step = match occ.axis {
+            MotifAxis::X => IVec3::new(1, 0, 0),
+            MotifAxis::Y => IVec3::new(0, 1, 0),
+            MotifAxis::Z => IVec3::new(0, 0, 1),
+            MotifAxis::None => IVec3::ZERO,
+        };
+        (0..occ.length)
+            .map(|i| SlotCoord {
+                cube: occ.base.cube + step * i as i32,
+                slot: occ.base.slot,
+            })
+            .collect()
+    }
+
+    /// `Slot` isn't `Ord` (it's a shared type with no natural ordering need elsewhere), so give
+    /// it an arbitrary but stable discriminant purely for sorting footprint keys here.
+    fn slot_index(slot: crate::sparse3d::Slot) -> u8 {
+        use crate::sparse3d::Slot;
+        match slot {
+            Slot::Room => 0,
+            Slot::XLoWall => 1,
+            Slot::Floor => 2,
+            Slot::ZLoWall => 3,
+        }
+    }
+
+    /// A canonical, order-independent key for a `MotifOccurrence`: which motif it is, how
+    /// "notable" it is, and the exact set of grid points it covers. Two occurrences with the
+    /// same key cover the same physical footprint, regardless of which end their `base` measures
+    /// from or how the run happened to get split up during collapsing.
+    fn occurrence_key(
+        occ: &crate::autotile::MotifOccurrence,
+    ) -> (usize, u64, Vec<(i32, i32, i32, u8)>) {
+        let mut points: Vec<_> = occurrence_footprint(occ)
+            .into_iter()
+            .map(|p| (p.cube.x, p.cube.y, p.cube.z, slot_index(p.slot)))
+            .collect();
+        points.sort();
+        (occ.id.0, occ.nonmundanity.to_bits(), points)
+    }
+
+    /// Rotates a `MotifOccurrence`'s footprint (every point it covers) by one CW turn, without
+    /// relying on `occ.base`/`occ.axis` staying "the same end"/"the same axis label" under
+    /// rotation -- `MotifAxis::X`/`Z` swap under a 90° turn, and rotation can also reverse which
+    /// end of a run has the smaller coordinate, so comparing `base`/`axis` directly (rather than
+    /// full footprints) would be comparing the wrong endpoint half the time.
+    fn rotate_occurrence_key(
+        occ: &crate::autotile::MotifOccurrence,
+    ) -> (usize, u64, Vec<(i32, i32, i32, u8)>) {
+        use crate::sparse3d::Rotateable;
+        let mut points: Vec<_> = occurrence_footprint(occ)
+            .into_iter()
+            .map(|p| p.rotate(crate::sparse3d::Rotation::Clockwise))
+            .map(|p| (p.cube.x, p.cube.y, p.cube.z, slot_index(p.slot)))
+            .collect();
+        points.sort();
+        (occ.id.0, occ.nonmundanity.to_bits(), points)
+    }
+
+    /// Stronger than `motif_count_is_rotation_invariant`: not just the same *number* of motifs,
+    /// but the exact same *set* of motif footprints, just rotated -- every occurrence in the base
+    /// structure must have a corresponding occurrence in the rotated structure covering the
+    /// rotated image of the same grid points (same motif id, same nonmundanity), and vice versa.
+    /// Likewise for defects (single-point occurrences).
+    #[test]
+    fn motifs_correspond_exactly_under_rotation() {
+        let structures = crate::eorf::load_structure_info();
+        let names: Vec<String> = structures.iter().map(|s| s.name.clone()).collect();
+
+        let src = include_str!("../../buildables/motifs.autotile");
+        let file = parse::<Motif>(src).expect("motifs.autotile should parse");
+        let rules = compile(&file);
+
+        let grid = crate::serialization::load_from_str(
+            include_str!("../../assets/static/training/layered_offices.txt"),
+            &structures,
+        )
+        .expect("layered_offices.txt should load");
+        let rotated_grid = {
+            use crate::sparse3d::Rotateable;
+            grid.clone().rotate(crate::sparse3d::Rotation::Clockwise)
+        };
+
+        let (occurrences, defects) = all_motifs(&grid, &rules, &names);
+        let (rotated_occurrences, rotated_defects) = all_motifs(&rotated_grid, &rules, &names);
+
+        let mut expected: Vec<_> = occurrences.iter().map(rotate_occurrence_key).collect();
+        let mut actual: Vec<_> = rotated_occurrences.iter().map(occurrence_key).collect();
+        expected.sort();
+        actual.sort();
+        check!(
+            expected == actual,
+            "rotated occurrence footprints don't match (out of {} base / {} rotated occurrences)",
+            occurrences.len(),
+            rotated_occurrences.len()
+        );
+
+        let mut expected_defects: Vec<_> = defects
+            .iter()
+            .map(|d| {
+                use crate::sparse3d::Rotateable;
+                let p = d.loc.rotate(crate::sparse3d::Rotation::Clockwise);
+                (d.id.0, p.cube.x, p.cube.y, p.cube.z, slot_index(p.slot))
+            })
+            .collect();
+        let mut actual_defects: Vec<_> = rotated_defects
+            .iter()
+            .map(|d| {
+                (
+                    d.id.0,
+                    d.loc.cube.x,
+                    d.loc.cube.y,
+                    d.loc.cube.z,
+                    slot_index(d.loc.slot),
+                )
+            })
+            .collect();
+        expected_defects.sort();
+        actual_defects.sort();
+        check!(
+            expected_defects == actual_defects,
+            "rotated defect locations don't match (out of {} base / {} rotated defects)",
+            defects.len(),
+            rotated_defects.len()
+        );
+    }
 }
