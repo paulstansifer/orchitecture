@@ -16,7 +16,7 @@ use std::sync::Arc;
 use orchitecture_lib::qnn::translate::{
     load_training_data, GroundTruth, GroundTruthBatcher, Metric, ScoreConstraint,
 };
-use orchitecture_lib::qnn::{Args, MotifNn, OrderStatsNn};
+use orchitecture_lib::qnn::{Args, MotifNn};
 
 #[derive(Config, Debug)]
 struct TrainingConfig {
@@ -120,22 +120,6 @@ fn report_loss_curve(
 
         plots.push(std::fs::read_to_string(plot_file).unwrap());
     }
-}
-
-/// Space-separated `count(h1,h2,h3)` per example, in dataset order: `count` is the number of
-/// `motif_order` rows (paired-up motif occurrences) and `h1,h2,h3` are that example's
-/// `motif_order_stats` h-indices (see its doc comment). Handy for spotting "no data" -- or "no
-/// variation" -- as an explanation for a metric that won't train.
-fn motif_order_pair_counts<B: Backend, D: Dataset<GroundTruth<B>>>(data: &D) -> String {
-    (0..data.len())
-        .map(|i| {
-            let datum = data.get(i).unwrap();
-            let count = datum.motif_order.dims()[0];
-            let stats = datum.order_stats.into_data().to_vec::<f32>().unwrap();
-            format!("{count}({},{},{})", stats[0], stats[1], stats[2])
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn create_artifact_dir(artifact_dir: &str) {
@@ -246,6 +230,40 @@ fn train<B: Backend>() {
         let mut order_debug_rows: Vec<(bool, String, String, f32, f32, usize, usize, usize)> =
             Vec::new();
 
+        // Shared by both loops below: records one already-scored datum into `predictions`,
+        // `errors`, and (for `order`, with `--show-scores`) `order_debug_rows`. The loops
+        // themselves stay separate because extracting a plain `Tensor<B, 2>` differs for a
+        // train datum (`Tensor<Autodiff<B>, 2>`, needs `.inner()`) vs. a test datum (already
+        // `Tensor<B, 2>`).
+        let mut record_score = |filename: String,
+                                constraint: ScoreConstraint,
+                                goal: f32,
+                                pred: f32,
+                                order_stats: Vec<f32>,
+                                is_val: bool| {
+            predictions.push(pred);
+            if metric == Metric::Order && args.show_scores {
+                order_debug_rows.push((
+                    is_val,
+                    filename.clone(),
+                    format!("{}{:.2}", constraint_symbol(constraint), goal),
+                    goal,
+                    pred,
+                    order_stats[0] as usize,
+                    order_stats[1] as usize,
+                    order_stats[2] as usize,
+                ));
+            }
+            errors.push((
+                constrained_error(pred, goal, constraint),
+                filename,
+                is_val,
+                pred,
+                goal,
+                constraint,
+            ));
+        };
+
         let model = MotifNn::<Autodiff<B>>::new(&device, &args);
         println!(
             "MotifNn params: {}. Training items: {}. Test items: {}",
@@ -271,6 +289,7 @@ fn train<B: Backend>() {
 
         {
             let (train_data, test_data) = load_data();
+
             for idx in 0..train_data.len() {
                 let datum = train_data.get(idx).unwrap();
                 let order_stats = datum.order_stats.to_data().to_vec::<f32>().unwrap();
@@ -284,27 +303,14 @@ fn train<B: Backend>() {
                     .into_scalar()
                     .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
-                predictions.push(pred);
-                if metric == Metric::Order && args.show_scores {
-                    order_debug_rows.push((
-                        false,
-                        datum.filename.clone(),
-                        format!("{}{:.2}", constraint_symbol(datum.constraint), goal),
-                        goal,
-                        pred,
-                        order_stats[0] as usize,
-                        order_stats[1] as usize,
-                        order_stats[2] as usize,
-                    ));
-                }
-                errors.push((
-                    constrained_error(pred, goal, datum.constraint),
-                    datum.filename.clone(),
-                    false,
-                    pred,
-                    goal,
+                record_score(
+                    datum.filename,
                     datum.constraint,
-                ));
+                    goal,
+                    pred,
+                    order_stats,
+                    false,
+                );
             }
             for idx in 0..test_data.len() {
                 let datum = test_data.get(idx).unwrap();
@@ -315,27 +321,14 @@ fn train<B: Backend>() {
                     .into_scalar()
                     .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
-                predictions.push(pred);
-                if metric == Metric::Order && args.show_scores {
-                    order_debug_rows.push((
-                        true,
-                        datum.filename.clone(),
-                        format!("{}{:.2}", constraint_symbol(datum.constraint), goal),
-                        goal,
-                        pred,
-                        order_stats[0] as usize,
-                        order_stats[1] as usize,
-                        order_stats[2] as usize,
-                    ));
-                }
-                errors.push((
-                    constrained_error(pred, goal, datum.constraint),
-                    datum.filename.clone(),
-                    true,
-                    pred,
-                    goal,
+                record_score(
+                    datum.filename,
                     datum.constraint,
-                ));
+                    goal,
+                    pred,
+                    order_stats,
+                    true,
+                );
             }
         }
 
