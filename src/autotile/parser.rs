@@ -175,7 +175,7 @@ pub enum CaseList {
 
 /// The kind of value an autotile rule case produces. Implemented by `AutotiledMeshes` (mesh
 /// selection, the original use of this file format) and `Motif` (nonmundanity annotations).
-pub trait AutotileResultKind: Clone + std::fmt::Debug {
+pub trait AutotileResultKind: Clone + std::fmt::Debug + PartialEq {
     /// Parse the text after `-->`, with any `(multi)` prefix already stripped. `lineno` is the
     /// 1-based source line of the `-->` line, used by `Motif` to derive a unique id.
     /// `pattern_type` is the anchor pattern type of the case this result belongs to (or `H` for
@@ -199,6 +199,21 @@ pub trait AutotileResultKind: Clone + std::fmt::Debug {
     /// `Motif` uses this to assign `MotifId`s in order of each `Nonmundane` result's first-seen
     /// name (see `Motif::finalize`). Default: no-op.
     fn finalize(_file: &mut AutotileFile<Self>) {}
+
+    /// Whether every case of this result kind behaves as if marked `(multi)`, regardless of the
+    /// source rule's own marker: every matching orientation in a group contributes, rather than
+    /// an unmarked ambiguous match being a hard error (see `match_pattern_cases`). `Motif`
+    /// overrides this to `true` -- a symmetric-looking configuration (e.g. an interior column
+    /// with floor on both sides, or a room corner) legitimately satisfying more than one
+    /// orientation at once is routine for motifs, not a rule-authoring mistake, so it's always
+    /// allowed; exactly-equal results from different orientations are then deduplicated so this
+    /// doesn't inflate the atom count. Mesh-selection (`AutotiledMeshes`) keeps the default:
+    /// ambiguity there usually does indicate a rule bug (see `motif_count_is_rotation_invariant`
+    /// and the `column` autotile-rule dedup fix in `compile_rule`), so it stays a hard error
+    /// unless the rule author opts in with an explicit `(multi)`.
+    fn implicitly_multi() -> bool {
+        false
+    }
 }
 
 impl AutotileResultKind for AutotiledMeshes {
@@ -380,6 +395,10 @@ impl AutotileResultKind for Motif {
                 }
             }
         }
+    }
+
+    fn implicitly_multi() -> bool {
+        true
     }
 }
 

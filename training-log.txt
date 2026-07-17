@@ -1587,3 +1587,25 @@ Final motif-interest loss (t/v) 0.039 0.030, skill (t/v) 0.639 0.574  score hist
 Final motif-order loss (t/v) 0.064 0.189, skill (t/v) 0.260 -0.409  score hist: [90101]
 Final motif-interest loss (t/v) 0.018 0.053, skill (t/v) 0.788 0.562  score hist: [96500]
 Final motif-order loss (t/v) 0.085 0.112, skill (t/v) 0.135 -0.128  score hist: [90002]
+---
+Fixed a motif bug:
+Final motif-interest loss (t/v) 0.039 0.022, skill (t/v) 0.567 0.801  score hist: [80920]
+Final motif-order loss (t/v) 0.077 0.133, skill (t/v) 0.119 0.013  score hist: [90000]
+Final motif-interest loss (t/v) 0.051 0.033, skill (t/v) 0.445 0.714  score hist: [90700]
+Final motif-order loss (t/v) 0.114 0.088, skill (t/v) 0.035 -0.543  score hist: [39131]
+Final motif-interest loss (t/v) 0.033 0.028, skill (t/v) 0.694 0.608  score hist: [90812]
+Final motif-order loss (t/v) 0.081 0.155, skill (t/v) 0.141 -0.156  score hist: [19000]
+Final motif-interest loss (t/v) 0.023 0.048, skill (t/v) 0.730 0.607  score hist: [97400]
+Final motif-order loss (t/v) 0.084 0.139, skill (t/v) 0.195 -0.399  score hist: [03903]
+
+What if we declared that boxes had 0.0 order? The h-index technique actually scores them very low...
+Final motif-interest loss (t/v) 0.041 0.023, skill (t/v) 0.545 0.798  score hist: [93421]
+Final motif-order loss (t/v) 0.099 0.133, skill (t/v) 0.169 0.103  score hist: [00090]
+Final motif-interest loss (t/v) 0.040 0.038, skill (t/v) 0.564 0.678  score hist: [71900]
+Final motif-order loss (t/v) 0.102 0.165, skill (t/v) 0.196 -0.385  score hist: [92108]
+Final motif-interest loss (t/v) 0.031 0.040, skill (t/v) 0.713 0.439  score hist: [90822]
+Final motif-order loss (t/v) 0.089 0.188, skill (t/v) 0.178 -0.331  score hist: [90000]
+Final motif-interest loss (t/v) 0.030 0.050, skill (t/v) 0.650 0.587  score hist: [97400]
+Final motif-order loss (t/v) 0.128 0.164, skill (t/v) -0.007 -0.649  score hist: [00009]
+
+No luck!

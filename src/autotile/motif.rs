@@ -342,7 +342,11 @@ H:
         use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
 
         // A wall motif that fires whenever there's a wall to the +X side, scoring 0.75 along
-        // the pattern's column (X) axis.
+        // the pattern's column (X) axis. The middle wall of a run legitimately satisfies both the
+        // "+X neighbor" and "-X neighbor" (mirrored) readings of this symmetric pattern at once;
+        // `Motif` results are implicitly `(multi)` (see `AutotileResultKind::implicitly_multi`),
+        // so both fire, producing two identical atoms at that location that `match_pattern_cases`
+        // dedupes back down to one before `collapse_motif_atoms` ever sees them.
         let input = "\
 == wall: wall ==
 H:
@@ -400,5 +404,135 @@ H:
         check!(occurrences.len() == 1);
         check!(occurrences[0].length == 2);
         check!(occurrences[0].nonmundanity == 0.75);
+    }
+
+    /// `Motif` results are implicitly `(multi)` (`AutotileResultKind::implicitly_multi`), so a
+    /// symmetric pattern matching two orientations at once never panics -- unlike the equivalent
+    /// `AutotiledMeshes` case (see `matcher::tests::non_multi_ambiguous_match_panics`). Whether
+    /// both orientations survive depends on whether they produce *equal* results: identical
+    /// results (same case, e.g. `discard`/`defect`, or a `'name'`+axis that happens to coincide)
+    /// collapse to one; results that genuinely differ (e.g. different axes, as with the real
+    /// `h_corner` rule at a room corner) both survive.
+    #[test]
+    fn implicitly_multi_dedupes_identical_results_but_keeps_distinct_ones() {
+        use super::super::{compile_rule, match_pattern};
+        use crate::city::Cell;
+        use crate::eorf::EorfId;
+        use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Sparse3D};
+
+        fn char_matches(ch: char, id: EorfId, _facing: Facing) -> bool {
+            ch == 'W' && id.0 == 0
+        }
+        fn no_name_match(_name: &str, _id: EorfId) -> bool {
+            false
+        }
+
+        // Two neighbors (both walls), so both the "+X neighbor" and "-X neighbor" (mirrored)
+        // orientations of this symmetric pattern match at once -- but they both emit the exact
+        // same `discard` result, so only one atom should survive.
+        let discard_input = "\
+== wall: wall ==
+H:
+ @ W
+--> discard
+";
+        let file = super::super::parse::<Motif>(discard_input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
+        let mut grid: Sparse3D<Cell> = Sparse3D::new();
+        for loc in [
+            RelSlotCoord::new(-1, 0, 0, RelSlot::XLoWall),
+            RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall),
+        ] {
+            grid.set(
+                loc,
+                Cell {
+                    id: EorfId(0),
+                    facing: Default::default(),
+                    evaluation: None,
+                    build_material: Default::default(),
+                },
+            );
+        }
+        let results = match_pattern(
+            &oriented,
+            |l| grid.get(l).map(|c| (c.id, c.facing)),
+            anchor,
+            char_matches,
+            no_name_match,
+        );
+        check!(
+            results == vec![&Motif::Discard],
+            "two orientations emitting the same `discard` should collapse to one; got {results:?}"
+        );
+
+        // Now a floor-anchored corner-shaped rule (shaped like the real `h_corner` motif): unlike
+        // the wall-anchored case above, a Floor anchor's four compiled rotations all share one
+        // case list (never split into `cases_plus_90`), so two of them can match at once with
+        // genuinely different axes -- a wall on the +X side (axis Z) and a wall on the +Z side
+        // (axis X) of the same floor cell, i.e. an actual room corner. Both are real, distinct
+        // motifs and must both survive (mirrors the real `h_corner` rule's fix in
+        // `buildables/motifs.autotile`; see `matcher::tests::motif_count_is_rotation_invariant`).
+        let corner_input = "\
+== floor: floor ==
+V:
+   w
+  @
+--> . 'h_corner_like' 0.0
+";
+        let corner_file = super::super::parse::<Motif>(corner_input).unwrap();
+        let corner_oriented = compile_rule(&corner_file.rules[0]);
+
+        let floor_anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Floor);
+        let mut corner_grid: Sparse3D<Cell> = Sparse3D::new();
+        for loc in [
+            RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall),
+            RelSlotCoord::new(0, 0, 1, RelSlot::ZLoWall),
+        ] {
+            corner_grid.set(
+                loc,
+                Cell {
+                    id: EorfId(0),
+                    facing: Default::default(),
+                    evaluation: None,
+                    build_material: Default::default(),
+                },
+            );
+        }
+        fn wall_matches(ch: char, id: EorfId, _facing: Facing) -> bool {
+            ch == 'w' && id.0 == 0
+        }
+        let corner_results = match_pattern(
+            &corner_oriented,
+            |l| corner_grid.get(l).map(|c| (c.id, c.facing)),
+            floor_anchor,
+            wall_matches,
+            no_name_match,
+        );
+        check!(
+            corner_results.len() == 2,
+            "both distinct-axis orientations at a real corner should survive; got {corner_results:?}"
+        );
+        check!(
+            corner_results.iter().any(|r| matches!(
+                r,
+                Motif::Nonmundane {
+                    axis: MotifAxis::Z,
+                    ..
+                }
+            )),
+            "expected a Z-axis result among {corner_results:?}"
+        );
+        check!(
+            corner_results.iter().any(|r| matches!(
+                r,
+                Motif::Nonmundane {
+                    axis: MotifAxis::X,
+                    ..
+                }
+            )),
+            "expected an X-axis result among {corner_results:?}"
+        );
     }
 }

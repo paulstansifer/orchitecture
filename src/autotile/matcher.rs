@@ -155,8 +155,29 @@ fn match_pattern_cases<'a, R: AutotileResultKind>(
             i += 1;
         }
         if !matched.is_empty() {
-            if !multi {
-                matched.truncate(1);
+            if R::implicitly_multi() {
+                // Every matching orientation is legitimate (e.g. an interior column with floor on
+                // both sides, or a room corner, satisfying two orientations of the same case at
+                // once) -- but drop exact duplicates (not necessarily adjacent in `matched`) so a
+                // coincidence like that doesn't inflate the atom count beyond what a single
+                // physical event should produce.
+                let mut deduped: Vec<&'a OrientedCase<R>> = Vec::new();
+                for m in matched {
+                    if !deduped.iter().any(|d| d.result == m.result) {
+                        deduped.push(m);
+                    }
+                }
+                matched = deduped;
+            } else if !multi {
+                assert!(
+                    matched.len() == 1,
+                    "non-(multi) rule {:?} (slot {:?}, case group {group}) matched {} \
+                     orientations at once at anchor {anchor:?}; mark it `(multi)` or make the \
+                     orientations mutually exclusive",
+                    oriented.subject,
+                    oriented.slot,
+                    matched.len()
+                );
             }
             return matched;
         }
@@ -624,9 +645,16 @@ H:
         // XLoWall(-1,0,0), which must be empty for the rule to fire.
         let anchor_loc = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
         let output_loc = RelSlotCoord::new(-1, 0, 0, RelSlot::XLoWall);
+        // A single wall is symmetric under 180°, so both the west ('@ W') and mirrored east
+        // ('W @') readings of the pattern would match the same wall at once on an otherwise-empty
+        // grid; a second wall east of the anchor blocks the east reading's own "`@` is empty"
+        // check, leaving only the west orientation -- disambiguating without weakening what this
+        // test is actually about (west-side dispatch and its '.' blocking check).
+        let east_blocker_loc = RelSlotCoord::new(1, 0, 0, RelSlot::XLoWall);
 
         let mut grid: Sparse3D<Cell> = Sparse3D::new();
         grid.set(anchor_loc, wall_cell());
+        grid.set(east_blocker_loc, wall_cell());
         let results = evaluate_empty_anchor_rules(
             anchor_loc,
             "wall",
@@ -635,16 +663,13 @@ H:
             test_char_matches,
             no_name_match,
         );
-        // A single wall is symmetric under 180°, so both the west ('@ W') and mirrored east
-        // ('W @') readings of the pattern match the same wall at once; unless `(multi)`, only the
-        // first (here, the west one) survives the group's `truncate(1)`.
         check!(results.len() == 1, "expected one match; got {results:?}");
         check!(results[0].0 == output_loc);
         check!(matches!(results[0].1, AutotiledMeshes::Mesh { .. }));
 
         // If the output position is occupied too, the injected '.' check must block that specific
-        // (west) orientation from matching -- it must no longer appear among the results (the
-        // mirrored east orientation, whose own `@` is still empty, may still match instead).
+        // (west) orientation from matching -- and the east reading stays blocked by its own
+        // blocker wall, so no orientation should match at all.
         let mut grid_blocked = grid.clone();
         grid_blocked.set(output_loc, wall_cell());
         let blocked = evaluate_empty_anchor_rules(
@@ -656,8 +681,8 @@ H:
             no_name_match,
         );
         check!(
-            blocked.iter().all(|(loc, _)| *loc != output_loc),
-            "west orientation should be blocked once its @ position is occupied; got {blocked:?}"
+            blocked.is_empty(),
+            "both orientations should be blocked once their '@' positions are occupied; got {blocked:?}"
         );
 
         // No wall present at all: the index shouldn't even be consulted for an unrelated name.
@@ -681,12 +706,16 @@ H:
     /// was matched against.
     #[test]
     fn empty_anchor_landing_on_the_other_wall_slot_does_not_panic() {
+        // `(multi)`: on an otherwise-empty grid, this diagonal pattern's sole non-dispatch
+        // constraint (the injected "`@` is empty" check) is satisfied by more than one of its
+        // compiled orientations at once -- harmless here since the test only cares that matching
+        // completes without panicking, not which single orientation "wins".
         let input = "\
 == empty: wall ==
 H:
  W
   @
---> hit
+--> (multi) hit
 ";
         let file = parse::<AutotiledMeshes>(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
@@ -772,10 +801,14 @@ H:
         );
     }
 
-    /// Without `(multi)`, the same two-sided configuration yields just the first matching
-    /// orientation (one mesh).
+    /// Without `(multi)`, a genuinely ambiguous two-sided configuration (both orientations of a
+    /// symmetric pattern matching at once) is a hard error rather than a silent, rotation-order-
+    /// dependent pick of "the first one" -- that silent pick isn't rotation-covariant (see
+    /// `motif_count_is_rotation_invariant`'s bug write-up), so it's better caught here. Mark the
+    /// case `(multi)` if every matching orientation should legitimately fire.
     #[test]
-    fn non_multi_emits_single_orientation() {
+    #[should_panic(expected = "matched 2 orientations")]
+    fn non_multi_ambiguous_match_panics() {
         let input = "\
 == table: room ==
 H:
@@ -790,16 +823,12 @@ H:
         grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), table_cell());
         grid.set(RelSlotCoord::new(-1, 0, 0, RelSlot::Room), table_cell());
 
-        let results = match_pattern(
+        match_pattern(
             &oriented,
             |loc| grid.get(loc).map(|c| (c.id, c.facing)),
             anchor,
             is_table,
             no_name_match,
-        );
-        check!(
-            results.len() == 1,
-            "expected one orientation; got {results:?}"
         );
     }
 
@@ -1246,5 +1275,110 @@ H: 1=stairs:90 2=stairs
         let ann2 = pat.annotations.get(&'2').unwrap();
         check!(ann2.name == "stairs");
         check!(ann2.orientation == None);
+    }
+
+    // ── Motif count invariance under rotation ─────────────────────────────────
+
+    /// Runs every rule in `rules` over every occupied cell of `grid` and collapses the results,
+    /// mirroring `qnn::translate::visible_motifs_and_defects` but without its vantage-based
+    /// visibility filtering (we want every motif in the structure, not just the visible ones).
+    fn all_motifs(
+        grid: &Sparse3D<Cell>,
+        rules: &[AutotileOriented<Motif>],
+        names: &[String],
+    ) -> (
+        Vec<crate::autotile::MotifOccurrence>,
+        Vec<crate::autotile::DefectAtom>,
+    ) {
+        use crate::autotile::{collapse_motif_atoms, MotifAtom};
+        use crate::sparse3d::SlotCoord;
+
+        let empty_index = build_empty_anchor_index(rules, names, |ch, id, _facing| {
+            char_matches_name(ch, &names[id.as_usize()])
+        });
+
+        let char_matches = |ch: char, id: EorfId, _facing: Facing, anchor_name: &str| match ch {
+            '=' => names[id.as_usize()] == anchor_name,
+            other => char_matches_name(other, &names[id.as_usize()]),
+        };
+
+        let mut atoms = Vec::new();
+        for (loc, cell) in grid.iter() {
+            let anchor_name = names[cell.id.as_usize()].clone();
+            let rel_loc: RelSlotCoord = loc.into();
+
+            if let Some(results) = evaluate_autotile_rules(
+                rel_loc,
+                &anchor_name,
+                rules,
+                |l| grid.get(l).map(|c| (c.id, c.facing)),
+                |ch, id, facing| char_matches(ch, id, facing, &anchor_name),
+                |name, id| names[id.as_usize()] == name,
+            ) {
+                for motif in results {
+                    if matches!(motif, Motif::Discard) {
+                        continue;
+                    }
+                    atoms.push(MotifAtom { motif, loc });
+                }
+            }
+
+            for (out_loc, motif) in evaluate_empty_anchor_rules(
+                rel_loc,
+                &anchor_name,
+                &empty_index,
+                |l| grid.get(l).map(|c| (c.id, c.facing)),
+                |ch, id, facing| char_matches(ch, id, facing, &anchor_name),
+                |name, id| names[id.as_usize()] == name,
+            ) {
+                if matches!(motif, Motif::Discard) {
+                    continue;
+                }
+                atoms.push(MotifAtom {
+                    motif,
+                    loc: SlotCoord::from(out_loc),
+                });
+            }
+        }
+
+        collapse_motif_atoms(&atoms)
+    }
+
+    /// `layered_offices` generates a certain number of motifs; the same structure rotated 90°
+    /// should generate the same number, since rotation shouldn't change what's structurally
+    /// present -- only its orientation in space.
+    #[test]
+    fn motif_count_is_rotation_invariant() {
+        let structures = crate::eorf::load_structure_info();
+        let names: Vec<String> = structures.iter().map(|s| s.name.clone()).collect();
+
+        let src = include_str!("../../buildables/motifs.autotile");
+        let file = parse::<Motif>(src).expect("motifs.autotile should parse");
+        let rules = compile(&file);
+
+        let grid = crate::serialization::load_from_str(
+            include_str!("../../assets/static/training/layered_offices.txt"),
+            &structures,
+        )
+        .expect("layered_offices.txt should load");
+        let rotated_grid = {
+            use crate::sparse3d::Rotateable;
+            grid.clone().rotate(crate::sparse3d::Rotation::Clockwise)
+        };
+
+        let (occurrences, defects) = all_motifs(&grid, &rules, &names);
+        let (rotated_occurrences, rotated_defects) = all_motifs(&rotated_grid, &rules, &names);
+
+        let count = occurrences.len() + defects.len();
+        let rotated_count = rotated_occurrences.len() + rotated_defects.len();
+        check!(
+            count == rotated_count,
+            "expected the same motif count under rotation; got {count} (occurrences={}, defects={}) \
+             vs {rotated_count} (occurrences={}, defects={})",
+            occurrences.len(),
+            defects.len(),
+            rotated_occurrences.len(),
+            rotated_defects.len()
+        );
     }
 }

@@ -110,6 +110,49 @@ fn rotate_slot_offset(offset: AutotileRelSlotOffset, rot: u8) -> AutotileRelSlot
     }
 }
 
+/// A location key for `AutotileRelSlotOffset` that's independent of the arbitrary Lo/Hi choice
+/// of `origin_slot`/`dest_slot` -- e.g. `XLoWall` at cube offset `(1,0,0)` and `XHiWall` at cube
+/// offset `(0,0,0)` name the same physical wall (see `AutotileRelSlot::XLoWall`'s doc comment),
+/// and `rotate_slot_offset` can produce either spelling for the same real check depending on
+/// rotation. Mirrors the canonicalization `RelSlotCoord::apply_offset` performs at match time, so
+/// two checks that always resolve to the same cell dedup together even when their Lo/Hi spelling
+/// differs.
+fn canonical_offset_key(offset: AutotileRelSlotOffset) -> (AutotileRelSlot, (i32, i32, i32)) {
+    let (ox, oy, oz) = offset.origin_slot.absolute_offset();
+    let (mut cx, mut cy, mut cz) = offset.cube_offset;
+    cx -= ox;
+    cy -= oy;
+    cz -= oz;
+    let dest_slot = match offset.dest_slot {
+        AutotileRelSlot::XHiWall => {
+            cx += 1;
+            AutotileRelSlot::XLoWall
+        }
+        AutotileRelSlot::ZHiWall => {
+            cz += 1;
+            AutotileRelSlot::ZLoWall
+        }
+        AutotileRelSlot::Ceiling => {
+            cy += 1;
+            AutotileRelSlot::Floor
+        }
+        other => other,
+    };
+    (dest_slot, (cx, cy, cz))
+}
+
+/// A dedup key for a whole (rotated) check set: canonicalizes each offset (see
+/// `canonical_offset_key`) so that two check sets naming the same physical cells compare equal
+/// even if they disagree on Lo/Hi spelling.
+fn canonical_checks_key(
+    checks: &HashMap<AutotileRelSlotOffset, char>,
+) -> HashMap<(AutotileRelSlot, (i32, i32, i32)), char> {
+    checks
+        .iter()
+        .map(|(&offset, &ch)| (canonical_offset_key(offset), ch))
+        .collect()
+}
+
 fn rotate_checks(
     checks: &HashMap<AutotileRelSlotOffset, char>,
     rot: u8,
@@ -300,10 +343,12 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                         | AutotileRelSlot::ZHiWall
                 );
 
-                let mut seen: Vec<HashMap<AutotileRelSlotOffset, char>> = Vec::new();
-                let mut seen_plus_90: Vec<HashMap<AutotileRelSlotOffset, char>> = Vec::new();
+                let mut seen: Vec<HashMap<(AutotileRelSlot, (i32, i32, i32)), char>> = Vec::new();
+                let mut seen_plus_90: Vec<HashMap<(AutotileRelSlot, (i32, i32, i32)), char>> =
+                    Vec::new();
                 for rot in 0u8..4 {
                     let rotated = rotate_checks(&base_checks, rot);
+                    let canonical = canonical_checks_key(&rotated);
                     let is_z_family = anchor_is_wall
                         && matches!(
                             rotate_autotile_rel_slot(anchor_origin_slot, rot),
@@ -311,8 +356,8 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                         );
 
                     if !is_z_family {
-                        if !seen.iter().any(|s| s == &rotated) {
-                            seen.push(rotated.clone());
+                        if !seen.iter().any(|s| s == &canonical) {
+                            seen.push(canonical);
                             cases.push(OrientedCase {
                                 pattern_type: pt,
                                 checks: checks_to_conditions(&rotated),
@@ -324,8 +369,8 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                                     .map(|o| rotate_slot_offset(o, rot)),
                             });
                         }
-                    } else if !seen_plus_90.iter().any(|s| s == &rotated) {
-                        seen_plus_90.push(rotated.clone());
+                    } else if !seen_plus_90.iter().any(|s| s == &canonical) {
+                        seen_plus_90.push(canonical);
                         cases_plus_90.push(OrientedCase {
                             pattern_type: pt,
                             checks: checks_to_conditions(&rotated),
