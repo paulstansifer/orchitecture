@@ -15,9 +15,6 @@ training = [
     "dep:stdio-override",
     "dep:textplots",
 ]
-# Trains the old voxel/conv `Cnn` alongside `MotifNn`. Off by default so day-to-day training
-# iterates on `MotifNn` alone; enable to also retrain `Cnn`.
-old_qnn = []
 
 [dependencies]
 anyhow = "1"

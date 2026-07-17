@@ -16,8 +16,6 @@ use std::sync::Arc;
 use orchitecture_lib::qnn::translate::{
     load_training_data, GroundTruth, GroundTruthBatcher, Metric, ScoreConstraint,
 };
-#[cfg(feature = "old_qnn")]
-use orchitecture_lib::qnn::Cnn;
 use orchitecture_lib::qnn::{Args, MotifNn, OrderStatsNn};
 
 #[derive(Config, Debug)]
@@ -187,175 +185,10 @@ fn train<B: Backend>() {
     B::seed(&device, config.seed);
 
     let mut score_output = String::new();
-    #[cfg(feature = "old_qnn")]
-    let mut baseline_losses: HashMap<Metric, (f32, f32)> = HashMap::new();
-    #[cfg(feature = "old_qnn")]
-    let mut histograms: HashMap<Metric, String> = HashMap::new();
     let mut motif_baseline_losses: HashMap<Metric, (f32, f32)> = HashMap::new();
     let mut motif_histograms: HashMap<Metric, String> = HashMap::new();
 
-    #[cfg(feature = "old_qnn")]
-    for metric in [Metric::Interest, Metric::Order] {
-        let batcher = GroundTruthBatcher {};
-
-        let load_data = || {
-            load_training_data::<B>(
-                if args.fake_data {
-                    "fake_training"
-                } else {
-                    "assets/static/training"
-                },
-                config.seed,
-                metric,
-            )
-        };
-
-        let (train_data, test_data) = load_data();
-        let data_size = (train_data.len(), test_data.len());
-        let dataloader_train: Arc<dyn DataLoader<Autodiff<B>, GroundTruth<Autodiff<B>>>> =
-            burn::data::dataloader::DataLoaderBuilder::new(batcher.clone())
-                .batch_size(config.batch_size)
-                .shuffle(config.seed)
-                .num_workers(config.num_workers)
-                .build(train_data);
-
-        let dataloader_test: Arc<dyn DataLoader<B, GroundTruth<B>>> =
-            burn::data::dataloader::DataLoaderBuilder::new(batcher)
-                .batch_size(config.batch_size)
-                .shuffle(config.seed)
-                .num_workers(config.num_workers)
-                .build(test_data);
-
-        let model = Cnn::<Autodiff<B>>::new(&device, &args);
-
-        if metric == Metric::Interest {
-            // Only need to show this once:
-            println!(
-                "Model params: {}. Training items: {}. Test items: {}",
-                model.num_params(),
-                data_size.0,
-                data_size.1
-            );
-        }
-        // println!("### Model: {model}");
-        // println!("### last layer: {:?}", model.fc.last().unwrap().weight);
-
-        let model_trained =
-            burn::train::SupervisedTraining::new(artifact_dir, dataloader_train, dataloader_test)
-                .metric_train_numeric(burn::train::metric::LossMetric::new())
-                .metric_valid_numeric(burn::train::metric::LossMetric::new())
-                .num_epochs(config.num_epochs)
-                .with_metric_logger(FileMetricLogger::new(format!("/tmp/logs/{metric}/")))
-                .launch(burn::train::Learner::new(
-                    model,
-                    config.optimizer.init(),
-                    config.learning_rate,
-                ));
-        println!(
-            "last layer: {:?}",
-            model_trained.model.fc.last().unwrap().weight
-        );
-
-        {
-            let (train_data, test_data) = load_data();
-            let mut errors: Vec<(f32, String, bool, f32, f32, ScoreConstraint)> = Vec::new();
-            let mut predictions: Vec<f32> = Vec::new();
-
-            for idx in 0..train_data.len() {
-                let datum = train_data.get(idx).unwrap();
-                let pred: f32 = model_trained
-                    .model
-                    .forward(datum.voxels.inner())
-                    .into_scalar()
-                    .elem();
-                let goal: f32 = datum.scores.into_scalar().elem();
-                if args.show_scores {
-                    score_output += &format!(
-                        "{}: {:.2}=>{}{:.1} ",
-                        datum.filename,
-                        pred,
-                        constraint_symbol(datum.constraint),
-                        goal
-                    );
-                }
-                predictions.push(pred);
-                errors.push((
-                    constrained_error(pred, goal, datum.constraint),
-                    datum.filename.clone(),
-                    false,
-                    pred,
-                    goal,
-                    datum.constraint,
-                ));
-            }
-            if args.show_scores {
-                score_output += "/// ";
-            }
-            for idx in 0..test_data.len() {
-                let datum = test_data.get(idx).unwrap();
-                let pred: f32 = model_trained
-                    .model
-                    .forward(datum.voxels)
-                    .into_scalar()
-                    .elem();
-                let goal: f32 = datum.scores.into_scalar().elem();
-                if args.show_scores {
-                    score_output += &format!(
-                        "{}: {:.2}=>{}{:.1} ",
-                        datum.filename,
-                        pred,
-                        constraint_symbol(datum.constraint),
-                        goal
-                    );
-                }
-                predictions.push(pred);
-                errors.push((
-                    constrained_error(pred, goal, datum.constraint),
-                    datum.filename.clone(),
-                    true,
-                    pred,
-                    goal,
-                    datum.constraint,
-                ));
-            }
-            if args.show_scores {
-                score_output += "\n";
-            }
-
-            let train_goals: Vec<f32> = errors.iter().filter(|e| !e.2).map(|e| e.4).collect();
-            let valid_goals: Vec<f32> = errors.iter().filter(|e| e.2).map(|e| e.4).collect();
-            baseline_losses.insert(
-                metric,
-                (baseline_mse(&train_goals), baseline_mse(&valid_goals)),
-            );
-
-            errors.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            score_output += &format!("\nWorst {metric} errors:\n");
-            for (err, filename, is_val, pred, goal, constraint) in errors.iter().take(10) {
-                let marker = if *is_val { "*" } else { " " };
-                let symbol = constraint_symbol(*constraint);
-                score_output += &format!(
-                    "  {marker} {filename}: {symbol}{goal:.1}=>{pred:.2} (err {err:.2})\n"
-                );
-            }
-
-            histograms.insert(metric, quintile_histogram(&predictions));
-        }
-
-        model_trained
-            .model
-            .save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
-                format!("{artifact_dir}/{metric}_model"),
-                &burn::record::CompactRecorder::new(),
-            )
-            .expect("Trained model should be saved successfully");
-
-        let args_ron = ron::to_string(&args).unwrap();
-        std::fs::write(format!("{artifact_dir}/model_args.ron"), args_ron).unwrap();
-    }
-
-    // MotifNn: same score target as the Cnn loop above, but scored purely from visible motifs
-    // (see MotifNn's doc comment).
+    // MotifNn: scores a room purely from its visible motifs (see MotifNn's doc comment).
     for metric in [Metric::Interest, Metric::Order] {
         let batcher = GroundTruthBatcher {};
 
@@ -480,10 +313,15 @@ fn train<B: Backend>() {
         model_trained
             .model
             .save_file::<DefaultFileRecorder<HalfPrecisionSettings>, String>(
-                format!("{artifact_dir}/motif_{metric}_model"),
+                format!("{artifact_dir}/{metric}_model"),
                 &burn::record::CompactRecorder::new(),
             )
             .expect("Trained MotifNn model should be saved successfully");
+        std::fs::write(
+            format!("{artifact_dir}/model_args.ron"),
+            ron::to_string(&args).unwrap(),
+        )
+        .unwrap();
 
         {
             let train_goals: Vec<f32> = errors.iter().filter(|e| !e.2).map(|e| e.4).collect();
@@ -515,21 +353,7 @@ fn train<B: Backend>() {
 
     let mut plots: Vec<String> = Vec::new();
 
-    // Cnn's per-epoch loss curves, read back from the logger's CSVs -- only meaningful when the
-    // Cnn loop above actually ran.
-    #[cfg(feature = "old_qnn")]
-    for metric in [Metric::Interest, Metric::Order] {
-        report_loss_curve(
-            metric,
-            format!("/tmp/logs/{metric}"),
-            config.num_epochs,
-            baseline_losses[&metric],
-            &histograms[&metric],
-            &mut plots,
-        );
-    }
-
-    // MotifNn's per-epoch loss curves, same as above.
+    // MotifNn's per-epoch loss curves, read back from the logger's CSVs.
     for metric in [Metric::Interest, Metric::Order] {
         report_loss_curve(
             format!("motif-{metric}"),

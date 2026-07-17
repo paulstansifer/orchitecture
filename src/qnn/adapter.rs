@@ -1,5 +1,5 @@
 #![allow(unused)]
-use super::model::Cnn;
+use super::model::MotifNn;
 use bevy::asset::{Asset, AssetLoader, Assets, Handle, LoadContext};
 use bevy::prelude::*;
 use burn::record::Recorder;
@@ -51,8 +51,8 @@ impl AssetLoader for ModelBytesLoader {
 // ---------------------------------------------------------------------------
 
 pub struct ModelHolder {
-    pub interest: Cnn<AppBackend>,
-    pub order: Cnn<AppBackend>,
+    pub interest: MotifNn<AppBackend>,
+    pub order: MotifNn<AppBackend>,
 }
 
 impl ModelHolder {
@@ -65,16 +65,16 @@ impl ModelHolder {
         let args: super::model::Args = ron::from_str(MODEL_ARGS).unwrap();
 
         let recorder = NamedMpkBytesRecorder::<HalfPrecisionSettings>::new();
-        let i_record: <Cnn<AppBackend> as Module<AppBackend>>::Record =
+        let i_record: <MotifNn<AppBackend> as Module<AppBackend>>::Record =
             recorder.load(interest_bytes, &device).unwrap();
-        let i_model = Cnn::<AppBackend>::new(&device, &args).load_record(i_record);
-        let c_record: <Cnn<AppBackend> as Module<AppBackend>>::Record =
+        let i_model = MotifNn::<AppBackend>::new(&device, &args).load_record(i_record);
+        let o_record: <MotifNn<AppBackend> as Module<AppBackend>>::Record =
             recorder.load(order_bytes, &device).unwrap();
-        let c_model = Cnn::<AppBackend>::new(&device, &args).load_record(c_record);
+        let o_model = MotifNn::<AppBackend>::new(&device, &args).load_record(o_record);
 
         ModelHolder {
             interest: i_model,
-            order: c_model,
+            order: o_model,
         }
     }
 }
@@ -85,16 +85,29 @@ pub fn compute_metrics(
     structures: &[crate::eorf::EorfInfo],
     location: Vec3,
 ) -> Vec<f32> {
+    use crate::sparse3d::{RelSlot, RelSlotCoord};
+
     let pos = location.round().as_ivec3();
-    let tensor: burn::tensor::Tensor<AppBackend, 5> =
-        super::translate::sparse3d_to_tensor(contents, pos, |cell: &crate::city::Cell| {
-            structures[cell.id.as_usize()].embedding.to_vec()
-        })
-        .unwrap();
+    let vantage = RelSlotCoord::new(pos.x, pos.y, pos.z, RelSlot::Room);
+    let (occurrences, _defects) =
+        super::translate::visible_motifs_and_defects(contents, vantage, structures);
+    let (motif_interest, motif_order) =
+        super::translate::motif_occurrences_to_tensors::<AppBackend>(&occurrences);
+    let order_stats = super::translate::motif_order_stats::<AppBackend>(&occurrences);
 
     vec![
-        holder.order.forward(tensor.clone()).sum().into_scalar(),
-        holder.interest.forward(tensor).sum().into_scalar(),
+        holder
+            .order
+            .forward(
+                motif_interest.clone(),
+                motif_order.clone(),
+                order_stats.clone(),
+            )
+            .into_scalar(),
+        holder
+            .interest
+            .forward(motif_interest, motif_order, order_stats)
+            .into_scalar(),
     ]
 }
 
@@ -143,9 +156,37 @@ impl Plugin for ModelPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<ModelBytes>()
             .register_asset_loader(ModelBytesLoader)
-            .add_systems(Startup, setup_model_loading);
-        // TODO: restore when we update to the new models:
-        //.add_systems(Update, build_model_when_ready);
-        
+            .add_systems(Startup, setup_model_loading)
+            .add_systems(Update, build_model_when_ready);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rebuilds `ModelHolder` from the checked-in weights/args, on `NdArray` rather than
+    /// `AppBackend` so it doesn't need a GPU -- catches a `MotifNn` architecture change (in
+    /// `model.rs`/`Args`) that no longer matches what's actually saved at
+    /// `assets/static/models/{interest,order}_model.mpk`.
+    #[test]
+    fn model_holder_loads_from_committed_assets() {
+        use burn::backend::NdArray;
+        use burn::module::Module;
+        use burn::record::{HalfPrecisionSettings, NamedMpkBytesRecorder, Recorder};
+
+        let interest_bytes =
+            include_bytes!("../../assets/static/models/interest_model.mpk").to_vec();
+        let order_bytes = include_bytes!("../../assets/static/models/order_model.mpk").to_vec();
+
+        let device = Default::default();
+        let args: super::super::model::Args = ron::from_str(MODEL_ARGS).unwrap();
+        let recorder = NamedMpkBytesRecorder::<HalfPrecisionSettings>::new();
+
+        for bytes in [interest_bytes, order_bytes] {
+            let record: <MotifNn<NdArray<f32>> as Module<NdArray<f32>>>::Record =
+                recorder.load(bytes, &device).unwrap();
+            MotifNn::<NdArray<f32>>::new(&device, &args).load_record(record);
+        }
     }
 }
