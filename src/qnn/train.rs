@@ -242,6 +242,9 @@ fn train<B: Backend>() {
 
         let mut errors: Vec<(f32, String, bool, f32, f32, ScoreConstraint)> = Vec::new();
         let mut predictions: Vec<f32> = Vec::new();
+        // (is_val, filename, "<=0.70"-style goal string, goal (for sorting), pred, h1, h2, h3)
+        let mut order_debug_rows: Vec<(bool, String, String, f32, f32, usize, usize, usize)> =
+            Vec::new();
 
         let model = MotifNn::<Autodiff<B>>::new(&device, &args);
         println!(
@@ -270,6 +273,7 @@ fn train<B: Backend>() {
             let (train_data, test_data) = load_data();
             for idx in 0..train_data.len() {
                 let datum = train_data.get(idx).unwrap();
+                let order_stats = datum.order_stats.to_data().to_vec::<f32>().unwrap();
                 let pred: f32 = model_trained
                     .model
                     .forward(
@@ -281,6 +285,18 @@ fn train<B: Backend>() {
                     .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
                 predictions.push(pred);
+                if metric == Metric::Order && args.show_scores {
+                    order_debug_rows.push((
+                        false,
+                        datum.filename.clone(),
+                        format!("{}{:.2}", constraint_symbol(datum.constraint), goal),
+                        goal,
+                        pred,
+                        order_stats[0] as usize,
+                        order_stats[1] as usize,
+                        order_stats[2] as usize,
+                    ));
+                }
                 errors.push((
                     constrained_error(pred, goal, datum.constraint),
                     datum.filename.clone(),
@@ -292,6 +308,7 @@ fn train<B: Backend>() {
             }
             for idx in 0..test_data.len() {
                 let datum = test_data.get(idx).unwrap();
+                let order_stats = datum.order_stats.to_data().to_vec::<f32>().unwrap();
                 let pred: f32 = model_trained
                     .model
                     .forward(datum.motif_interest, datum.motif_order, datum.order_stats)
@@ -299,6 +316,18 @@ fn train<B: Backend>() {
                     .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
                 predictions.push(pred);
+                if metric == Metric::Order && args.show_scores {
+                    order_debug_rows.push((
+                        true,
+                        datum.filename.clone(),
+                        format!("{}{:.2}", constraint_symbol(datum.constraint), goal),
+                        goal,
+                        pred,
+                        order_stats[0] as usize,
+                        order_stats[1] as usize,
+                        order_stats[2] as usize,
+                    ));
+                }
                 errors.push((
                     constrained_error(pred, goal, datum.constraint),
                     datum.filename.clone(),
@@ -340,6 +369,22 @@ fn train<B: Backend>() {
                     let symbol = constraint_symbol(*constraint);
                     score_output += &format!(
                         "  {marker} {filename}: {symbol}{goal:.1}=>{pred:.2} (err {err:.2})\n"
+                    );
+                }
+            }
+
+            if !order_debug_rows.is_empty() {
+                order_debug_rows
+                    .sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+
+                let name_width = order_debug_rows.iter().map(|r| r.1.len()).max().unwrap();
+                let goal_width = order_debug_rows.iter().map(|r| r.2.len()).max().unwrap();
+
+                score_output += "\nOrder data points (sorted by ground-truth score):\n";
+                for (is_val, filename, goal_str, _goal, pred, h1, h2, h3) in &order_debug_rows {
+                    let marker = if *is_val { "*" } else { " " };
+                    score_output += &format!(
+                        "  {marker} {filename:<name_width$} {goal_str:>goal_width$} => {pred:>5.2}  h=({h1:>2}, {h2:>2}, {h3:>2})\n"
                     );
                 }
             }
