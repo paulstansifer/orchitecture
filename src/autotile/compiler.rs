@@ -53,6 +53,8 @@ pub struct AutotileOriented {
     pub cases_plus_90: Vec<OrientedCase>,
     /// True if this is a motif rule (header had no colon, anchor is first non-empty cell).
     pub is_motif: bool,
+    /// What the '@' anchor should match: "empty" or a structure name. None = default.
+    pub anchor_matcher: Option<String>,
 }
 
 // ─── Rotation helpers ─────────────────────────────────────────────────────────
@@ -329,6 +331,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
         cases,
         cases_plus_90,
         is_motif: rule.is_motif,
+        anchor_matcher: rule.anchor_matcher.clone(),
     }
 }
 
