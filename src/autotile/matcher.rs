@@ -276,7 +276,8 @@ H:
         check!(
             result
                 == vec![&AutotileResult::Mesh {
-                    spec: atom("wall_across").rotate(180)
+                    spec: atom("wall_across").rotate(180),
+                    motif_id: None,
                 }]
         );
 
@@ -323,7 +324,8 @@ H:
         )[0];
         check!(
             r_x == &AutotileResult::Mesh {
-                spec: atom("wall_across").rotate(180)
+                spec: atom("wall_across").rotate(180),
+                motif_id: None,
             }
         );
 
@@ -341,7 +343,8 @@ H:
         )[0];
         check!(
             r_z == &AutotileResult::Mesh {
-                spec: atom("wall_across")
+                spec: atom("wall_across"),
+                motif_id: None,
             },
             "ZLoWall anchor with ZLoWall neighbor at (0,0,1): expected wall_across, got {r_z:?}"
         );

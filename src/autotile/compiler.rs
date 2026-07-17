@@ -168,8 +168,9 @@ fn rotate_annotations(
 fn rotate_result(result: &AutotileResult, rot: u8) -> AutotileResult {
     match result {
         AutotileResult::None => AutotileResult::None,
-        AutotileResult::Mesh { spec } => AutotileResult::Mesh {
+        AutotileResult::Mesh { spec, motif_id } => AutotileResult::Mesh {
             spec: spec.clone().rotate(rot as i32 * 90),
+            motif_id: *motif_id,
         },
     }
 }

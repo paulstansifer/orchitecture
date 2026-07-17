@@ -140,7 +140,7 @@ impl MeshSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutotileResult {
     None,
-    Mesh { spec: MeshSpec },
+    Mesh { spec: MeshSpec, motif_id: Option<u32> },
 }
 
 // ─── Parsed representation ───────────────────────────────────────────────────
@@ -319,6 +319,7 @@ pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
     let lines: Vec<&str> = input.lines().collect();
     let mut i = 0;
     let mut rules = Vec::new();
+    let mut motif_names: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
 
     while i < lines.len() {
         let line = strip_comment(lines[i]);
@@ -350,7 +351,7 @@ pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
                 (String::new(), slot, true)
             };
             i += 1;
-            let (cases, new_i) = parse_cases(&lines, i, slot, is_motif)?;
+            let (cases, new_i) = parse_cases(&lines, i, slot, is_motif, &mut motif_names)?;
             i = new_i;
             rules.push(AutotileRule {
                 structure_name,
@@ -371,6 +372,7 @@ fn parse_cases(
     mut i: usize,
     slot: UnorientedSlot,
     is_motif: bool,
+    motif_names: &mut std::collections::HashMap<String, u32>,
 ) -> anyhow::Result<(Vec<PatternCase>, usize)> {
     let mut cases = Vec::new();
 
@@ -390,7 +392,7 @@ fn parse_cases(
 
         if let Some(rest) = line.strip_prefix("-->") {
             let (multi, result) =
-                parse_result(rest.trim()).with_context(|| format!("line {lineno}"))?;
+                parse_result(rest.trim(), motif_names).with_context(|| format!("line {lineno}"))?;
             cases.push(PatternCase {
                 pattern: None,
                 result,
@@ -418,7 +420,7 @@ fn parse_cases(
                 let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations, is_motif)
                     .with_context(|| format!("line {plineno}"))?;
                 let (multi, result) =
-                    parse_result(rest.trim()).with_context(|| format!("line {plineno}"))?;
+                    parse_result(rest.trim(), motif_names).with_context(|| format!("line {plineno}"))?;
                 cases.push(PatternCase {
                     pattern: Some(pattern),
                     result,
@@ -750,8 +752,9 @@ fn is_dead_slot(pt: &PatternType, col: usize, row: usize) -> bool {
 // ─── Mesh spec parser ─────────────────────────────────────────────────────────
 
 /// Parse a result line, returning `(multi, result)` where `multi` is set by a leading
-/// `(multi)` marker (see [`PatternCase::multi`]).
-fn parse_result(s: &str) -> anyhow::Result<(bool, AutotileResult)> {
+/// `(multi)` marker (see [`PatternCase::multi`]). For motif rules, a trailing `'name'`
+/// is extracted and used to assign a motif ID.
+fn parse_result(s: &str, motif_names: &mut std::collections::HashMap<String, u32>) -> anyhow::Result<(bool, AutotileResult)> {
     if s == "none" {
         return Ok((false, AutotileResult::None));
     }
@@ -760,8 +763,23 @@ fn parse_result(s: &str) -> anyhow::Result<(bool, AutotileResult)> {
     } else {
         (false, s)
     };
-    let spec = parse_mesh_spec(rest).with_context(|| format!("invalid result: {s:?}"))?;
-    Ok((multi, AutotileResult::Mesh { spec }))
+
+    // Extract optional motif name at the end (e.g., "mesh 'name'")
+    let (mesh_str, motif_id) = if let Some(quote_pos) = rest.rfind('\'') {
+        if let Some(open_quote) = rest[..quote_pos].rfind('\'') {
+            let name = rest[open_quote + 1..quote_pos].to_string();
+            let next_id = motif_names.len() as u32;
+            let id = *motif_names.entry(name).or_insert(next_id);
+            (&rest[..open_quote], Some(id))
+        } else {
+            (rest, None)
+        }
+    } else {
+        (rest, None)
+    };
+
+    let spec = parse_mesh_spec(mesh_str.trim()).with_context(|| format!("invalid result: {s:?}"))?;
+    Ok((multi, AutotileResult::Mesh { spec, motif_id }))
 }
 
 /// Recursive-descent parser for mesh specs.
@@ -1071,14 +1089,16 @@ H:
         check!(
             rule.cases[0].result
                 == AutotileResult::Mesh {
-                    spec: atom("mesh_a")
+                    spec: atom("mesh_a"),
+                    motif_id: None,
                 }
         );
         check!(rule.cases[1].multi == false);
         check!(
             rule.cases[1].result
                 == AutotileResult::Mesh {
-                    spec: atom("mesh_b")
+                    spec: atom("mesh_b"),
+                    motif_id: None,
                 }
         );
     }
@@ -1575,5 +1595,47 @@ H:
         let checks = pat.relative_checks();
         // Should have no checks since '@' and '.' are both empty markers.
         check!(checks.is_empty());
+    }
+
+    /// Motif rules can have names assigned IDs in order of first occurrence.
+    #[test]
+    fn motif_with_id_names() {
+        let input = "\
+== room ==
+H:
+ =
+--> mesh 'bedroom'
+== room ==
+H:
+ =
+--> mesh 'living_room'
+== room ==
+H:
+ =
+--> mesh 'bedroom'
+";
+        let file = parse(input).unwrap();
+        check!(file.rules.len() == 3);
+
+        // First occurrence of 'bedroom' gets ID 0
+        if let AutotileResult::Mesh { spec: _, motif_id } = &file.rules[0].cases[0].result {
+            check!(motif_id == &Some(0));
+        } else {
+            panic!("expected Mesh result");
+        }
+
+        // First occurrence of 'living_room' gets ID 1
+        if let AutotileResult::Mesh { spec: _, motif_id } = &file.rules[1].cases[0].result {
+            check!(motif_id == &Some(1));
+        } else {
+            panic!("expected Mesh result");
+        }
+
+        // Second occurrence of 'bedroom' reuses ID 0
+        if let AutotileResult::Mesh { spec: _, motif_id } = &file.rules[2].cases[0].result {
+            check!(motif_id == &Some(0));
+        } else {
+            panic!("expected Mesh result");
+        }
     }
 }
