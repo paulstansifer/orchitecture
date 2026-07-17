@@ -25,7 +25,7 @@ V:
 ==column:wall==
 V:
   @
---> | ok 1.0  # tall columns
+--> | 'column' 1.0  # tall columns
 
 ==doorway:wall==
 # TODO: those `.`s should be changed to something that expresses "no element is here" (allowing furniture).
@@ -41,24 +41,24 @@ H:
   .
  w .
   @ 
---> . ok 0.0  # normal corners 
+--> . 'v_corner' 0.0  # normal corners 
 ==floor:floor==
 V:
    w
   @
---> . ok 0.0
+--> . 'h_corner' 0.0
 
 ==railing:wall==
 V:
    @
   F .
---> . ok 0.5 
+--> . 'railing_edge' 0.5 
 V:
    @
   . F
---> . ok 0.5   # TODO: do we need to flip ourselves?
+--> . 'railing_edge' 0.5   # TODO: do we need to flip ourselves?
 V:
    @
   F F
---> . ok 0.0
+--> . 'railing_middle' 0.0
 --> defect

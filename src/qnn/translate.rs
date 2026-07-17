@@ -651,23 +651,26 @@ pub fn motif_order_width() -> usize {
     motif_interest_width() + 3
 }
 
-/// Number of one-hot slots for a `MotifId`: sized to the largest source line number seen among
-/// `motif_rules()`'s results. `MotifId`s are currently just line numbers (see `motif_rules`'s doc
-/// comment), so this over-allocates rather than tracking a separate compact remapping.
+/// Number of one-hot slots for a `MotifId`: sized to the largest id among `motif_rules()`'s
+/// `Nonmundane` results. Those ids are assigned compactly (0, 1, 2, ... in order of each name's
+/// first appearance -- see `Motif::finalize`), so this is exactly the number of distinct named
+/// motifs, with no over-allocation. `Defect` ids (still per-line, and not fed into
+/// `motif_occurrences_to_tensors`) are deliberately excluded from this count.
 fn motif_id_slots() -> usize {
-    fn max_case_id(cases: &[OrientedCase<Motif>]) -> Option<usize> {
+    fn max_nonmundane_id(cases: &[OrientedCase<Motif>]) -> Option<usize> {
         cases
             .iter()
             .filter_map(|c| match &c.result {
-                Motif::Discard => None,
-                Motif::Defect { id } => Some(id.0),
                 Motif::Nonmundane { id, .. } => Some(id.0),
+                Motif::Discard | Motif::Defect { .. } => None,
             })
             .max()
     }
     motif_rules()
         .iter()
-        .filter_map(|rule| max_case_id(&rule.cases).max(max_case_id(&rule.cases_plus_90)))
+        .filter_map(|rule| {
+            max_nonmundane_id(&rule.cases).max(max_nonmundane_id(&rule.cases_plus_90))
+        })
         .max()
         .map_or(0, |max_id| max_id + 1)
 }

@@ -61,6 +61,7 @@ pub fn collapse_motif_atoms(atoms: &[MotifAtom]) -> (Vec<MotifOccurrence>, Vec<D
                 axis,
                 nonmundanity,
                 id,
+                ..
             } => {
                 nonmundanity_by_id.insert(*id, *nonmundanity);
                 axis_by_id.insert(*id, *axis);
@@ -143,6 +144,7 @@ mod tests {
             motif: Motif::Nonmundane {
                 axis,
                 nonmundanity,
+                name: format!("motif_{id}"),
                 id: MotifId(id),
             },
             loc: SlotCoord {
@@ -269,7 +271,7 @@ mod tests {
 == wall: wall ==
 H:
  @ W
---> - ok 0.75
+--> - 'wall_row' 0.75
 --> defect
 ";
         let file = parse::<Motif>(input).unwrap();

@@ -193,6 +193,12 @@ pub trait AutotileResultKind: Clone + std::fmt::Debug {
     fn no_match_placeholder() -> Option<Self> {
         None
     }
+
+    /// Called once, after the whole file has been parsed, so implementations that need
+    /// cross-case bookkeeping can do a final resolution pass over every result in the file.
+    /// `Motif` uses this to assign `MotifId`s in order of each `Nonmundane` result's first-seen
+    /// name (see `Motif::finalize`). Default: no-op.
+    fn finalize(_file: &mut AutotileFile<Self>) {}
 }
 
 impl AutotileResultKind for AutotiledMeshes {
@@ -252,14 +258,19 @@ impl MotifAxis {
     }
 }
 
-/// Uniquely identifies a `Motif`, derived from the source line number of its `-->` result line.
+/// Uniquely identifies a `Motif`. For `Nonmundane` results, assigned in order of each distinct
+/// quoted name's first appearance in the file (see `Motif::finalize`), so every case naming the
+/// same motif shares one id. For `Defect`, still derived from the source line number of its
+/// `-->` result line, since each `defect` case is deliberately its own distinct motif.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MotifId(pub usize);
 
 /// The result of a Motif rule case: either a `defect`, a `discard` (matches but produces
 /// nothing — neither a `MotifOccurrence` nor a `DefectAtom`), or a nonmundanity annotation of
-/// the form `<axis> ok <score>` (e.g. `- ok 0.85`), where `<axis>` is one of `x` (no axis), `-`
-/// (column axis), `|` (row axis), or `.` (the axis perpendicular to the pattern's plane).
+/// the form `<axis> '<name>' <score>` (e.g. `- 'lonely_pillar' 0.85`), where `<axis>` is one of
+/// `x` (no axis), `-` (column axis), `|` (row axis), or `.` (the axis perpendicular to the
+/// pattern's plane), and `<name>` identifies the motif -- every case across the file sharing the
+/// same name is assigned the same `MotifId` (see `Motif::finalize`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Motif {
     Discard,
@@ -269,6 +280,7 @@ pub enum Motif {
     Nonmundane {
         axis: MotifAxis,
         nonmundanity: f64,
+        name: String,
         id: MotifId,
     },
 }
@@ -307,15 +319,23 @@ impl AutotileResultKind for Motif {
         };
         let rest = chars
             .as_str()
-            .strip_prefix(" ok ")
-            .with_context(|| format!("invalid motif result {s:?}: expected \" ok \" after axis"))?;
-        let nonmundanity: f64 = rest
+            .strip_prefix(' ')
+            .and_then(|s| s.strip_prefix('\''))
+            .with_context(|| {
+                format!("invalid motif result {s:?}: expected \" '<name>' <score>\" after axis")
+            })?;
+        let end_quote = rest.find('\'').with_context(|| {
+            format!("invalid motif result {s:?}: unterminated name (missing closing ')")
+        })?;
+        let name = rest[..end_quote].to_owned();
+        let nonmundanity: f64 = rest[end_quote + 1..]
             .trim()
             .parse()
             .with_context(|| format!("invalid motif result {s:?}: bad nonmundanity score"))?;
         Ok(Motif::Nonmundane {
             axis,
             nonmundanity,
+            name,
             id,
         })
     }
@@ -327,6 +347,7 @@ impl AutotileResultKind for Motif {
             Motif::Nonmundane {
                 axis,
                 nonmundanity,
+                name,
                 id,
             } => Motif::Nonmundane {
                 axis: if checks_rot % 2 == 1 {
@@ -335,8 +356,29 @@ impl AutotileResultKind for Motif {
                     *axis
                 },
                 nonmundanity: *nonmundanity,
+                name: name.clone(),
                 id: *id,
             },
+        }
+    }
+
+    /// Assigns `MotifId`s to every `Nonmundane` result in order of its name's first appearance in
+    /// the file, so all cases (across every rule) naming the same motif end up sharing one id.
+    /// `Defect` ids are left untouched (still per-line, see `MotifId`'s doc comment).
+    fn finalize(file: &mut AutotileFile<Self>) {
+        let mut next_id = 0usize;
+        let mut ids_by_name: HashMap<String, usize> = HashMap::new();
+        for rule in &mut file.rules {
+            for case in &mut rule.cases {
+                if let Motif::Nonmundane { name, id, .. } = &mut case.result {
+                    let assigned = *ids_by_name.entry(name.clone()).or_insert_with(|| {
+                        let v = next_id;
+                        next_id += 1;
+                        v
+                    });
+                    *id = MotifId(assigned);
+                }
+            }
         }
     }
 }
@@ -614,7 +656,9 @@ pub fn parse<R: AutotileResultKind>(input: &str) -> anyhow::Result<AutotileFile<
         }
     }
 
-    Ok(AutotileFile { rules })
+    let mut file = AutotileFile { rules };
+    R::finalize(&mut file);
+    Ok(file)
 }
 
 fn parse_cases<R: AutotileResultKind>(
@@ -1863,7 +1907,7 @@ H:
 == column: wall ==
 H:
  @
---> | ok 1.0
+--> | 'row_z' 1.0
 ";
         let file = parse::<Motif>(input).unwrap();
         let result = &file.rules[0].cases[0].result;
@@ -1886,7 +1930,7 @@ H:
 == column: wall ==
 V:
  @
---> | ok 1.0
+--> | 'row_y' 1.0
 ";
         let file = parse::<Motif>(input).unwrap();
         let result = &file.rules[0].cases[0].result;
@@ -1909,13 +1953,13 @@ V:
 == column: wall ==
 H:
  @
---> - ok 1.0
+--> - 'col' 1.0
 ";
         let v = "\
 == column: wall ==
 V:
  @
---> - ok 1.0
+--> - 'col' 1.0
 ";
         for input in [h, v] {
             let file = parse::<Motif>(input).unwrap();
@@ -1940,7 +1984,7 @@ V:
 == column: wall ==
 H:
  @
---> . ok 1.0
+--> . 'perp_y' 1.0
 ";
         let file = parse::<Motif>(input).unwrap();
         let result = &file.rules[0].cases[0].result;
@@ -1963,7 +2007,7 @@ H:
 == column: wall ==
 V:
  @
---> . ok 1.0
+--> . 'perp_z' 1.0
 ";
         let file = parse::<Motif>(input).unwrap();
         let result = &file.rules[0].cases[0].result;
@@ -1986,7 +2030,7 @@ V:
 == column: wall ==
 H:
  @
---> x ok 1.0
+--> x 'no_axis' 1.0
 ";
         let file = parse::<Motif>(input).unwrap();
         let result = &file.rules[0].cases[0].result;
@@ -2012,5 +2056,60 @@ H:
 ";
         let file = parse::<Motif>(input).unwrap();
         check!(file.rules[0].cases[0].result == Motif::Discard);
+    }
+
+    /// `MotifId`s are assigned in order of each name's first appearance, and every case
+    /// (including across different rules) that names the same motif shares one id.
+    #[test]
+    fn motif_ids_assigned_in_first_seen_name_order_and_shared_across_cases() {
+        let input = "\
+== column: wall ==
+H:
+ @
+--> - 'second' 1.0
+H:
+ @ =
+--> - 'first' 1.0
+
+== railing: wall ==
+H:
+ @
+--> - 'second' 0.5
+";
+        let file = parse::<Motif>(input).unwrap();
+        let get_id = |motif: &Motif| match motif {
+            Motif::Nonmundane { id, .. } => *id,
+            other => panic!("expected Nonmundane, got {other:?}"),
+        };
+        // 'second' is named first in the file (rule 0, case 0), so it gets id 0; 'first' (named
+        // second in the file, despite its name) gets id 1.
+        let second_id = get_id(&file.rules[0].cases[0].result);
+        let first_id = get_id(&file.rules[0].cases[1].result);
+        check!(second_id == MotifId(0));
+        check!(first_id == MotifId(1));
+        // The second rule's 'second' case shares the SAME id as the first rule's 'second' case.
+        check!(get_id(&file.rules[1].cases[0].result) == second_id);
+    }
+
+    /// `defect` ids are untouched by name-based assignment: each `defect` case keeps its own
+    /// per-line id, distinct even when it appears right alongside a named `Nonmundane` case.
+    #[test]
+    fn defect_ids_stay_per_line_and_unaffected_by_names() {
+        let input = "\
+== column: wall ==
+H:
+ @ =
+--> - 'shared' 1.0
+--> defect
+";
+        let file = parse::<Motif>(input).unwrap();
+        let Motif::Defect { id: defect_id } = file.rules[0].cases[1].result else {
+            panic!("expected Defect");
+        };
+        let Motif::Nonmundane { id: named_id, .. } = file.rules[0].cases[0].result else {
+            panic!("expected Nonmundane");
+        };
+        check!(named_id == MotifId(0));
+        check!(defect_id != named_id);
     }
 }
