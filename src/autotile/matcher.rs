@@ -101,6 +101,28 @@ pub fn match_pattern<'a, R: AutotileResultKind>(
     char_matches_id: impl Fn(char, EorfId, Facing) -> bool,
     name_matches_id: impl Fn(&str, EorfId) -> bool,
 ) -> Vec<&'a R> {
+    match_pattern_cases(
+        oriented,
+        &get_cell,
+        anchor,
+        &char_matches_id,
+        &name_matches_id,
+    )
+    .into_iter()
+    .map(|case| &case.result)
+    .collect()
+}
+
+/// Same matching logic as `match_pattern`, but returns the matched `OrientedCase`s themselves
+/// (rather than just their results), so callers that need more than the result — e.g.
+/// `evaluate_empty_anchor_rules`, which needs each case's `output_offset` — can get at it.
+fn match_pattern_cases<'a, R: AutotileResultKind>(
+    oriented: &'a AutotileOriented<R>,
+    get_cell: &impl Fn(RelSlotCoord) -> Option<(EorfId, Facing)>,
+    anchor: RelSlotCoord,
+    char_matches_id: &impl Fn(char, EorfId, Facing) -> bool,
+    name_matches_id: &impl Fn(&str, EorfId) -> bool,
+) -> Vec<&'a OrientedCase<R>> {
     let turn_90 = matches!(anchor.rel_slot, RelSlot::ZLoWall | RelSlot::ZHiWall);
     let cases = if turn_90 {
         &oriented.cases_plus_90
@@ -113,9 +135,9 @@ pub fn match_pattern<'a, R: AutotileResultKind>(
             check_condition(
                 cond,
                 anchor,
-                &get_cell,
-                &char_matches_id,
-                &name_matches_id,
+                get_cell,
+                char_matches_id,
+                name_matches_id,
                 &case.char_annotations,
             )
         })
@@ -125,10 +147,10 @@ pub fn match_pattern<'a, R: AutotileResultKind>(
     while i < cases.len() {
         let group = cases[i].group;
         let multi = cases[i].multi;
-        let mut matched: Vec<&'a R> = Vec::new();
+        let mut matched: Vec<&'a OrientedCase<R>> = Vec::new();
         while i < cases.len() && cases[i].group == group {
             if case_matches(&cases[i]) {
-                matched.push(&cases[i].result);
+                matched.push(&cases[i]);
             }
             i += 1;
         }
@@ -180,7 +202,7 @@ pub fn evaluate_autotile_rules<R: AutotileResultKind>(
     let unoriented = rel_slot_to_unoriented(loc.rel_slot);
     let matching: Vec<_> = rules
         .iter()
-        .filter(|r| r.structure_name == cell_name && r.slot == unoriented)
+        .filter(|r| r.subject.structure_name() == Some(cell_name) && r.slot == unoriented)
         .collect();
     if matching.is_empty() {
         return None;
@@ -201,6 +223,108 @@ pub fn evaluate_autotile_rules<R: AutotileResultKind>(
             })
             .collect(),
     )
+}
+
+// ─── Empty-anchored rule dispatch ────────────────────────────────────────────
+
+/// Index for dispatching `==empty:...==` rules: since their `@` anchor is empty and can't be
+/// discovered by iterating occupied cells, they're instead triggered by whatever occupied cell
+/// satisfies their dispatch-anchor character (see `Pattern::dispatch_anchor`). This index maps a
+/// concrete structure name to the rules whose dispatch-anchor character it satisfies, so
+/// per-cell dispatch is a hash lookup rather than a scan of every empty rule. Build once via
+/// `build_empty_anchor_index` (structure names and rules are static after startup) and reuse it.
+pub struct EmptyAnchorIndex<R> {
+    rules: Vec<AutotileOriented<R>>,
+    by_name: HashMap<String, Vec<usize>>,
+}
+
+/// The dispatch-anchor character of a compiled empty-anchored rule is the same across every
+/// orientation: it's the check at cube offset `(0,0,0)` whose origin and destination slot
+/// coincide (the anchor's own cell, recentered onto itself). Returns `None` if the rule has no
+/// pattern-based case at all (an empty rule with only an else-case has no anchor to dispatch on).
+fn dispatch_anchor_char<R: AutotileResultKind>(case: &OrientedCase<R>) -> Option<char> {
+    case.checks.iter().find_map(|cond| match cond {
+        Condition::Atom(offset, ch) if offset.cube_offset == (0, 0, 0) => Some(*ch),
+        _ => None,
+    })
+}
+
+/// Build the dispatch index for the `Empty`-subject rules among `all_rules`. `names` is the full
+/// structure name list (indexed by `EorfId`, as elsewhere in this module); `char_matches_id`
+/// answers "does this neighbor satisfy this pattern character?" exactly as in
+/// `evaluate_autotile_rules` (facing is irrelevant here since anchor eligibility is name-level,
+/// so an arbitrary facing is passed).
+pub fn build_empty_anchor_index<R: AutotileResultKind>(
+    all_rules: &[AutotileOriented<R>],
+    names: &[String],
+    char_matches_id: impl Fn(char, EorfId, Facing) -> bool,
+) -> EmptyAnchorIndex<R> {
+    let rules: Vec<AutotileOriented<R>> = all_rules
+        .iter()
+        .filter(|r| matches!(r.subject, RuleSubject::Empty))
+        .cloned()
+        .collect();
+
+    let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, rule) in rules.iter().enumerate() {
+        let Some(case) = rule.cases.first() else {
+            continue;
+        };
+        let Some(anchor_ch) = dispatch_anchor_char(case) else {
+            continue;
+        };
+        for (i, name) in names.iter().enumerate() {
+            let id = EorfId(i as u32);
+            let accepted = match case.char_annotations.get(&anchor_ch) {
+                Some(ann) => ann.name == *name,
+                None => char_matches_id(anchor_ch, id, Facing::PosX),
+            };
+            if accepted {
+                by_name.entry(name.clone()).or_default().push(idx);
+            }
+        }
+    }
+
+    EmptyAnchorIndex { rules, by_name }
+}
+
+/// Like `evaluate_autotile_rules`, but for `==empty:...==` rules: `loc`/`cell_name` describe the
+/// *occupied* cell serving as the dispatch anchor (found via `index`), not `@` itself, so results
+/// aren't necessarily recorded at `loc` — each returned pair is `(output location, result)`,
+/// where the output location is `loc` shifted by the matched case's `output_offset`.
+pub fn evaluate_empty_anchor_rules<R: AutotileResultKind>(
+    loc: RelSlotCoord,
+    cell_name: &str,
+    index: &EmptyAnchorIndex<R>,
+    get_cell: impl Fn(RelSlotCoord) -> Option<(EorfId, Facing)>,
+    char_matches_id: impl Fn(char, EorfId, Facing) -> bool,
+    name_matches_id: impl Fn(&str, EorfId) -> bool,
+) -> Vec<(RelSlotCoord, R)> {
+    let Some(rule_indices) = index.by_name.get(cell_name) else {
+        return Vec::new();
+    };
+    rule_indices
+        .iter()
+        .flat_map(|&i| {
+            let rule = &index.rules[i];
+            match_pattern_cases(rule, &get_cell, loc, &char_matches_id, &name_matches_id)
+                .into_iter()
+                .map(|case| {
+                    let output_loc = match case.output_offset {
+                        Some(offset) => {
+                            let (cx, cy, cz) = offset.cube_offset;
+                            loc.apply_offset(crate::sparse3d::RelSlotCoordOffset {
+                                origin_slot: offset.origin_slot.into(),
+                                cube_offset: IVec3::new(cx, cy, cz),
+                                dest_slot: offset.dest_slot.into(),
+                            })
+                        }
+                        None => loc,
+                    };
+                    (output_loc, case.result.clone())
+                })
+        })
+        .collect()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -469,6 +593,83 @@ H:
             "rot=3 (CCW): expected mesh rotation 90, got {}",
             mesh_rotation(r3)
         );
+    }
+
+    // ── `==empty:...==` dispatch ──────────────────────────────────────────────
+
+    /// An empty-anchored rule fires when its dispatch-anchor structure ('W' here) is present and
+    /// `@`'s own position is actually empty, recording the result at `@`'s offset from the
+    /// anchor rather than at the anchor's own location. It must NOT fire when something occupies
+    /// `@`'s position -- the injected `.` check should block it.
+    #[test]
+    fn empty_anchor_rule_dispatches_via_neighbor_structure() {
+        let input = "\
+== empty: wall ==
+H:
+ @ W
+--> hit
+";
+        let file = parse::<AutotiledMeshes>(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+        let names = vec![
+            "wall".to_string(),
+            "floor".to_string(),
+            "stairs".to_string(),
+            "railing".to_string(),
+        ];
+        let index =
+            build_empty_anchor_index(std::slice::from_ref(&oriented), &names, test_char_matches);
+
+        // A wall at XLoWall(0,0,0) serves as the dispatch anchor; '@' (and thus the output) is at
+        // XLoWall(-1,0,0), which must be empty for the rule to fire.
+        let anchor_loc = RelSlotCoord::new(0, 0, 0, RelSlot::XLoWall);
+        let output_loc = RelSlotCoord::new(-1, 0, 0, RelSlot::XLoWall);
+
+        let mut grid: Sparse3D<Cell> = Sparse3D::new();
+        grid.set(anchor_loc, wall_cell());
+        let results = evaluate_empty_anchor_rules(
+            anchor_loc,
+            "wall",
+            &index,
+            |loc| grid.get(loc).map(|c| (c.id, c.facing)),
+            test_char_matches,
+            no_name_match,
+        );
+        // A single wall is symmetric under 180°, so both the west ('@ W') and mirrored east
+        // ('W @') readings of the pattern match the same wall at once; unless `(multi)`, only the
+        // first (here, the west one) survives the group's `truncate(1)`.
+        check!(results.len() == 1, "expected one match; got {results:?}");
+        check!(results[0].0 == output_loc);
+        check!(matches!(results[0].1, AutotiledMeshes::Mesh { .. }));
+
+        // If the output position is occupied too, the injected '.' check must block that specific
+        // (west) orientation from matching -- it must no longer appear among the results (the
+        // mirrored east orientation, whose own `@` is still empty, may still match instead).
+        let mut grid_blocked = grid.clone();
+        grid_blocked.set(output_loc, wall_cell());
+        let blocked = evaluate_empty_anchor_rules(
+            anchor_loc,
+            "wall",
+            &index,
+            |loc| grid_blocked.get(loc).map(|c| (c.id, c.facing)),
+            test_char_matches,
+            no_name_match,
+        );
+        check!(
+            blocked.iter().all(|(loc, _)| *loc != output_loc),
+            "west orientation should be blocked once its @ position is occupied; got {blocked:?}"
+        );
+
+        // No wall present at all: the index shouldn't even be consulted for an unrelated name.
+        let none_results = evaluate_empty_anchor_rules(
+            anchor_loc,
+            "floor",
+            &index,
+            |loc| grid.get(loc).map(|c| (c.id, c.facing)),
+            test_char_matches,
+            no_name_match,
+        );
+        check!(none_results.is_empty());
     }
 
     // ── (multi) tests ─────────────────────────────────────────────────────────

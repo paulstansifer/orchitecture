@@ -245,8 +245,12 @@ fn extract_structure_atomic_meshes(
     let mut mapping: HashMap<String, Vec<String>> = HashMap::new();
 
     for rule in &file.rules {
+        // Empty-anchored rules aren't associated with a placeable structure's meshes.
+        let Some(structure_name) = rule.subject.structure_name() else {
+            continue;
+        };
         let meshes = mapping
-            .entry(rule.structure_name.clone())
+            .entry(structure_name.to_owned())
             .or_insert_with(Vec::new);
 
         for case in &rule.cases {

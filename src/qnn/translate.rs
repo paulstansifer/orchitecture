@@ -1,6 +1,7 @@
 use crate::autotile::{
-    char_matches_name, collapse_motif_atoms, compile, evaluate_autotile_rules, parse,
-    AutotileOriented, DefectAtom, Motif, MotifAtom, MotifAxis, MotifOccurrence, OrientedCase,
+    build_empty_anchor_index, char_matches_name, collapse_motif_atoms, compile,
+    evaluate_autotile_rules, evaluate_empty_anchor_rules, parse, AutotileOriented, DefectAtom,
+    Motif, MotifAtom, MotifAxis, MotifOccurrence, OrientedCase,
 };
 use crate::city::Cell;
 use crate::eorf::{EorfId, EorfInfo};
@@ -574,26 +575,49 @@ pub fn visible_motifs_and_defects(
 ) -> (Vec<MotifOccurrence>, Vec<DefectAtom>) {
     let rules = motif_rules();
     let names: Vec<String> = structures.iter().map(|s| s.name.clone()).collect();
+    // `'='` (only meaningful relative to a named anchor's own structure) never matches here;
+    // empty-anchored rules have no such anchor, so their dispatch character can't sensibly use it.
+    let empty_index = build_empty_anchor_index(&rules, &names, |ch, id, _facing| {
+        char_matches_name(ch, &names[id.as_usize()])
+    });
 
     let mut atoms = Vec::new();
     for (loc, cell) in sparse_data.iter() {
         let anchor_name = &names[cell.id.as_usize()];
         let rel_loc: RelSlotCoord = loc.into();
-        let Some(results) = evaluate_autotile_rules(
+        if let Some(results) = evaluate_autotile_rules(
             rel_loc,
             anchor_name,
             &rules,
             |l| sparse_data.get(l).map(|c| (c.id, c.facing)),
             |ch, id, facing| motif_char_matches(ch, id, facing, anchor_name, &names),
             |name, id| names[id.as_usize()] == name,
-        ) else {
-            continue;
-        };
-        for motif in results {
+        ) {
+            for motif in results {
+                if matches!(motif, Motif::Discard) {
+                    continue;
+                }
+                atoms.push(MotifAtom { motif, loc });
+            }
+        }
+
+        // `@`-is-empty rules: `loc`/`anchor_name` here serve as the dispatch anchor (a real
+        // structure), not `@` itself — the motif is recorded at the offset `@` position instead.
+        for (out_loc, motif) in evaluate_empty_anchor_rules(
+            rel_loc,
+            anchor_name,
+            &empty_index,
+            |l| sparse_data.get(l).map(|c| (c.id, c.facing)),
+            |ch, id, facing| motif_char_matches(ch, id, facing, anchor_name, &names),
+            |name, id| names[id.as_usize()] == name,
+        ) {
             if matches!(motif, Motif::Discard) {
                 continue;
             }
-            atoms.push(MotifAtom { motif, loc });
+            atoms.push(MotifAtom {
+                motif,
+                loc: out_loc.into(),
+            });
         }
     }
 

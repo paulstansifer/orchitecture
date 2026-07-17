@@ -17,7 +17,10 @@ pub use display::autotile_update_system;
 #[cfg(autotile_matching)]
 pub use matcher::*;
 #[cfg(autotile_matching)]
-pub use meshes::{load_autotile_handles, spawn_autotile_rules, AutotileHandles, AutotileRules};
+pub use meshes::{
+    load_autotile_handles, spawn_autotile_rules, spawn_empty_anchor_index, AutotileHandles,
+    AutotileRules, EmptyAnchorRules,
+};
 #[cfg(autotile_matching)]
 pub use motif::{collapse_motif_atoms, DefectAtom, MotifAtom, MotifOccurrence};
 pub use parser::*;

@@ -8,7 +8,10 @@ use bevy_egui::{
 };
 use bevy_file_dialog::FileDialogPlugin;
 use orchitecture_lib::{
-    autotile::{autotile_update_system, load_autotile_handles, spawn_autotile_rules},
+    autotile::{
+        autotile_update_system, load_autotile_handles, spawn_autotile_rules,
+        spawn_empty_anchor_index,
+    },
     build_ui::{build_ui_system, enable_ui_input_absorption, FurnitureRightClick, UiState},
     camera::{
         camera_input_system, disable_auto_egui_primary_context, spawn_camera, CameraState,
@@ -136,7 +139,11 @@ fn main() {
                 // spawn_structures must run before spawn_grid (grid reads EorfList),
                 // and spawn_initial_places after spawn_grid (it needs the WallGrid resource).
                 (spawn_structures, spawn_grid, spawn_initial_places).chain(),
-                spawn_autotile_rules,
+                // spawn_empty_anchor_index needs both spawn_structures (EorfList) and
+                // spawn_autotile_rules (AutotileRules) already run.
+                (spawn_autotile_rules, spawn_empty_anchor_index)
+                    .chain()
+                    .after(spawn_structures),
                 load_autotile_handles,
                 generate_farms,
                 spawn_population,

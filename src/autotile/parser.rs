@@ -11,6 +11,27 @@ pub enum UnorientedSlot {
     Floor,
 }
 
+/// What a rule's `@` anchor is required to be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleSubject {
+    /// `== name: slot ==`: `@` must be occupied by a structure named `name`.
+    Named(String),
+    /// `== empty: slot ==`: `@` must be an empty cell. Since there's then nothing to iterate
+    /// from at `@` itself, the pattern needs some other guaranteed-nonempty character to serve
+    /// as the dispatch anchor; see `Pattern::dispatch_anchor`.
+    Empty,
+}
+
+impl RuleSubject {
+    /// The structure name this rule is keyed on, if any (`None` for `Empty`).
+    pub fn structure_name(&self) -> Option<&str> {
+        match self {
+            RuleSubject::Named(name) => Some(name),
+            RuleSubject::Empty => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatternType {
     H,
@@ -352,6 +373,10 @@ pub struct Pattern {
     pub at_layer: usize,
     /// Labeled character → annotation (e.g. `'1'` → stairs at 90°).
     pub annotations: HashMap<char, PatternAnnotation>,
+    /// For `==empty:...==` rules only: the (layer, col, row) of the guaranteed-nonempty
+    /// character chosen to serve as the dispatch anchor, since `@` itself is empty and can't be
+    /// discovered by iterating occupied cells. `None` for ordinary (non-empty-anchored) rules.
+    pub dispatch_anchor: Option<(usize, usize, usize)>,
 }
 
 /// The spatial axis a pattern type stacks along when layered.
@@ -386,6 +411,36 @@ fn apply_layer_t(pt: PatternType, t: i32, x: i32, y: i32, z: i32) -> (i32, i32, 
     }
 }
 
+/// Compute the (ax, ay, az, origin_slot) frame for an arbitrary grid anchor position.
+fn anchor_frame(
+    layers: &[Layer],
+    at_layer: usize,
+    at_col: usize,
+    at_row: usize,
+) -> (i32, i32, i32, AutotileRelSlot) {
+    let anchor = &layers[at_layer];
+    let (ax0, ay0, az0, origin_slot) = grid_pos_to_3d(anchor.pattern_type, at_col, at_row);
+    let (ax, ay, az) = apply_layer_t(anchor.pattern_type, anchor.t, ax0, ay0, az0);
+    (ax, ay, az, origin_slot)
+}
+
+/// Compute the offset of grid cell `(col, row)` in `layer` relative to an anchor frame.
+fn cell_offset(
+    origin_slot: AutotileRelSlot,
+    (ax, ay, az): (i32, i32, i32),
+    layer: &Layer,
+    col: usize,
+    row: usize,
+) -> AutotileRelSlotOffset {
+    let (tx0, ty0, tz0, dest_slot) = grid_pos_to_3d(layer.pattern_type, col, row);
+    let (tx, ty, tz) = apply_layer_t(layer.pattern_type, layer.t, tx0, ty0, tz0);
+    AutotileRelSlotOffset {
+        origin_slot,
+        cube_offset: (tx - ax, ty - ay, tz - az),
+        dest_slot,
+    }
+}
+
 impl Pattern {
     /// The pattern type of the layer containing the `@` anchor.
     pub fn anchor_pattern_type(&self) -> PatternType {
@@ -394,10 +449,8 @@ impl Pattern {
 
     /// Returns non-wildcard, non-@ cells as AutotileRelSlotOffset → char, across all layers.
     pub fn relative_checks(&self) -> HashMap<AutotileRelSlotOffset, char> {
-        let anchor = &self.layers[self.at_layer];
-        let (ax0, ay0, az0, origin_slot) =
-            grid_pos_to_3d(anchor.pattern_type, self.at_col, self.at_row);
-        let (ax, ay, az) = apply_layer_t(anchor.pattern_type, anchor.t, ax0, ay0, az0);
+        let (ax, ay, az, origin_slot) =
+            anchor_frame(&self.layers, self.at_layer, self.at_col, self.at_row);
 
         let mut map = HashMap::new();
         for layer in &self.layers {
@@ -406,20 +459,49 @@ impl Pattern {
                     if ch == ' ' || ch == '@' {
                         continue;
                     }
-                    let (tx0, ty0, tz0, dest_slot) = grid_pos_to_3d(layer.pattern_type, c, r);
-                    let (tx, ty, tz) = apply_layer_t(layer.pattern_type, layer.t, tx0, ty0, tz0);
-                    map.insert(
-                        AutotileRelSlotOffset {
-                            origin_slot,
-                            cube_offset: (tx - ax, ty - ay, tz - az),
-                            dest_slot,
-                        },
-                        ch,
-                    );
+                    map.insert(cell_offset(origin_slot, (ax, ay, az), layer, c, r), ch);
                 }
             }
         }
         map
+    }
+
+    /// Like `relative_checks`, but for `==empty:...==` patterns: checks are computed relative to
+    /// `dispatch_anchor` (the guaranteed-nonempty dispatch cell) instead of `@`, and `@`'s own
+    /// position becomes a required-empty (`.`) check. Returns `(checks, output_offset)`, where
+    /// `output_offset` is the offset from the dispatch anchor to `@` (where the result should
+    /// actually be recorded). For ordinary rules (`dispatch_anchor` is `None`) this is equivalent
+    /// to `relative_checks()` with `output_offset = None`.
+    pub fn relative_checks_with_output(
+        &self,
+    ) -> (
+        HashMap<AutotileRelSlotOffset, char>,
+        Option<AutotileRelSlotOffset>,
+    ) {
+        let Some((dl, dc, dr)) = self.dispatch_anchor else {
+            return (self.relative_checks(), None);
+        };
+        let (ax, ay, az, origin_slot) = anchor_frame(&self.layers, dl, dc, dr);
+
+        let mut map = HashMap::new();
+        let mut output_offset = None;
+        for layer in &self.layers {
+            for (r, row) in layer.rows.iter().enumerate() {
+                for (c, &ch) in row.iter().enumerate() {
+                    if ch == ' ' {
+                        continue;
+                    }
+                    let offset = cell_offset(origin_slot, (ax, ay, az), layer, c, r);
+                    if ch == '@' {
+                        map.insert(offset, '.');
+                        output_offset = Some(offset);
+                    } else {
+                        map.insert(offset, ch);
+                    }
+                }
+            }
+        }
+        (map, output_offset)
     }
 }
 
@@ -469,7 +551,7 @@ pub struct PatternCase<R> {
 
 #[derive(Debug, Clone)]
 pub struct AutotileRule<R> {
-    pub structure_name: String,
+    pub subject: RuleSubject,
     pub slot: UnorientedSlot,
     pub cases: Vec<PatternCase<R>>,
 }
@@ -507,6 +589,11 @@ pub fn parse<R: AutotileResultKind>(input: &str) -> anyhow::Result<AutotileFile<
                 .rfind(':')
                 .with_context(|| format!("line {lineno}: unexpected line: {line:?}"))?;
             let structure_name = inner[..colon].trim().to_owned();
+            let subject = if structure_name == "empty" {
+                RuleSubject::Empty
+            } else {
+                RuleSubject::Named(structure_name)
+            };
             let slot = match inner[colon + 1..].trim() {
                 "wall" => UnorientedSlot::Wall,
                 "room" => UnorientedSlot::Room,
@@ -514,10 +601,11 @@ pub fn parse<R: AutotileResultKind>(input: &str) -> anyhow::Result<AutotileFile<
                 other => bail!("line {lineno}: invalid slot: {other:?}"),
             };
             i += 1;
-            let (cases, new_i) = parse_cases::<R>(&lines, i, slot)?;
+            let is_empty_anchor = matches!(subject, RuleSubject::Empty);
+            let (cases, new_i) = parse_cases::<R>(&lines, i, slot, is_empty_anchor)?;
             i = new_i;
             rules.push(AutotileRule {
-                structure_name,
+                subject,
                 slot,
                 cases,
             });
@@ -533,6 +621,7 @@ fn parse_cases<R: AutotileResultKind>(
     lines: &[&str],
     mut i: usize,
     slot: UnorientedSlot,
+    is_empty_anchor: bool,
 ) -> anyhow::Result<(Vec<PatternCase<R>>, usize)> {
     let mut cases = Vec::new();
 
@@ -578,8 +667,15 @@ fn parse_cases<R: AutotileResultKind>(
             let pline = strip_comment(lines[i]);
             let plineno = i + 1;
             if let Some(rest) = pline.strip_prefix("-->") {
-                let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations)
-                    .with_context(|| format!("line {plineno}"))?;
+                let pattern = build_pattern(
+                    layer_types,
+                    layer_ts,
+                    layer_rows,
+                    slot,
+                    annotations,
+                    is_empty_anchor,
+                )
+                .with_context(|| format!("line {plineno}"))?;
                 let pattern_type = pattern.anchor_pattern_type();
                 let (multi, result) = parse_result_line::<R>(rest.trim(), plineno, pattern_type)
                     .with_context(|| format!("line {plineno}"))?;
@@ -758,6 +854,7 @@ fn build_pattern(
     layer_rows: Vec<Vec<Vec<char>>>,
     slot: UnorientedSlot,
     annotations: HashMap<char, PatternAnnotation>,
+    is_empty_anchor: bool,
 ) -> anyhow::Result<Pattern> {
     // Find the single '@' across all layers.
     let mut anchor: Option<(usize, usize, usize)> = None; // (layer, col, row)
@@ -808,7 +905,7 @@ fn build_pattern(
     let col_shift = if col_offset % 2 != 0 { 1 } else { 0 };
     let row_shift = if row_offset % 2 != 0 { 1 } else { 0 };
 
-    let layers = layer_types
+    let layers: Vec<Layer> = layer_types
         .into_iter()
         .zip(layer_ts)
         .zip(layer_rows)
@@ -819,12 +916,37 @@ fn build_pattern(
         })
         .collect();
 
+    // For `==empty:...==` patterns, pick the first guaranteed-nonempty character (in
+    // layer/row/col scan order) to serve as the dispatch anchor, since `@` is empty and can't be
+    // discovered by iterating occupied cells. `'r'` is excluded: it can be satisfied at two
+    // different locations (a wall, or a roof beyond it), so it can't serve as a single dispatch
+    // point. It's a fatal error if no such character exists.
+    let dispatch_anchor = if is_empty_anchor {
+        let mut found = None;
+        'outer: for (l, layer) in layers.iter().enumerate() {
+            for (r, row) in layer.rows.iter().enumerate() {
+                for (c, &ch) in row.iter().enumerate() {
+                    if !matches!(ch, ' ' | '.' | '@' | 'r') {
+                        found = Some((l, c, r));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        Some(found.context(
+            "==empty:...== pattern has no guaranteed-nonempty character to serve as its dispatch anchor",
+        )?)
+    } else {
+        None
+    };
+
     Ok(Pattern {
         layers,
         at_col: at_col + col_shift,
         at_row: at_row + row_shift,
         at_layer,
         annotations,
+        dispatch_anchor,
     })
 }
 
@@ -1120,11 +1242,67 @@ mod tests {
         let file = parse::<AutotiledMeshes>(input).unwrap();
         check!(file.rules.len() == 1);
         let rule = &file.rules[0];
-        check!(rule.structure_name == "wall");
+        check!(rule.subject.structure_name() == Some("wall"));
         check!(rule.slot == UnorientedSlot::Wall);
         check!(rule.cases.len() == 1);
         check!(rule.cases[0].pattern.is_none());
         check!(rule.cases[0].result == AutotiledMeshes::None);
+    }
+
+    // ── `==empty:...==` rules ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_empty_header_is_empty_subject() {
+        let input = "\
+== empty: wall ==
+H:
+ @ W
+--> mesh_a
+";
+        let file = parse::<AutotiledMeshes>(input).unwrap();
+        let rule = &file.rules[0];
+        check!(rule.subject == RuleSubject::Empty);
+        check!(rule.slot == UnorientedSlot::Wall);
+    }
+
+    #[test]
+    fn empty_pattern_with_no_nonempty_matcher_is_fatal() {
+        // Only '.', wildcard, and 'r' present -- none can serve as a dispatch anchor.
+        let input = "\
+== empty: wall ==
+H:
+ r @ .
+--> mesh_a
+";
+        check!(parse::<AutotiledMeshes>(input).is_err());
+    }
+
+    #[test]
+    fn empty_pattern_picks_dispatch_anchor_and_recenters() {
+        let input = "\
+== empty: wall ==
+H:
+ @ W
+--> mesh_a
+";
+        let file = parse::<AutotiledMeshes>(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        check!(pat.dispatch_anchor.is_some());
+
+        // Ordinary relative_checks() is unaffected: still relative to '@', 'W' at offset (1,0,0).
+        let plain = pat.relative_checks();
+        check!(plain.len() == 1);
+        check!(plain.values().next() == Some(&'W'));
+
+        // relative_checks_with_output() recenters onto 'W': '@' becomes a required-empty ('.')
+        // check at the offset from 'W' back to '@', and that offset is returned as output_offset.
+        let (checks, output_offset) = pat.relative_checks_with_output();
+        let output_offset =
+            output_offset.expect("empty-anchored pattern must have an output_offset");
+        check!(checks.get(&output_offset) == Some(&'.'));
+        // 'W' itself, now at the anchor, shows up as a trivial self-check at offset zero.
+        check!(checks.values().filter(|&&ch| ch == 'W').count() == 1);
+        check!(checks.len() == 2);
     }
 
     #[test]
@@ -1265,8 +1443,8 @@ H:
 ";
         let file = parse::<AutotiledMeshes>(input).unwrap();
         check!(file.rules.len() == 2);
-        check!(file.rules[0].structure_name == "wall");
-        check!(file.rules[1].structure_name == "railing");
+        check!(file.rules[0].subject.structure_name() == Some("wall"));
+        check!(file.rules[1].subject.structure_name() == Some("railing"));
     }
 
     #[test]
@@ -1282,7 +1460,7 @@ V:
         let file = parse::<AutotiledMeshes>(input).unwrap();
         check!(file.rules.len() == 1);
         let rule = &file.rules[0];
-        check!(rule.structure_name == "rug");
+        check!(rule.subject.structure_name() == Some("rug"));
         check!(rule.slot == UnorientedSlot::Floor);
         check!(rule.cases.len() == 2);
 

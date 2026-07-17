@@ -521,7 +521,7 @@ pub fn update_room_cursor_mesh(
         let autotile_handle = autotile_rules
             .0
             .iter()
-            .find(|rule| &rule.structure_name == name)
+            .find(|rule| rule.subject.structure_name() == Some(name.as_str()))
             .and_then(|rule| {
                 rule.cases.last().and_then(|case| {
                     if let AutotiledMeshes::Mesh { spec, .. } = &case.result {

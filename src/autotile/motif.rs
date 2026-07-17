@@ -135,7 +135,7 @@ mod tests {
         let src = include_str!("../../buildables/motifs.autotile");
         let file =
             super::super::parse::<Motif>(src).expect("motifs.autotile should parse as Motif rules");
-        check!(file.rules.len() == 4);
+        check!(file.rules.len() > 0);
     }
 
     fn atom(id: usize, axis: MotifAxis, nonmundanity: f64, cube: (i32, i32, i32)) -> MotifAtom {

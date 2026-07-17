@@ -40,11 +40,16 @@ pub struct OrientedCase<R> {
     /// `(multi)`: when one orientation in this group matches, every matching orientation emits
     /// its mesh. See [`super::parser::PatternCase::multi`].
     pub multi: bool,
+    /// For `==empty:...==` rules: the offset from the dispatch anchor (`checks`' origin) to `@`,
+    /// where the result should actually be recorded. `None` means "record at the dispatch
+    /// anchor's own location" — always true for ordinary (non-empty-anchored) rules, and also
+    /// used as a fallback for an empty-anchored rule's else-case, which has no `@` of its own.
+    pub output_offset: Option<AutotileRelSlotOffset>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AutotileOriented<R> {
-    pub structure_name: String,
+    pub subject: RuleSubject,
     pub slot: UnorientedSlot,
     /// Cases in priority order; else case (empty checks) is last.
     pub cases: Vec<OrientedCase<R>>,
@@ -174,8 +179,13 @@ pub fn structure_to_meshes(file: &AutotileFile<AutotiledMeshes>) -> HashMap<Stri
     let mut mapping: HashMap<String, Vec<String>> = HashMap::new();
 
     for rule in &file.rules {
-        let structure_name = rule.structure_name.clone();
-        let meshes = mapping.entry(structure_name).or_insert_with(Vec::new);
+        // Empty-anchored rules aren't associated with a placeable structure's mesh category.
+        let Some(structure_name) = rule.subject.structure_name() else {
+            continue;
+        };
+        let meshes = mapping
+            .entry(structure_name.to_owned())
+            .or_insert_with(Vec::new);
 
         for case in &rule.cases {
             if let AutotiledMeshes::Mesh { spec } = &case.result {
@@ -261,6 +271,7 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                     char_annotations: HashMap::new(),
                     group,
                     multi: case.multi,
+                    output_offset: None,
                 };
                 if rule.slot == UnorientedSlot::Wall {
                     cases_plus_90.push(oc.clone());
@@ -268,7 +279,7 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                 cases.push(oc);
             }
             Some(pattern) => {
-                let base_checks = pattern.relative_checks();
+                let (base_checks, base_output_offset) = pattern.relative_checks_with_output();
                 let base_annotations = &pattern.annotations;
                 let pt = pattern.anchor_pattern_type();
 
@@ -292,6 +303,7 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                             char_annotations: rotate_annotations(base_annotations, rot),
                             group,
                             multi: case.multi,
+                            output_offset: base_output_offset.map(|o| rotate_slot_offset(o, rot)),
                         });
 
                         if rule.slot == UnorientedSlot::Wall {
@@ -303,6 +315,8 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                                 char_annotations: rotate_annotations(base_annotations, rot + 1),
                                 group,
                                 multi: case.multi,
+                                output_offset: base_output_offset
+                                    .map(|o| rotate_slot_offset(o, rot + 1)),
                             });
                         }
                     }
@@ -312,7 +326,7 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
     }
 
     AutotileOriented {
-        structure_name: rule.structure_name.clone(),
+        subject: rule.subject.clone(),
         slot: rule.slot,
         cases,
         cases_plus_90,
@@ -403,6 +417,34 @@ H:
         let file = parse::<AutotiledMeshes>(input).unwrap();
         let oriented = compile_rule(&file.rules[0]);
         check!(oriented.cases.len() == 2);
+    }
+
+    // ── `==empty:...==` output_offset ─────────────────────────────────────────
+
+    /// For an empty-anchored rule, every compiled case must carry an `output_offset` (the vector
+    /// from the dispatch anchor back to `@`), rotated consistently with `checks`.
+    #[test]
+    fn empty_anchor_output_offset_present_and_rotates() {
+        let input = "\
+== empty: wall ==
+H:
+ @ W
+--> mesh_a
+";
+        let file = parse::<AutotiledMeshes>(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+
+        for case in oriented.cases.iter().chain(oriented.cases_plus_90.iter()) {
+            check!(
+                case.output_offset.is_some(),
+                "case missing output_offset: {case:?}"
+            );
+        }
+
+        // rot=0: 'W' (the dispatch anchor) is at cube_offset (1,0,0) from '@' as authored, so
+        // recentered on 'W', '@' sits at cube_offset (-1,0,0).
+        let rot0 = &oriented.cases[0];
+        check!(rot0.output_offset.unwrap().cube_offset == (-1, 0, 0));
     }
 
     #[test]

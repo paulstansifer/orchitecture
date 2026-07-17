@@ -4,10 +4,19 @@ use bevy::asset::{AssetServer, Handle};
 use bevy::prelude::{Commands, Res, Resource};
 use bevy::scene::Scene;
 
+use super::matcher::{build_empty_anchor_index, EmptyAnchorIndex};
+use super::parser::char_matches_name;
 use super::{compile, parse, spec_stem, AutotileOriented, AutotiledMeshes};
+use crate::eorf::EorfList;
 
 #[derive(Resource)]
 pub struct AutotileRules(pub Vec<AutotileOriented<AutotiledMeshes>>);
+
+/// Dispatch index for `==empty:...==` rules (see `matcher::EmptyAnchorIndex`). Built once at
+/// startup by `spawn_empty_anchor_index`, after both `AutotileRules` and `EorfList` are
+/// populated — neither changes at runtime, so there's no need to rebuild this per-frame.
+#[derive(Resource)]
+pub struct EmptyAnchorRules(pub EmptyAnchorIndex<AutotiledMeshes>);
 
 #[derive(Resource)]
 pub struct AutotileHandles {
@@ -28,6 +37,26 @@ pub fn spawn_autotile_rules(mut commands: Commands) {
     let src = include_str!("../../buildables/structures.autotile");
     let file = parse(src).expect("structures.autotile parse failed");
     commands.insert_resource(AutotileRules(compile(&file)));
+}
+
+/// Must run after both `spawn_autotile_rules` (needs `AutotileRules`) and `spawn_structures`
+/// (needs `EorfList` populated).
+pub fn spawn_empty_anchor_index(
+    structure_list: Res<EorfList>,
+    rules: Res<AutotileRules>,
+    mut commands: Commands,
+) {
+    let names: Vec<String> = structure_list
+        .structures
+        .iter()
+        .map(|s| s.info.name.clone())
+        .collect();
+    // `'='` (only meaningful relative to a named anchor's own structure) never matches here;
+    // empty-anchored rules have no such anchor, so their dispatch character can't sensibly use it.
+    let index = build_empty_anchor_index(&rules.0, &names, |ch, id, _facing| {
+        char_matches_name(ch, &names[id.as_usize()])
+    });
+    commands.insert_resource(EmptyAnchorRules(index));
 }
 
 pub fn load_autotile_handles(asset_server: Res<AssetServer>, mut commands: Commands) {
