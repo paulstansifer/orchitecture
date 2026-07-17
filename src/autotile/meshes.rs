@@ -26,13 +26,13 @@ fn gltf_is_empty(stem: &str, suffix: &str) -> bool {
 
 pub fn spawn_autotile_rules(mut commands: Commands) {
     let src = include_str!("../../buildables/structures.autotile");
-    let file = parse(src).expect("structures.autotile parse failed");
+    let file = parse(src, false).expect("structures.autotile parse failed");
     commands.insert_resource(AutotileRules(compile(&file)));
 }
 
 pub fn load_autotile_handles(asset_server: Res<AssetServer>, mut commands: Commands) {
     let src = include_str!("../../buildables/structures.autotile");
-    let file = parse(src).expect("structures.autotile parse failed");
+    let file = parse(src, false).expect("structures.autotile parse failed");
     let oriented = compile(&file);
 
     let mut handles: HashMap<String, (Handle<Scene>, Option<Handle<Scene>>)> = HashMap::new();

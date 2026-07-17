@@ -586,7 +586,7 @@ H:
 
     fn all_rules() -> Vec<AutotileOriented> {
         let src = include_str!("../../buildables/structures.autotile");
-        compile(&parse(src).unwrap())
+        compile(&parse(src, false).unwrap())
     }
 
     fn stems_from_results(results: &[AutotileResult]) -> Vec<String> {

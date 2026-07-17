@@ -175,8 +175,6 @@ pub struct Pattern {
     pub at_layer: usize,
     /// Labeled character → annotation (e.g. `'1'` → stairs at 90°).
     pub annotations: HashMap<char, PatternAnnotation>,
-    /// What the '@' anchor should match: "empty" or a structure name. None = default.
-    pub anchor_matcher: Option<String>,
 }
 
 /// The spatial axis a pattern type stacks along when layered.
@@ -218,8 +216,9 @@ impl Pattern {
     }
 
     /// Returns non-wildcard, non-empty cells as AutotileRelSlotOffset → char, across all layers.
-    /// Skips space (wildcard) and '.' (explicit empty). Includes '@' if anchor_matcher is set.
-    pub fn relative_checks(&self) -> HashMap<AutotileRelSlotOffset, char> {
+    /// Skips space (wildcard) and '.' (explicit empty).
+    /// For motif rules (is_motif=true), includes '@' as a check that requires empty space.
+    pub fn relative_checks(&self, is_motif: bool) -> HashMap<AutotileRelSlotOffset, char> {
         let anchor = &self.layers[self.at_layer];
         let (ax0, ay0, az0, origin_slot) =
             grid_pos_to_3d(anchor.pattern_type, self.at_col, self.at_row);
@@ -227,16 +226,15 @@ impl Pattern {
 
         let mut map = HashMap::new();
 
-        // If anchor_matcher is set, include @ as a matcher for that condition.
-        if let Some(ref matcher) = self.anchor_matcher {
-            let anchor_char = if matcher == "empty" { '.' } else { '@' };
+        // For motif rules, @ must match empty, so include it as a check.
+        if is_motif {
             map.insert(
                 AutotileRelSlotOffset {
                     origin_slot,
                     cube_offset: (0, 0, 0),
                     dest_slot: origin_slot,
                 },
-                anchor_char,
+                '.',
             );
         }
 
@@ -313,11 +311,8 @@ pub struct AutotileRule {
     pub structure_name: String,
     pub slot: UnorientedSlot,
     pub cases: Vec<PatternCase>,
-    /// True if this rule uses motif format (header has no colon, anchor is first non-empty cell).
+    /// True if this rule uses motif format (header is ==empty:slot==).
     pub is_motif: bool,
-    /// What the '@' anchor should match: "empty" (matches empty cell) or a structure name.
-    /// Only used for non-motif rules. None means the default (the structure being placed).
-    pub anchor_matcher: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -335,7 +330,10 @@ fn strip_comment(line: &str) -> &str {
     }
 }
 
-pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
+/// Parse autotile rules from a file.
+/// `is_motif_file` indicates whether the rules in this file are motif rules (true)
+/// or regular structure rules (false).
+pub fn parse(input: &str, is_motif_file: bool) -> anyhow::Result<AutotileFile> {
     let lines: Vec<&str> = input.lines().collect();
     let mut i = 0;
     let mut rules = Vec::new();
@@ -350,46 +348,25 @@ pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
         }
         if let Some(inner) = line.strip_prefix("==").and_then(|s| s.strip_suffix("==")) {
             let inner = inner.trim();
-            let (structure_name, slot, is_motif, anchor_matcher) = if let Some(colon) = inner.rfind(':') {
-                // Regular format: ==matcher:slot==
-                let matcher_str = inner[..colon].trim();
-                let slot = match inner[colon + 1..].trim() {
-                    "wall" => UnorientedSlot::Wall,
-                    "room" => UnorientedSlot::Room,
-                    "floor" => UnorientedSlot::Floor,
-                    other => bail!("line {lineno}: invalid slot: {other:?}"),
-                };
-
-                // For regular format, matcher_str can be:
-                // - "empty" to match empty cells at @
-                // - A structure name (like "stairs", "wall") to match that structure at @
-                let (structure_name, anchor_matcher) = if matcher_str == "empty" {
-                    // ==empty:slot== format: @ matches empty
-                    (String::new(), Some("empty".to_string()))
-                } else {
-                    // ==structure:slot== format: @ matches that structure (or default if None)
-                    (matcher_str.to_owned(), None)
-                };
-                (structure_name, slot, false, anchor_matcher)
-            } else {
-                // Motif format: ==slot==
-                let slot = match inner.trim() {
-                    "wall" => UnorientedSlot::Wall,
-                    "room" => UnorientedSlot::Room,
-                    "floor" => UnorientedSlot::Floor,
-                    other => bail!("line {lineno}: invalid slot or missing colon: {other:?}"),
-                };
-                (String::new(), slot, true, None)
+            let colon = inner
+                .rfind(':')
+                .with_context(|| format!("line {lineno}: header must contain a colon: {line:?}"))?;
+            let structure_name = inner[..colon].trim().to_owned();
+            let slot = match inner[colon + 1..].trim() {
+                "wall" => UnorientedSlot::Wall,
+                "room" => UnorientedSlot::Room,
+                "floor" => UnorientedSlot::Floor,
+                other => bail!("line {lineno}: invalid slot: {other:?}"),
             };
+
             i += 1;
-            let (cases, new_i) = parse_cases(&lines, i, slot, is_motif, &mut motif_names, anchor_matcher.clone())?;
+            let (cases, new_i) = parse_cases(&lines, i, slot, is_motif_file, &mut motif_names)?;
             i = new_i;
             rules.push(AutotileRule {
                 structure_name,
                 slot,
                 cases,
-                is_motif,
-                anchor_matcher,
+                is_motif: is_motif_file,
             });
         } else {
             bail!("line {lineno}: unexpected line: {line:?}");
@@ -405,7 +382,6 @@ fn parse_cases(
     slot: UnorientedSlot,
     is_motif: bool,
     motif_names: &mut std::collections::HashMap<String, u32>,
-    anchor_matcher: Option<String>,
 ) -> anyhow::Result<(Vec<PatternCase>, usize)> {
     let mut cases = Vec::new();
 
@@ -450,7 +426,7 @@ fn parse_cases(
             let pline = strip_comment(lines[i]);
             let plineno = i + 1;
             if let Some(rest) = pline.strip_prefix("-->") {
-                let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations, is_motif, anchor_matcher.clone())
+                let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations, is_motif)
                     .with_context(|| format!("line {plineno}"))?;
                 let (multi, result) =
                     parse_result(rest.trim(), motif_names).with_context(|| format!("line {plineno}"))?;
@@ -634,30 +610,9 @@ fn build_pattern(
     slot: UnorientedSlot,
     annotations: HashMap<char, PatternAnnotation>,
     is_motif: bool,
-    anchor_matcher: Option<String>,
 ) -> anyhow::Result<Pattern> {
-    let (at_layer, at_col, at_row) = if is_motif {
-        // Motif: find first non-empty cell as anchor
-        let mut anchor: Option<(usize, usize, usize)> = None; // (layer, col, row)
-        for (l, rows) in layer_rows.iter().enumerate() {
-            for (r, row) in rows.iter().enumerate() {
-                for (c, &ch) in row.iter().enumerate() {
-                    if is_non_empty_cell(ch) {
-                        anchor = Some((l, c, r));
-                        break;
-                    }
-                }
-                if anchor.is_some() {
-                    break;
-                }
-            }
-            if anchor.is_some() {
-                break;
-            }
-        }
-        anchor.context("motif pattern has no non-empty cells")?
-    } else {
-        // Regular: find the single '@'
+    // Find the single '@' character (anchor point)
+    let (at_layer, at_col, at_row) = {
         let mut anchor: Option<(usize, usize, usize)> = None; // (layer, col, row)
         for (l, rows) in layer_rows.iter().enumerate() {
             for (r, row) in rows.iter().enumerate() {
@@ -718,25 +673,12 @@ fn build_pattern(
         })
         .collect();
 
-    // If anchor_matcher is set and it's not "empty", add an annotation for the anchor.
-    let mut final_annotations = annotations;
-    if let Some(ref matcher) = anchor_matcher {
-        if matcher != "empty" {
-            // Use '@' as the annotation key for the anchor matcher
-            final_annotations.insert('@', PatternAnnotation {
-                name: matcher.clone(),
-                orientation: None,
-            });
-        }
-    }
-
     Ok(Pattern {
         layers,
         at_col: at_col + col_shift,
         at_row: at_row + row_shift,
         at_layer,
-        annotations: final_annotations,
-        anchor_matcher,
+        annotations,
     })
 }
 
@@ -1043,7 +985,7 @@ mod tests {
 == wall: wall ==
 --> none
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         check!(file.rules.len() == 1);
         let rule = &file.rules[0];
         check!(rule.structure_name == "wall");
@@ -1061,7 +1003,7 @@ H:
  . @ .
 --> straight
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let rule = &file.rules[0];
         check!(rule.cases.len() == 1);
         let case = &rule.cases[0];
@@ -1072,7 +1014,7 @@ H:
         check!(pat.at_row == 1);
         // '.' at (col=1, row=1) = XLoWall at cube (1,0,0): offset (-1,0,0).
         // '.' at (col=5, row=1) = XLoWall at cube (3,0,0): offset (+1,0,0).
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         let lo = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::XLoWall,
             cube_offset: (-1, 0, 0),
@@ -1129,7 +1071,7 @@ H:
 --> (multi) mesh_a
 --> mesh_b
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let rule = &file.rules[0];
         check!(rule.cases.len() == 2);
         check!(rule.cases[0].multi == true);
@@ -1164,9 +1106,9 @@ H:
   .
 --> wall_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         let north = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::XLoWall,
             cube_offset: (0, 0, -1),
@@ -1191,7 +1133,7 @@ H:
 == railing: wall ==
 --> mesh_b
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         check!(file.rules.len() == 2);
         check!(file.rules[0].structure_name == "wall");
         check!(file.rules[1].structure_name == "railing");
@@ -1207,7 +1149,7 @@ V:
 --> rug_with_room
 --> rug_bare
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         check!(file.rules.len() == 1);
         let rule = &file.rules[0];
         check!(rule.structure_name == "rug");
@@ -1221,7 +1163,7 @@ V:
         check!(pat.at_col == 0);
         check!(pat.at_row == 0);
 
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         // '@' at grid (0,0) → (0,1,0, Floor); 'R' at grid (0,1) → (0,0,0, Room).
         // cube_offset = (0,0,0) − (0,1,0) = (0,−1,0).
         let room_below = AutotileRelSlotOffset {
@@ -1246,11 +1188,11 @@ V narrow:
  W
 --> wall_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers[pat.at_layer].pattern_type == PatternType::VNarrow);
         // '@' wall at cube (0,-1,0); 'W' above at (0,0,0) → +Y; 'W' below at (0,-2,0) → -Y.
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         let above = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::ZLoWall,
             cube_offset: (0, 1, 0),
@@ -1287,11 +1229,11 @@ H narrow:
  F @ F
 --> floor_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers[pat.at_layer].pattern_type == PatternType::HNarrow);
         // '@' floor at cube (1,0,0); 'F' west at (0,0,0) → -X; 'F' east at (2,0,0) → +X.
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         let west = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::Floor,
             cube_offset: (-1, 0, 0),
@@ -1320,10 +1262,10 @@ H narrow:
   W
 --> mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers[pat.at_layer].pattern_type == PatternType::HNarrow);
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         // All offsets share the Floor anchor's origin; the cube's own −X and −Z walls sit at
         // cube_offset (0,0,0), while the +X / +Z walls live one cube over.
         let x_lo = AutotileRelSlotOffset {
@@ -1376,14 +1318,14 @@ H narrow:
 |=|@|
 --> stacked
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers.len() == 2);
         check!(pat.layers[0].t == 0);
         check!(pat.layers[1].t == -1);
         check!(pat.at_layer == 1);
         // '@' Room at Y=-1; '=' Room directly above at Y=0 → cube_offset (0,+1,0).
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         let above = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::Room,
             cube_offset: (0, 1, 0),
@@ -1402,12 +1344,12 @@ H narrow:
 |=|F|@|
 --> stacked
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers.len() == 3);
         check!(pat.layers[1].t == 0); // narrow shares the upper regular's coord
         check!(pat.layers[2].t == -1);
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         // Floor separator (boundary of the cube at Y=0) sits at +1 above the Y=-1 anchor.
         let floor = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::Room,
@@ -1433,13 +1375,13 @@ H narrow:
 |=|W|@|
 --> stacked
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers.len() == 3);
         check!(pat.layers[0].t == 0);
         check!(pat.layers[1].t == 0);
         check!(pat.layers[2].t == -1);
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         // Anchor Room at Z=-1; separator ZLoWall and the room copy sit at +1 in Z.
         let wall = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::Room,
@@ -1478,14 +1420,14 @@ H narrow:
 | @ | F |
 --> stacked
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.layers.len() == 2);
         check!(pat.layers[0].t == 0);
         check!(pat.layers[1].t == -1);
         check!(pat.at_layer == 0);
         // '@' floor at Y=0; 'F' floor one level below at Y=-1 → cube_offset (0,-1,0).
-        let checks = pat.relative_checks();
+        let checks = pat.relative_checks(false);
         let below = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::Floor,
             cube_offset: (0, -1, 0),
@@ -1507,7 +1449,7 @@ H: 1=stairs:90
  @1
 --> stair_railing:90
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.annotations.len() == 1);
         let ann = pat.annotations.get(&'1').unwrap();
@@ -1524,7 +1466,7 @@ H: 1=railing
  @1
 --> railing_mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         let ann = pat.annotations.get(&'1').unwrap();
         check!(ann.name == "railing");
@@ -1540,7 +1482,7 @@ H: 1=stairs:90 2=stairs:0
  @1
 --> stair_railing:90
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.annotations.len() == 2);
         check!(pat.annotations.get(&'1').unwrap().orientation == Some(90));
@@ -1599,12 +1541,12 @@ H:
  @
 --> mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.annotations.is_empty());
     }
 
-    /// Motif format: header has no colon, first non-empty cell is the anchor.
+    /// Motif rules: is_motif_file=true determines rule type, not header syntax.
     #[test]
     fn parse_motif_format() {
         let input = "\
@@ -1613,56 +1555,18 @@ H:
  = . .
 --> mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, true).unwrap();
         check!(file.rules.len() == 1);
         let rule = &file.rules[0];
         check!(rule.is_motif == true);
-        check!(rule.structure_name.is_empty());
+        check!(rule.structure_name == "room");
         check!(rule.slot == UnorientedSlot::Room);
 
         let case = &rule.cases[0];
         let pat = case.pattern.as_ref().unwrap();
-        // The anchor should be at the '=' (first non-empty cell at col 0).
-        // After parity adjustment for Room in H pattern, at_col should be 0.
-        check!(pat.at_row == 1);
-    }
-
-    /// Motif pattern with @ treated as empty (should be skipped in relative_checks).
-    #[test]
-    fn motif_with_at_empty_cell() {
-        let input = "\
-== room ==
-H:
- = @ .
---> mesh
-";
-        let file = parse(input).unwrap();
-        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
-        // '=' at (col=0, row=1) is the anchor, '@' at (col=2, row=1) should be empty.
-        let checks = pat.relative_checks();
-        // Should have no checks since '@' and '.' are both empty markers.
-        check!(checks.is_empty());
-    }
-
-    /// Regular rules can use ==empty:slot== to require @ to be empty.
-    #[test]
-    fn empty_anchor_matcher() {
-        let input = "\
-== empty: room ==
-H:
- .
- @
---> mesh
-";
-        let file = parse(input).unwrap();
-        check!(file.rules.len() == 1);
-        let rule = &file.rules[0];
-        check!(rule.anchor_matcher == Some("empty".to_string()));
-        check!(rule.is_motif == false);
-
-        let pat = rule.cases[0].pattern.as_ref().unwrap();
-        // @ should generate a '.' condition at the anchor
-        let checks = pat.relative_checks();
+        // The anchor is at @ position
+        let checks = pat.relative_checks(true);
+        // For motif rules, should include '.' check at anchor (empty requirement)
         let anchor_offset = AutotileRelSlotOffset {
             origin_slot: AutotileRelSlot::Room,
             cube_offset: (0, 0, 0),
@@ -1671,9 +1575,32 @@ H:
         check!(checks[&anchor_offset] == '.');
     }
 
-    /// Regular rules can use ==structure:slot== to require @ to match that structure.
+    /// Motif pattern with @ as empty marker: @ and '.' both indicate empty cells.
     #[test]
-    fn structure_anchor_matcher() {
+    fn motif_with_at_empty_cell() {
+        let input = "\
+== room ==
+H:
+ = @ .
+--> mesh
+";
+        let file = parse(input, true).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        // For motif rules, @ matches empty, so there should still be the anchor check
+        let checks = pat.relative_checks(true);
+        let anchor_offset = AutotileRelSlotOffset {
+            origin_slot: AutotileRelSlot::Room,
+            cube_offset: (0, 0, 0),
+            dest_slot: AutotileRelSlot::Room,
+        };
+        check!(checks[&anchor_offset] == '.');
+        // No other checks needed since '.' and '@' are both empty markers
+        check!(checks.len() == 1);
+    }
+
+    /// Regular rules (is_motif_file=false) do not require @ to match empty.
+    #[test]
+    fn regular_rule_format() {
         let input = "\
 == stairs: room ==
 H:
@@ -1681,12 +1608,17 @@ H:
  @
 --> mesh
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, false).unwrap();
         check!(file.rules.len() == 1);
         let rule = &file.rules[0];
-        check!(rule.anchor_matcher == None);
-        check!(rule.structure_name == "stairs");
         check!(rule.is_motif == false);
+        check!(rule.structure_name == "stairs");
+
+        let pat = rule.cases[0].pattern.as_ref().unwrap();
+        // For regular rules, @ is not checked in relative_checks
+        let checks = pat.relative_checks(false);
+        // Should have no anchor check for regular rules
+        check!(checks.is_empty());
     }
 
     /// Motif rules can have names assigned IDs in order of first occurrence.
@@ -1706,7 +1638,7 @@ H:
  =
 --> mesh 'bedroom'
 ";
-        let file = parse(input).unwrap();
+        let file = parse(input, true).unwrap();
         check!(file.rules.len() == 3);
 
         // First occurrence of 'bedroom' gets ID 0
