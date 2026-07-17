@@ -18,7 +18,7 @@ use orchitecture_lib::qnn::translate::{
 };
 #[cfg(feature = "old_qnn")]
 use orchitecture_lib::qnn::Cnn;
-use orchitecture_lib::qnn::{Args, MotifNn};
+use orchitecture_lib::qnn::{Args, MotifNn, OrderStatsNn};
 
 #[derive(Config, Debug)]
 struct TrainingConfig {
@@ -70,6 +70,7 @@ fn report_loss_curve(
     log_dir: impl std::fmt::Display,
     num_epochs: usize,
     baseline: (f32, f32),
+    histogram: &str,
     plots: &mut Vec<String>,
 ) {
     let mut train_curve = vec![];
@@ -106,7 +107,7 @@ fn report_loss_curve(
     let valid_skill = 1.0 - final_valid_loss / valid_baseline;
 
     println!(
-        "Final {label} loss (t/v) {:.3} {:.3}, skill (t/v) {:.3} {:.3}",
+        "Final {label} loss (t/v) {:.3} {:.3}, skill (t/v) {:.3} {:.3}  score hist: [{histogram}]",
         final_train_loss, final_valid_loss, train_skill, valid_skill
     );
 
@@ -123,9 +124,24 @@ fn report_loss_curve(
     }
 }
 
+/// Space-separated `count(h1,h2,h3)` per example, in dataset order: `count` is the number of
+/// `motif_order` rows (paired-up motif occurrences) and `h1,h2,h3` are that example's
+/// `motif_order_stats` h-indices (see its doc comment). Handy for spotting "no data" -- or "no
+/// variation" -- as an explanation for a metric that won't train.
+fn motif_order_pair_counts<B: Backend, D: Dataset<GroundTruth<B>>>(data: &D) -> String {
+    (0..data.len())
+        .map(|i| {
+            let datum = data.get(i).unwrap();
+            let count = datum.motif_order.dims()[0];
+            let stats = datum.order_stats.into_data().to_vec::<f32>().unwrap();
+            format!("{count}({},{},{})", stats[0], stats[1], stats[2])
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn create_artifact_dir(artifact_dir: &str) {
     // Remove existing artifacts before to get an accurate learner summary
-    //std::fs::remove_dir_all(artifact_dir).unwrap();
     std::fs::create_dir_all(artifact_dir).unwrap();
 }
 
@@ -173,10 +189,13 @@ fn train<B: Backend>() {
     let mut score_output = String::new();
     #[cfg(feature = "old_qnn")]
     let mut baseline_losses: HashMap<Metric, (f32, f32)> = HashMap::new();
+    #[cfg(feature = "old_qnn")]
+    let mut histograms: HashMap<Metric, String> = HashMap::new();
     let mut motif_baseline_losses: HashMap<Metric, (f32, f32)> = HashMap::new();
+    let mut motif_histograms: HashMap<Metric, String> = HashMap::new();
 
     #[cfg(feature = "old_qnn")]
-    for metric in [Metric::Interest, Metric::Coherence] {
+    for metric in [Metric::Interest, Metric::Order] {
         let batcher = GroundTruthBatcher {};
 
         let load_data = || {
@@ -320,8 +339,7 @@ fn train<B: Backend>() {
                 );
             }
 
-            let histogram = quintile_histogram(&predictions);
-            score_output += &format!("{metric} score distribution (quintiles): {histogram}\n");
+            histograms.insert(metric, quintile_histogram(&predictions));
         }
 
         model_trained
@@ -337,9 +355,8 @@ fn train<B: Backend>() {
     }
 
     // MotifNn: same score target as the Cnn loop above, but scored purely from visible motifs
-    // (see MotifNn's doc comment). Coherence has no motif ground truth yet, so this only trains
-    // on Interest.
-    for metric in [Metric::Interest] {
+    // (see MotifNn's doc comment).
+    for metric in [Metric::Interest, Metric::Order] {
         let batcher = GroundTruthBatcher {};
 
         let load_data = || {
@@ -356,6 +373,18 @@ fn train<B: Backend>() {
 
         let (train_data, test_data) = load_data();
         let data_size = (train_data.len(), test_data.len());
+
+        // Display the H-indices in the data:
+        // if metric == Metric::Order {
+        //     println!(
+        //         "motif_order pair counts, train: {}",
+        //         motif_order_pair_counts(&train_data)
+        //     );
+        //     println!(
+        //         "motif_order pair counts, valid: {}",
+        //         motif_order_pair_counts(&test_data)
+        //     );
+        // }
 
         // Each room contributes a different number of occurrence/pair rows (see
         // `GroundTruthBatcher::batch`'s doc comment), so batching more than one room together
@@ -375,6 +404,12 @@ fn train<B: Backend>() {
                 .num_workers(config.num_workers)
                 .build(test_data);
 
+        let motif_artifact_dir = format!("{artifact_dir}/motif");
+        create_artifact_dir(&motif_artifact_dir);
+
+        let mut errors: Vec<(f32, String, bool, f32, f32, ScoreConstraint)> = Vec::new();
+        let mut predictions: Vec<f32> = Vec::new();
+
         let model = MotifNn::<Autodiff<B>>::new(&device, &args);
         println!(
             "MotifNn params: {}. Training items: {}. Test items: {}",
@@ -382,9 +417,6 @@ fn train<B: Backend>() {
             data_size.0,
             data_size.1
         );
-
-        let motif_artifact_dir = format!("{artifact_dir}/motif");
-        create_artifact_dir(&motif_artifact_dir);
 
         let model_trained = burn::train::SupervisedTraining::new(
             &motif_artifact_dir,
@@ -403,14 +435,15 @@ fn train<B: Backend>() {
 
         {
             let (train_data, test_data) = load_data();
-            let mut errors: Vec<(f32, String, bool, f32, f32, ScoreConstraint)> = Vec::new();
-            let mut predictions: Vec<f32> = Vec::new();
-
             for idx in 0..train_data.len() {
                 let datum = train_data.get(idx).unwrap();
                 let pred: f32 = model_trained
                     .model
-                    .forward(datum.motif_interest.inner(), datum.motif_order.inner())
+                    .forward(
+                        datum.motif_interest.inner(),
+                        datum.motif_order.inner(),
+                        datum.order_stats.inner(),
+                    )
                     .into_scalar()
                     .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
@@ -428,7 +461,7 @@ fn train<B: Backend>() {
                 let datum = test_data.get(idx).unwrap();
                 let pred: f32 = model_trained
                     .model
-                    .forward(datum.motif_interest, datum.motif_order)
+                    .forward(datum.motif_interest, datum.motif_order, datum.order_stats)
                     .into_scalar()
                     .elem();
                 let goal: f32 = datum.scores.into_scalar().elem();
@@ -442,27 +475,6 @@ fn train<B: Backend>() {
                     datum.constraint,
                 ));
             }
-
-            let train_goals: Vec<f32> = errors.iter().filter(|e| !e.2).map(|e| e.4).collect();
-            let valid_goals: Vec<f32> = errors.iter().filter(|e| e.2).map(|e| e.4).collect();
-            motif_baseline_losses.insert(
-                metric,
-                (baseline_mse(&train_goals), baseline_mse(&valid_goals)),
-            );
-
-            errors.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            score_output += &format!("\nWorst motif-{metric} errors:\n");
-            for (err, filename, is_val, pred, goal, constraint) in errors.iter().take(10) {
-                let marker = if *is_val { "*" } else { " " };
-                let symbol = constraint_symbol(*constraint);
-                score_output += &format!(
-                    "  {marker} {filename}: {symbol}{goal:.1}=>{pred:.2} (err {err:.2})\n"
-                );
-            }
-
-            let histogram = quintile_histogram(&predictions);
-            score_output +=
-                &format!("motif-{metric} score distribution (quintiles): {histogram}\n");
         }
 
         model_trained
@@ -472,33 +484,59 @@ fn train<B: Backend>() {
                 &burn::record::CompactRecorder::new(),
             )
             .expect("Trained MotifNn model should be saved successfully");
+
+        {
+            let train_goals: Vec<f32> = errors.iter().filter(|e| !e.2).map(|e| e.4).collect();
+            let valid_goals: Vec<f32> = errors.iter().filter(|e| e.2).map(|e| e.4).collect();
+            motif_baseline_losses.insert(
+                metric,
+                (baseline_mse(&train_goals), baseline_mse(&valid_goals)),
+            );
+
+            errors.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            if args.show_worst_errors {
+                score_output += &format!("\nWorst motif-{metric} errors:\n");
+                for (err, filename, is_val, pred, goal, constraint) in errors.iter().take(10) {
+                    let marker = if *is_val { "*" } else { " " };
+                    let symbol = constraint_symbol(*constraint);
+                    score_output += &format!(
+                        "  {marker} {filename}: {symbol}{goal:.1}=>{pred:.2} (err {err:.2})\n"
+                    );
+                }
+            }
+
+            motif_histograms.insert(metric, quintile_histogram(&predictions));
+        }
     }
+    // Gotta let the trainer go out of scope to get access to the terminal back?
 
     println!("Parameters: {:?}", Args::parse());
 
-    // Gotta let the trainer go out of scope to get access to the terminal back?
     let mut plots: Vec<String> = Vec::new();
 
     // Cnn's per-epoch loss curves, read back from the logger's CSVs -- only meaningful when the
     // Cnn loop above actually ran.
     #[cfg(feature = "old_qnn")]
-    for metric in [Metric::Interest, Metric::Coherence] {
+    for metric in [Metric::Interest, Metric::Order] {
         report_loss_curve(
             metric,
             format!("/tmp/logs/{metric}"),
             config.num_epochs,
             baseline_losses[&metric],
+            &histograms[&metric],
             &mut plots,
         );
     }
 
     // MotifNn's per-epoch loss curves, same as above.
-    for metric in [Metric::Interest] {
+    for metric in [Metric::Interest, Metric::Order] {
         report_loss_curve(
             format!("motif-{metric}"),
             format!("/tmp/logs/motif-{metric}"),
             config.num_epochs,
             motif_baseline_losses[&metric],
+            &motif_histograms[&metric],
             &mut plots,
         );
     }

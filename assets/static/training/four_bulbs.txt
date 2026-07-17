@@ -45,4 +45,4 @@ M
 (1,0,0,"Room")={"id":10,"facing":"NegX","evaluation":null,"build_material":5}
 (1,0,2,"Room")={"id":10,"facing":"PosX","evaluation":null,"build_material":5}
 (0,0,1,"Room")={"id":10,"facing":"NegZ","evaluation":null,"build_material":5}
-(3,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":0.6},"build_material":5}
+(3,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"order":1.0,"interest":0.6},"build_material":5}

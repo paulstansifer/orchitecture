@@ -317,7 +317,7 @@ mod tests {
         use std::collections::HashMap;
 
         let structures_by_char: HashMap<char, EorfId> = HashMap::new();
-        let content = "  \n  \n~~~~~\n~*~*~\n(0,0,0,\"Room\")={\"id\":0,\"facing\":\"NegX\",\"evaluation\":{\"coherence\":{\"at_most\":0.5},\"interest\":{\"at_least\":0.2}},\"build_material\":0}\n";
+        let content = "  \n  \n~~~~~\n~*~*~\n(0,0,0,\"Room\")={\"id\":0,\"facing\":\"NegX\",\"evaluation\":{\"order\":{\"at_most\":0.5},\"interest\":{\"at_least\":0.2}},\"build_material\":0}\n";
 
         let grid = super::deserialize_sparse3d::<Cell, _, anyhow::Error>(
             content,
@@ -331,7 +331,7 @@ mod tests {
         check!(
             evaluation
                 == Some(VantageEvaluation {
-                    coherence: Some(ConstrainedScore::AtMost { at_most: 0.5 }),
+                    order: Some(ConstrainedScore::AtMost { at_most: 0.5 }),
                     interest: Some(ConstrainedScore::AtLeast { at_least: 0.2 }),
                 })
         );

@@ -1523,3 +1523,45 @@ Final motif-interest loss (t/v) 0.046 0.057, skill (t/v) 0.595 0.350
 Final motif-interest loss (t/v) 0.036 0.037, skill (t/v) 0.626 0.704
 
 I think we need more high-interest data now.
+---
+Tried training on order; results were bad:
+
+Final motif-interest loss (t/v) 0.043 0.025, skill (t/v) 0.523 0.778  score hist: [99721]
+Final motif-order loss (t/v) 0.092 0.123, skill (t/v) 0.070 0.012  score hist: [90000]
+Final motif-interest loss (t/v) 0.058 0.075, skill (t/v) 0.374 0.359  score hist: [92000]
+Final motif-order loss (t/v) 0.086 0.111, skill (t/v) 0.257 -0.434  score hist: [00019]
+Final motif-interest loss (t/v) 0.039 0.029, skill (t/v) 0.644 0.594  score hist: [70921]
+Final motif-order loss (t/v) 0.094 0.136, skill (t/v) 0.019 -0.047  score hist: [00009]
+Final motif-interest loss (t/v) 0.031 0.055, skill (t/v) 0.642 0.541  score hist: [97400]
+Final motif-order loss (t/v) 0.071 0.161, skill (t/v) 0.347 -0.599  score hist: [33491]
+
+---
+Parameters: Args { conv: "5/12,3/24", fc: "12,6,1", motif_shared: "12,6", lr: 0.005, epochs: 50, seed: .., show_scores: false, fake_data: false }
+
+Claude suggested mean-pooling instead of sum-pooling:
+Final motif-interest loss (t/v) 0.052 0.106, skill (t/v) 0.424 0.051  score hist: [40931]
+Final motif-order loss (t/v) 0.093 0.120, skill (t/v) 0.066 0.040  score hist: [90000]
+Final motif-interest loss (t/v) 0.057 0.074, skill (t/v) 0.379 0.363  score hist: [89623]
+Final motif-order loss (t/v) 0.089 0.125, skill (t/v) 0.226 -0.614  score hist: [22190]
+Final motif-interest loss (t/v) 0.057 0.086, skill (t/v) 0.475 -0.210  score hist: [69212]
+Final motif-order loss (t/v) 0.077 0.160, skill (t/v) 0.202 -0.236  score hist: [00195]
+Final motif-interest loss (t/v) 0.042 0.091, skill (t/v) 0.514 0.252  score hist: [59101]
+Final motif-order loss (t/v) 0.085 0.108, skill (t/v) 0.204 -0.073  score hist: [11932]
+
+Also tried adding some h-index stats. Didn't really help, nor did training exlcusively on them (should check to see if they even help, but I'm leaving them in for now.)
+
+Nope; going back:
+Final motif-interest loss (t/v) 0.041 0.039, skill (t/v) 0.550 0.652  score hist: [95511]
+Final motif-order loss (t/v) 0.083 0.151, skill (t/v) 0.052 -0.053  score hist: [01910]
+Final motif-interest loss (t/v) 0.052 0.052, skill (t/v) 0.436 0.552  score hist: [93100]
+Final motif-order loss (t/v) 0.092 0.102, skill (t/v) 0.222 -0.788  score hist: [96300]
+
+Parameters: Args { conv: "5/12,3/24", fc: "12,6,1", motif_shared: "12,6", lr: 0.005, epochs: 50, seed: 1, show_scores: false, show_worst_errors: false, fake_data: false }
+Final motif-interest loss (t/v) 0.046 0.041, skill (t/v) 0.489 0.631  score hist: [93720]
+Final motif-order loss (t/v) 0.080 0.150, skill (t/v) 0.077 -0.045  score hist: [90000]
+Final motif-interest loss (t/v) 0.041 0.035, skill (t/v) 0.554 0.697  score hist: [60900]
+Final motif-order loss (t/v) 0.084 0.158, skill (t/v) 0.255 -1.760  score hist: [91406]
+Final motif-interest loss (t/v) 0.041 0.034, skill (t/v) 0.619 0.522  score hist: [90931]
+Final motif-order loss (t/v) 0.057 0.192, skill (t/v) 0.340 -0.435  score hist: [33973]
+Final motif-interest loss (t/v) 0.019 0.043, skill (t/v) 0.772 0.645  score hist: [95400]
+Final motif-order loss (t/v) 0.070 0.162, skill (t/v) 0.333 -0.630  score hist: [01129]

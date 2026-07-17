@@ -607,9 +607,9 @@ fn build_footer(
         ui.label(format!("Direction: {}", build_state.cur_dir));
     }
 
-    if let Some((coherence, interest)) = build_state.evaluation {
+    if let Some((order, interest)) = build_state.evaluation {
         ui.separator();
-        ui.label(format!("Coherence: {:.3}", coherence));
+        ui.label(format!("Order: {:.3}", order));
         ui.label(format!("Interest:  {:.3}", interest));
     }
 

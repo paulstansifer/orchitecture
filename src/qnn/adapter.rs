@@ -52,11 +52,11 @@ impl AssetLoader for ModelBytesLoader {
 
 pub struct ModelHolder {
     pub interest: Cnn<AppBackend>,
-    pub coherence: Cnn<AppBackend>,
+    pub order: Cnn<AppBackend>,
 }
 
 impl ModelHolder {
-    fn from_bytes(interest_bytes: Vec<u8>, coherence_bytes: Vec<u8>) -> Self {
+    fn from_bytes(interest_bytes: Vec<u8>, order_bytes: Vec<u8>) -> Self {
         use burn::module::Module;
         use burn::record::HalfPrecisionSettings;
         use burn::record::NamedMpkBytesRecorder;
@@ -69,12 +69,12 @@ impl ModelHolder {
             recorder.load(interest_bytes, &device).unwrap();
         let i_model = Cnn::<AppBackend>::new(&device, &args).load_record(i_record);
         let c_record: <Cnn<AppBackend> as Module<AppBackend>>::Record =
-            recorder.load(coherence_bytes, &device).unwrap();
+            recorder.load(order_bytes, &device).unwrap();
         let c_model = Cnn::<AppBackend>::new(&device, &args).load_record(c_record);
 
         ModelHolder {
             interest: i_model,
-            coherence: c_model,
+            order: c_model,
         }
     }
 }
@@ -93,7 +93,7 @@ pub fn compute_metrics(
         .unwrap();
 
     vec![
-        holder.coherence.forward(tensor.clone()).sum().into_scalar(),
+        holder.order.forward(tensor.clone()).sum().into_scalar(),
         holder.interest.forward(tensor).sum().into_scalar(),
     ]
 }
@@ -105,14 +105,14 @@ pub fn compute_metrics(
 #[derive(Resource)]
 pub struct ModelState {
     interest_handle: Handle<ModelBytes>,
-    coherence_handle: Handle<ModelBytes>,
+    order_handle: Handle<ModelBytes>,
     pub holder: Option<Mutex<ModelHolder>>,
 }
 
 fn setup_model_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(ModelState {
         interest_handle: asset_server.load("assets/static/models/interest_model.mpk"),
-        coherence_handle: asset_server.load("assets/static/models/coherence_model.mpk"),
+        order_handle: asset_server.load("assets/static/models/order_model.mpk"),
         holder: None,
     });
 }
@@ -126,17 +126,15 @@ fn build_model_when_ready(
     }
     // Check both are present before removing either.
     if model_bytes.get(&model_state.interest_handle).is_none()
-        || model_bytes.get(&model_state.coherence_handle).is_none()
+        || model_bytes.get(&model_state.order_handle).is_none()
     {
         return;
     }
     let interest = model_bytes
         .remove(model_state.interest_handle.id())
         .unwrap();
-    let coherence = model_bytes
-        .remove(model_state.coherence_handle.id())
-        .unwrap();
-    model_state.holder = Some(Mutex::new(ModelHolder::from_bytes(interest.0, coherence.0)));
+    let order = model_bytes.remove(model_state.order_handle.id()).unwrap();
+    model_state.holder = Some(Mutex::new(ModelHolder::from_bytes(interest.0, order.0)));
 }
 
 pub struct ModelPlugin;
@@ -146,6 +144,8 @@ impl Plugin for ModelPlugin {
         app.init_asset::<ModelBytes>()
             .register_asset_loader(ModelBytesLoader)
             .add_systems(Startup, setup_model_loading);
-            //.add_systems(Update, build_model_when_ready);
+        // TODO: restore when we update to the new models:
+        //.add_systems(Update, build_model_when_ready);
+        
     }
 }

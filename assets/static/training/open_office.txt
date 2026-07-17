@@ -42,7 +42,7 @@ W# # # # # # #W
 ~~~~~
 ~*~*~
 (1,0,1,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":null,"interest":null},"build_material":5}
-(3,0,1,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":{"at_most":0.3}},"build_material":5}
+(3,0,1,"Room")={"id":9,"facing":"NegX","evaluation":{"order":1.0,"interest":{"at_most":0.3}},"build_material":5}
 (1,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":null,"interest":null},"build_material":5}
 (3,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":null,"interest":null},"build_material":5}
 (5,0,1,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":null,"interest":null},"build_material":5}

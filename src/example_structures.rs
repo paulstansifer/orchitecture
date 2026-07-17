@@ -15,20 +15,16 @@ pub fn make_structures() -> Vec<Sparse3D<Cell>> {
     // Plain rectangular room, with minimum height.
     let mut boring_room = Builder::new(&structures);
     boring_room.build_box(v(-3, 0, 0), v(3, 0, 14));
-    boring_room.set_vantage(v(0, 0, 2), /*coherence=*/ 1.0, /*interest=*/ 0.0);
+    boring_room.set_vantage(v(0, 0, 2), /*order=*/ 1.0, /*interest=*/ 0.0);
 
     let mut boring_room_with_alcove = Builder::new(&structures);
     boring_room_with_alcove
         .build_union_boxes(&[(v(-3, 0, 0), v(3, 0, 14)), (v(-2, 0, 2), v(-4, 0, 5))]);
-    boring_room_with_alcove.set_vantage(
-        v(0, 0, 2),
-        /*coherence=*/ 0.7,
-        /*interest=*/ 0.1,
-    );
+    boring_room_with_alcove.set_vantage(v(0, 0, 2), /*order=*/ 0.7, /*interest=*/ 0.1);
 
     let mut plus_shaped_room = Builder::new(&structures);
     plus_shaped_room.build_union_boxes(&[(v(-2, 0, -7), v(2, 0, 7)), (v(-7, 0, -2), v(7, 0, 2))]);
-    plus_shaped_room.set_vantage(v(0, 0, 0), /*coherence=*/ 1.0, /*interest=*/ 0.1);
+    plus_shaped_room.set_vantage(v(0, 0, 0), /*order=*/ 1.0, /*interest=*/ 0.1);
 
     // Like the plain room, but with pillars along both sides.
     let mut plain_pillar_room = Builder::new(&structures);
@@ -37,7 +33,7 @@ pub fn make_structures() -> Vec<Sparse3D<Cell>> {
         plain_pillar_room.build_box(v(-2, 0, i), v(-2, 0, i));
         plain_pillar_room.build_box(v(2, 0, i), v(2, 0, i));
     }
-    plain_pillar_room.set_vantage(v(0, 0, 2), /*coherence=*/ 0.9, /*interest=*/ 0.25);
+    plain_pillar_room.set_vantage(v(0, 0, 2), /*order=*/ 0.9, /*interest=*/ 0.25);
 
     // A taller room with pillars: a little more interesting
     let mut tall_pillar_room = Builder::new(&structures);
@@ -46,7 +42,7 @@ pub fn make_structures() -> Vec<Sparse3D<Cell>> {
         tall_pillar_room.build_box(v(-2, 0, i), v(-2, 3, i));
         tall_pillar_room.build_box(v(2, 0, i), v(2, 3, i));
     }
-    tall_pillar_room.set_vantage(v(0, 0, 2), /*coherence=*/ 0.9, /*interest=*/ 0.4);
+    tall_pillar_room.set_vantage(v(0, 0, 2), /*order=*/ 0.9, /*interest=*/ 0.4);
 
     // A corner (made of 3 3x3 squares), and another corner (made of 3 6x6 squares) atop it,
     // with a railing overlooking the gap.
@@ -58,7 +54,7 @@ pub fn make_structures() -> Vec<Sparse3D<Cell>> {
         (v(-5, 1, 0), v(-1, 2, 11)),
     ]);
     nested_corners.build_plane(v(0, 1, 0), v(0, 1, 5), RelSlot::XLoWall, Some("railing"));
-    nested_corners.set_vantage(v(1, 0, 1), /*coherence=*/ 0.6, /*interest=*/ 0.6);
+    nested_corners.set_vantage(v(1, 0, 1), /*order=*/ 0.6, /*interest=*/ 0.6);
 
     let mut gallery = Builder::new(&structures);
     gallery.build_box(v(-3, 0, 0), v(3, 3, 9));
@@ -75,7 +71,7 @@ pub fn make_structures() -> Vec<Sparse3D<Cell>> {
     gallery.build_plane(v(3, 0, 4), v(3, 0, 4), RelSlot::ZLoWall, Some("doorway"));
     gallery.build_plane(v(-1, 0, 6), v(-1, 0, 6), RelSlot::XLoWall, Some("doorway"));
     gallery.build_plane(v(1, 0, 6), v(1, 0, 6), RelSlot::XHiWall, Some("doorway"));
-    gallery.set_vantage(v(0, 0, 1), /*coherence=*/ 0.7, /*interest=*/ 0.7);
+    gallery.set_vantage(v(0, 0, 1), /*order=*/ 0.7, /*interest=*/ 0.7);
 
     let mut res = vec![
         boring_room.get(),

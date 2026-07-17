@@ -172,7 +172,7 @@ P# # # # # # # # # # #P
 (5,2,12,"Room")={"id":9,"facing":"NegX","evaluation":null}
 (9,0,8,"Room")={"id":10,"facing":"PosZ","evaluation":null}
 (6,0,9,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
-(7,0,9,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":1.0}}
+(7,0,9,"Room")={"id":9,"facing":"NegX","evaluation":{"order":1.0,"interest":1.0}}
 (8,0,9,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":null,"interest":null}}
 (9,0,9,"Room")={"id":10,"facing":"PosZ","evaluation":null}
 (6,0,10,"Room")={"id":9,"facing":"PosX","evaluation":{"coherence":null,"interest":null}}

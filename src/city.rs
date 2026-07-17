@@ -103,7 +103,7 @@ impl ConstrainedScoreExt for Option<ConstrainedScore> {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct VantageEvaluation {
     #[serde(default)]
-    pub coherence: Option<ConstrainedScore>,
+    pub order: Option<ConstrainedScore>,
     #[serde(default)]
     pub interest: Option<ConstrainedScore>,
 }

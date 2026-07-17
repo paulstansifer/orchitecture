@@ -220,7 +220,7 @@ impl ProposedCity {
             };
             if let Some(Proposal::Place(cell)) = self.proposed_changes.get_mut(loc) {
                 cell.evaluation = Some(VantageEvaluation {
-                    coherence: None,
+                    order: None,
                     interest: None,
                 });
             }

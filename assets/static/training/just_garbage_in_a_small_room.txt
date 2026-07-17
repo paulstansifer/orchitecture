@@ -31,4 +31,4 @@ S  D
 ~*~*~
 (2,0,1,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":5}
 (0,0,3,"Room")={"id":3,"facing":"PosZ","evaluation":null,"build_material":5}
-(1,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":{"at_most":0.4}},"build_material":5}
+(1,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"order":{"at_most":0.4}},"build_material":5}

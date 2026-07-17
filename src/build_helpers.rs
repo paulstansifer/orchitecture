@@ -216,7 +216,7 @@ impl Builder {
     pub fn set_vantage(
         &mut self,
         loc: IVec3,
-        coherence: impl Into<crate::city::ConstrainedScore>,
+        order: impl Into<crate::city::ConstrainedScore>,
         interest: impl Into<crate::city::ConstrainedScore>,
     ) {
         self.map.set(
@@ -226,7 +226,7 @@ impl Builder {
                 facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation {
                     interest: Some(interest.into()),
-                    coherence: Some(coherence.into()),
+                    order: Some(order.into()),
                 }),
                 build_material: BuildMaterialId::default(),
             },
@@ -388,11 +388,11 @@ pub fn add_noise(
             }
         }
 
-        // Noisy room should score at least 0.3 worse on coherence than the original.
+        // Noisy room should score at least 0.3 worse on order than the original.
         if let Some(orig_eval) = v_cell.evaluation.as_ref() {
             if let Some(cell_mut) = new_s.get_mut(*v_loc) {
                 cell_mut.evaluation = Some(VantageEvaluation {
-                    coherence: orig_eval.coherence.subtract(0.3).unbound_lower(),
+                    order: orig_eval.order.subtract(0.3).unbound_lower(),
                     interest: orig_eval.interest,
                 });
             }
@@ -424,7 +424,7 @@ fn test_add_noise() {
             id: table_id,
             facing: crate::sparse3d::Facing::NegX,
             evaluation: Some(VantageEvaluation {
-                coherence: Some(ConstrainedScore::Exact(1.0)),
+                order: Some(ConstrainedScore::Exact(1.0)),
                 interest: Some(ConstrainedScore::Exact(0.5)),
             }),
             build_material: BuildMaterialId::default(),
@@ -458,6 +458,6 @@ fn test_add_noise() {
 
     assert!(let Some(cell) = out.get(v_loc));
     assert!(let Some(eval) = &cell.evaluation);
-    // original coherence 1.0, subtract 0.3, unbound_lower → AtMost { at_most: 0.7 }
-    check!(eval.coherence == Some(ConstrainedScore::AtMost { at_most: 0.7 }));
+    // original order 1.0, subtract 0.3, unbound_lower → AtMost { at_most: 0.7 }
+    check!(eval.order == Some(ConstrainedScore::AtMost { at_most: 0.7 }));
 }

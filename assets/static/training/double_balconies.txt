@@ -64,7 +64,7 @@ W#               #W
                     
 ~~~~~
 ~*~*~
-(4,0,2,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":1.0,"interest":1.0},"build_material":5}
+(4,0,2,"Room")={"id":9,"facing":"NegX","evaluation":{"order":0.9,"interest":1.0},"build_material":5}
 (5,0,4,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":5}
 (7,1,4,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":5}
 (3,0,4,"Room")={"id":3,"facing":"PosZ","evaluation":null,"build_material":5}

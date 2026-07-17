@@ -114,4 +114,4 @@
                           
 ~~~~~
 ~*~*~
-(7,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":{"at_least":0.7},"interest":{"at_most":0.5}}}
+(7,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"order":0.3,"interest":{"at_most":0.5}}}

@@ -10,4 +10,4 @@
  # # # # #
 ~~~~~
 ~*~*~
-(2,0,2,"Room")={"id":9,"facing":"NegX","evaluation":{"interest":0.0},"build_material":5}
+(2,0,2,"Room")={"id":9,"facing":"NegX","evaluation":{"interest":0.0, "order":1.0},"build_material":5}

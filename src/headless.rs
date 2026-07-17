@@ -199,8 +199,8 @@ impl HeadlessSession {
         );
         if let Some(eval) = &cell.evaluation {
             s.push_str(&format!(
-                " evaluation(coherence={:?}, interest={:?})",
-                eval.coherence, eval.interest
+                " evaluation(order={:?}, interest={:?})",
+                eval.order, eval.interest
             ));
         }
         s

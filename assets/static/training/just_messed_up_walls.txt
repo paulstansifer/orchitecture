@@ -41,4 +41,4 @@
                         
 ~~~~~
 ~*~*~
-(5,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"coherence":0.0},"build_material":5}
+(5,0,4,"Room")={"id":9,"facing":"NegX","evaluation":{"order":0.0},"build_material":5}

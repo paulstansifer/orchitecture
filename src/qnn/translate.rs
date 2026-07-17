@@ -15,8 +15,6 @@ use burn::backend::Autodiff;
 #[cfg(feature = "training")]
 use burn::data::dataset::InMemDataset;
 #[cfg(feature = "training")]
-use rand::rngs::StdRng;
-#[cfg(feature = "training")]
 use std::collections::HashMap;
 
 pub const EMBEDDING_SIZE: usize = 5 + 1; // Keep this in sync with structure.rs (+ 1 for "visibility")
@@ -48,7 +46,7 @@ impl crate::city::ConstrainedScore {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Metric {
     Interest,
-    Coherence,
+    Order,
 }
 
 #[cfg(feature = "training")]
@@ -56,7 +54,7 @@ impl std::fmt::Display for Metric {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Metric::Interest => write!(f, "interest"),
-            Metric::Coherence => write!(f, "coherence"),
+            Metric::Order => write!(f, "order"),
         }
     }
 }
@@ -104,6 +102,8 @@ pub struct GroundTruth<B: Backend> {
     /// metric other than `Interest` gets its own motif training data).
     pub motif_interest: Tensor<B, 2, Float>,
     pub motif_order: Tensor<B, 2, Float>,
+    /// See `motif_order_stats`; also computed unconditionally, same reasoning as above.
+    pub order_stats: Tensor<B, 2, Float>,
     pub scores: Tensor<B, 1, Float>,
     pub constraint: ScoreConstraint,
     pub filename: String,
@@ -115,6 +115,7 @@ fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTru
         voxels: Tensor::from_inner(gt.voxels),
         motif_interest: Tensor::from_inner(gt.motif_interest),
         motif_order: Tensor::from_inner(gt.motif_order),
+        order_stats: Tensor::from_inner(gt.order_stats),
         scores: Tensor::from_inner(gt.scores),
         constraint: gt.constraint,
         filename: gt.filename,
@@ -125,22 +126,15 @@ fn convert_ground_truth_to_autodiff<B: Backend>(gt: GroundTruth<B>) -> GroundTru
 #[derive(Clone, Debug)]
 pub struct GroundTruthBatcher {}
 
+/// Rotational augmentation only. Used to also mess rooms up (`build_helpers::add_noise`) and
+/// dock the messed copy's `order` label by a fixed amount for `Metric::Order`, but that fixed
+/// docking has no reliable relationship to `motif_order_stats`'s h-indices -- noise that doesn't
+/// happen to break enough motif pairs to move an h-index still got the same label penalty,
+/// planting contradictory training examples. Dropped.
 #[cfg(feature = "training")]
-fn augment_datum(
-    s: (Sparse3D<Cell>, String),
-    metric: Metric,
-    structure_info: &[EorfInfo],
-    rng: &mut StdRng,
-) -> Vec<(Sparse3D<Cell>, String)> {
+fn augment_datum(s: (Sparse3D<Cell>, String)) -> Vec<(Sparse3D<Cell>, String)> {
     use crate::sparse3d::Rotateable;
     let mut res = vec![];
-
-    if metric == Metric::Coherence {
-        let messed_up = crate::build_helpers::add_noise(s.0.clone(), structure_info, rng);
-        for messed in messed_up {
-            res.push((messed, format!("{}-messed", s.1)));
-        }
-    }
 
     res.push((
         s.0.clone().rotate(crate::sparse3d::Rotation::Clockwise),
@@ -167,6 +161,7 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
         // begin. MotifNn's dataloader enforces batch_size=1 for exactly this reason.
         let mut motif_interest: Vec<Tensor<B, 2, Float>> = Vec::new();
         let mut motif_order: Vec<Tensor<B, 2, Float>> = Vec::new();
+        let mut order_stats: Vec<Tensor<B, 2, Float>> = Vec::new();
         let mut scores: Vec<Tensor<B, 1, Float>> = Vec::new();
         let mut files: Vec<String> = Vec::new();
         // batch_size=1; all items in a batch should have the same constraint
@@ -176,6 +171,7 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
             voxels.push(gt.voxels);
             motif_interest.push(gt.motif_interest);
             motif_order.push(gt.motif_order);
+            order_stats.push(gt.order_stats);
             scores.push(gt.scores);
             files.push(gt.filename);
         }
@@ -183,11 +179,13 @@ impl<B: Backend> burn::data::dataloader::batcher::Batcher<B, GroundTruth<B>, Gro
         let voxels = Tensor::cat(voxels, 0);
         let motif_interest = Tensor::cat(motif_interest, 0);
         let motif_order = Tensor::cat(motif_order, 0);
+        let order_stats = Tensor::cat(order_stats, 0);
         let scores = Tensor::cat(scores, 0);
         GroundTruth {
             voxels,
             motif_interest,
             motif_order,
+            order_stats,
             scores,
             constraint,
             filename: files.join("/"),
@@ -273,11 +271,11 @@ pub fn load_training_data<B: Backend>(
         }
     }
 
-    // if metric == Metric::Coherence {
+    // if metric == Metric::Order {
     //     for exemplar in all_sparse_data.iter().take(6) {
     //         println!("{}", exemplar.1);
     //         print_voxels(
-    //             &ground_truth_at_vantage::<B>(exemplar, Metric::Coherence, &structures).voxels,
+    //             &ground_truth_at_vantage::<B>(exemplar, Metric::Order, &structures).voxels,
     //         );
     //         println!("{} messed up", exemplar.1);
 
@@ -289,7 +287,7 @@ pub fn load_training_data<B: Backend>(
     //                     .clone(),
     //                     format!("---"),
     //                 ),
-    //                 Metric::Coherence,
+    //                 Metric::Order,
     //                 &structures,
     //             )
     //             .voxels,
@@ -310,12 +308,12 @@ pub fn load_training_data<B: Backend>(
 
     let mut t_rooms_augmented = Vec::new();
     for data in t_rooms {
-        t_rooms_augmented.extend(augment_datum(data, metric, &structures, &mut rng));
+        t_rooms_augmented.extend(augment_datum(data));
     }
 
     let mut v_rooms_augmented = Vec::new();
     for data in v_rooms {
-        v_rooms_augmented.extend(augment_datum(data, metric, &structures, &mut rng));
+        v_rooms_augmented.extend(augment_datum(data));
     }
 
     let train_data: Vec<_> = t_rooms_augmented
@@ -343,7 +341,7 @@ pub fn ground_truth_at_vantage<B: Backend>(
         if let Some(eval) = &cell.evaluation {
             let constrained = match metric {
                 Metric::Interest => eval.interest?,
-                Metric::Coherence => eval.coherence?,
+                Metric::Order => eval.order?,
             };
             let (val, constraint) = constrained.disassemble();
 
@@ -357,11 +355,13 @@ pub fn ground_truth_at_vantage<B: Backend>(
             let vantage = RelSlotCoord::new(loc.cube.x, loc.cube.y, loc.cube.z, RelSlot::Room);
             let (occurrences, _defects) = visible_motifs_and_defects(&data.0, vantage, structures);
             let (motif_interest, motif_order) = motif_occurrences_to_tensors(&occurrences);
+            let order_stats = motif_order_stats(&occurrences);
 
             return Some(GroundTruth {
                 voxels: tensor,
                 motif_interest,
                 motif_order,
+                order_stats,
                 scores: Tensor::from_data(TensorData::from([val]), &Default::default()),
                 constraint,
                 filename: data.1.clone(),
@@ -728,6 +728,69 @@ pub fn motif_occurrences_to_tensors<B: Backend>(
     );
 
     (interest, order)
+}
+
+/// The largest `h` such that at least `h` of `values` are themselves `>= h` (as in an "h-index").
+/// A high h-index means many items are simultaneously large -- one enormous outlier can't inflate
+/// it the way a sum or max could, which is the point of reaching for it here.
+fn h_index(mut values: Vec<usize>) -> usize {
+    values.sort_unstable_by(|a, b| b.cmp(a));
+    values
+        .iter()
+        .enumerate()
+        .take_while(|&(i, &v)| v >= i + 1)
+        .count()
+}
+
+/// Row width of `motif_order_stats`'s output.
+pub fn motif_order_stats_width() -> usize {
+    3
+}
+
+/// Three hand-picked "h-index" statistics meant to proxy different flavors of repetition/alignment
+/// among visible motifs -- an experiment to see whether handing the `order` model explicit
+/// structure like this helps where raw pooled occurrence/pair features haven't:
+///
+/// 1. h-index of "occurrences per `MotifId`" -- high when many distinct motif classes are each
+///    repeated many times (repetition richness).
+/// 2. h-index of occurrence `length`s (one value per occurrence, not per class) -- high when many
+///    occurrences are themselves long runs.
+/// 3. h-index of "distinct `MotifId`s sharing a given length" (one value per distinct length seen)
+///    -- high when many different lengths are each shared by several different motif types, i.e.
+///    unrelated motifs lining up on the same scale.
+pub fn motif_order_stats<B: Backend>(occurrences: &[MotifOccurrence]) -> Tensor<B, 2, Float> {
+    let device = Default::default();
+
+    let mut occurrences_per_id: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
+    let mut ids_per_length: std::collections::HashMap<u32, std::collections::HashSet<usize>> =
+        std::collections::HashMap::new();
+    let mut lengths = Vec::with_capacity(occurrences.len());
+    for occ in occurrences {
+        *occurrences_per_id.entry(occ.id.0).or_insert(0) += 1;
+        ids_per_length
+            .entry(occ.length)
+            .or_default()
+            .insert(occ.id.0);
+        lengths.push(occ.length as usize);
+    }
+
+    let repetition_richness = h_index(occurrences_per_id.into_values().collect());
+    let run_length_richness = h_index(lengths);
+    let cross_motif_alignment =
+        h_index(ids_per_length.into_values().map(|ids| ids.len()).collect());
+
+    Tensor::from_data(
+        TensorData::new(
+            vec![
+                repetition_richness as f32,
+                run_length_richness as f32,
+                cross_motif_alignment as f32,
+            ],
+            [1, motif_order_stats_width()],
+        ),
+        &device,
+    )
 }
 
 #[allow(dead_code)]

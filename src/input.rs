@@ -172,7 +172,7 @@ pub struct BuildState {
     /// `WallPlop`'s rotation state on `ZLoWall`s: unflipped (`NegZ`) or
     /// flipped 180° (`PosZ`). See `wall_plop_flip_x`.
     pub wall_plop_flip_z: bool,
-    /// Latest evaluation results (coherence, interest).
+    /// Latest evaluation results (order, interest).
     pub evaluation: Option<(f32, f32)>,
     /// Selected material (`BuildMaterialId`, index into `MaterialList::materials`) per structure type.
     pub material_per_type:

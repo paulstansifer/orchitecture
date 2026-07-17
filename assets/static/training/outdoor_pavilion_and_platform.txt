@@ -34,5 +34,5 @@
 ~~~~~
 ~*~*~
 (7,0,0,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":5}
-(4,0,1,"Room")={"id":9,"facing":"NegZ","evaluation":{"coherence":{"at_least":0.8},"interest":{"at_most":0.8}},"build_material":5}
+(4,0,1,"Room")={"id":9,"facing":"NegZ","evaluation":{"order":{"at_least":0.3},"interest":{"at_most":0.8}},"build_material":5}
 (7,0,1,"Room")={"id":3,"facing":"NegZ","evaluation":null,"build_material":5}
