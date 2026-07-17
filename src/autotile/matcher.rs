@@ -49,7 +49,7 @@ where
             let cell = get_cell(neighbor);
             match ch {
                 ' ' => true,
-                '.' => cell.is_none(),
+                '.' | '@' => cell.is_none(),
                 _ => {
                     if let Some((id, facing)) = cell {
                         if let Some(ann) = char_annotations.get(ch) {
@@ -180,7 +180,11 @@ pub fn evaluate_autotile_rules(
     let unoriented = rel_slot_to_unoriented(loc.rel_slot);
     let matching: Vec<_> = rules
         .iter()
-        .filter(|r| r.structure_name == cell_name && r.slot == unoriented)
+        .filter(|r| {
+            // Motif rules (empty structure_name) match any structure in the slot.
+            // Regular rules must match the specific structure and slot.
+            (r.is_motif && r.slot == unoriented) || (r.structure_name == cell_name && r.slot == unoriented)
+        })
         .collect();
     if matching.is_empty() {
         return None;
@@ -981,5 +985,51 @@ H: 1=stairs:90 2=stairs
         let ann2 = pat.annotations.get(&'2').unwrap();
         check!(ann2.name == "stairs");
         check!(ann2.orientation == None);
+    }
+
+    // ── Motif rules ───────────────────────────────────────────────────────────
+
+    /// Motif rules (empty structure_name) should match any structure in the slot.
+    #[test]
+    fn motif_rule_matches_any_structure() {
+        let input = "\
+== room ==
+H:
+ = . .
+--> motif_mesh
+--> none
+";
+        let file = parse(input).unwrap();
+        let oriented = compile_rule(&file.rules[0]);
+
+        // Verify the rule is marked as motif
+        check!(oriented.is_motif == true);
+        check!(oriented.structure_name.is_empty());
+
+        let anchor = RelSlotCoord::new(0, 0, 0, RelSlot::Room);
+
+        // Set up a grid with a room neighbor (doesn't matter what structure it is)
+        let mut grid: Sparse3D<Cell> = Sparse3D::new();
+        grid.set(RelSlotCoord::new(1, 0, 0, RelSlot::Room), table_cell()); // Any structure
+
+        let result = match_pattern(
+            &oriented,
+            |loc| grid.get(loc).map(|c| (c.id, c.facing)),
+            anchor,
+            |ch, id, _facing| {
+                // Simple matcher: '=' means room slot with any id
+                if ch == '=' {
+                    true
+                } else {
+                    char_matches_name(ch, if id.0 == 0 { "wall" } else { "room" })
+                }
+            },
+            |_name, _id| false,
+        );
+
+        check!(
+            matches!(result[0], AutotileResult::Mesh { .. }),
+            "motif rule should match any structure in the slot; got {result:?}"
+        );
     }
 }

@@ -215,7 +215,8 @@ impl Pattern {
         self.layers[self.at_layer].pattern_type
     }
 
-    /// Returns non-wildcard, non-@ cells as AutotileRelSlotOffset → char, across all layers.
+    /// Returns non-wildcard, non-empty cells as AutotileRelSlotOffset → char, across all layers.
+    /// Skips space (wildcard), '.' (explicit empty), and '@' (anchor for regular, empty for motif).
     pub fn relative_checks(&self) -> HashMap<AutotileRelSlotOffset, char> {
         let anchor = &self.layers[self.at_layer];
         let (ax0, ay0, az0, origin_slot) =
@@ -226,7 +227,7 @@ impl Pattern {
         for layer in &self.layers {
             for (r, row) in layer.rows.iter().enumerate() {
                 for (c, &ch) in row.iter().enumerate() {
-                    if ch == ' ' || ch == '@' {
+                    if ch == ' ' || ch == '@' || ch == '.' {
                         continue;
                     }
                     let (tx0, ty0, tz0, dest_slot) = grid_pos_to_3d(layer.pattern_type, c, r);
@@ -295,6 +296,8 @@ pub struct AutotileRule {
     pub structure_name: String,
     pub slot: UnorientedSlot,
     pub cases: Vec<PatternCase>,
+    /// True if this rule uses motif format (header has no colon, anchor is first non-empty cell).
+    pub is_motif: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -326,23 +329,34 @@ pub fn parse(input: &str) -> anyhow::Result<AutotileFile> {
         }
         if let Some(inner) = line.strip_prefix("==").and_then(|s| s.strip_suffix("==")) {
             let inner = inner.trim();
-            let colon = inner
-                .rfind(':')
-                .with_context(|| format!("line {lineno}: unexpected line: {line:?}"))?;
-            let structure_name = inner[..colon].trim().to_owned();
-            let slot = match inner[colon + 1..].trim() {
-                "wall" => UnorientedSlot::Wall,
-                "room" => UnorientedSlot::Room,
-                "floor" => UnorientedSlot::Floor,
-                other => bail!("line {lineno}: invalid slot: {other:?}"),
+            let (structure_name, slot, is_motif) = if let Some(colon) = inner.rfind(':') {
+                // Regular format: ==structure_name:slot==
+                let structure_name = inner[..colon].trim().to_owned();
+                let slot = match inner[colon + 1..].trim() {
+                    "wall" => UnorientedSlot::Wall,
+                    "room" => UnorientedSlot::Room,
+                    "floor" => UnorientedSlot::Floor,
+                    other => bail!("line {lineno}: invalid slot: {other:?}"),
+                };
+                (structure_name, slot, false)
+            } else {
+                // Motif format: ==slot==
+                let slot = match inner.trim() {
+                    "wall" => UnorientedSlot::Wall,
+                    "room" => UnorientedSlot::Room,
+                    "floor" => UnorientedSlot::Floor,
+                    other => bail!("line {lineno}: invalid slot or missing colon: {other:?}"),
+                };
+                (String::new(), slot, true)
             };
             i += 1;
-            let (cases, new_i) = parse_cases(&lines, i, slot)?;
+            let (cases, new_i) = parse_cases(&lines, i, slot, is_motif)?;
             i = new_i;
             rules.push(AutotileRule {
                 structure_name,
                 slot,
                 cases,
+                is_motif,
             });
         } else {
             bail!("line {lineno}: unexpected line: {line:?}");
@@ -356,6 +370,7 @@ fn parse_cases(
     lines: &[&str],
     mut i: usize,
     slot: UnorientedSlot,
+    is_motif: bool,
 ) -> anyhow::Result<(Vec<PatternCase>, usize)> {
     let mut cases = Vec::new();
 
@@ -400,7 +415,7 @@ fn parse_cases(
             let pline = strip_comment(lines[i]);
             let plineno = i + 1;
             if let Some(rest) = pline.strip_prefix("-->") {
-                let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations)
+                let pattern = build_pattern(layer_types, layer_ts, layer_rows, slot, annotations, is_motif)
                     .with_context(|| format!("line {plineno}"))?;
                 let (multi, result) =
                     parse_result(rest.trim()).with_context(|| format!("line {plineno}"))?;
@@ -573,28 +588,55 @@ fn assign_layer_ts(types: &[PatternType]) -> anyhow::Result<Vec<i32>> {
     Ok(ts)
 }
 
+fn is_non_empty_cell(ch: char) -> bool {
+    ch != ' ' && ch != '.' && ch != '@'
+}
+
 fn build_pattern(
     layer_types: Vec<PatternType>,
     layer_ts: Vec<i32>,
     layer_rows: Vec<Vec<Vec<char>>>,
     slot: UnorientedSlot,
     annotations: HashMap<char, PatternAnnotation>,
+    is_motif: bool,
 ) -> anyhow::Result<Pattern> {
-    // Find the single '@' across all layers.
-    let mut anchor: Option<(usize, usize, usize)> = None; // (layer, col, row)
-    for (l, rows) in layer_rows.iter().enumerate() {
-        for (r, row) in rows.iter().enumerate() {
-            for (c, &ch) in row.iter().enumerate() {
-                if ch == '@' {
-                    if anchor.is_some() {
-                        bail!("pattern has multiple @ characters");
+    let (at_layer, at_col, at_row) = if is_motif {
+        // Motif: find first non-empty cell as anchor
+        let mut anchor: Option<(usize, usize, usize)> = None; // (layer, col, row)
+        for (l, rows) in layer_rows.iter().enumerate() {
+            for (r, row) in rows.iter().enumerate() {
+                for (c, &ch) in row.iter().enumerate() {
+                    if is_non_empty_cell(ch) {
+                        anchor = Some((l, c, r));
+                        break;
                     }
-                    anchor = Some((l, c, r));
+                }
+                if anchor.is_some() {
+                    break;
+                }
+            }
+            if anchor.is_some() {
+                break;
+            }
+        }
+        anchor.context("motif pattern has no non-empty cells")?
+    } else {
+        // Regular: find the single '@'
+        let mut anchor: Option<(usize, usize, usize)> = None; // (layer, col, row)
+        for (l, rows) in layer_rows.iter().enumerate() {
+            for (r, row) in rows.iter().enumerate() {
+                for (c, &ch) in row.iter().enumerate() {
+                    if ch == '@' {
+                        if anchor.is_some() {
+                            bail!("pattern has multiple @ characters");
+                        }
+                        anchor = Some((l, c, r));
+                    }
                 }
             }
         }
-    }
-    let (at_layer, at_col, at_row) = anchor.context("pattern has no @ character")?;
+        anchor.context("pattern has no @ character")?
+    };
 
     let mut layer_rows = layer_rows;
 
@@ -1493,5 +1535,45 @@ H:
         let file = parse(input).unwrap();
         let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
         check!(pat.annotations.is_empty());
+    }
+
+    /// Motif format: header has no colon, first non-empty cell is the anchor.
+    #[test]
+    fn parse_motif_format() {
+        let input = "\
+== room ==
+H:
+ = . .
+--> mesh
+";
+        let file = parse(input).unwrap();
+        check!(file.rules.len() == 1);
+        let rule = &file.rules[0];
+        check!(rule.is_motif == true);
+        check!(rule.structure_name.is_empty());
+        check!(rule.slot == UnorientedSlot::Room);
+
+        let case = &rule.cases[0];
+        let pat = case.pattern.as_ref().unwrap();
+        // The anchor should be at the '=' (first non-empty cell at col 0).
+        // After parity adjustment for Room in H pattern, at_col should be 0.
+        check!(pat.at_row == 1);
+    }
+
+    /// Motif pattern with @ treated as empty (should be skipped in relative_checks).
+    #[test]
+    fn motif_with_at_empty_cell() {
+        let input = "\
+== room ==
+H:
+ = @ .
+--> mesh
+";
+        let file = parse(input).unwrap();
+        let pat = file.rules[0].cases[0].pattern.as_ref().unwrap();
+        // '=' at (col=0, row=1) is the anchor, '@' at (col=2, row=1) should be empty.
+        let checks = pat.relative_checks();
+        // Should have no checks since '@' and '.' are both empty markers.
+        check!(checks.is_empty());
     }
 }

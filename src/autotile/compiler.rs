@@ -51,6 +51,8 @@ pub struct AutotileOriented {
     // If `slot` is Wall, this will be 90-degree-rotated versions of `cases`.
     // Otherwise, it'll be empty
     pub cases_plus_90: Vec<OrientedCase>,
+    /// True if this is a motif rule (header had no colon, anchor is first non-empty cell).
+    pub is_motif: bool,
 }
 
 // ─── Rotation helpers ─────────────────────────────────────────────────────────
@@ -325,6 +327,7 @@ pub fn compile_rule(rule: &AutotileRule) -> AutotileOriented {
         slot: rule.slot,
         cases,
         cases_plus_90,
+        is_motif: rule.is_motif,
     }
 }
 
