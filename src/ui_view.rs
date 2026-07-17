@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use crate::city::{ConstructedCity, ProposedCity};
-use crate::city_effect::{compute_month_effects, LedgerSource};
+use crate::city_effect::{compute_month_effects, CityEffect, LedgerSource};
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource::{Precision, UniformResource};
@@ -34,12 +34,28 @@ pub struct ResourceRow {
     pub storage_delta: i64,
     /// Units lost to a full store this month.
     pub lost: u32,
-    /// Remaining construction need for this resource (0 if none, or in sandbox).
+    /// Remaining construction need for this resource (0 if none, or in
+    /// sandbox) — for `Potato`, this instead holds this month's total food
+    /// need (population size × ration).
     pub need: u32,
-    /// How much of `need` is being paid off this month.
+    /// How much of `need` is being paid off this month — for `Potato`, how
+    /// many of the needed potatoes will actually be granted.
     pub applied: u32,
     /// One entry per contributing source this month, for the hover tooltip.
     pub sources: Vec<(LedgerSource, i32)>,
+    /// Total capacity from bins dedicated to this resource specifically, if
+    /// any — shown alongside `current` as "current/capacity".
+    pub dedicated_capacity: Option<u32>,
+}
+
+/// The always-shown row measuring free *uncommitted* (shared, undedicated)
+/// storage capacity — room not earmarked for any particular resource.
+pub struct UncommittedStorageRow {
+    /// Free shared capacity right now.
+    pub available: u32,
+    /// Projected change to `available` this month (negative = this month's
+    /// leftover inflow will consume some of it).
+    pub delta: i64,
 }
 
 /// This month's traveler offer, if any, and whether it's currently affordable.
@@ -60,6 +76,7 @@ pub struct MonthPanelView {
     pub invited_count: usize,
     pub has_storage: bool,
     pub rows: Vec<ResourceRow>,
+    pub uncommitted_storage: UncommittedStorageRow,
     pub tool_count: u32,
     pub traveler: Option<TravelerOfferView>,
 }
@@ -114,6 +131,12 @@ pub fn month_panel_view(
 
     let has_storage = !crate::place::storage_ids(constructed).is_empty();
     let blocked_construction = crate::construction::construction_blocked(&remaining_need);
+    let dedicated_ceilings = crate::place::storage_dedicated_ceilings(constructed);
+
+    let eat = effects.effects.iter().find_map(|e| match e {
+        CityEffect::Eat(eat) => Some(eat),
+        _ => None,
+    });
 
     let mut resources: Vec<UniformResource> = station_totals.iter().map(|(r, _, _)| *r).collect();
     for (r, _) in &effects.player_gains {
@@ -126,6 +149,11 @@ pub fn month_panel_view(
             resources.push(*r);
         }
     }
+    // Potatoes are the population's food, so their row (and its need/applied
+    // as this month's food need/granted) is always shown.
+    if !resources.contains(&UniformResource::Potato) {
+        resources.push(UniformResource::Potato);
+    }
     resources.sort();
 
     let rows = resources
@@ -136,13 +164,21 @@ pub fn month_panel_view(
                 .find(|(r, _, _)| *r == res)
                 .map(|(_, q, p)| (*q, *p))
                 .unwrap_or((0, Precision::Exact));
-            let need = remaining_need_map.get(&res).copied().unwrap_or(0);
+            let (need, applied) = if res == UniformResource::Potato {
+                let eat = eat.expect("Eat effect is always present");
+                (eat.desired_potato, eat.granted_potato)
+            } else {
+                let need = remaining_need_map.get(&res).copied().unwrap_or(0);
+                // Construction consumes (negative net); flip its sign for the
+                // "applied this month" figure.
+                let applied =
+                    (-effects.ledger.net_for(LedgerSource::Construction, res)).max(0) as u32;
+                (need, applied)
+            };
             let lost = effects.leftover.get(&res).map(|f| f.lost).unwrap_or(0);
             let storage_delta = effects.storage_delta(res);
-            // Construction consumes (negative net); flip its sign for the
-            // "applied this month" figure.
-            let applied = (-effects.ledger.net_for(LedgerSource::Construction, res)).max(0) as u32;
             let sources = effects.ledger.sources_touching(res).collect();
+            let dedicated_capacity = dedicated_ceilings.get(&res).map(|&c| c.round() as u32);
             ResourceRow {
                 resource: res,
                 current,
@@ -152,9 +188,36 @@ pub fn month_panel_view(
                 need,
                 applied,
                 sources,
+                dedicated_capacity,
             }
         })
         .collect();
+
+    // Uncommitted (shared, undedicated) storage capacity: how much is free
+    // right now, and how much this month's projected leftover inflow will
+    // consume, mirroring `ResourceRow::storage_delta`'s "preview" math.
+    let shared_ceiling = crate::place::storage_shared_ceiling(constructed);
+    let storage_totals_now = crate::place::storage_totals(constructed);
+    let uncommitted_now = crate::place::uncommitted_free_capacity(
+        shared_ceiling,
+        &dedicated_ceilings,
+        &storage_totals_now,
+    );
+    let mut storage_totals_after = storage_totals_now.clone();
+    for &res in UniformResource::ALL {
+        let delta = effects.storage_delta(res);
+        let entry = storage_totals_after.entry(res).or_insert(0);
+        *entry = (*entry as i64 + delta).max(0) as u32;
+    }
+    let uncommitted_after = crate::place::uncommitted_free_capacity(
+        shared_ceiling,
+        &dedicated_ceilings,
+        &storage_totals_after,
+    );
+    let uncommitted_storage = UncommittedStorageRow {
+        available: uncommitted_now.round() as u32,
+        delta: uncommitted_after.round() as i64 - uncommitted_now.round() as i64,
+    };
 
     let has_project = pending.num_changes() > 0;
     let has_farms_invited = farms.invited_count() > 0;
@@ -188,6 +251,7 @@ pub fn month_panel_view(
         invited_count: farms.invited_count(),
         has_storage,
         rows,
+        uncommitted_storage,
         tool_count: crate::place::total_tool_count(constructed),
         traveler,
     }
@@ -263,7 +327,9 @@ mod tests {
         );
 
         assert!(matches!(view.advance, AdvanceState::NothingPending));
-        assert!(view.rows.is_empty());
+        // The potato row is always shown, even with nothing else pending.
+        assert_eq!(view.rows.len(), 1);
+        assert_eq!(view.rows[0].resource, UniformResource::Potato);
     }
 
     /// An invited farm makes the panel active and reports the market gain in

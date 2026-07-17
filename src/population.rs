@@ -8,7 +8,11 @@ pub struct Individual {
     /// The place this individual is assigned to for each flavor of need
     /// (e.g. the bedroom they sleep in). See `assign_places`.
     pub assignments: HashMap<AssignmentFlavor, PlacedPlaceId>,
-    pub fed_this_month: bool,
+    /// Fraction (0.0–1.0) of this individual's monthly potato ration that was
+    /// satisfied. Shortfalls are prorated evenly across the population rather
+    /// than leaving some individuals fully fed and others starved — see
+    /// `city_effect::Eat::apply`.
+    pub fed_fraction: f32,
 }
 
 impl Individual {
@@ -30,11 +34,7 @@ impl Individual {
     }
 
     pub fn food(&self) -> f32 {
-        if self.fed_this_month {
-            1.0
-        } else {
-            0.25
-        }
+        0.25 + 0.75 * self.fed_fraction
     }
 
     pub fn inspiration(&self) -> f32 {

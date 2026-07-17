@@ -1017,6 +1017,58 @@ pub fn storage_overall_free_capacity(cw: &ConstructedCity) -> f32 {
         .sum()
 }
 
+/// Total volume across all storage places' bins that are *not* dedicated to
+/// any particular resource — i.e. general-purpose room available to
+/// whichever resource wants it, as opposed to a bin restricted to one
+/// resource (see [`ConstructedCity::bin_resource_restrictions`]).
+pub fn storage_shared_ceiling(cw: &ConstructedCity) -> f32 {
+    storage_ids(cw)
+        .into_iter()
+        .flat_map(|id| cw.placed_places[id].fulfillments.iter())
+        .filter(|f| match f {
+            FulfilledPorf::Furniture(cube) => !cw.bin_resource_restrictions.contains_key(cube),
+            FulfilledPorf::Place(_) => false,
+        })
+        .count() as f32
+        * 20.0
+}
+
+/// Per-resource capacity ceiling contributed by bins dedicated (restricted)
+/// to that resource specifically, summed across all storage places. Resources
+/// with no dedicated bins are absent from the map.
+pub fn storage_dedicated_ceilings(cw: &ConstructedCity) -> HashMap<UniformResource, f32> {
+    let mut ceilings = HashMap::new();
+    for id in storage_ids(cw) {
+        for f in &cw.placed_places[id].fulfillments {
+            if let FulfilledPorf::Furniture(cube) = f {
+                if let Some(&res) = cw.bin_resource_restrictions.get(cube) {
+                    *ceilings.entry(res).or_insert(0.0) += 20.0;
+                }
+            }
+        }
+    }
+    ceilings
+}
+
+/// Free volume across shared (undedicated) storage bins, given a snapshot of
+/// per-resource storage `totals`. Dedicated bins' free space is excluded even
+/// when empty, since that room is earmarked for one resource rather than
+/// generally available; any stored amount beyond what a resource's own
+/// dedicated bins can hold is assumed to occupy shared bins.
+pub fn uncommitted_free_capacity(
+    shared_ceiling: f32,
+    dedicated_ceilings: &HashMap<UniformResource, f32>,
+    totals: &HashMap<UniformResource, u32>,
+) -> f32 {
+    let shared_used: f32 = totals
+        .iter()
+        .map(|(res, &qty)| {
+            (qty as f32 - dedicated_ceilings.get(res).copied().unwrap_or(0.0)).max(0.0)
+        })
+        .sum();
+    (shared_ceiling - shared_used).max(0.0)
+}
+
 /// Deposits `qty` of `res`, spreading it across storage places' free
 /// capacity for `res` (mirrors `consume_uniform`'s spreading pattern), which
 /// honors each bin's individual resource restriction so a resource is never
@@ -1424,5 +1476,51 @@ mod tests {
         let deposited = deposit_uniform_with_capacity(&mut cw, UniformResource::Straw, 10);
         assert_eq!(deposited, 0);
         assert_eq!(storage_totals(&cw).get(&UniformResource::Straw), None);
+    }
+
+    #[test]
+    fn shared_ceiling_excludes_dedicated_bins() {
+        let inv = Inventory::new(40.0);
+        let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
+        cw.bin_resource_restrictions
+            .insert(b(0, 0), UniformResource::Timber);
+        // Only b(0, 1) is unrestricted.
+        assert_eq!(storage_shared_ceiling(&cw), 20.0);
+        assert_eq!(
+            storage_dedicated_ceilings(&cw).get(&UniformResource::Timber),
+            Some(&20.0)
+        );
+    }
+
+    #[test]
+    fn uncommitted_capacity_excludes_dedicated_room_even_when_empty() {
+        let inv = Inventory::new(40.0);
+        let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
+        cw.bin_resource_restrictions
+            .insert(b(0, 0), UniformResource::Timber);
+        let dedicated = storage_dedicated_ceilings(&cw);
+        let shared_ceiling = storage_shared_ceiling(&cw);
+        // No Timber stored yet, but the dedicated bin still isn't "uncommitted".
+        assert_eq!(
+            uncommitted_free_capacity(shared_ceiling, &dedicated, &storage_totals(&cw)),
+            20.0
+        );
+    }
+
+    #[test]
+    fn uncommitted_capacity_counts_overflow_into_shared_bins() {
+        let mut inv = Inventory::new(40.0);
+        inv.add_uniform(UniformResource::Timber, 25);
+        let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
+        cw.bin_resource_restrictions
+            .insert(b(0, 0), UniformResource::Timber);
+        let dedicated = storage_dedicated_ceilings(&cw);
+        let shared_ceiling = storage_shared_ceiling(&cw);
+        // Timber's dedicated bin (20) is full; the extra 5 units spill into
+        // the 20-unit shared bin, leaving 15 uncommitted.
+        assert_eq!(
+            uncommitted_free_capacity(shared_ceiling, &dedicated, &storage_totals(&cw)),
+            15.0
+        );
     }
 }

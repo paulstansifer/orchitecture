@@ -569,7 +569,7 @@ impl HeadlessSession {
                                 ind.assigned(crate::place::AssignmentFlavor::Work)
                                     .map(|w| w.to_string())
                                     .unwrap_or_else(|| "none".to_string()),
-                                ind.fed_this_month,
+                                ind.fed_fraction,
                                 ind.morale()
                             )
                         })

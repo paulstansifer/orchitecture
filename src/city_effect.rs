@@ -246,14 +246,15 @@ impl Eat {
         if self.from_storage > 0 {
             place::consume_uniform(ctx.constructed, UniformResource::Potato, self.from_storage);
         }
-        let mut remaining = self.granted_potato;
+        // Prorate any shortfall evenly across the population rather than
+        // fully feeding some individuals and starving others.
+        let fraction = if self.desired_potato == 0 {
+            1.0
+        } else {
+            (self.granted_potato as f32 / self.desired_potato as f32).min(1.0)
+        };
         for individual in &mut ctx.population.individuals {
-            if remaining >= POTATOES_PER_INDIVIDUAL {
-                individual.fed_this_month = true;
-                remaining -= POTATOES_PER_INDIVIDUAL;
-            } else {
-                individual.fed_this_month = false;
-            }
+            individual.fed_fraction = fraction;
         }
     }
 
@@ -1057,5 +1058,39 @@ mod tests {
         // since there's still no storage room -- but that's now accounted
         // for as a normal loss instead of silently vanishing.
         assert_eq!(effects.leftover.get(&Plank).map(|f| f.lost), Some(2));
+    }
+
+    /// A potato shortfall is prorated evenly across the population, rather
+    /// than fully feeding some individuals and starving others.
+    #[test]
+    fn eat_prorates_shortfall_evenly() {
+        use rand::{rngs::StdRng, SeedableRng};
+
+        let mut cw = ConstructedCity::new(Vec::new());
+        let mut pending = crate::city::ProposedCity::new();
+        let mut population = population(4); // needs 4 * 5 = 20 potato
+        let mut farms = farms_with(vec![]);
+        let mut rng = StdRng::seed_from_u64(0);
+
+        let eat = Eat {
+            desired_potato: 20,
+            granted_potato: 10, // half of what's needed
+            from_storage: 0,
+        };
+        let mut ctx = EffectContext {
+            constructed: &mut cw,
+            pending: &mut pending,
+            population: &mut population,
+            farms: &mut farms,
+            rng: &mut rng,
+        };
+        eat.apply(&mut ctx);
+
+        // Every individual gets the same half-satisfied ration, instead of
+        // half the population being fully fed and the other half starved.
+        for individual in &population.individuals {
+            assert_eq!(individual.fed_fraction, 0.5);
+            assert_eq!(individual.food(), 0.625); // 0.25 + 0.75 * 0.5
+        }
     }
 }

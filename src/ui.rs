@@ -142,6 +142,12 @@ pub fn shared_ui_system(
                             Precision::Approximate => format!("~{}", row.current),
                             Precision::Conservative => format!(">{}", row.current),
                         };
+                        // If some storage is dedicated to this resource, show
+                        // it as "current/capacity".
+                        let quantity_str = match row.dedicated_capacity {
+                            Some(cap) => format!("{}/{}", quantity_str, cap),
+                            None => quantity_str,
+                        };
                         let storage_resp = if !view.has_storage {
                             if row.lost > 0 {
                                 label!(ui, format!("({} lost)", row.lost))
@@ -210,6 +216,29 @@ pub fn shared_ui_system(
 
                         ui.end_row();
                     }
+
+                    // Uncommitted storage: free capacity not dedicated to any
+                    // particular resource, plus how much of it this month's
+                    // projected leftover inflow will consume.
+                    ui.label(egui::RichText::new("?").size(LARGE_SIZE[1]));
+                    let uncommitted = &view.uncommitted_storage;
+                    if uncommitted.delta < 0 {
+                        label!(
+                            ui,
+                            format!("/{}", uncommitted.available),
+                            col_format!(problem, " –{}", -uncommitted.delta)
+                        );
+                    } else if uncommitted.delta > 0 {
+                        label!(
+                            ui,
+                            format!("/{}", uncommitted.available),
+                            col_format!(preview, " +{}", uncommitted.delta)
+                        );
+                    } else {
+                        label!(ui, format!("/{}", uncommitted.available));
+                    }
+                    ui.label("");
+                    ui.end_row();
                 });
 
             // Tools count (UniqueResource — tracked separately from uniform resources).
