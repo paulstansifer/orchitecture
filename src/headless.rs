@@ -500,7 +500,7 @@ impl HeadlessSession {
                         format!(
                             "{i} {} requires=[{reqs}] storage={}",
                             s.name.replace(' ', "_"),
-                            s.storage.is_some()
+                            s.public_storage
                         )
                     })
                     .collect())
@@ -1101,9 +1101,12 @@ mod tests {
             "pending_changes=0 remaining_need=[]"
         );
 
-        // There's still no storage, so any resources beyond what construction
-        // consumed were lost rather than stockpiled.
-        assert_eq!(
+        // The starting camp's wagon provides some storage, so leftover
+        // resources beyond what construction consumed were stockpiled there
+        // rather than lost. Exact amounts depend on which farms happened to
+        // be invited across the retry loop above, so just check something
+        // landed in storage instead of everything being lost.
+        assert_ne!(
             dispatch_ok(&mut session, "query inventory"),
             vec!["(empty)".to_string()]
         );

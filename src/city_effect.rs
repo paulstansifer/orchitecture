@@ -592,7 +592,7 @@ pub fn compute_month_effects(
 mod tests {
     use super::*;
     use crate::city::ConstructedCity;
-    use crate::place::{ParentRestriction, ParticularPlace, PlaceStorageSpec};
+    use crate::place::{ParentRestriction, ParticularPlace};
     use crate::population::Individual;
     use crate::resource::{Approximation, Inventory, UniformResource::*};
     use crate::surroundings::farmstead::{FarmData, FarmEvent};
@@ -645,13 +645,11 @@ mod tests {
         cw.places = vec![crate::place::Place {
             name: "storage room".to_string(),
             requirements: vec![],
-            storage: Some(PlaceStorageSpec {
-                accounting: Approximation {
-                    digits: 2,
-                    max: 999,
-                },
+            public_storage: true,
+            accounting: Some(Approximation {
+                digits: 2,
+                max: 999,
             }),
-            rack_storage: false,
             quality_factors: vec![],
             assignable_for: None,
         }];

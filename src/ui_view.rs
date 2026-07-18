@@ -377,7 +377,42 @@ mod tests {
         use crate::resource::{Inventory, RackContents};
         use bevy::math::IVec3;
 
-        let mut cw = ConstructedCity::new(Vec::new());
+        use crate::eorf::{EorfInfo, FurnitureOrElement, PlacementStyle, StructureEmbedding};
+        use crate::materials::BuildMaterialId;
+        use crate::resource::StorageKind;
+        use crate::sparse3d::{Facing, Slot, SlotCoord};
+
+        let rack = EorfInfo {
+            name: "rack".to_string(),
+            placement_style: PlacementStyle::RoomPlop,
+            x_char: None,
+            z_char: None,
+            embedding: StructureEmbedding {
+                tall: 0.0,
+                passable: 0.0,
+                decorative: 0.0,
+                striated: 0.0,
+                temporary: 1.0,
+            },
+            kind: FurnitureOrElement::Furniture(vec![]),
+            vantage_evaluated: false,
+            storage_capacity: vec![(StorageKind::Rack, 10.0)],
+            placeable: true,
+        };
+        let mut cw = ConstructedCity::new(vec![rack]);
+        let rack_id = cw.find_structure_by_name("rack").unwrap();
+        cw.contents.set(
+            SlotCoord {
+                cube: IVec3::ZERO,
+                slot: Slot::Room,
+            },
+            crate::city::Cell {
+                id: rack_id,
+                facing: Facing::default(),
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            },
+        );
         cw.places = vec![Place {
             name: "shelving".to_string(),
             requirements: vec![PlaceReq {
@@ -387,8 +422,8 @@ mod tests {
                 worker_visit_weight: 1.0,
                 worker_visit_duration: 1.0,
             }],
-            storage: None,
-            rack_storage: true,
+            public_storage: true,
+            accounting: None,
             quality_factors: vec![],
             assignable_for: None,
         }];

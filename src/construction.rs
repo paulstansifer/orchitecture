@@ -707,7 +707,7 @@ mod tests {
     use crate::city::{Cell, ConstructedCity, Proposal, ProposalView, ProposedCity};
     use crate::eorf::{EorfId, EorfInfo, PlacementStyle};
     use crate::materials::BuildMaterialId;
-    use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot};
+    use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, SlotCoord};
 
     use super::{compute_construction_absorption, construct, load_from_offline, tick_construction};
 
@@ -727,6 +727,8 @@ mod tests {
             },
             kind: crate::eorf::FurnitureOrElement::Element(crate::materials::ElementType::WallLike),
             vantage_evaluated: false,
+            storage_capacity: Vec::new(),
+            placeable: true,
         }];
         let mut cw = ConstructedCity::new(structs);
         cw.road_forbidden_zone = false;
@@ -938,24 +940,55 @@ mod tests {
 
     #[test]
     fn construct_remove_refunds_refundable_resources_but_not_lime() {
+        use crate::eorf::StructureEmbedding;
         use crate::materials::{BuildMaterial, ElementType, MaterialList};
-        use crate::place::{ParentRestriction, ParticularPlace, Place, PlaceStorageSpec};
-        use crate::resource::{Approximation, Inventory, UniformResource};
+        use crate::place::{ParentRestriction, ParticularPlace, Place};
+        use crate::resource::{Approximation, Inventory, StorageKind, UniformResource};
         use std::collections::BTreeMap;
 
         let (mut cw, mut pw) = make_world();
 
-        // A storage bin with plenty of room, so the refund has somewhere to land.
+        // A storage bin (with ample capacity) so the refund has somewhere to
+        // land.
+        let bin_id = cw.eorfs.len() as u32;
+        cw.eorfs.push(EorfInfo {
+            name: "test_bin".to_string(),
+            placement_style: PlacementStyle::RoomPlop,
+            x_char: None,
+            z_char: None,
+            embedding: StructureEmbedding {
+                tall: 0.0,
+                passable: 0.0,
+                decorative: 0.0,
+                striated: 0.0,
+                temporary: 1.0,
+            },
+            kind: crate::eorf::FurnitureOrElement::Furniture(vec![]),
+            vantage_evaluated: false,
+            storage_capacity: vec![(StorageKind::Bulk, 999.0)],
+            placeable: true,
+        });
+        cw.contents.set(
+            SlotCoord {
+                cube: IVec3::new(5, 0, 5),
+                slot: Slot::Room,
+            },
+            crate::city::Cell {
+                id: crate::eorf::EorfId(bin_id),
+                facing: Facing::default(),
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            },
+        );
+
         cw.places = vec![Place {
             name: "storage room".to_string(),
             requirements: vec![],
-            storage: Some(PlaceStorageSpec {
-                accounting: Approximation {
-                    digits: 2,
-                    max: 999,
-                },
+            public_storage: true,
+            accounting: Some(Approximation {
+                digits: 2,
+                max: 999,
             }),
-            rack_storage: false,
             quality_factors: vec![],
             assignable_for: None,
         }];

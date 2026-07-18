@@ -281,6 +281,8 @@ mod tests {
                     crate::materials::ElementType::WallLike,
                 ),
                 vantage_evaluated: false,
+                storage_capacity: Vec::new(),
+                placeable: true,
             },
             EorfInfo {
                 name: "floor".to_string(),
@@ -298,6 +300,8 @@ mod tests {
                     crate::materials::ElementType::GroundFloorLike,
                 ),
                 vantage_evaluated: false,
+                storage_capacity: Vec::new(),
+                placeable: true,
             },
         ]
     }

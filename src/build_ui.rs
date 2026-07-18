@@ -550,7 +550,7 @@ fn structure_list_ui(
     let mut display_idx = 0;
     for &struct_idx in sorted.iter() {
         let info = &eorfs[struct_idx];
-        if info.is_furniture() != want_furniture {
+        if info.is_furniture() != want_furniture || !info.placeable {
             continue;
         }
         let group = info.element_type();

@@ -164,8 +164,8 @@ mod tests {
                 worker_visit_weight: 1.0,
                 worker_visit_duration: 1.0,
             }],
-            storage: None,
-            rack_storage: false,
+            public_storage: false,
+            accounting: None,
             quality_factors: vec![],
             assignable_for: Some(AssignmentFlavor::Sleep),
         }

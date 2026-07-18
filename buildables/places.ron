@@ -10,9 +10,7 @@
                 worker_visit_duration: 1.0,
             ),
         ],
-        storage: Some((
-            accounting: (digits: 1, max: 100),
-        )),
+        public_storage: true,
     ),
     (
         name: "shelving",
@@ -25,8 +23,20 @@
                 worker_visit_duration: 1.0,
             ),
         ],
-        storage: None,
-        rack_storage: true,
+        public_storage: true,
+    ),
+    (
+        name: "camp",
+        requirements: [
+            (
+                requirement: Furniture("wagon"),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+        ],
+        public_storage: true,
     ),
     (
         name: "bedroom",
@@ -39,7 +49,6 @@
                 worker_visit_duration: 1.0,
             ),
         ],
-        storage: None,
         assignable_for: Some(Sleep),
     ),
     (
@@ -53,7 +62,6 @@
                 worker_visit_duration: 1.0,
             ),
         ],
-        storage: None,
         quality_factors: [
             (
                 aspect: Indoors,

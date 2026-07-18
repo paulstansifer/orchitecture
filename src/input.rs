@@ -359,7 +359,10 @@ pub fn building_input_system(
         if let Some(want_furniture) = want_furniture {
             let filtered: Vec<usize> = crate::eorf::sorted_structure_indices(&constructed.eorfs)
                 .into_iter()
-                .filter(|&i| constructed.eorfs[i].is_furniture() == want_furniture)
+                .filter(|&i| {
+                    constructed.eorfs[i].is_furniture() == want_furniture
+                        && constructed.eorfs[i].placeable
+                })
                 .collect();
             for (display_idx, key) in DIGIT_KEYS.iter().enumerate() {
                 if keyboard.just_pressed(*key) {

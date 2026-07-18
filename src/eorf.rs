@@ -69,11 +69,29 @@ pub struct EorfInfo {
     /// Placing this structure attaches a `VantageEvaluation` for the QNN to
     /// score (e.g. desks evaluate the view from where someone would sit).
     pub vantage_evaluated: bool,
+    /// Storage capacity this furniture contributes per `StorageKind`, when
+    /// placed within a `public_storage` place -- see `place::place_capacity_ceiling`
+    /// / `place::rack_capacity_ceiling`. Empty for furniture (and always for
+    /// elements) that provides no storage.
+    pub storage_capacity: Vec<(crate::resource::StorageKind, f32)>,
+    /// Whether this structure may be placed by the player through the build
+    /// UI (e.g. the starting "wagon" is placed once, at world generation,
+    /// and shouldn't be player-buildable). Always `true` for elements.
+    pub placeable: bool,
 }
 
 impl EorfInfo {
     pub fn is_furniture(&self) -> bool {
         matches!(self.kind, FurnitureOrElement::Furniture(_))
+    }
+
+    /// Storage capacity this structure provides for `kind`, or 0.0 if none.
+    pub fn storage_capacity_for(&self, kind: crate::resource::StorageKind) -> f32 {
+        self.storage_capacity
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0)
     }
 
     pub fn furniture_cost(&self) -> Option<&crate::materials::Cost> {
@@ -140,6 +158,10 @@ struct ElementRon {
     element_type: crate::materials::ElementType,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// `furniture.ron` entry shape: the fields common to every `Eorf`, plus its
 /// fixed material cost.
 #[derive(Deserialize)]
@@ -152,6 +174,10 @@ struct FurnitureRon {
     cost: crate::materials::Cost,
     #[serde(default)]
     vantage_evaluated: bool,
+    #[serde(default)]
+    storage_capacity: Vec<(crate::resource::StorageKind, f32)>,
+    #[serde(default = "default_true")]
+    placeable: bool,
 }
 
 /// Loads `buildables/elements.ron` and `buildables/furniture.ron`, in that
@@ -173,6 +199,8 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             embedding: e.embedding,
             kind: FurnitureOrElement::Element(e.element_type),
             vantage_evaluated: false,
+            storage_capacity: Vec::new(),
+            placeable: true,
         })
         .chain(furniture.into_iter().map(|f| EorfInfo {
             name: f.name,
@@ -182,6 +210,8 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             embedding: f.embedding,
             kind: FurnitureOrElement::Furniture(f.cost),
             vantage_evaluated: f.vantage_evaluated,
+            storage_capacity: f.storage_capacity,
+            placeable: f.placeable,
         }))
         .collect()
 }

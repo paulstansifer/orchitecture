@@ -134,6 +134,16 @@ pub enum RackContents {
     Tools,
 }
 
+/// Which kind of storage a piece of furniture provides -- see
+/// `EorfInfo::storage_capacity`. `Bulk` backs `UniformResource`s (what bins
+/// hold); `Rack` backs `UniqueResource`s, further dedicated per-cube to
+/// `RackContents::{Books,Tools}` (what racks hold).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+pub enum StorageKind {
+    Bulk,
+    Rack,
+}
+
 impl RackContents {
     pub fn label(self) -> &'static str {
         match self {

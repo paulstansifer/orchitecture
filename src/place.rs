@@ -2,7 +2,7 @@ use crate::city::{apply_changes, AssembledCity, Cell, ConstructedCity};
 use crate::eorf::EorfList;
 use crate::materials::BuildMaterialId;
 use crate::resource::{
-    Approximation, Inventory, RackContents, ToolKind, UniformResource, UniqueResource,
+    Approximation, Inventory, RackContents, StorageKind, ToolKind, UniformResource, UniqueResource,
 };
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use bevy::math::IVec3;
@@ -175,26 +175,30 @@ pub struct PlaceReq {
     pub worker_visit_duration: f32,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PlaceStorageSpec {
-    pub accounting: Approximation,
-    // max storage space is 20.0 * bins
-}
+/// Display-rounding precision used by the storage UI when a `Place` doesn't
+/// specify its own `accounting`.
+pub const DEFAULT_STORAGE_ACCOUNTING: Approximation = Approximation {
+    digits: 1,
+    max: 100,
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Place {
     pub name: String,
     // First requirement is the core.
     pub requirements: Vec<PlaceReq>,
-    /// Storage for `UniformResource`s (see `bin_resource_restrictions`) --
-    /// mutually exclusive with `rack_storage` in practice, since bins and
-    /// racks are different furniture with different dedication schemes.
-    pub storage: Option<PlaceStorageSpec>,
-    /// Whether this place's furniture fulfillments are Racks, providing
-    /// storage for `UniqueResource`s (books/tools) instead -- see
-    /// `rack_restrictions`, `rack_free_capacity_for`.
+    /// Whether this place provides storage using whatever storage-capable
+    /// furniture (bins, racks, wagons, ...) it contains -- see
+    /// `EorfInfo::storage_capacity`, `storage_ids`, `rack_storage_ids`.
+    /// `false` means no storage at all, regardless of furniture (e.g. a
+    /// dining room that happens to be near some bins).
     #[serde(default)]
-    pub rack_storage: bool,
+    pub public_storage: bool,
+    /// Display-rounding precision for the storage UI; falls back to
+    /// `DEFAULT_STORAGE_ACCOUNTING` when unset. Meaningless unless
+    /// `public_storage` is set.
+    #[serde(default)]
+    pub accounting: Option<Approximation>,
     #[serde(default)]
     pub quality_factors: Vec<QualityFactor>,
     /// If set, individuals may be assigned to placed instances of this kind
@@ -639,11 +643,28 @@ pub fn commit_assignment(cw: &mut ConstructedCity, cube: IVec3, place_idx: usize
         cw.placed_places.remove(*id);
     }
 
-    let max_volume = 20.0 * plan.chosen.len() as f32;
+    let max_volume: f32 = plan
+        .chosen
+        .iter()
+        .map(|f| match f {
+            FulfilledPorf::Furniture(cube) => {
+                cube_storage_capacity(cw, *cube, StorageKind::Bulk)
+                    + cube_storage_capacity(cw, *cube, StorageKind::Rack)
+            }
+            FulfilledPorf::Place(_) => 0.0,
+        })
+        .sum();
+    let mut contents = Inventory::new(max_volume);
+    if cw.places[place_idx].name == "camp" {
+        contents.add_uniform(UniformResource::Plank, 18);
+        contents.add_uniform(UniformResource::Canvas, 6);
+        contents.add_uniform(UniformResource::Potato, 20);
+    }
+
     cw.placed_places.insert(ParticularPlace {
         place: place_idx,
         fulfillments: plan.chosen,
-        contents: Inventory::new(max_volume),
+        contents,
         restriction: ParentRestriction::Unrestricted,
     });
 }
@@ -847,41 +868,44 @@ pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
     false
 }
 
-fn is_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
+fn is_public_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
     cw.places
         .get(pp.place)
-        .is_some_and(|info| info.storage.is_some())
+        .is_some_and(|info| info.public_storage)
 }
 
-fn is_rack_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
-    cw.places
-        .get(pp.place)
-        .is_some_and(|info| info.rack_storage)
+/// The storage capacity `cube`'s furniture contributes for `kind` (0.0 if it
+/// has none, or nothing is there).
+fn cube_storage_capacity(cw: &ConstructedCity, cube: IVec3, kind: StorageKind) -> f32 {
+    cw.contents
+        .get(SlotCoord {
+            cube,
+            slot: Slot::Room,
+        })
+        .map(|cell| cw.eorfs[cell.id.as_usize()].storage_capacity_for(kind))
+        .unwrap_or(0.0)
 }
 
-/// Every storage place holding `UniformResource`s (i.e. bin-backed), in
-/// placement order.
+/// Every `public_storage` place, in placement order -- used both for
+/// `UniformResource` (bin-backed) and `UniqueResource` (rack-backed) storage,
+/// since a single place's furniture (e.g. a wagon) may provide both at once.
 pub fn storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
     cw.placed_places
         .iter()
-        .filter(|(_, pp)| is_storage(cw, pp))
+        .filter(|(_, pp)| is_public_storage(cw, pp))
         .map(|(id, _)| id)
         .collect()
 }
 
-/// Every storage place holding `UniqueResource`s (i.e. rack-backed), in
-/// placement order.
+/// Same set as `storage_ids`, kept as a separate name for callers concerned
+/// specifically with rack (`UniqueResource`) storage.
 pub fn rack_storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
-    cw.placed_places
-        .iter()
-        .filter(|(_, pp)| is_rack_storage(cw, pp))
-        .map(|(id, _)| id)
-        .collect()
+    storage_ids(cw)
 }
 
-/// Per-cube capacity ceiling for `contents` within `pp`: 10 units for every
-/// rack fulfillment dedicated to `contents` (racks have no "unrestricted"
-/// option -- an unset cube defaults to `RackContents::Tools`).
+/// Per-cube capacity ceiling for `contents` within `pp`: the `Rack` storage
+/// capacity of every fulfillment dedicated to `contents` (racks have no
+/// "unrestricted" option -- an unset cube defaults to `RackContents::Tools`).
 fn rack_capacity_ceiling(
     cw: &ConstructedCity,
     pp: &ParticularPlace,
@@ -889,14 +913,14 @@ fn rack_capacity_ceiling(
 ) -> f32 {
     pp.fulfillments
         .iter()
-        .filter(|f| match f {
+        .filter_map(|f| match f {
             FulfilledPorf::Furniture(cube) => {
-                cw.rack_restrictions.get(cube).copied().unwrap_or_default() == contents
+                (cw.rack_restrictions.get(cube).copied().unwrap_or_default() == contents)
+                    .then(|| cube_storage_capacity(cw, *cube, StorageKind::Rack))
             }
-            FulfilledPorf::Place(_) => false,
+            FulfilledPorf::Place(_) => None,
         })
-        .count() as f32
-        * 10.0
+        .sum()
 }
 
 /// Free volume `pp` can currently accept for `contents` (Books or Tools):
@@ -924,20 +948,24 @@ pub fn rack_free_capacity(cw: &ConstructedCity, contents: RackContents) -> f32 {
         .sum()
 }
 
-/// True if `cube` is a bin fulfillment of some storage place -- used by the
-/// UI to decide whether to offer a per-bin resource-restriction dropdown.
+/// True if `cube` is a fulfillment (with `Bulk` capacity) of some
+/// `public_storage` place -- used by the UI to decide whether to offer a
+/// per-bin resource-restriction dropdown.
 pub fn cube_is_storage_bin(cw: &ConstructedCity, cube: IVec3) -> bool {
-    cw.placed_places.iter().any(|(_, pp)| {
-        is_storage(cw, pp) && pp.fulfillments.contains(&FulfilledPorf::Furniture(cube))
-    })
+    cube_storage_capacity(cw, cube, StorageKind::Bulk) > 0.0
+        && cw.placed_places.iter().any(|(_, pp)| {
+            is_public_storage(cw, pp) && pp.fulfillments.contains(&FulfilledPorf::Furniture(cube))
+        })
 }
 
-/// True if `cube` is a rack fulfillment of some rack storage place -- used by
-/// the UI to decide whether to offer a per-rack contents dropdown.
+/// True if `cube` is a fulfillment (with `Rack` capacity) of some
+/// `public_storage` place -- used by the UI to decide whether to offer a
+/// per-rack contents dropdown.
 pub fn cube_is_rack(cw: &ConstructedCity, cube: IVec3) -> bool {
-    cw.placed_places.iter().any(|(_, pp)| {
-        is_rack_storage(cw, pp) && pp.fulfillments.contains(&FulfilledPorf::Furniture(cube))
-    })
+    cube_storage_capacity(cw, cube, StorageKind::Rack) > 0.0
+        && cw.placed_places.iter().any(|(_, pp)| {
+            is_public_storage(cw, pp) && pp.fulfillments.contains(&FulfilledPorf::Furniture(cube))
+        })
 }
 
 /// Number of furniture pieces named `furniture_name` fulfilling placed places
@@ -1040,11 +1068,12 @@ pub fn place_resource_totals(
         let Some(info) = constructed.places.get(place.place) else {
             continue;
         };
-        let Some(spec) = &info.storage else {
+        if !info.public_storage {
             continue;
-        };
+        }
+        let accounting = info.accounting.unwrap_or(DEFAULT_STORAGE_ACCOUNTING);
         for (res, qty) in place.contents.uniform_totals() {
-            let (rounded, precision) = round(qty, spec.accounting);
+            let (rounded, precision) = round(qty, accounting);
             let entry = map.entry(res).or_insert((0, Precision::Exact));
             entry.0 += rounded as u32;
             if precision != Precision::Exact {
@@ -1057,21 +1086,21 @@ pub fn place_resource_totals(
     result
 }
 
-/// Per-bin capacity ceiling for `res` within `pp`: 20 units for every bin
-/// fulfillment that is unrestricted or restricted to `res`; bins restricted
-/// to a different resource contribute nothing.
+/// Per-bin capacity ceiling for `res` within `pp`: the `Bulk` storage
+/// capacity of every fulfillment that is unrestricted or restricted to
+/// `res`; bins restricted to a different resource contribute nothing.
 fn place_capacity_ceiling(cw: &ConstructedCity, pp: &ParticularPlace, res: UniformResource) -> f32 {
     pp.fulfillments
         .iter()
-        .filter(|f| match f {
+        .filter_map(|f| match f {
             FulfilledPorf::Furniture(cube) => cw
                 .bin_resource_restrictions
                 .get(cube)
-                .is_none_or(|r| *r == res),
-            FulfilledPorf::Place(_) => false,
+                .is_none_or(|r| *r == res)
+                .then(|| cube_storage_capacity(cw, *cube, StorageKind::Bulk)),
+            FulfilledPorf::Place(_) => None,
         })
-        .count() as f32
-        * 20.0
+        .sum()
 }
 
 /// Free volume `pp` can currently accept for `res`: bounded by its bins'
@@ -1124,12 +1153,13 @@ pub fn storage_shared_ceiling(cw: &ConstructedCity) -> f32 {
     storage_ids(cw)
         .into_iter()
         .flat_map(|id| cw.placed_places[id].fulfillments.iter())
-        .filter(|f| match f {
-            FulfilledPorf::Furniture(cube) => !cw.bin_resource_restrictions.contains_key(cube),
-            FulfilledPorf::Place(_) => false,
+        .filter_map(|f| match f {
+            FulfilledPorf::Furniture(cube) if !cw.bin_resource_restrictions.contains_key(cube) => {
+                Some(cube_storage_capacity(cw, *cube, StorageKind::Bulk))
+            }
+            _ => None,
         })
-        .count() as f32
-        * 20.0
+        .sum()
 }
 
 /// Per-resource capacity ceiling contributed by bins dedicated (restricted)
@@ -1141,7 +1171,8 @@ pub fn storage_dedicated_ceilings(cw: &ConstructedCity) -> HashMap<UniformResour
         for f in &cw.placed_places[id].fulfillments {
             if let FulfilledPorf::Furniture(cube) = f {
                 if let Some(&res) = cw.bin_resource_restrictions.get(cube) {
-                    *ceilings.entry(res).or_insert(0.0) += 20.0;
+                    *ceilings.entry(res).or_insert(0.0) +=
+                        cube_storage_capacity(cw, *cube, StorageKind::Bulk);
                 }
             }
         }
@@ -1195,35 +1226,29 @@ pub fn deposit_uniform_with_capacity(
     deposited
 }
 
-/// Places the starting market stands directly into `constructed` (real
-/// cells, no proposal step). Returns the real-cell deltas for the caller to
-/// pass to `apply_changes`. The player starts with **no storage** — storage
-/// rooms/bins must be built normally through construction.
+/// Places the starting market stands and camp wagon directly into
+/// `constructed` (real cells, no proposal step). Returns the real-cell deltas
+/// for the caller to pass to `apply_changes`. The wagon (not otherwise
+/// player-placeable -- see `EorfInfo::placeable`) auto-forms a "camp" place
+/// via `sync_places`, giving the player some storage from the start; beyond
+/// that, storage rooms/bins must be built normally through construction.
 pub fn place_initial_places(constructed: &mut ConstructedCity) -> Vec<(SlotCoord, Option<Cell>)> {
-    let Some(market_stand_id) = constructed.find_structure_by_name("market stand") else {
-        return Vec::new();
-    };
-
-    let market_stand_positions = [
-        IVec3::new(1, 0, -1),
-        IVec3::new(3, 0, -1),
-        IVec3::new(5, 0, -1),
-    ];
     let mut changes: Vec<(SlotCoord, Option<Cell>)> = Vec::new();
-    for cube in &market_stand_positions {
-        let loc = SlotCoord {
-            cube: *cube,
-            slot: Slot::Room,
-        };
-        let cell = Cell {
-            id: market_stand_id,
-            facing: Facing::default(),
-            evaluation: None,
-            build_material: BuildMaterialId::default(),
-        };
-        constructed.contents.set(loc, cell.clone());
-        changes.push((loc, Some(cell)));
-    }
+
+    let wagon_id = constructed.find_structure_by_name("wagon").unwrap();
+
+    let loc = SlotCoord {
+        cube: IVec3::new(7, 0, -1),
+        slot: Slot::Room,
+    };
+    let cell = Cell {
+        id: wagon_id,
+        facing: Facing::default(),
+        evaluation: None,
+        build_material: BuildMaterialId::default(),
+    };
+    constructed.contents.set(loc, cell.clone());
+    changes.push((loc, Some(cell)));
 
     changes
 }
@@ -1245,25 +1270,47 @@ mod tests {
     use super::*;
     use crate::eorf::{EorfInfo, PlacementStyle, StructureEmbedding};
 
-    fn bin_structures() -> Vec<EorfInfo> {
-        vec![EorfInfo {
-            name: "bin".to_string(),
-            placement_style: PlacementStyle::RoomPlop,
-            x_char: None,
-            z_char: None,
-            embedding: StructureEmbedding {
-                tall: 0.0,
-                passable: 0.0,
-                decorative: 0.0,
-                striated: 0.0,
-                temporary: 1.0,
+    /// Test furniture: "bin" (`Bulk` capacity 20, matching the old flat
+    /// per-bin constant) and "rack" (`Rack` capacity 10, matching the old
+    /// flat per-rack constant).
+    fn test_structures() -> Vec<EorfInfo> {
+        let embedding = StructureEmbedding {
+            tall: 0.0,
+            passable: 0.0,
+            decorative: 0.0,
+            striated: 0.0,
+            temporary: 1.0,
+        };
+        vec![
+            EorfInfo {
+                name: "bin".to_string(),
+                placement_style: PlacementStyle::RoomPlop,
+                x_char: None,
+                z_char: None,
+                embedding: embedding.clone(),
+                kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
+                    crate::resource::UniformResource::Plank,
+                    1,
+                )]),
+                vantage_evaluated: false,
+                storage_capacity: vec![(StorageKind::Bulk, 20.0)],
+                placeable: true,
             },
-            kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
-                crate::resource::UniformResource::Plank,
-                1,
-            )]),
-            vantage_evaluated: false,
-        }]
+            EorfInfo {
+                name: "rack".to_string(),
+                placement_style: PlacementStyle::RoomPlop,
+                x_char: None,
+                z_char: None,
+                embedding,
+                kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
+                    crate::resource::UniformResource::Plank,
+                    1,
+                )]),
+                vantage_evaluated: false,
+                storage_capacity: vec![(StorageKind::Rack, 10.0)],
+                placeable: true,
+            },
+        ]
     }
 
     fn place_def(min: u8, max: Option<u8>) -> Place {
@@ -1276,15 +1323,15 @@ mod tests {
                 worker_visit_weight: 1.0,
                 worker_visit_duration: 1.0,
             }],
-            storage: None,
-            rack_storage: false,
+            public_storage: false,
+            accounting: None,
             quality_factors: vec![],
             assignable_for: None,
         }
     }
 
     fn grid_with_bins(def: Place, bins: &[IVec3]) -> ConstructedCity {
-        let mut cw = ConstructedCity::new(bin_structures());
+        let mut cw = ConstructedCity::new(test_structures());
         cw.road_forbidden_zone = false;
         cw.places = vec![def];
         let bin_id = cw.find_structure_by_name("bin").unwrap();
@@ -1491,22 +1538,43 @@ mod tests {
                 worker_visit_weight: 1.0,
                 worker_visit_duration: 1.0,
             }],
-            storage: Some(PlaceStorageSpec {
-                accounting: Approximation {
-                    digits: 2,
-                    max: 999,
-                },
+            public_storage: true,
+            accounting: Some(Approximation {
+                digits: 2,
+                max: 999,
             }),
-            rack_storage: false,
             quality_factors: vec![],
             assignable_for: None,
         }
     }
 
+    /// Builds a grid with `def`'s core furniture (from `def.requirements[0]`)
+    /// placed at each of `bins`, plus a `ParticularPlace` fulfilled by them --
+    /// so both the requirement lookup and the furniture-driven capacity
+    /// lookup (`cube_storage_capacity`) see consistent furniture.
     fn grid_with_storage_bins(def: Place, bins: &[IVec3], inv: Inventory) -> ConstructedCity {
-        let mut cw = ConstructedCity::new(bin_structures());
+        let furniture_name = match &def.requirements[0].requirement {
+            Porf::Furniture(name) => name.clone(),
+            Porf::Place(_) => panic!("test helper expects a furniture-backed place"),
+        };
+        let mut cw = ConstructedCity::new(test_structures());
         cw.road_forbidden_zone = false;
         cw.places = vec![def];
+        let furniture_id = cw.find_structure_by_name(&furniture_name).unwrap();
+        for cube in bins {
+            cw.contents.set(
+                SlotCoord {
+                    cube: *cube,
+                    slot: Slot::Room,
+                },
+                Cell {
+                    id: furniture_id,
+                    facing: Facing::default(),
+                    evaluation: None,
+                    build_material: BuildMaterialId::default(),
+                },
+            );
+        }
         cw.placed_places.insert(ParticularPlace {
             place: 0,
             fulfillments: bins.iter().map(|&cube| f(cube)).collect(),
@@ -1635,8 +1703,8 @@ mod tests {
                 worker_visit_weight: 1.0,
                 worker_visit_duration: 1.0,
             }],
-            storage: None,
-            rack_storage: true,
+            public_storage: true,
+            accounting: None,
             quality_factors: vec![],
             assignable_for: None,
         }
