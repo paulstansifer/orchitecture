@@ -415,6 +415,25 @@ impl MonthEffects {
     pub fn traveler_affordable(&self) -> bool {
         self.traveler_visit().is_some_and(|t| t.affordable)
     }
+
+    /// Whether this month's effects will deposit a tool into rack storage --
+    /// a farm respecializing away from a tool returns its previous one, or an
+    /// invited-and-affordable traveler's reward is a tool. Read-only preview
+    /// of what `CityEffect::apply` would do, for the UI's "will receive any"
+    /// row-visibility check (see `place::deposit_tool`).
+    pub fn tools_incoming(&self, farms: &FarmsResource) -> bool {
+        self.effects.iter().any(|e| match e {
+            CityEffect::Market {
+                farm_idx,
+                effect: MarketModeEffect::Reconfigure { paid, .. },
+                ..
+            } => *paid > 0 && matches!(farms[*farm_idx].production, FarmProduction::Specialized(_)),
+            CityEffect::TravelerVisit(t) => {
+                t.invited && t.affordable && matches!(t.reward, ResolvedReward::Tool(_))
+            }
+            _ => false,
+        })
+    }
 }
 
 /// Computes the full set of this month's effects, in claim-priority order:
@@ -632,6 +651,7 @@ mod tests {
                     max: 999,
                 },
             }),
+            rack_storage: false,
             quality_factors: vec![],
             assignable_for: None,
         }];

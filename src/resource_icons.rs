@@ -14,6 +14,7 @@ pub const SMALL_SIZE: [f32; 2] = [16.0, 12.0];
 pub struct ResourceIcons {
     large: HashMap<UniformResource, Handle<Image>>,
     small: HashMap<UniformResource, Handle<Image>>,
+    tool_large: Handle<Image>,
 }
 
 impl ResourceIcons {
@@ -29,6 +30,12 @@ impl ResourceIcons {
         contexts: &mut EguiContexts,
     ) -> HashMap<UniformResource, egui::TextureId> {
         register_all(&self.small, contexts)
+    }
+
+    /// Icon for the Tools rack row. There's no `UniformResource` variant for
+    /// tools, so this is kept as its own handle rather than living in `large`.
+    pub fn tool_texture_id_large(&self, contexts: &mut EguiContexts) -> egui::TextureId {
+        contexts.add_image(EguiTextureHandle::Strong(self.tool_large.clone()))
     }
 }
 
@@ -129,5 +136,13 @@ pub fn spawn_resource_icons(mut commands: Commands, mut images: ResMut<Assets<Im
         Lime      => "lime",
         Plank     => "plank",
     });
-    commands.insert_resource(ResourceIcons { large, small });
+    let tool_large = load_png(
+        include_bytes!("../assets/generated/sprites/24x18/tool.png"),
+        &mut images,
+    );
+    commands.insert_resource(ResourceIcons {
+        large,
+        small,
+        tool_large,
+    });
 }

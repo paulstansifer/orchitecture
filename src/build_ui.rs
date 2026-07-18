@@ -311,6 +311,16 @@ fn place_hierarchy_ui(
                 &mut constructed.bin_resource_restrictions,
             );
         }
+
+        if crate::place::cube_is_rack(constructed, cube) {
+            ui.label("Holds:");
+            rack_restriction_dropdown(
+                ui,
+                ("rack-restriction", eorf_idx),
+                cube,
+                &mut constructed.rack_restrictions,
+            );
+        }
     }
 
     highlight
@@ -777,6 +787,35 @@ fn bin_restriction_dropdown(
             restrictions.remove(&cube);
         }
     }
+}
+
+/// Dropdown for a rack's `RackContents` dedication: "Books" or "Tools" --
+/// unlike a bin, there's no "unrestricted" option, so absence from
+/// `restrictions` is just treated as the default (`Tools`).
+fn rack_restriction_dropdown(
+    ui: &mut egui::Ui,
+    id_source: impl std::hash::Hash,
+    cube: bevy::math::IVec3,
+    restrictions: &mut std::collections::HashMap<bevy::math::IVec3, crate::resource::RackContents>,
+) {
+    use crate::resource::RackContents;
+
+    let mut current = restrictions.get(&cube).copied().unwrap_or_default();
+    egui::ComboBox::from_id_salt(id_source)
+        .selected_text(current.label())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(
+                &mut current,
+                RackContents::Tools,
+                RackContents::Tools.label(),
+            );
+            ui.selectable_value(
+                &mut current,
+                RackContents::Books,
+                RackContents::Books.label(),
+            );
+        });
+    restrictions.insert(cube, current);
 }
 
 fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {

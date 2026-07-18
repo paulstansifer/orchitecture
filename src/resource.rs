@@ -124,6 +124,25 @@ pub enum UniqueResource {
     Tool(ToolKind),
 }
 
+/// What a Rack is dedicated to holding. Unlike a bin's `UniformResource`
+/// restriction, a rack has no "unrestricted" option -- it always holds one or
+/// the other, defaulting to `Tools`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+pub enum RackContents {
+    Books,
+    #[default]
+    Tools,
+}
+
+impl RackContents {
+    pub fn label(self) -> &'static str {
+        match self {
+            RackContents::Books => "Books",
+            RackContents::Tools => "Tools",
+        }
+    }
+}
+
 impl UniqueResource {
     pub fn volume(&self) -> f32 {
         match self {
@@ -227,6 +246,12 @@ impl Inventory {
     pub fn tool_count(&self) -> usize {
         self.unique_items()
             .filter(|i| matches!(i, UniqueResource::Tool(_)))
+            .count()
+    }
+
+    pub fn book_count(&self) -> usize {
+        self.unique_items()
+            .filter(|i| matches!(i, UniqueResource::Book { .. }))
             .count()
     }
 

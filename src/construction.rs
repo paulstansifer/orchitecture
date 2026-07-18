@@ -955,6 +955,7 @@ mod tests {
                     max: 999,
                 },
             }),
+            rack_storage: false,
             quality_factors: vec![],
             assignable_for: None,
         }];

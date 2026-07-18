@@ -295,6 +295,12 @@ pub struct ConstructedCity {
     /// furniture there is overwritten or removed, since the restriction
     /// belongs to that specific placement.
     pub bin_resource_restrictions: HashMap<IVec3, UniformResource>,
+    /// Per-rack `RackContents` dedication, keyed by the cube the rack is
+    /// placed at. Set in the UI; absent means `RackContents::Tools` (a rack
+    /// has no "unrestricted" option, unlike a bin). Cleared via
+    /// `set_cell`/`take_cell` whenever the furniture there is overwritten or
+    /// removed, since the dedication belongs to that specific placement.
+    pub rack_restrictions: HashMap<IVec3, crate::resource::RackContents>,
 }
 
 impl ConstructedCity {
@@ -307,24 +313,27 @@ impl ConstructedCity {
             road_forbidden_zone: true,
             furniture_restrictions: HashMap::new(),
             bin_resource_restrictions: HashMap::new(),
+            rack_restrictions: HashMap::new(),
         }
     }
 
-    /// Sets a cell, clearing any furniture/bin restriction recorded for the
+    /// Sets a cell, clearing any furniture/bin/rack restriction recorded for the
     /// cube it occupied (the restriction belongs to the previous occupant).
     pub fn set_cell(&mut self, loc: SlotCoord, cell: Cell) {
         if loc.slot == Slot::Room {
             self.furniture_restrictions.remove(&loc.cube);
             self.bin_resource_restrictions.remove(&loc.cube);
+            self.rack_restrictions.remove(&loc.cube);
         }
         self.contents.set(loc, cell);
     }
 
-    /// Removes a cell, clearing any furniture/bin restriction recorded for it.
+    /// Removes a cell, clearing any furniture/bin/rack restriction recorded for it.
     pub fn take_cell(&mut self, loc: SlotCoord) -> Option<Cell> {
         if loc.slot == Slot::Room {
             self.furniture_restrictions.remove(&loc.cube);
             self.bin_resource_restrictions.remove(&loc.cube);
+            self.rack_restrictions.remove(&loc.cube);
         }
         self.contents.take(loc)
     }

@@ -15,6 +15,20 @@
         )),
     ),
     (
+        name: "shelving",
+        requirements: [
+            (
+                requirement: Furniture("rack"),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+        ],
+        storage: None,
+        rack_storage: true,
+    ),
+    (
         name: "bedroom",
         requirements: [
             (

@@ -10,7 +10,7 @@ use crate::city::{ConstructedCity, ProposedCity};
 use crate::city_effect::{compute_month_effects, CityEffect, LedgerSource};
 use crate::materials::MaterialList;
 use crate::population::Population;
-use crate::resource::{Precision, UniformResource};
+use crate::resource::{Precision, RackContents, UniformResource};
 use crate::surroundings::farmstead::FarmsResource;
 use crate::traveler::{ResolvedReward, TravelerState};
 
@@ -58,6 +58,16 @@ pub struct UncommittedStorageRow {
     pub delta: i64,
 }
 
+/// A row for a `UniqueResource` category (Tools or Books) held in rack
+/// storage — shown when there's any rack capacity dedicated to it, or the
+/// player will receive one this month (see `month_panel_view`).
+pub struct RackResourceRow {
+    pub contents: RackContents,
+    pub current: u32,
+    /// Total capacity dedicated to this category across all racks, if any.
+    pub capacity: Option<u32>,
+}
+
 /// This month's traveler offer, if any, and whether it's currently affordable.
 pub struct TravelerOfferView {
     pub demands: Vec<(UniformResource, u16)>,
@@ -77,7 +87,7 @@ pub struct MonthPanelView {
     pub has_storage: bool,
     pub rows: Vec<ResourceRow>,
     pub uncommitted_storage: UncommittedStorageRow,
-    pub tool_count: u32,
+    pub rack_rows: Vec<RackResourceRow>,
     pub traveler: Option<TravelerOfferView>,
 }
 
@@ -219,6 +229,29 @@ pub fn month_panel_view(
         delta: uncommitted_after.round() as i64 - uncommitted_now.round() as i64,
     };
 
+    // Tools/Books rows: shown when the player has any rack capacity
+    // dedicated to that category, or will receive one this month.
+    let tools_incoming = effects.tools_incoming(farms);
+    let rack_rows: Vec<RackResourceRow> = [RackContents::Tools, RackContents::Books]
+        .into_iter()
+        .filter_map(|contents| {
+            let capacity = crate::place::rack_capacity(constructed, contents);
+            let incoming = contents == RackContents::Tools && tools_incoming;
+            if capacity <= 0.0 && !incoming {
+                return None;
+            }
+            let current = match contents {
+                RackContents::Tools => crate::place::total_tool_count(constructed),
+                RackContents::Books => crate::place::total_book_count(constructed),
+            };
+            Some(RackResourceRow {
+                contents,
+                current,
+                capacity: (capacity > 0.0).then_some(capacity.round() as u32),
+            })
+        })
+        .collect();
+
     let has_project = pending.num_changes() > 0;
     let has_farms_invited = farms.invited_count() > 0;
     let advance = if has_project || has_farms_invited || traveler_state.invited {
@@ -252,7 +285,7 @@ pub fn month_panel_view(
         has_storage,
         rows,
         uncommitted_storage,
-        tool_count: crate::place::total_tool_count(constructed),
+        rack_rows,
         traveler,
     }
 }
@@ -330,6 +363,65 @@ mod tests {
         // The potato row is always shown, even with nothing else pending.
         assert_eq!(view.rows.len(), 1);
         assert_eq!(view.rows[0].resource, UniformResource::Potato);
+        // No racks exist and nothing is incoming, so no Tools/Books rows.
+        assert!(view.rack_rows.is_empty());
+    }
+
+    /// A rack gives the Tools row a capacity, even with zero tools currently
+    /// held -- mirroring how a dedicated bin shows up for a `UniformResource`.
+    #[test]
+    fn rack_capacity_alone_makes_the_tools_row_appear() {
+        use crate::place::{
+            FulfilledPorf, ParentRestriction, ParticularPlace, Place, PlaceReq, Porf,
+        };
+        use crate::resource::{Inventory, RackContents};
+        use bevy::math::IVec3;
+
+        let mut cw = ConstructedCity::new(Vec::new());
+        cw.places = vec![Place {
+            name: "shelving".to_string(),
+            requirements: vec![PlaceReq {
+                requirement: Porf::Furniture("rack".to_string()),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            }],
+            storage: None,
+            rack_storage: true,
+            quality_factors: vec![],
+            assignable_for: None,
+        }];
+        cw.placed_places.insert(ParticularPlace {
+            place: 0,
+            fulfillments: vec![FulfilledPorf::Furniture(IVec3::ZERO)],
+            contents: Inventory::new(10.0),
+            restriction: ParentRestriction::Unrestricted,
+        });
+
+        let farms = farms_with(vec![]);
+        let pending = crate::city::ProposedCity::new();
+        let pop = Population {
+            individuals: vec![],
+        };
+        let traveler_state = no_traveler();
+        let material_list = MaterialList::default();
+
+        let view = month_panel_view(
+            1,
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &traveler_state,
+            &material_list,
+            false,
+        );
+
+        assert_eq!(view.rack_rows.len(), 1);
+        assert_eq!(view.rack_rows[0].contents, RackContents::Tools);
+        assert_eq!(view.rack_rows[0].current, 0);
+        assert_eq!(view.rack_rows[0].capacity, Some(10));
     }
 
     /// An invited farm makes the panel active and reports the market gain in
