@@ -28,6 +28,10 @@ dist/
 # Temporary files from Wings3D:
 buildables/*~
 buildables/#*#
+buildables/templates/*~
+buildables/templates/#*#
+
+#TODO: delete the files and remove these
 buildables/autotile/*
 sprites/pngs/*
 

@@ -98,4 +98,17 @@
         ),
         cost: [(Fieldstone, 5), (Timber, 3)],
     )
+    (
+        # TODO: make this unplaceable!
+        name: "wagon",
+        placement_style: RoomPlop,
+        embedding: (
+            tall: 0.5,
+            passable: 0.3,
+            decorative: 0.4,
+            striated: 0.0,
+            temporary: 0.5,
+        ),
+        cost: [(Planks, 5)]
+    )
 ]
