@@ -1,1 +1,1 @@
-(fc:"12,6,1",motif_shared:"12,6",lr:0.005,epochs:50,seed:1,show_scores:false,show_worst_errors:true,fake_data:false)
+(fc:"12,6,1",motif_shared:"12,6",lr:0.005,epochs:50,seed:1,show_scores:false,show_worst_errors:false,fake_data:false)
