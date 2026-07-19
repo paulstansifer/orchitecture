@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::city_effect::{CityEffect, LedgerSource, Pool};
 use crate::resource::{ToolKind, UniformResource};
+use crate::surroundings::road_network::{RoadNetwork, INITIAL_TRIPS};
 
 /// Farms within this map-unit radius are considered neighbours for the purpose
 /// of updating a farm's wanted resource after a market visit.
@@ -174,6 +175,18 @@ pub struct FarmsResource {
     /// Rebuilt from polygons when empty (covers fresh generation and loaded saves).
     #[serde(skip)]
     pub neighbors: Vec<Vec<FarmId>>,
+    /// Persisted per-edge road trip counts, indexed to match `roads.edges`.
+    /// Drives road development (lower travel cost, a darker brown line).
+    #[serde(default)]
+    pub road_trips: Vec<u32>,
+    /// Persisted per-edge paved fractions, indexed to match `roads.edges`.
+    /// See `pave_fieldstone_routes`.
+    #[serde(default)]
+    pub road_paved: Vec<f32>,
+    /// The road network over the farm polygons. Rebuilt from polygons +
+    /// `road_trips`/`road_paved` when absent (fresh generation and loaded saves).
+    #[serde(skip)]
+    pub roads: Option<RoadNetwork>,
 }
 
 impl std::ops::Index<FarmId> for FarmsResource {
@@ -224,6 +237,84 @@ impl FarmsResource {
         if self.neighbors.len() != self.farms.len() {
             self.neighbors = build_adjacency(&self.farms);
         }
+    }
+
+    /// Ensure the road network is built and its shortest-path tree is current.
+    /// Builds topology from the farm polygons on first use (or after a load);
+    /// seeds fresh/mismatched `road_trips`/`road_paved` (to `INITIAL_TRIPS`, the
+    /// factor-4.0 dirt-road start, and to unpaved respectively); then recomputes
+    /// the city-rooted distance tree so routing reads reflect the latest state.
+    pub fn ensure_roads(&mut self) {
+        if self.roads.is_none() {
+            let polygons: Vec<Vec<Vec2>> = self.farms.iter().map(|f| f.polygon.clone()).collect();
+            let mut roads = RoadNetwork::build(&polygons, self.circle_pos);
+            if self.road_trips.len() != roads.edge_count() {
+                self.road_trips = vec![INITIAL_TRIPS; roads.edge_count()];
+            }
+            if self.road_paved.len() != roads.edge_count() {
+                self.road_paved = vec![0.0; roads.edge_count()];
+            }
+            roads.set_trips(&self.road_trips);
+            roads.set_paved(&self.road_paved);
+            self.roads = Some(roads);
+        }
+        if let Some(roads) = self.roads.as_mut() {
+            roads.recompute_dist();
+        }
+    }
+
+    /// Record one trip along every invited farm's cheapest delivery route, and
+    /// (if it visited) the traveler's route from `traveler_start`. Roads develop
+    /// where traffic actually flows. Persists the updated counts into
+    /// `road_trips`; the next `ensure_roads` recomputes distances.
+    pub fn record_road_trips(&mut self, traveler_start: Option<Vec2>) {
+        let Some(roads) = self.roads.as_mut() else {
+            return;
+        };
+        let mut edges: Vec<usize> = Vec::new();
+        for farm in &self.farms {
+            if !farm.invited {
+                continue;
+            }
+            if let Some((_, corner)) = roads.farm_delivery(&farm.polygon) {
+                edges.extend(roads.path_edges(corner));
+            }
+        }
+        if let Some(start) = traveler_start {
+            let node = roads.nearest_node(start);
+            edges.extend(roads.path_edges(node));
+        }
+        for edge_idx in edges {
+            roads.bump_trips(edge_idx);
+        }
+        self.road_trips = roads.trips();
+        roads.recompute_dist();
+    }
+
+    /// Spends `fieldstone_budget` paving this month's Fieldstone delivery
+    /// routes — every invited Fieldstone-producing farm's cheapest route to
+    /// the city — closest-to-city leg first. No-op if the road network isn't
+    /// built yet. Persists the updated paved fractions into `road_paved`.
+    /// Returns whatever fieldstone went unused (e.g. every candidate route was
+    /// already fully paved), which the caller should give back to the player.
+    pub fn pave_fieldstone_routes(&mut self, fieldstone_budget: u32) -> u32 {
+        if fieldstone_budget == 0 {
+            return 0;
+        }
+        let farms = &self.farms;
+        let Some(roads) = self.roads.as_mut() else {
+            return fieldstone_budget;
+        };
+        let edges: Vec<usize> = farms
+            .iter()
+            .filter(|f| f.invited && f.produced_resource() == UniformResource::Fieldstone)
+            .filter_map(|f| roads.farm_delivery(&f.polygon))
+            .flat_map(|(_, corner)| roads.path_edges(corner))
+            .collect();
+        let leftover = roads.pave_edges(edges, fieldstone_budget as f32);
+        roads.recompute_dist();
+        self.road_paved = roads.paved();
+        leftover.floor().max(0.0) as u32
     }
 
     fn neighbors_of(&self, id: FarmId) -> &[FarmId] {
@@ -292,14 +383,24 @@ pub struct MarketOutcome {
     pub player_gains: Vec<(UniformResource, u32)>,
 }
 
-fn invited_with_costs(farms: &[FarmData], circle_pos: Vec2) -> Vec<(FarmId, u32)> {
-    farms
+/// Each invited farm's `(id, travel_cost)`. The resource teleports free to the
+/// farm's cheapest non-city corner, then follows the lowest-cost road route in;
+/// the route's `length * factor` weight converts to potatoes with the same
+/// scale as the old straight-line formula (a factor-1.0 road reproduces it).
+/// Falls back to the straight-line estimate if the road graph isn't ready.
+fn invited_with_costs(fr: &FarmsResource) -> Vec<(FarmId, u32)> {
+    fr.farms
         .iter()
         .enumerate()
         .filter(|(_, f)| f.invited)
         .map(|(i, f)| {
-            let dist = f.seed.distance(circle_pos);
-            let cost = (dist * 8.0 / MARKET_RADIUS.max(1.0)).round() as u32;
+            let weight = fr
+                .roads
+                .as_ref()
+                .and_then(|roads| roads.farm_delivery(&f.polygon))
+                .map(|(w, _)| w)
+                .unwrap_or_else(|| f.seed.distance(fr.circle_pos));
+            let cost = (weight * 8.0 / MARKET_RADIUS.max(1.0)).round() as u32;
             (FarmId::new(i), cost)
         })
         .collect()
@@ -312,7 +413,7 @@ fn invited_with_costs(farms: &[FarmData], circle_pos: Vec2) -> Vec<(FarmId, u32)
 /// before any outside claim (Eat, a traveler's visit) so those can take from
 /// the pool ahead of farms' own market participation in `resolve_market`.
 pub fn seed_market(fr: &FarmsResource, pool: &mut Pool) -> Vec<(FarmId, u32)> {
-    let invited = invited_with_costs(&fr.farms, fr.circle_pos);
+    let invited = invited_with_costs(fr);
     for &(id, cost) in &invited {
         let farm = &fr[id];
         pool.contribute(
@@ -519,6 +620,7 @@ pub fn farm_breakdown(
     temp_production: Option<FarmProduction>,
 ) -> Vec<String> {
     fr.ensure_adjacency();
+    fr.ensure_roads();
     let saved_event = fr.farm_event(idx);
     let saved_prod = fr[idx].production;
     fr.set_farm_event(idx, event);
@@ -541,6 +643,7 @@ pub fn market_effect(
     fr.ensure_adjacency();
     let saved = fr.farm_event(idx);
     fr.set_farm_event(idx, event);
+    fr.ensure_roads();
     let effect = compute_market(fr)
         .farm_effects
         .get(&idx)
@@ -717,6 +820,9 @@ mod tests {
                 .into_iter()
                 .map(|v| v.into_iter().map(FarmId::new).collect())
                 .collect(),
+            road_trips: Vec::new(),
+            road_paved: Vec::new(),
+            roads: None,
         }
     }
 
@@ -747,6 +853,51 @@ mod tests {
         assert_eq!(adj[0], vec![FarmId::new(1)]);
         assert_eq!(adj[1], vec![FarmId::new(0)]);
         assert!(adj[2].is_empty());
+    }
+
+    #[test]
+    fn pave_fieldstone_routes_returns_unused_budget_once_route_is_paved() {
+        use UniformResource::{Fieldstone, Straw};
+        let square = |x: f32| FarmData {
+            polygon: vec![
+                Vec2::new(x, 0.0),
+                Vec2::new(x + 1.0, 0.0),
+                Vec2::new(x + 1.0, 1.0),
+                Vec2::new(x, 1.0),
+            ],
+            ..mk_farm(FarmProduction::Regular(Straw), Straw, 5.0, 0)
+        };
+        let city_square = square(0.0);
+        let mut farm_square = square(1.0);
+        farm_square.production = FarmProduction::Regular(Fieldstone);
+
+        let mut fr = farms_with(vec![city_square, farm_square], vec![vec![1], vec![0]]);
+        fr.circle_pos = Vec2::new(1.0, 0.0); // the two squares' shared corner
+        fr.ensure_roads();
+
+        // The route is a single length-1 edge among the network's 7; at 0.1
+        // length-per-fieldstone (a 10x paving cost), fully paving it costs 10.
+        let paved_sum = |fr: &FarmsResource| -> f32 { fr.road_paved.iter().sum() };
+        let nonzero_edges = |fr: &FarmsResource| fr.road_paved.iter().filter(|&&p| p > 0.0).count();
+
+        let leftover = fr.pave_fieldstone_routes(3);
+        assert_eq!(leftover, 0, "a small budget should be fully spent");
+        assert_eq!(
+            nonzero_edges(&fr),
+            1,
+            "only the route's one edge is touched"
+        );
+        assert!((paved_sum(&fr) - 0.3).abs() < 1e-6);
+
+        let leftover = fr.pave_fieldstone_routes(100);
+        assert!(
+            (paved_sum(&fr) - 1.0).abs() < 1e-6,
+            "the edge is now fully paved"
+        );
+        assert_eq!(
+            leftover, 93,
+            "once fully paved, the rest of the budget (100 - 7 more to finish) goes unused"
+        );
     }
 
     #[test]

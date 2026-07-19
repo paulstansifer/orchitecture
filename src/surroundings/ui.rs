@@ -15,6 +15,8 @@ use crate::resource::ToolKind;
 
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
+/// Opacity of a fully-developed dirt-road line; scales down with development.
+const ROAD_MAX_ALPHA: u8 = 200;
 const FOG_GRID_STEP_PX: f32 = 20.0;
 const PANEL_W: f32 = 110.0;
 /// Generous upper bound on a farm info panel's rendered height, used only to
@@ -139,6 +141,7 @@ pub fn surroundings_ui_system(
 
     // Market preview for farm boost display.
     farms.ensure_adjacency();
+    farms.ensure_roads();
     let preview = compute_market(&*farms);
     // Predicted boost for a farm, if it is invited in `Market` mode.
     let predicted_boost = |id: FarmId| -> u32 {
@@ -196,6 +199,43 @@ pub fn surroundings_ui_system(
                         panel_rect.expand2(egui::Vec2::new(PANEL_W / 2.0, PANEL_H_MAX / 2.0));
                     if panel_reach.contains(centroid) {
                         revealed.push((FarmId::new(i), centroid));
+                    }
+                }
+            }
+
+            // ── Pass 2: roads (under fog) — dirt fades in brown as it develops;
+            // a paved fraction (from the city-side end) is solid gray instead. ──
+            if let Some(roads) = farms.roads.as_ref() {
+                for edge in &roads.edges {
+                    let dev = edge.development();
+                    let paved = edge.paved.clamp(0.0, 1.0);
+                    if dev <= 0.0 && paved <= 0.0 {
+                        continue;
+                    }
+                    let (near, far) = if roads.dist_to_city(edge.a) <= roads.dist_to_city(edge.b) {
+                        (edge.a, edge.b)
+                    } else {
+                        (edge.b, edge.a)
+                    };
+                    let near_map = roads.nodes[near];
+                    let far_map = roads.nodes[far];
+                    let near_pt = view.to_screen(near_map);
+                    let far_pt = view.to_screen(far_map);
+                    if !expanded.contains(near_pt) && !expanded.contains(far_pt) {
+                        continue;
+                    }
+                    let split = near_map.lerp(far_map, paved);
+                    let split_pt = view.to_screen(split);
+
+                    if paved > 0.0 {
+                        let gray = Color32::from_rgba_unmultiplied(150, 150, 150, ROAD_MAX_ALPHA);
+                        painter.line_segment([near_pt, split_pt], Stroke::new(2.0, gray));
+                    }
+                    if paved < 1.0 && dev > 0.0 {
+                        let alpha = (dev * ROAD_MAX_ALPHA as f32) as u8;
+                        let brown = Color32::from_rgba_unmultiplied(120, 80, 40, alpha);
+                        let width = 1.0 + dev * 1.5;
+                        painter.line_segment([split_pt, far_pt], Stroke::new(width, brown));
                     }
                 }
             }

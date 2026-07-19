@@ -63,6 +63,7 @@ pub fn advance_month(
 ) -> MonthOutcome {
     clock.advance_month();
     farms.ensure_adjacency();
+    farms.ensure_roads();
 
     let effects = compute_month_effects(
         farms,
@@ -89,6 +90,18 @@ pub fn advance_month(
         }
     }
 
+    // Roads develop where traffic flowed this month: every invited farm's
+    // delivery route, plus an accepted traveler's route. Must run before the
+    // `invited` flags are cleared below.
+    let traveler_start = effects
+        .traveler_visit()
+        .filter(|t| t.invited && t.affordable)
+        .and_then(|t| t.path.first().copied());
+    farms.record_road_trips(traveler_start);
+    // Half of whatever Fieldstone survived market transactions paves its own
+    // delivery routes; also must run before `invited` is cleared below.
+    let paving_leftover = farms.pave_fieldstone_routes(effects.fieldstone_for_paving);
+
     // Invited farms' per-cycle events are spent; reset for next month.
     reset_farm_events(farms);
 
@@ -104,7 +117,9 @@ pub fn advance_month(
         .filter(|t| t.invited)
         .map(|t| t.affordable);
     traveler_state.invited = false;
-    roll_traveler_offer(traveler_state, CIRCLE_REVEAL_RADIUS, rng);
+    if let Some(roads) = farms.roads.as_ref() {
+        roll_traveler_offer(traveler_state, CIRCLE_REVEAL_RADIUS, roads, rng);
+    }
 
     // Whatever wasn't claimed by any effect above is stored (if capacity
     // allows) or was already accounted as lost.
@@ -113,6 +128,16 @@ pub fn advance_month(
             place::deposit_uniform_with_capacity(constructed, *res, flow.stored);
         }
     }
+    // Fieldstone earmarked for paving but not actually spent (every candidate
+    // route was already fully paved) still goes to the player, same as any
+    // other unclaimed inflow.
+    if paving_leftover > 0 {
+        place::deposit_uniform_with_capacity(
+            constructed,
+            UniformResource::Fieldstone,
+            paving_leftover,
+        );
+    }
 
     // Construction completes once fully paid off (sandbox mode bypasses the
     // resource requirement, as it always has).
@@ -120,8 +145,22 @@ pub fn advance_month(
         || remaining_construction_need(pending, &constructed.eorfs, material_list).is_empty();
     let construction_changes = tick_construction(pending, constructed, fully_paid, material_list);
 
+    let mut market_gains = effects.player_gains;
+    if paving_leftover > 0 {
+        match market_gains
+            .iter_mut()
+            .find(|(res, _)| *res == UniformResource::Fieldstone)
+        {
+            Some((_, qty)) => *qty += paving_leftover,
+            None => {
+                market_gains.push((UniformResource::Fieldstone, paving_leftover));
+                market_gains.sort_by_key(|&(res, _)| res);
+            }
+        }
+    }
+
     MonthOutcome {
-        market_gains: effects.player_gains,
+        market_gains,
         traveler_accepted,
         construction_changes,
     }

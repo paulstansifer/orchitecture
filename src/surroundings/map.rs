@@ -162,29 +162,20 @@ fn two_lowest_indices(vals: &[f32]) -> (usize, usize) {
     (first, second)
 }
 
-/// Generates a winding path from `start` toward the map origin.
-pub fn generate_path_from_pos(start: Vec2, rng: &mut impl rand::Rng) -> Vec<Vec2> {
-    let start_dist = start.length();
-    let main_dir = -start.normalize(); // points toward origin
-    let perp = Vec2::new(-main_dir.y, main_dir.x);
-
-    let mut points = vec![start];
-    let num_middle = 4;
-    for i in 1..=num_middle {
-        let t = i as f32 / (num_middle + 1) as f32;
-        let base = start + main_dir * (start_dist * t);
-        // Perpendicular deviation shrinks as we approach the centre
-        let deviation = rng.random_range(-12.0..12.0_f32) * (1.0 - t * 0.7);
-        points.push(base + perp * deviation);
-    }
-    points.push(Vec2::ZERO);
-    points
+/// Bevy startup system: generates a fresh, randomly-seeded farm layout. For a
+/// deterministic layout (e.g. headless test sessions), call
+/// [`build_farms_resource`] directly with a seeded RNG instead.
+pub fn generate_farms(mut commands: Commands) {
+    let mut rng = rand::rng();
+    commands.insert_resource(build_farms_resource(&mut rng));
 }
 
-pub fn generate_farms(mut commands: Commands) {
-    use rand::Rng as _;
-    let mut rng = rand::rng();
-
+/// Pure farm-layout generation: Voronoi-partitions the map, assigns each cell
+/// a resource and starting stockpile, and locates the city corner — fully
+/// determined by `rng`, so the same `rng` state always produces the same
+/// layout (see `headless::HeadlessSession::new`, which seeds this from
+/// `--seed`).
+pub fn build_farms_resource(rng: &mut impl rand::Rng) -> FarmsResource {
     const MIN_REVEALED_FARMS: usize = 7;
 
     // Phase 1: compute Voronoi cells and areas, then sort by distance from
@@ -288,10 +279,13 @@ pub fn generate_farms(mut commands: Commands) {
     }
 
     let neighbors = crate::surroundings::farmstead::build_adjacency(&farms);
-    commands.insert_resource(FarmsResource {
+    FarmsResource {
         farms,
         circle_pos,
         traveler_reveals: Vec::new(),
         neighbors,
-    });
+        road_trips: Vec::new(),
+        road_paved: Vec::new(),
+        roads: None,
+    }
 }

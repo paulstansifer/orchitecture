@@ -324,6 +324,9 @@ mod tests {
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
             neighbors: vec![Vec::new(); n],
+            road_trips: Vec::new(),
+            road_paved: Vec::new(),
+            roads: None,
         }
     }
 

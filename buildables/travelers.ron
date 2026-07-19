@@ -1,7 +1,6 @@
 [
     (
         appear_chance: 0.25,
-        origin_dist: (start: 1.5, end: 2.5),
         demands: [
             (options: [(Potato, (start: 10, end: 15))]),
             (options: [
@@ -14,7 +13,6 @@
     ),
     (
         appear_chance: 0.4,
-        origin_dist: (start: 1.5, end: 2.5),
         demands: [
             (options: [(Potato, (start: 10, end: 15))]),
             (options: [

@@ -48,6 +48,9 @@ pub enum LedgerSource {
     Market,
     Eat,
     Traveler,
+    /// Half of whatever Fieldstone survives market transactions is spent
+    /// paving its own delivery routes — see `pave_fieldstone_routes`.
+    Paving,
     Construction,
 }
 
@@ -57,6 +60,7 @@ impl LedgerSource {
             LedgerSource::Market => "market",
             LedgerSource::Eat => "eat",
             LedgerSource::Traveler => "traveler",
+            LedgerSource::Paving => "paving",
             LedgerSource::Construction => "construction",
         }
     }
@@ -64,11 +68,12 @@ impl LedgerSource {
 
 /// Display order for the per-resource tooltip: the same order the effects are
 /// resolved in (Eat and the traveler get first dibs, then farms' own market
-/// participation, then construction).
-const LEDGER_SOURCE_ORDER: [LedgerSource; 4] = [
+/// participation, then road paving, then construction).
+const LEDGER_SOURCE_ORDER: [LedgerSource; 5] = [
     LedgerSource::Eat,
     LedgerSource::Traveler,
     LedgerSource::Market,
+    LedgerSource::Paving,
     LedgerSource::Construction,
 ];
 
@@ -381,6 +386,10 @@ pub struct MonthEffects {
     pub leftover: HashMap<UniformResource, ResourceFlow>,
     /// The single accounting record of every resource movement this month.
     pub ledger: MonthLedger,
+    /// Fieldstone diverted to road paving this month (half of whatever
+    /// survived market transactions). Applied to the road network separately
+    /// via `FarmsResource::pave_fieldstone_routes`.
+    pub fieldstone_for_paving: u32,
 }
 
 impl MonthEffects {
@@ -524,6 +533,19 @@ pub fn compute_month_effects(
     // (by farm id) order rather than shuffling from frame to frame.
     effects.extend(resolve_market(farms, &invited, &mut pool).into_values());
 
+    // Half of whatever Fieldstone survived market transactions is diverted to
+    // paving its own delivery routes, before the player ever sees it as a gain
+    // or spends it on construction/storage. `pave_fieldstone_routes` (called
+    // separately, once the pool's effects are applied) does the actual paving.
+    let fieldstone_for_paving = pool.inflow_available(UniformResource::Fieldstone) / 2;
+    if fieldstone_for_paving > 0 {
+        pool.claim(
+            LedgerSource::Paving,
+            UniformResource::Fieldstone,
+            fieldstone_for_paving,
+        );
+    }
+
     // Whatever inflow farms left in the pool is the player's gains, and this
     // month's inflow for Construction and the leftover-distribution pass below.
     let player_gains: Vec<(UniformResource, u32)> = {
@@ -585,6 +607,7 @@ pub fn compute_month_effects(
         player_gains,
         leftover,
         ledger: pool.ledger,
+        fieldstone_for_paving,
     }
 }
 
@@ -623,6 +646,9 @@ mod tests {
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
             neighbors: vec![Vec::new(); n],
+            road_trips: Vec::new(),
+            road_paved: Vec::new(),
+            roads: None,
         }
     }
 
@@ -835,6 +861,7 @@ mod tests {
             player_gains: Vec::new(),
             leftover,
             ledger,
+            fieldstone_for_paving: 0,
         };
 
         // Timber: leftover deposit already includes the traveler reward.
