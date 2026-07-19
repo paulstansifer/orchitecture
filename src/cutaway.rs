@@ -1406,6 +1406,7 @@ mod tests {
                     info: info.clone(),
                     mesh_handle: Handle::default(),
                     cut_handle: None,
+                    is_wings: false,
                 })
                 .collect(),
         };

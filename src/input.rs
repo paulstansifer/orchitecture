@@ -39,6 +39,7 @@ pub fn cursor_system(
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
     build_state: Res<BuildState>,
     constructed: Res<ConstructedCity>,
+    structure_list: Res<EorfList>,
     cursor_entities: Res<CursorEntities>,
     mut cursors: Query<(&mut Transform, &mut Visibility)>,
 ) {
@@ -77,6 +78,9 @@ pub fn cursor_system(
                 };
                 let tr = cell_transform(slot, facing, cube);
                 t.translation = tr.translation;
+                if structure_list.is_wings(id) {
+                    t.translation += crate::city::wings_offset(tr.rotation);
+                }
                 t.rotation = tr.rotation;
                 t.scale = Vec3::splat(0.999);
                 *vis = Visibility::Inherited;

@@ -609,6 +609,19 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
     }
 }
 
+/// Extra translation needed to place a Wings3D-sourced mesh correctly, given
+/// the rotation `cell_transform` already computed for its cell. Wings3D
+/// meshes are authored directly in game (Y-up) coordinates, spanning `[0,1]`
+/// on every axis. OpenSCAD-derived meshes instead pick up a
+/// `rotate([-90,0,0])` Z-up-to-Y-up correction in `build.rs`, which leaves
+/// their local Z spanning `[-1,0]` rather than `[0,1]` -- and `cell_transform`
+/// was written to place that asymmetric range correctly. Shifting a Wings3D
+/// mesh's local Z by -1 before that same rotation (i.e. adding
+/// `rotation * (0,0,-1)` to the translation) makes it land the same way.
+pub fn wings_offset(rotation: Quat) -> Vec3 {
+    rotation * Vec3::new(0.0, 0.0, -1.0)
+}
+
 /// Snaps a continuous ground-plane position to the nearest wall boundary for
 /// `WallPlop` placement: picks `XLoWall` when `pos.x` sits closer to an
 /// integer grid line than `pos.z` does, otherwise `ZLoWall`. Unlike
@@ -642,7 +655,10 @@ pub fn apply_changes(
         // Clear autotile state so the per-frame system unconditionally re-evaluates.
         assembled.autotile_results.remove(&loc);
         if let Some(cell) = new_cell {
-            let transform = cell_transform(loc.slot, cell.facing, loc.cube);
+            let mut transform = cell_transform(loc.slot, cell.facing, loc.cube);
+            if structure_list.is_wings(cell.id) {
+                transform.translation += wings_offset(transform.rotation);
+            }
             let handle = structure_list.scene_handle(cell.id).clone();
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
