@@ -994,7 +994,10 @@ mod tests {
         }];
         cw.placed_places.insert(ParticularPlace {
             place: 0,
-            fulfillments: vec![crate::place::FulfilledPorf::Furniture(IVec3::new(5, 0, 5))],
+            fulfillments: vec![crate::place::FulfilledPorf::Furniture(SlotCoord {
+                cube: IVec3::new(5, 0, 5),
+                slot: Slot::Room,
+            })],
             contents: Inventory::new(100.0),
             restriction: ParentRestriction::Unrestricted,
         });

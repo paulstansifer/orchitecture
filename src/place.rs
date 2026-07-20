@@ -208,10 +208,14 @@ pub struct Place {
     pub assignable_for: Option<AssignmentFlavor>,
 }
 
-/// What actually fulfills one slot of a placed `Place`'s requirements.
+/// What actually fulfills one slot of a placed `Place`'s requirements. A
+/// `Furniture` fulfillment carries the full `SlotCoord` (not just the cube) so
+/// that wall-mounted furniture -- e.g. a `WallPlop` chair in a dining room --
+/// is identified unambiguously and never confused with room-slot furniture
+/// sharing the same cube.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FulfilledPorf {
-    Furniture(IVec3),
+    Furniture(SlotCoord),
     Place(PlacedPlaceId),
 }
 
@@ -363,7 +367,7 @@ fn manhattan2d(a: IVec3, b: IVec3) -> i32 {
 /// place it points through) no longer exists.
 fn try_place_location(cw: &ConstructedCity, id: PlacedPlaceId) -> Option<IVec3> {
     match cw.placed_places.get(id)?.fulfillments.first()? {
-        FulfilledPorf::Furniture(cube) => Some(*cube),
+        FulfilledPorf::Furniture(loc) => Some(loc.cube),
         FulfilledPorf::Place(inner) => try_place_location(cw, *inner),
     }
 }
@@ -375,27 +379,33 @@ pub fn place_location(cw: &ConstructedCity, id: PlacedPlaceId) -> IVec3 {
 
 fn fulfillment_location(cw: &ConstructedCity, f: &FulfilledPorf) -> IVec3 {
     match f {
-        FulfilledPorf::Furniture(cube) => *cube,
+        FulfilledPorf::Furniture(loc) => loc.cube,
         FulfilledPorf::Place(id) => place_location(cw, *id),
     }
 }
 
-/// All furniture cubes named `name` within `PLACE_DIST` (2D Manhattan, same
-/// y-layer) of `origin`. Includes `origin` itself when it qualifies.
-fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<IVec3> {
+/// Slots a piece of furniture can occupy: room-plopped in the cube's interior,
+/// or wall-plopped on one of its two low-side walls. (Only `*LoWall` slots are
+/// ever stored -- see `nearest_wall_slot` -- so scanning each cube's own low
+/// walls visits every wall slot exactly once across the grid.)
+const FURNITURE_SLOTS: [Slot; 3] = [Slot::Room, Slot::XLoWall, Slot::ZLoWall];
+
+/// All furniture named `name` within `PLACE_DIST` (2D Manhattan, same y-layer)
+/// of `origin`, at whatever slot they occupy (room or wall). Includes furniture
+/// at `origin` itself when it qualifies.
+fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<SlotCoord> {
     let mut found = Vec::new();
     for dx in -PLACE_DIST..=PLACE_DIST {
         let zspan = PLACE_DIST - dx.abs();
         for dz in -zspan..=zspan {
             let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
-            let loc = SlotCoord {
-                cube,
-                slot: Slot::Room,
-            };
-            if let Some(cell) = cw.contents.get(loc) {
-                let info = &cw.eorfs[cell.id.as_usize()];
-                if info.is_furniture() && info.name == name {
-                    found.push(cube);
+            for slot in FURNITURE_SLOTS {
+                let loc = SlotCoord { cube, slot };
+                if let Some(cell) = cw.contents.get(loc) {
+                    let info = &cw.eorfs[cell.id.as_usize()];
+                    if info.is_furniture() && info.name == name {
+                        found.push(loc);
+                    }
                 }
             }
         }
@@ -433,9 +443,9 @@ fn candidates_near(
     match req {
         Porf::Furniture(name) => furniture_of_name_near(cw, origin, name)
             .into_iter()
-            .filter(|cube| {
+            .filter(|loc| {
                 cw.furniture_restrictions
-                    .get(cube)
+                    .get(&loc.cube)
                     .is_none_or(|r| r.allows(parent_name))
             })
             .map(FulfilledPorf::Furniture)
@@ -452,12 +462,9 @@ fn candidates_near(
 /// for (used to re-check a donor place after some of its members are pulled).
 fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> bool {
     match (f, req) {
-        (FulfilledPorf::Furniture(cube), Porf::Furniture(name)) => cw
+        (FulfilledPorf::Furniture(loc), Porf::Furniture(name)) => cw
             .contents
-            .get(SlotCoord {
-                cube: *cube,
-                slot: Slot::Room,
-            })
+            .get(*loc)
             .map(|c| cw.eorfs[c.id.as_usize()].name == *name)
             .unwrap_or(false),
         (FulfilledPorf::Place(id), Porf::Place(name)) => cw
@@ -500,7 +507,7 @@ pub fn valid_places_for(cw: &ConstructedCity, cube: IVec3) -> Vec<usize> {
 fn place_contains(cw: &ConstructedCity, id: PlacedPlaceId, cube: IVec3) -> bool {
     cw.placed_places.get(id).is_some_and(|pp| {
         pp.fulfillments.iter().any(|f| match f {
-            FulfilledPorf::Furniture(c) => *c == cube,
+            FulfilledPorf::Furniture(loc) => loc.cube == cube,
             FulfilledPorf::Place(inner) => place_contains(cw, *inner, cube),
         })
     })
@@ -647,9 +654,10 @@ pub fn commit_assignment(cw: &mut ConstructedCity, cube: IVec3, place_idx: usize
         .chosen
         .iter()
         .map(|f| match f {
-            FulfilledPorf::Furniture(cube) => {
-                cube_storage_capacity(cw, *cube, StorageKind::Bulk)
-                    + cube_storage_capacity(cw, *cube, StorageKind::Rack)
+            FulfilledPorf::Furniture(loc) => {
+                slot_storage_capacity(cw, *loc, StorageKind::Bulk)
+                    + slot_storage_capacity(cw, *loc, StorageKind::Rack)
+                    + slot_storage_capacity(cw, *loc, StorageKind::Book)
             }
             FulfilledPorf::Place(_) => 0.0,
         })
@@ -674,13 +682,19 @@ pub fn unassign_place(cw: &mut ConstructedCity, id: PlacedPlaceId) {
     cw.placed_places.remove(id);
 }
 
-/// All furniture cubes named `name` anywhere in the grid (unbounded, unlike
-/// `furniture_of_name_near`) -- used by `sync_places` to enumerate candidate
-/// cores without a "clicked cube" to search near.
+/// The cubes of all furniture named `name` anywhere in the grid (unbounded,
+/// unlike `furniture_of_name_near`) -- used by `sync_places` to enumerate
+/// candidate cores without a "clicked cube" to search near.
+///
+/// Furniture at *any* slot qualifies (room-plopped or wall-mounted), so a place
+/// may be cored on wall-slot furniture. Only the cube is returned: it seeds
+/// `choose_core`, which re-resolves the exact (slot-aware) core via
+/// `candidates_near`. A cube hosting the named furniture in more than one slot
+/// appears once per occurrence, which is harmless -- the first to form a place
+/// there makes the rest no-ops (see the `place_id_at` guard in `sync_places`).
 fn all_furniture_named(cw: &ConstructedCity, name: &str) -> Vec<IVec3> {
     cw.contents
         .iter()
-        .filter(|(loc, _)| loc.slot == Slot::Room)
         .filter_map(|(loc, cell)| {
             let info = &cw.eorfs[cell.id.as_usize()];
             (info.is_furniture() && info.name == name).then_some(loc.cube)
@@ -712,9 +726,9 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
         let parent_name = &cw.places[pp.place].name;
         for f in &pp.fulfillments {
             let allowed = match f {
-                FulfilledPorf::Furniture(cube) => cw
+                FulfilledPorf::Furniture(loc) => cw
                     .furniture_restrictions
-                    .get(cube)
+                    .get(&loc.cube)
                     .is_none_or(|r| r.allows(parent_name)),
                 FulfilledPorf::Place(pid) => cw
                     .placed_places
@@ -847,8 +861,8 @@ pub fn book_capacity(cw: &ConstructedCity) -> f32 {
         .into_iter()
         .flat_map(|id| cw.placed_places[id].fulfillments.clone())
         .filter_map(|f| match f {
-            FulfilledPorf::Furniture(cube) => {
-                Some(cube_storage_capacity(cw, cube, StorageKind::Book))
+            FulfilledPorf::Furniture(loc) => {
+                Some(slot_storage_capacity(cw, loc, StorageKind::Book))
             }
             FulfilledPorf::Place(_) => None,
         })
@@ -899,16 +913,29 @@ fn is_public_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
         .is_some_and(|info| info.public_storage)
 }
 
-/// The storage capacity `cube`'s furniture contributes for `kind` (0.0 if it
-/// has none, or nothing is there).
-fn cube_storage_capacity(cw: &ConstructedCity, cube: IVec3, kind: StorageKind) -> f32 {
+/// The storage capacity the furniture at `loc` contributes for `kind` (0.0 if
+/// it has none, or nothing is there). Slot-precise, so a wall-mounted chair
+/// contributes nothing even when a storage cube shares its coordinate.
+fn slot_storage_capacity(cw: &ConstructedCity, loc: SlotCoord, kind: StorageKind) -> f32 {
     cw.contents
-        .get(SlotCoord {
-            cube,
-            slot: Slot::Room,
-        })
+        .get(loc)
         .map(|cell| cw.eorfs[cell.id.as_usize()].storage_capacity_for(kind))
         .unwrap_or(0.0)
+}
+
+/// The storage capacity `cube`'s room-slot furniture contributes for `kind`
+/// (0.0 if it has none, or nothing is there). For callers that hold a bare cube
+/// (e.g. a clicked location); fulfillment-based callers use
+/// [`slot_storage_capacity`] so wall furniture is handled correctly.
+fn cube_storage_capacity(cw: &ConstructedCity, cube: IVec3, kind: StorageKind) -> f32 {
+    slot_storage_capacity(
+        cw,
+        SlotCoord {
+            cube,
+            slot: Slot::Room,
+        },
+        kind,
+    )
 }
 
 /// Every `public_storage` place, in placement order -- used both for
@@ -939,10 +966,13 @@ fn rack_capacity_ceiling(
     pp.fulfillments
         .iter()
         .filter_map(|f| match f {
-            FulfilledPorf::Furniture(cube) => {
-                (cw.rack_restrictions.get(cube).copied().unwrap_or_default() == contents)
-                    .then(|| cube_storage_capacity(cw, *cube, StorageKind::Rack))
-            }
+            FulfilledPorf::Furniture(loc) => (cw
+                .rack_restrictions
+                .get(&loc.cube)
+                .copied()
+                .unwrap_or_default()
+                == contents)
+                .then(|| slot_storage_capacity(cw, *loc, StorageKind::Rack)),
             FulfilledPorf::Place(_) => None,
         })
         .sum()
@@ -977,20 +1007,30 @@ pub fn rack_free_capacity(cw: &ConstructedCity, contents: RackContents) -> f32 {
 /// `public_storage` place -- used by the UI to decide whether to offer a
 /// per-bin resource-restriction dropdown.
 pub fn cube_is_storage_bin(cw: &ConstructedCity, cube: IVec3) -> bool {
+    let room = FulfilledPorf::Furniture(SlotCoord {
+        cube,
+        slot: Slot::Room,
+    });
     cube_storage_capacity(cw, cube, StorageKind::Bulk) > 0.0
-        && cw.placed_places.iter().any(|(_, pp)| {
-            is_public_storage(cw, pp) && pp.fulfillments.contains(&FulfilledPorf::Furniture(cube))
-        })
+        && cw
+            .placed_places
+            .iter()
+            .any(|(_, pp)| is_public_storage(cw, pp) && pp.fulfillments.contains(&room))
 }
 
 /// True if `cube` is a fulfillment (with `Rack` capacity) of some
 /// `public_storage` place -- used by the UI to decide whether to offer a
 /// per-rack contents dropdown.
 pub fn cube_is_rack(cw: &ConstructedCity, cube: IVec3) -> bool {
+    let room = FulfilledPorf::Furniture(SlotCoord {
+        cube,
+        slot: Slot::Room,
+    });
     cube_storage_capacity(cw, cube, StorageKind::Rack) > 0.0
-        && cw.placed_places.iter().any(|(_, pp)| {
-            is_public_storage(cw, pp) && pp.fulfillments.contains(&FulfilledPorf::Furniture(cube))
-        })
+        && cw
+            .placed_places
+            .iter()
+            .any(|(_, pp)| is_public_storage(cw, pp) && pp.fulfillments.contains(&room))
 }
 
 /// Number of furniture pieces named `furniture_name` fulfilling placed places
@@ -1006,16 +1046,10 @@ pub fn count_furniture_named_in_places(
         .filter(|(_, pp)| cw.places[pp.place].name == place_name)
         .flat_map(|(_, pp)| pp.fulfillments.iter())
         .filter(|f| match f {
-            FulfilledPorf::Furniture(cube) => {
-                let loc = SlotCoord {
-                    cube: *cube,
-                    slot: Slot::Room,
-                };
-                cw.contents.get(loc).is_some_and(|cell| {
-                    let info = &cw.eorfs[cell.id.as_usize()];
-                    info.is_furniture() && info.name == furniture_name
-                })
-            }
+            FulfilledPorf::Furniture(loc) => cw.contents.get(*loc).is_some_and(|cell| {
+                let info = &cw.eorfs[cell.id.as_usize()];
+                info.is_furniture() && info.name == furniture_name
+            }),
             FulfilledPorf::Place(_) => false,
         })
         .count()
@@ -1118,11 +1152,11 @@ fn place_capacity_ceiling(cw: &ConstructedCity, pp: &ParticularPlace, res: Unifo
     pp.fulfillments
         .iter()
         .filter_map(|f| match f {
-            FulfilledPorf::Furniture(cube) => cw
+            FulfilledPorf::Furniture(loc) => cw
                 .bin_resource_restrictions
-                .get(cube)
+                .get(&loc.cube)
                 .is_none_or(|r| *r == res)
-                .then(|| cube_storage_capacity(cw, *cube, StorageKind::Bulk)),
+                .then(|| slot_storage_capacity(cw, *loc, StorageKind::Bulk)),
             FulfilledPorf::Place(_) => None,
         })
         .sum()
@@ -1179,8 +1213,10 @@ pub fn storage_shared_ceiling(cw: &ConstructedCity) -> f32 {
         .into_iter()
         .flat_map(|id| cw.placed_places[id].fulfillments.iter())
         .filter_map(|f| match f {
-            FulfilledPorf::Furniture(cube) if !cw.bin_resource_restrictions.contains_key(cube) => {
-                Some(cube_storage_capacity(cw, *cube, StorageKind::Bulk))
+            FulfilledPorf::Furniture(loc)
+                if !cw.bin_resource_restrictions.contains_key(&loc.cube) =>
+            {
+                Some(slot_storage_capacity(cw, *loc, StorageKind::Bulk))
             }
             _ => None,
         })
@@ -1194,10 +1230,10 @@ pub fn storage_dedicated_ceilings(cw: &ConstructedCity) -> HashMap<UniformResour
     let mut ceilings = HashMap::new();
     for id in storage_ids(cw) {
         for f in &cw.placed_places[id].fulfillments {
-            if let FulfilledPorf::Furniture(cube) = f {
-                if let Some(&res) = cw.bin_resource_restrictions.get(cube) {
+            if let FulfilledPorf::Furniture(loc) = f {
+                if let Some(&res) = cw.bin_resource_restrictions.get(&loc.cube) {
                     *ceilings.entry(res).or_insert(0.0) +=
-                        cube_storage_capacity(cw, *cube, StorageKind::Bulk);
+                        slot_storage_capacity(cw, *loc, StorageKind::Bulk);
                 }
             }
         }
@@ -1340,13 +1376,42 @@ mod tests {
                 placement_style: PlacementStyle::RoomPlop,
                 x_char: None,
                 z_char: None,
-                embedding,
+                embedding: embedding.clone(),
                 kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
                     crate::resource::UniformResource::Plank,
                     1,
                 )]),
                 vantage_evaluated: false,
                 storage_capacity: vec![(StorageKind::Book, 10.0)],
+                placeable: true,
+            },
+            EorfInfo {
+                name: "table".to_string(),
+                placement_style: PlacementStyle::RoomPlop,
+                x_char: None,
+                z_char: None,
+                embedding: embedding.clone(),
+                kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
+                    crate::resource::UniformResource::Plank,
+                    1,
+                )]),
+                vantage_evaluated: false,
+                storage_capacity: vec![],
+                placeable: true,
+            },
+            // A `WallPlop` piece -- lives in a wall slot, not the cube interior.
+            EorfInfo {
+                name: "chair".to_string(),
+                placement_style: PlacementStyle::WallPlop,
+                x_char: None,
+                z_char: None,
+                embedding,
+                kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
+                    crate::resource::UniformResource::Plank,
+                    1,
+                )]),
+                vantage_evaluated: false,
+                storage_capacity: vec![],
                 placeable: true,
             },
         ]
@@ -1395,8 +1460,134 @@ mod tests {
         IVec3::new(x, 0, z)
     }
 
+    /// A room-slot furniture fulfillment at `cube` -- the common case for
+    /// these tests, whose helper grids place furniture in `Slot::Room`.
     fn f(cube: IVec3) -> FulfilledPorf {
-        FulfilledPorf::Furniture(cube)
+        FulfilledPorf::Furniture(SlotCoord {
+            cube,
+            slot: Slot::Room,
+        })
+    }
+
+    /// Place a piece of `name`d furniture at `loc` (any slot).
+    fn put(cw: &mut ConstructedCity, loc: SlotCoord, name: &str) {
+        let id = cw.find_structure_by_name(name).unwrap();
+        cw.contents.set(
+            loc,
+            Cell {
+                id,
+                facing: Facing::default(),
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            },
+        );
+    }
+
+    #[test]
+    fn wall_mounted_furniture_fulfills_a_place_requirement() {
+        // A dining-room-like place: a room-slot `table` core plus two
+        // `WallPlop` chairs, which live in wall slots. The place system must
+        // still find and claim them.
+        let mut cw = ConstructedCity::new(test_structures());
+        cw.road_forbidden_zone = false;
+        cw.places = vec![Place {
+            name: "dining room".to_string(),
+            requirements: vec![
+                PlaceReq {
+                    requirement: Porf::Furniture("table".to_string()),
+                    min: 1,
+                    max: None,
+                    worker_visit_weight: 1.0,
+                    worker_visit_duration: 1.0,
+                },
+                PlaceReq {
+                    requirement: Porf::Furniture("chair".to_string()),
+                    min: 2,
+                    max: None,
+                    worker_visit_weight: 1.0,
+                    worker_visit_duration: 1.0,
+                },
+            ],
+            public_storage: false,
+            accounting: None,
+            quality_factors: vec![],
+            assignable_for: None,
+        }];
+
+        put(
+            &mut cw,
+            SlotCoord {
+                cube: b(0, 0),
+                slot: Slot::Room,
+            },
+            "table",
+        );
+        put(
+            &mut cw,
+            SlotCoord {
+                cube: b(0, 0),
+                slot: Slot::ZLoWall,
+            },
+            "chair",
+        );
+        put(
+            &mut cw,
+            SlotCoord {
+                cube: b(0, 1),
+                slot: Slot::ZLoWall,
+            },
+            "chair",
+        );
+
+        sync_places(&mut cw);
+
+        assert_eq!(cw.placed_places.iter().count(), 1);
+        let (_, pp) = cw.placed_places.iter().next().unwrap();
+        assert_eq!(cw.places[pp.place].name, "dining room");
+        // The table plus both wall chairs.
+        assert_eq!(pp.fulfillments.len(), 3);
+        let wall_chairs = pp
+            .fulfillments
+            .iter()
+            .filter(|f| matches!(f, FulfilledPorf::Furniture(loc) if loc.slot != Slot::Room))
+            .count();
+        assert_eq!(wall_chairs, 2);
+    }
+
+    #[test]
+    fn wall_slot_furniture_can_be_a_place_core() {
+        // A place whose *core* requirement is a wall-mounted chair. Exercises
+        // core-candidate enumeration (`all_furniture_named`) for non-room slots.
+        let mut cw = ConstructedCity::new(test_structures());
+        cw.road_forbidden_zone = false;
+        cw.places = vec![Place {
+            name: "nook".to_string(),
+            requirements: vec![PlaceReq {
+                requirement: Porf::Furniture("chair".to_string()),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            }],
+            public_storage: false,
+            accounting: None,
+            quality_factors: vec![],
+            assignable_for: None,
+        }];
+
+        let core = SlotCoord {
+            cube: b(2, 2),
+            slot: Slot::XLoWall,
+        };
+        put(&mut cw, core, "chair");
+
+        sync_places(&mut cw);
+
+        assert_eq!(cw.placed_places.iter().count(), 1);
+        let (_, pp) = cw.placed_places.iter().next().unwrap();
+        assert_eq!(cw.places[pp.place].name, "nook");
+        // The place is cored on the wall chair itself.
+        assert_eq!(pp.fulfillments, vec![FulfilledPorf::Furniture(core)]);
     }
 
     #[test]

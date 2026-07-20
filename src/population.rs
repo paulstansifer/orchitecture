@@ -151,6 +151,7 @@ mod tests {
     use super::*;
     use crate::eorf::EorfInfo;
     use crate::place::{FulfilledPorf, ParticularPlace, Place, PlaceReq, Porf};
+    use crate::sparse3d::{Slot, SlotCoord};
     use bevy::math::IVec3;
     use std::collections::HashSet;
 
@@ -174,7 +175,10 @@ mod tests {
     fn placed(place: usize) -> ParticularPlace {
         ParticularPlace {
             place,
-            fulfillments: vec![FulfilledPorf::Furniture(IVec3::ZERO)],
+            fulfillments: vec![FulfilledPorf::Furniture(SlotCoord {
+                cube: IVec3::ZERO,
+                slot: Slot::Room,
+            })],
             contents: crate::resource::Inventory::new(1.0),
             restriction: crate::place::ParentRestriction::Unrestricted,
         }

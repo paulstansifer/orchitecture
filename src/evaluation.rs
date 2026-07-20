@@ -313,7 +313,10 @@ mod tests {
         let place = cw.places.len() - 1;
         cw.placed_places.insert(ParticularPlace {
             place,
-            fulfillments: vec![FulfilledPorf::Furniture(core)],
+            fulfillments: vec![FulfilledPorf::Furniture(SlotCoord {
+                cube: core,
+                slot: Slot::Room,
+            })],
             contents: Inventory::new(20.0),
             restriction: crate::place::ParentRestriction::Unrestricted,
         })

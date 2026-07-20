@@ -212,10 +212,7 @@ fn place_hierarchy_ui(
                 std::collections::BTreeMap::new();
             for f in &fulfillments {
                 if let crate::place::FulfilledPorf::Furniture(loc) = f {
-                    if let Some(cell) = constructed.contents.get(SlotCoord {
-                        cube: *loc,
-                        slot: Slot::Room,
-                    }) {
+                    if let Some(cell) = constructed.contents.get(*loc) {
                         *counts
                             .entry(constructed.eorfs[cell.id.as_usize()].name.clone())
                             .or_default() += 1;
@@ -257,17 +254,14 @@ fn place_hierarchy_ui(
             }
             ui.separator();
         }
-        // Highlight the innermost place's furniture in 3D. Place fulfillments
-        // are always `Slot::Room` furniture.
+        // Highlight the innermost place's furniture in 3D, each at its own
+        // slot (room-plopped or wall-mounted, e.g. a dining chair).
         let innermost = &constructed.placed_places[chain[0]];
         highlight = innermost
             .fulfillments
             .iter()
             .filter_map(|f| match f {
-                crate::place::FulfilledPorf::Furniture(cube) => Some(SlotCoord {
-                    cube: *cube,
-                    slot: Slot::Room,
-                }),
+                crate::place::FulfilledPorf::Furniture(loc) => Some(*loc),
                 crate::place::FulfilledPorf::Place(_) => None,
             })
             .collect();
