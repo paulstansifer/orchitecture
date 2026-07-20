@@ -47,38 +47,39 @@ use crate::traveler::{setup_travelers, TravelerState};
 
 const HELP_TEXT: &str = "\
 Commands (space-separated tokens, one per line):
-  place <x> <y> <z> <slot> <structure> [facing]   propose (or, in sandbox, build) a structure
-  remove <x> <y> <z> <slot>                       propose (or, in sandbox, commit) a removal
+  place <x> <y> <z> <slot> <structure> [facing]    propose (or, in sandbox, build) a structure
+  remove <x> <y> <z> <slot>                        propose (or, in sandbox, commit) a removal
   build_box <x1> <y1> <z1> <x2> <y2> <z2>          build a hollow box (walls/floor/ceiling)
   construct                                        commit all pending proposals now
   undo / redo                                      undo/redo the last proposal edit
   sandbox on|off                                   toggle direct-build vs propose-then-construct
-  advance [n]                                       advance the game clock by n months (default 1)
-  tick                                              run one Bevy Update pass (change detection!)
+  advance [n]                                      advance the game clock by n months (default 1)
+  tick                                             run one Bevy Update pass (change detection!)
   invite <farm_idx> / uninvite <farm_idx>          toggle a farm's market invitation
   farm_event <farm_idx> market|reroll|specialize|adopt   set a farm's next market action
   set_production <farm_idx> <resource>             cheat: force a farm's produced resource
+  set_inventory <resource> <qty>                   cheat: adjust city inventory of a resource(if possible)
   query cell <x> <y> <z> <slot>                    inspect a grid location
   query structures                                 list placeable structures
   query places                                     list place types (Places form automatically)
   query place <x> <y> <z>                          inspect the place owning a cube
   query valid_places <x> <y> <z>                   place types formable around a cube
   query population                                 each individual's home/work/fed/morale
-  query farms                                       list all farms
-  query farm <idx>                                  detailed farm info + market/production preview
+  query farms                                      list all farms
+  query farm <idx>                                 detailed farm info + market/production preview
   query outdoorness <x> <y> <z>                    outdoorsness (0.0-1.0) at a cube
-  query month                                       current game-clock month
-  query traveler                                    current traveler offer's origin/path, if any
-  query inventory                                   total stored resources across all places
-  query proposals                                   pending-proposal count / construction timer
-  query changed                                     what reacted on the most recent tick
-  query path <x1> <y1> <z1> <x2> <y2> <z2>          route between two Room cells (needs a tick)
-  query connected <x1> <y1> <z1> <x2> <y2> <z2>     cheap reachability check (needs a tick)
-  dump                                              print the city as the on-disk text format
+  query month                                      current game-clock month
+  query traveler                                   current traveler offer's origin/path, if any
+  query inventory                                  total stored resources across all places
+  query proposals                                  pending-proposal count / construction timer
+  query changed                                    what reacted on the most recent tick
+  query path <x1> <y1> <z1> <x2> <y2> <z2>         route between two Room cells (needs a tick)
+  query connected <x1> <y1> <z1> <x2> <y2> <z2>    cheap reachability check (needs a tick)
+  dump                                             print the city as the on-disk text format
   save <path> / load <path>                        save/load the city to/from a text file
-  reset [seed]                                      start a brand-new session
-  help                                              this text
-  quit / exit                                       end the session
+  reset [seed]                                     start a brand-new session
+  help                                             this text
+  quit / exit                                      end the session
 Slots: room|floor|xwall|zwall. Facings: negx|negz|posx|posz (or 0-3). Eorf names use
 underscores for spaces (e.g. market_stand). Pathfinding queries read `NavigationGrid`, which
 is only rebuilt by a `tick` after the city changes.";
@@ -391,6 +392,30 @@ impl HeadlessSession {
                     .ok_or_else(|| format!("no such farm: {idx}"))?;
                 farm.production = FarmProduction::Regular(resource);
                 Ok(vec![format!("farm {idx} produces={}", resource.label())])
+            }
+
+            "set_inventory" => {
+                let resource = args
+                    .get(0)
+                    .copied()
+                    .ok_or_else(|| "usage: set_production <idx> <resource>".to_string())
+                    .and_then(parse_uniform_resource)?;
+                let qty = parse_usize(args.get(1).copied().unwrap_or(""))? as u32;
+                let mut cw = self.world().resource_mut::<ConstructedCity>();
+                let cur_amt = crate::place::total_uniform(&*cw, resource);
+                let mut descr = vec![];
+                if qty > cur_amt {
+                    let depositied = crate::place::deposit_uniform_with_capacity(
+                        &mut cw,
+                        resource,
+                        qty - cur_amt,
+                    );
+                    descr.push(format!("{depositied} deposited"));
+                } else {
+                    let withdrawn = crate::place::consume_uniform(&mut cw, resource, cur_amt - qty);
+                    descr.push(format!("{withdrawn} withdrawn"));
+                }
+                Ok(descr)
             }
 
             "query" => self.query(args),
@@ -1083,6 +1108,9 @@ mod tests {
         let mut session = HeadlessSession::new(1);
         // Sandbox is on by default: placing commits immediately, for free.
         dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
+        dispatch_ok(&mut session, "set_inventory potato 0");
+        dispatch_ok(&mut session, "set_inventory canvas 0");
+        dispatch_ok(&mut session, "set_inventory plank 0");
 
         let cell = dispatch_ok(&mut session, &format!("query cell {PALLET_CELL}"));
         assert!(
@@ -1156,6 +1184,8 @@ mod tests {
         let mut session = HeadlessSession::new(5);
         dispatch_ok(&mut session, "sandbox off");
         dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
+        dispatch_ok(&mut session, "set_inventory canvas 0");
+        dispatch_ok(&mut session, "set_inventory straw 0");
         let before = dispatch_ok(&mut session, "query proposals");
         assert_eq!(
             before[0],
