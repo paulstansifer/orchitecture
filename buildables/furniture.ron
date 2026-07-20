@@ -58,6 +58,21 @@
         storage_capacity: [(Rack, 20.0)],
     ),
     (
+        name: "bookcase",
+        placement_style: RoomPlop,
+        x_char: None,
+        z_char: None,
+        embedding: (
+            tall: 0.9,
+            passable: 0.5,
+            decorative: 0.2,
+            striated: 0.5,
+            temporary: 1.0,
+        ),
+        cost: [(Plank, 5)],
+        storage_capacity: [(Book, 20.0)],
+    ),
+    (
         name: "bin",
         placement_style: RoomPlop,
         x_char: None,

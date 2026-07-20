@@ -26,6 +26,26 @@
         public_storage: true,
     ),
     (
+        name: "bookroom",
+        requirements: [
+            (
+                requirement: Furniture("bookcase"),
+                min: 2,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+            (
+                requirement: Furniture("chair"),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+        ],
+        public_storage: true,
+    ),
+    (
         name: "camp",
         requirements: [
             (

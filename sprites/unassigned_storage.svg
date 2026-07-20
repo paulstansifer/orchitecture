@@ -15,11 +15,11 @@
      id="defs63" />
   <sodipodi:namedview
      id="namedview61"
-     pagecolor="#ffffff"
+     pagecolor="#323232"
      bordercolor="#000000"
      borderopacity="0.25"
      inkscape:showpageshadow="2"
-     inkscape:pageopacity="0.0"
+     inkscape:pageopacity="0"
      inkscape:pagecheckerboard="0"
      inkscape:deskcolor="#d1d1d1"
      showgrid="false"
@@ -34,12 +34,12 @@
      inkscape:current-layer="svg59" />
   <path
      id="rect1031"
-     style="fill:none;stroke:#000000;stroke-width:3"
+     style="fill:none;stroke:#ffffff;stroke-width:3"
      d="m 45.646275,26.9412 v 5.813463 H 2.3537254 V 26.9412"
      sodipodi:nodetypes="cccc" />
   <text
      xml:space="preserve"
-     style="font-size:31.9378px;font-family:'Quicksand Light';-inkscape-font-specification:'Quicksand Light, Normal';text-align:center;text-anchor:middle;fill:none;stroke:#000000;stroke-width:3"
+     style="font-size:31.9378px;font-family:'Quicksand Light';-inkscape-font-specification:'Quicksand Light, Normal';text-align:center;text-anchor:middle;fill:#ffffff;stroke:#ffffff;stroke-width:3"
      x="23.504974"
      y="28.087704"
      id="text1236"><tspan
