@@ -58,13 +58,22 @@ pub struct UncommittedStorageRow {
     pub delta: i64,
 }
 
-/// A row for a `UniqueResource` category (Tools or Books) held in rack
-/// storage — shown when there's any rack capacity dedicated to it, or the
-/// player will receive one this month (see `month_panel_view`).
-pub struct RackResourceRow {
-    pub contents: RackContents,
+/// A category of `UniqueResource` shown in its own storage row. `Tools` and
+/// `Rugs` are rack-backed (per-cube dedicated); `Books` are bookcase-backed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UniqueCategory {
+    Tools,
+    Rugs,
+    Books,
+}
+
+/// A row for a `UniqueResource` category held in storage — shown when there's
+/// any capacity for it, or the player will receive one this month (see
+/// `month_panel_view`).
+pub struct UniqueResourceRow {
+    pub category: UniqueCategory,
     pub current: u32,
-    /// Total capacity dedicated to this category across all racks, if any.
+    /// Total capacity for this category across all storage, if any.
     pub capacity: Option<u32>,
 }
 
@@ -87,7 +96,7 @@ pub struct MonthPanelView {
     pub has_storage: bool,
     pub rows: Vec<ResourceRow>,
     pub uncommitted_storage: UncommittedStorageRow,
-    pub rack_rows: Vec<RackResourceRow>,
+    pub rack_rows: Vec<UniqueResourceRow>,
     pub traveler: Option<TravelerOfferView>,
 }
 
@@ -229,28 +238,38 @@ pub fn month_panel_view(
         delta: uncommitted_after.round() as i64 - uncommitted_now.round() as i64,
     };
 
-    // Tools/Books rows: shown when the player has any rack capacity
-    // dedicated to that category, or will receive one this month.
+    // Tools/Rugs/Books rows: shown when the player has any storage capacity
+    // for that category, or will receive one this month. Tools and Rugs are
+    // rack-backed; Books are bookcase-backed.
     let tools_incoming = effects.tools_incoming(farms);
-    let rack_rows: Vec<RackResourceRow> = [RackContents::Tools, RackContents::Books]
-        .into_iter()
-        .filter_map(|contents| {
-            let capacity = crate::place::rack_capacity(constructed, contents);
-            let incoming = contents == RackContents::Tools && tools_incoming;
-            if capacity <= 0.0 && !incoming {
-                return None;
-            }
-            let current = match contents {
-                RackContents::Tools => crate::place::total_tool_count(constructed),
-                RackContents::Books => crate::place::total_book_count(constructed),
-            };
-            Some(RackResourceRow {
-                contents,
-                current,
-                capacity: (capacity > 0.0).then_some(capacity.round() as u32),
-            })
+    let rack_rows: Vec<UniqueResourceRow> = [
+        UniqueCategory::Tools,
+        UniqueCategory::Rugs,
+        UniqueCategory::Books,
+    ]
+    .into_iter()
+    .filter_map(|category| {
+        let capacity = match category {
+            UniqueCategory::Tools => crate::place::rack_capacity(constructed, RackContents::Tools),
+            UniqueCategory::Rugs => crate::place::rack_capacity(constructed, RackContents::Rugs),
+            UniqueCategory::Books => crate::place::book_capacity(constructed),
+        };
+        let incoming = category == UniqueCategory::Tools && tools_incoming;
+        if capacity <= 0.0 && !incoming {
+            return None;
+        }
+        let current = match category {
+            UniqueCategory::Tools => crate::place::total_tool_count(constructed),
+            UniqueCategory::Rugs => crate::place::total_rug_count(constructed),
+            UniqueCategory::Books => crate::place::total_book_count(constructed),
+        };
+        Some(UniqueResourceRow {
+            category,
+            current,
+            capacity: (capacity > 0.0).then_some(capacity.round() as u32),
         })
-        .collect();
+    })
+    .collect();
 
     let has_project = pending.num_changes() > 0;
     let has_farms_invited = farms.invited_count() > 0;
@@ -364,7 +383,7 @@ mod tests {
         // The potato row is always shown, even with nothing else pending.
         assert_eq!(view.rows.len(), 1);
         assert_eq!(view.rows[0].resource, UniformResource::Potato);
-        // No racks exist and nothing is incoming, so no Tools/Books rows.
+        // No racks exist and nothing is incoming, so no Tools/Rugs/Books rows.
         assert!(view.rack_rows.is_empty());
     }
 
@@ -455,7 +474,7 @@ mod tests {
         );
 
         assert_eq!(view.rack_rows.len(), 1);
-        assert_eq!(view.rack_rows[0].contents, RackContents::Tools);
+        assert_eq!(view.rack_rows[0].category, UniqueCategory::Tools);
         assert_eq!(view.rack_rows[0].current, 0);
         assert_eq!(view.rack_rows[0].capacity, Some(10));
     }

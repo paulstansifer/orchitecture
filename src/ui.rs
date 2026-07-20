@@ -6,11 +6,11 @@ use crate::game_mode::{GameMode, SandboxMode};
 use crate::materials::MaterialList;
 use crate::month::AdvanceMonthRequested;
 use crate::population::Population;
-use crate::resource::{Precision, RackContents};
+use crate::resource::Precision;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::surroundings::farmstead::{FarmsResource, GameClock};
 use crate::traveler::TravelerState;
-use crate::ui_view::{month_panel_view, AdvanceState};
+use crate::ui_view::{month_panel_view, AdvanceState, UniqueCategory};
 use crate::{col_format, heading_label, label, note_label};
 
 pub fn shared_ui_system(
@@ -36,6 +36,7 @@ pub fn shared_ui_system(
 
     let icon_textures_lg = resource_icons.texture_ids_large(&mut contexts);
     let tool_texture_lg = resource_icons.tool_texture_id_large(&mut contexts);
+    let book_texture_lg = resource_icons.book_texture_id_large(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -241,19 +242,25 @@ pub fn shared_ui_system(
                     ui.label("");
                     ui.end_row();
 
-                    // Tools/Books: UniqueResource categories held in rack
-                    // storage, shown when there's rack capacity dedicated to
-                    // them or the player will receive one this month.
+                    // Tools/Rugs/Books: UniqueResource categories held in
+                    // storage, shown when there's capacity for them or the
+                    // player will receive one this month.
                     for row in &view.rack_rows {
-                        match row.contents {
-                            RackContents::Tools => {
+                        match row.category {
+                            UniqueCategory::Tools => {
                                 ui.add(egui::Image::new(egui::load::SizedTexture::new(
                                     tool_texture_lg,
                                     LARGE_SIZE,
                                 )));
                             }
-                            RackContents::Books => {
-                                ui.label(egui::RichText::new("B").size(LARGE_SIZE[1]));
+                            UniqueCategory::Books => {
+                                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                                    book_texture_lg,
+                                    LARGE_SIZE,
+                                )));
+                            }
+                            UniqueCategory::Rugs => {
+                                ui.label(egui::RichText::new("R").size(LARGE_SIZE[1]));
                             }
                         }
                         match row.capacity {

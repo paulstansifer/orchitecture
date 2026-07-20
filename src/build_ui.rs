@@ -817,7 +817,7 @@ fn bin_restriction_dropdown(
     }
 }
 
-/// Dropdown for a rack's `RackContents` dedication: "Books" or "Tools" --
+/// Dropdown for a rack's `RackContents` dedication: "Tools" or "Rugs" --
 /// unlike a bin, there's no "unrestricted" option, so absence from
 /// `restrictions` is just treated as the default (`Tools`).
 fn rack_restriction_dropdown(
@@ -837,11 +837,7 @@ fn rack_restriction_dropdown(
                 RackContents::Tools,
                 RackContents::Tools.label(),
             );
-            ui.selectable_value(
-                &mut current,
-                RackContents::Books,
-                RackContents::Books.label(),
-            );
+            ui.selectable_value(&mut current, RackContents::Rugs, RackContents::Rugs.label());
         });
     restrictions.insert(cube, current);
 }

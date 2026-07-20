@@ -822,11 +822,36 @@ pub fn total_tool_count(cw: &ConstructedCity) -> u32 {
         .sum()
 }
 
-/// Total number of books held across all rack storage places.
-pub fn total_book_count(cw: &ConstructedCity) -> u32 {
+/// Total number of rugs held across all rack storage places.
+pub fn total_rug_count(cw: &ConstructedCity) -> u32 {
     rack_storage_ids(cw)
         .into_iter()
+        .map(|id| cw.placed_places[id].contents.rug_count() as u32)
+        .sum()
+}
+
+/// Total number of books held across all (bookcase-backed) storage places.
+pub fn total_book_count(cw: &ConstructedCity) -> u32 {
+    storage_ids(cw)
+        .into_iter()
         .map(|id| cw.placed_places[id].contents.book_count() as u32)
+        .sum()
+}
+
+/// Total book (`StorageKind::Book`) capacity across all storage places -- the
+/// combined shelf space of every bookcase in a `public_storage` place. Unlike
+/// racks, bookcases have no per-cube dedication, so this just sums their
+/// capacity.
+pub fn book_capacity(cw: &ConstructedCity) -> f32 {
+    storage_ids(cw)
+        .into_iter()
+        .flat_map(|id| cw.placed_places[id].fulfillments.clone())
+        .filter_map(|f| match f {
+            FulfilledPorf::Furniture(cube) => {
+                Some(cube_storage_capacity(cw, cube, StorageKind::Book))
+            }
+            FulfilledPorf::Place(_) => None,
+        })
         .sum()
 }
 
@@ -923,7 +948,7 @@ fn rack_capacity_ceiling(
         .sum()
 }
 
-/// Free volume `pp` can currently accept for `contents` (Books or Tools):
+/// Free volume `pp` can currently accept for `contents` (Tools or Rugs):
 /// bounded by its racks' dedication (`rack_capacity_ceiling`) and by its
 /// overall room volume.
 fn rack_free_capacity_for(
@@ -932,14 +957,14 @@ fn rack_free_capacity_for(
     contents: RackContents,
 ) -> f32 {
     let current = match contents {
-        RackContents::Books => pp.contents.book_count(),
         RackContents::Tools => pp.contents.tool_count(),
+        RackContents::Rugs => pp.contents.rug_count(),
     } as f32;
     let ceiling_free = (rack_capacity_ceiling(cw, pp, contents) - current).max(0.0);
     ceiling_free.min(pp.contents.remaining_capacity())
 }
 
-/// Free volume available for `contents` (Books or Tools) across all rack
+/// Free volume available for `contents` (Tools or Rugs) across all rack
 /// storage places.
 pub fn rack_free_capacity(cw: &ConstructedCity, contents: RackContents) -> f32 {
     rack_storage_ids(cw)
@@ -1301,13 +1326,27 @@ mod tests {
                 placement_style: PlacementStyle::RoomPlop,
                 x_char: None,
                 z_char: None,
-                embedding,
+                embedding: embedding.clone(),
                 kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
                     crate::resource::UniformResource::Plank,
                     1,
                 )]),
                 vantage_evaluated: false,
                 storage_capacity: vec![(StorageKind::Rack, 10.0)],
+                placeable: true,
+            },
+            EorfInfo {
+                name: "bookcase".to_string(),
+                placement_style: PlacementStyle::RoomPlop,
+                x_char: None,
+                z_char: None,
+                embedding,
+                kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
+                    crate::resource::UniformResource::Plank,
+                    1,
+                )]),
+                vantage_evaluated: false,
+                storage_capacity: vec![(StorageKind::Book, 10.0)],
                 placeable: true,
             },
         ]
@@ -1710,18 +1749,56 @@ mod tests {
         }
     }
 
+    fn bookroom_place_def() -> Place {
+        Place {
+            name: "bookroom".to_string(),
+            requirements: vec![PlaceReq {
+                requirement: Porf::Furniture("bookcase".to_string()),
+                min: 2,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            }],
+            public_storage: true,
+            accounting: None,
+            quality_factors: vec![],
+            assignable_for: None,
+        }
+    }
+
+    #[test]
+    fn bookcases_provide_book_capacity_not_rack_capacity() {
+        let cw = grid_with_storage_bins(
+            bookroom_place_def(),
+            &[b(0, 0), b(0, 1)],
+            Inventory::new(30.0),
+        );
+        // Two bookcases at 10 each back a book capacity of 20...
+        assert_eq!(book_capacity(&cw), 20.0);
+        // ...and contribute nothing to rack (tool/rug) capacity.
+        assert_eq!(rack_capacity(&cw, RackContents::Tools), 0.0);
+        assert_eq!(rack_capacity(&cw, RackContents::Rugs), 0.0);
+    }
+
+    #[test]
+    fn racks_provide_no_book_capacity() {
+        let cw = grid_with_storage_bins(rack_place_def(), &[b(0, 0)], Inventory::new(10.0));
+        assert_eq!(book_capacity(&cw), 0.0);
+        assert_eq!(rack_capacity(&cw, RackContents::Tools), 10.0);
+    }
+
     #[test]
     fn rack_defaults_to_tools_when_unset() {
         let cw = grid_with_storage_bins(rack_place_def(), &[b(0, 0)], Inventory::new(10.0));
         assert_eq!(rack_free_capacity(&cw, RackContents::Tools), 10.0);
-        assert_eq!(rack_free_capacity(&cw, RackContents::Books), 0.0);
+        assert_eq!(rack_free_capacity(&cw, RackContents::Rugs), 0.0);
     }
 
     #[test]
-    fn rack_dedicated_to_books_excludes_tools() {
+    fn rack_dedicated_to_rugs_excludes_tools() {
         let mut cw = grid_with_storage_bins(rack_place_def(), &[b(0, 0)], Inventory::new(10.0));
-        cw.rack_restrictions.insert(b(0, 0), RackContents::Books);
-        assert_eq!(rack_free_capacity(&cw, RackContents::Books), 10.0);
+        cw.rack_restrictions.insert(b(0, 0), RackContents::Rugs);
+        assert_eq!(rack_free_capacity(&cw, RackContents::Rugs), 10.0);
         assert_eq!(rack_free_capacity(&cw, RackContents::Tools), 0.0);
     }
 
@@ -1729,15 +1806,15 @@ mod tests {
     fn deposit_tool_only_lands_in_a_tools_rack_with_room() {
         let mut cw =
             grid_with_storage_bins(rack_place_def(), &[b(0, 0), b(0, 1)], Inventory::new(10.0));
-        cw.rack_restrictions.insert(b(0, 0), RackContents::Books);
-        // b(0, 0) is dedicated to Books, so the tool must land via b(0, 1),
+        cw.rack_restrictions.insert(b(0, 0), RackContents::Rugs);
+        // b(0, 0) is dedicated to Rugs, so the tool must land via b(0, 1),
         // which defaults to Tools.
         assert!(deposit_tool(&mut cw, ToolKind::Whipsaw));
         assert_eq!(total_tool_count(&cw), 1);
     }
 
     #[test]
-    fn bins_never_hold_tools_or_books() {
+    fn bins_never_hold_tools_or_rugs() {
         // A plain bin-backed storage room has no rack fulfillments at all, so
         // it's never returned by `rack_storage_ids` and can't receive a tool.
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], Inventory::new(20.0));
@@ -1749,12 +1826,12 @@ mod tests {
     fn rack_capacity_reflects_total_ceiling_not_just_free_room() {
         let mut cw =
             grid_with_storage_bins(rack_place_def(), &[b(0, 0), b(0, 1)], Inventory::new(20.0));
-        cw.rack_restrictions.insert(b(0, 0), RackContents::Books);
+        cw.rack_restrictions.insert(b(0, 0), RackContents::Rugs);
         // b(0, 1) defaults to Tools; deposit one so free capacity (10) no
         // longer equals the total ceiling (still 10, since it's per-cube).
         deposit_tool(&mut cw, ToolKind::Whipsaw);
         assert_eq!(rack_capacity(&cw, RackContents::Tools), 10.0);
-        assert_eq!(rack_capacity(&cw, RackContents::Books), 10.0);
-        assert_eq!(total_book_count(&cw), 0);
+        assert_eq!(rack_capacity(&cw, RackContents::Rugs), 10.0);
+        assert_eq!(total_rug_count(&cw), 0);
     }
 }

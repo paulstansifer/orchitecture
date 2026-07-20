@@ -126,29 +126,32 @@ pub enum UniqueResource {
 
 /// What a Rack is dedicated to holding. Unlike a bin's `UniformResource`
 /// restriction, a rack has no "unrestricted" option -- it always holds one or
-/// the other, defaulting to `Tools`.
+/// the other, defaulting to `Tools`. (Books live in bookcases, not racks --
+/// see `StorageKind::Book`.)
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub enum RackContents {
-    Books,
     #[default]
     Tools,
+    Rugs,
 }
 
 /// Which kind of storage a piece of furniture provides -- see
 /// `EorfInfo::storage_capacity`. `Bulk` backs `UniformResource`s (what bins
-/// hold); `Rack` backs `UniqueResource`s, further dedicated per-cube to
-/// `RackContents::{Books,Tools}` (what racks hold).
+/// hold); `Rack` backs the tool/rug `UniqueResource`s, further dedicated
+/// per-cube to `RackContents::{Tools,Rugs}` (what racks hold); `Book` backs
+/// book `UniqueResource`s (what bookcases hold, with no per-cube dedication).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum StorageKind {
     Bulk,
     Rack,
+    Book,
 }
 
 impl RackContents {
     pub fn label(self) -> &'static str {
         match self {
-            RackContents::Books => "Books",
             RackContents::Tools => "Tools",
+            RackContents::Rugs => "Rugs",
         }
     }
 }
@@ -262,6 +265,12 @@ impl Inventory {
     pub fn book_count(&self) -> usize {
         self.unique_items()
             .filter(|i| matches!(i, UniqueResource::Book { .. }))
+            .count()
+    }
+
+    pub fn rug_count(&self) -> usize {
+        self.unique_items()
+            .filter(|i| matches!(i, UniqueResource::Rug { .. }))
             .count()
     }
 

@@ -15,6 +15,7 @@ pub struct ResourceIcons {
     large: HashMap<UniformResource, Handle<Image>>,
     small: HashMap<UniformResource, Handle<Image>>,
     tool_large: Handle<Image>,
+    book_large: Handle<Image>,
 }
 
 impl ResourceIcons {
@@ -36,6 +37,13 @@ impl ResourceIcons {
     /// tools, so this is kept as its own handle rather than living in `large`.
     pub fn tool_texture_id_large(&self, contexts: &mut EguiContexts) -> egui::TextureId {
         contexts.add_image(EguiTextureHandle::Strong(self.tool_large.clone()))
+    }
+
+    /// Icon for the Books bookcase row. Like tools, books are a
+    /// `UniqueResource` with no `UniformResource` variant, so it's its own
+    /// handle.
+    pub fn book_texture_id_large(&self, contexts: &mut EguiContexts) -> egui::TextureId {
+        contexts.add_image(EguiTextureHandle::Strong(self.book_large.clone()))
     }
 }
 
@@ -140,9 +148,14 @@ pub fn spawn_resource_icons(mut commands: Commands, mut images: ResMut<Assets<Im
         include_bytes!("../assets/generated/sprites/24x18/tool.png"),
         &mut images,
     );
+    let book_large = load_png(
+        include_bytes!("../assets/generated/sprites/24x18/book.png"),
+        &mut images,
+    );
     commands.insert_resource(ResourceIcons {
         large,
         small,
         tool_large,
+        book_large,
     });
 }
