@@ -3,7 +3,7 @@ use bevy_egui::{egui, EguiContexts};
 
 use crate::resource_icons::SMALL_SIZE;
 use crate::ui_util::FontSizes;
-use crate::{col_format, label};
+use crate::{col_format, label, note_label};
 
 use super::farmstead::{
     compute_market, farm_breakdown, market_effect, FarmEvent, FarmId, FarmProduction,
@@ -142,7 +142,8 @@ pub fn surroundings_ui_system(
     // Market preview for farm boost display.
     farms.ensure_adjacency();
     farms.ensure_roads();
-    let preview = compute_market(&*farms);
+    let storage_totals = crate::place::storage_totals(&constructed);
+    let preview = compute_market(&*farms, &storage_totals);
     // Predicted boost for a farm, if it is invited in `Market` mode.
     let predicted_boost = |id: FarmId| -> i32 {
         match preview.farm_effects.get(&id) {
@@ -384,32 +385,50 @@ fn farm_menu_ui(
     let current_event = farms.farm_event(menu_i);
     let is_specialized = matches!(farms[menu_i].production, FarmProduction::Specialized(_));
     let whipsaw_in_storage = crate::place::total_tools_of(constructed, ToolKind::Whipsaw) >= 1;
+    // Snapshot of stored resources, so previews and affordability checks can
+    // count the player's own potatoes toward a reconfigure's cost.
+    let storage_totals = crate::place::storage_totals(constructed);
 
     // Breakdowns via the same shared compute path.
-    let market_lines = farm_breakdown(farms, menu_i, FarmEvent::Market, None);
+    let market_lines = farm_breakdown(farms, menu_i, FarmEvent::Market, None, &storage_totals);
     let change_lines = farm_breakdown(
         farms,
         menu_i,
         FarmEvent::Reconfigure(NewProduction::RandomRegular),
         None,
+        &storage_totals,
     );
     let spec_lines = farm_breakdown(
         farms,
         menu_i,
         FarmEvent::Market,
         Some(FarmProduction::Specialized(ToolKind::Whipsaw)),
+        &storage_totals,
     );
-    let adopt_lines = farm_breakdown(farms, menu_i, FarmEvent::Adopt, None);
+    let adopt_lines = farm_breakdown(farms, menu_i, FarmEvent::Adopt, None, &storage_totals);
 
     let can_change = matches!(
         market_effect(
             farms,
             menu_i,
             FarmEvent::Reconfigure(NewProduction::RandomRegular),
+            &storage_totals,
         ),
         Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
     );
-    let can_specialize = !is_specialized && whipsaw_in_storage;
+    // Specializing is also a reconfigure, so it must be affordable too (from the
+    // market pool or the player's stored potatoes), not just have a spare tool.
+    let can_specialize = !is_specialized
+        && whipsaw_in_storage
+        && matches!(
+            market_effect(
+                farms,
+                menu_i,
+                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::Whipsaw)),
+                &storage_totals,
+            ),
+            Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
+        );
     let can_adopt = farms[menu_i].can_adopt();
 
     let render_event_option = |ui: &mut egui::Ui,
@@ -417,13 +436,19 @@ fn farm_menu_ui(
                                event: FarmEvent,
                                enabled: bool,
                                title: &str,
-                               lines: &[String]| {
+                               lines: &[String],
+                               disabled_note: Option<&str>| {
         let selected = current_event == event;
         if ui
             .add_enabled(enabled, egui::Button::selectable(selected, title))
             .clicked()
         {
             *chosen = Some(event);
+        }
+        if !enabled {
+            if let Some(note) = disabled_note {
+                note_label!(ui, note);
+            }
         }
         for line in lines {
             label!(ui, format!("    • {}", line));
@@ -446,6 +471,7 @@ fn farm_menu_ui(
                 true,
                 "Participate in the market",
                 &market_lines,
+                None,
             );
             render_event_option(
                 ui,
@@ -454,6 +480,7 @@ fn farm_menu_ui(
                 can_change,
                 "Select a different secondary resource",
                 &change_lines,
+                None,
             );
             render_event_option(
                 ui,
@@ -462,6 +489,7 @@ fn farm_menu_ui(
                 can_specialize,
                 "Process nearby timber into beams",
                 &spec_lines,
+                None,
             );
             render_event_option(
                 ui,
@@ -470,6 +498,7 @@ fn farm_menu_ui(
                 can_adopt,
                 "Adopt a family",
                 &adopt_lines,
+                Some("Total production must be at least 8"),
             );
         });
 

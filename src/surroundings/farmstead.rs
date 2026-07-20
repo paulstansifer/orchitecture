@@ -73,7 +73,7 @@ pub enum FarmEvent {
     /// Spend `RECONFIGURE_COST` potatoes from the pool (plus the farm's own potato
     /// stockpile) to permanently switch the farm's production to `new_production`.
     Reconfigure(NewProduction),
-    /// Take on a -10 declining production penalty in exchange for growing the
+    /// Take on a -8 declining production penalty in exchange for growing the
     /// city's population by one individual.
     Adopt,
 }
@@ -146,10 +146,11 @@ impl FarmData {
         ((self.base_production() as i32) + self.boost).max(0) as u32
     }
 
-    /// Whether this farm can absorb the "Adopt" action's -10 production penalty
-    /// without its capacity hitting zero.
+    /// Whether this farm's total production is large enough to take on the
+    /// "Adopt" action's -8 declining penalty. The penalty may bring capacity all
+    /// the way to zero, so a farm at exactly 8 still qualifies.
     pub fn can_adopt(&self) -> bool {
-        self.production_capacity() > 10
+        self.production_capacity() >= 8
     }
 
     pub fn specialized_tool(&self) -> Option<ToolKind> {
@@ -362,9 +363,12 @@ pub enum MarketModeEffect {
     /// `Market` event: attending the market raised the farm's boost by `MARKET_BOOST`.
     Boost,
     /// `Reconfigure` event: paid this many potatoes to switch production to
-    /// `new_production`.
+    /// `new_production`. `paid_from_storage` is how much of `paid` came out of
+    /// the player's pre-existing stored potatoes (as opposed to this month's
+    /// market inflow), which the executor must physically withdraw.
     Reconfigure {
         paid: u32,
+        paid_from_storage: u32,
         new_production: NewProduction,
     },
     /// `Adopt` event: population grows by one, production takes a -10 declining penalty.
@@ -456,14 +460,17 @@ pub fn resolve_market(
             // Pay a fixed reconfigure cost from the pool if it's there;
             // otherwise fall back to a normal boost.
             FarmEvent::Reconfigure(new_production) => {
-                if pool.inflow_available(UniformResource::Potato) >= RECONFIGURE_COST {
-                    pool.claim_inflow(
+                if pool.available(UniformResource::Potato) >= RECONFIGURE_COST {
+                    // Farms' delivered potatoes (inflow) pay first; the player's
+                    // own stored potatoes top up any shortfall.
+                    let (_, from_storage) = pool.claim(
                         LedgerSource::Market,
                         UniformResource::Potato,
                         RECONFIGURE_COST,
                     );
                     MarketModeEffect::Reconfigure {
                         paid: RECONFIGURE_COST,
+                        paid_from_storage: from_storage,
                         new_production,
                     }
                 } else {
@@ -498,14 +505,19 @@ fn gains_from_pool(inflow: &HashMap<UniformResource, u32>) -> Vec<(UniformResour
     gains
 }
 
-/// Compute what the next market run would do on its own — no feeding, traveler,
-/// or storage in the mix — without mutating state or using RNG. Used by the
+/// Compute what the next market run would do on its own — no feeding or traveler
+/// in the mix — without mutating state or using RNG. `storage` is a snapshot of
+/// the player's pre-existing stock, so a reconfigure's potato cost can draw on it
+/// (as it does in real execution) when the market inflow is short. Used by the
 /// preview UI and the "…" breakdown. Real execution instead threads a shared
 /// `Pool` through `seed_market` + `resolve_market` (see
 /// `city_effect::compute_month_effects`) so Eat and a traveler's visit can claim
 /// ahead of farms' own market participation.
-pub fn compute_market(fr: &FarmsResource) -> MarketOutcome {
-    let mut pool = Pool::new(HashMap::new());
+pub fn compute_market(
+    fr: &FarmsResource,
+    storage: &HashMap<UniformResource, u32>,
+) -> MarketOutcome {
+    let mut pool = Pool::new(storage.clone());
     let invited = seed_market(fr, &mut pool);
     let farm_effects = resolve_market(fr, &invited, &mut pool);
     MarketOutcome {
@@ -612,6 +624,7 @@ pub fn farm_breakdown(
     idx: FarmId,
     event: FarmEvent,
     temp_production: Option<FarmProduction>,
+    storage: &HashMap<UniformResource, u32>,
 ) -> Vec<String> {
     fr.ensure_adjacency();
     fr.ensure_roads();
@@ -621,7 +634,7 @@ pub fn farm_breakdown(
     if let Some(prod) = temp_production {
         fr[idx].production = prod;
     }
-    let lines = describe_farm_effect(fr, idx);
+    let lines = describe_farm_effect(fr, idx, storage);
     fr.set_farm_event(idx, saved_event);
     fr[idx].production = saved_prod;
     lines
@@ -633,12 +646,13 @@ pub fn market_effect(
     fr: &mut FarmsResource,
     idx: FarmId,
     event: FarmEvent,
+    storage: &HashMap<UniformResource, u32>,
 ) -> Option<MarketModeEffect> {
     fr.ensure_adjacency();
     let saved = fr.farm_event(idx);
     fr.set_farm_event(idx, event);
     fr.ensure_roads();
-    let effect = compute_market(fr)
+    let effect = compute_market(fr, storage)
         .farm_effects
         .get(&idx)
         .and_then(|e| match e {
@@ -649,9 +663,13 @@ pub fn market_effect(
     effect
 }
 
-fn describe_farm_effect(fr: &FarmsResource, idx: FarmId) -> Vec<String> {
+fn describe_farm_effect(
+    fr: &FarmsResource,
+    idx: FarmId,
+    storage: &HashMap<UniformResource, u32>,
+) -> Vec<String> {
     let mut lines = Vec::new();
-    let outcome = compute_market(fr);
+    let outcome = compute_market(fr, storage);
     let farm = &fr[idx];
 
     if let Some(CityEffect::Market {
@@ -677,6 +695,7 @@ fn describe_farm_effect(fr: &FarmsResource, idx: FarmId) -> Vec<String> {
             MarketModeEffect::Reconfigure {
                 paid,
                 new_production,
+                ..
             } => {
                 match new_production {
                     NewProduction::RandomRegular => lines.push(format!(
@@ -692,8 +711,7 @@ fn describe_farm_effect(fr: &FarmsResource, idx: FarmId) -> Vec<String> {
                 }
             }
             MarketModeEffect::Adopt => {
-                lines
-                    .push("Adopts a family: population +1, production -10 (declining)".to_string());
+                lines.push("Adopts a family: population +1, production -8 (declining)".to_string());
             }
         }
     } else {
@@ -878,13 +896,14 @@ mod tests {
         };
 
         // Pool has >= RECONFIGURE_COST potatoes: A pays and re-rolls.
-        let outcome = compute_market(&make(RECONFIGURE_COST + 5));
+        let outcome = compute_market(&make(RECONFIGURE_COST + 5), &HashMap::new());
         assert!(matches!(
             outcome.farm_effects[&FarmId::new(0)],
             crate::city_effect::CityEffect::Market {
                 effect: MarketModeEffect::Reconfigure {
                     paid,
                     new_production: NewProduction::RandomRegular,
+                    ..
                 },
                 ..
             } if paid == RECONFIGURE_COST
@@ -896,7 +915,7 @@ mod tests {
 
         // Pool has too little potato: A falls back to a normal boost, and its own
         // potatoes are still withheld (the event, not the outcome, decides that).
-        let outcome = compute_market(&make(RECONFIGURE_COST - 1));
+        let outcome = compute_market(&make(RECONFIGURE_COST - 1), &HashMap::new());
         assert!(matches!(
             outcome.farm_effects[&FarmId::new(0)],
             crate::city_effect::CityEffect::Market {
@@ -907,15 +926,16 @@ mod tests {
     }
 
     #[test]
-    fn can_adopt_requires_capacity_above_ten() {
+    fn can_adopt_requires_capacity_at_least_eight() {
         use UniformResource::Straw;
-        // area 10, no boost: capacity 10, exactly at the boundary -> not allowed.
-        let at_boundary = mk_farm(FarmProduction::Regular(Straw), 10.0, 0);
-        assert!(!at_boundary.can_adopt());
+        // area 8, no boost: capacity 8, exactly at the threshold -> allowed
+        // (the -8 penalty may take it to zero).
+        let at_threshold = mk_farm(FarmProduction::Regular(Straw), 8.0, 0);
+        assert!(at_threshold.can_adopt());
 
-        // area 11: capacity 11 -> allowed.
-        let above_boundary = mk_farm(FarmProduction::Regular(Straw), 11.0, 0);
-        assert!(above_boundary.can_adopt());
+        // area 7: capacity 7 -> not allowed.
+        let below_threshold = mk_farm(FarmProduction::Regular(Straw), 7.0, 0);
+        assert!(!below_threshold.can_adopt());
     }
 
     #[test]
@@ -930,7 +950,7 @@ mod tests {
         let mut fr = farms_with(vec![a], vec![vec![]]);
         fr.farms[0].event = FarmEvent::Adopt;
 
-        let effect = compute_market(&fr)
+        let effect = compute_market(&fr, &HashMap::new())
             .farm_effects
             .remove(&FarmId::new(0))
             .unwrap();
@@ -949,12 +969,12 @@ mod tests {
 
         // Population::default() starts with one individual; Adopt adds one more.
         assert_eq!(population.individuals.len(), 2);
-        assert_eq!(fr.farms[0].boost, -10);
-        assert_eq!(fr.farms[0].production_capacity(), 10);
+        assert_eq!(fr.farms[0].boost, -8);
+        assert_eq!(fr.farms[0].production_capacity(), 12); // area 20 - 8
 
         // The penalty decays by 1/month, same as a positive boost, moving toward 0.
         let plan = compute_production(&fr, &mut rand::rng());
         apply_production(&mut fr, &plan);
-        assert_eq!(fr.farms[0].boost, -9);
+        assert_eq!(fr.farms[0].boost, -7);
     }
 }

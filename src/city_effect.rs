@@ -302,14 +302,25 @@ impl CityEffect {
                 match effect {
                     MarketModeEffect::Boost => ctx.farms[i].boost += MARKET_BOOST,
                     MarketModeEffect::Adopt => {
-                        ctx.farms[i].boost -= 10;
+                        ctx.farms[i].boost -= 8;
                         ctx.population.individuals.push(Individual::default());
                     }
                     MarketModeEffect::Reconfigure {
                         paid,
+                        paid_from_storage,
                         new_production,
                     } => {
                         ctx.farms[i].boost = 0;
+                        // Physically withdraw the portion of the cost that came
+                        // out of the player's stored potatoes; the inflow portion
+                        // was farms' own delivery and needs no withdrawal.
+                        if *paid_from_storage > 0 {
+                            place::consume_uniform(
+                                ctx.constructed,
+                                UniformResource::Potato,
+                                *paid_from_storage,
+                            );
+                        }
                         if *paid > 0 {
                             if let FarmProduction::Specialized(prev) = ctx.farms[i].production {
                                 place::deposit_tool(ctx.constructed, prev);
@@ -1029,6 +1040,108 @@ mod tests {
         // since there's still no storage room -- but that's now accounted
         // for as a normal loss instead of silently vanishing.
         assert_eq!(effects.leftover.get(&Plank).map(|f| f.lost), Some(2));
+    }
+
+    /// A reconfiguring farm can cover the 10-potato cost from the player's
+    /// stored potatoes when this month's market inflow is short, and executing
+    /// the effect physically withdraws that portion from storage.
+    #[test]
+    fn reconfigure_pays_from_stored_potatoes_when_inflow_short() {
+        use rand::{rngs::StdRng, SeedableRng};
+
+        // One invited farm, set to re-roll. A reconfiguring farm contributes no
+        // potatoes to the pool, so this month's potato inflow is 0.
+        let mut farm = mk_farm(0);
+        farm.event = FarmEvent::Reconfigure(NewProduction::RandomRegular);
+        let mut farms = farms_with(vec![farm]);
+
+        // The player has 20 stored potatoes to draw on.
+        let mut inv = Inventory::new(100.0);
+        inv.add_uniform(Potato, 20);
+        let mut cw = grid_with_storage(inv);
+        let pending = ProposedCity::new();
+        let pop = population(0); // no eating, so nothing claims potatoes first
+
+        let material_list = MaterialList::default();
+        let effects = compute_month_effects(
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &no_traveler(),
+            &material_list,
+            false,
+        );
+
+        let market = effects
+            .effects
+            .iter()
+            .find_map(|e| match e {
+                CityEffect::Market { effect, .. } => Some(*effect),
+                _ => None,
+            })
+            .expect("a Market effect should be present");
+        assert!(
+            matches!(
+                market,
+                MarketModeEffect::Reconfigure {
+                    paid: 10,
+                    paid_from_storage: 10,
+                    ..
+                }
+            ),
+            "the whole 10-potato cost should be drawn from storage",
+        );
+
+        // Executing the effect withdraws those 10 potatoes from storage.
+        let mut population = pop;
+        let mut rng = StdRng::seed_from_u64(0);
+        for effect in effects.all() {
+            effect.apply(&mut EffectContext {
+                constructed: &mut cw,
+                pending: &mut ProposedCity::new(),
+                population: &mut population,
+                farms: &mut farms,
+                rng: &mut rng,
+            });
+        }
+        assert_eq!(
+            crate::place::storage_totals(&cw).get(&Potato).copied(),
+            Some(10),
+            "20 stored - 10 paid = 10 remaining",
+        );
+    }
+
+    /// With neither market inflow nor stored potatoes enough to cover the cost,
+    /// a reconfigure falls back to an ordinary boost.
+    #[test]
+    fn reconfigure_falls_back_to_boost_when_unaffordable() {
+        let mut farm = mk_farm(0);
+        farm.event = FarmEvent::Reconfigure(NewProduction::RandomRegular);
+        let farms = farms_with(vec![farm]);
+
+        let mut inv = Inventory::new(100.0);
+        inv.add_uniform(Potato, 5); // not enough, even from storage
+        let cw = grid_with_storage(inv);
+        let pending = ProposedCity::new();
+        let pop = population(0);
+
+        let material_list = MaterialList::default();
+        let effects = compute_month_effects(
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &no_traveler(),
+            &material_list,
+            false,
+        );
+
+        let market = effects.effects.iter().find_map(|e| match e {
+            CityEffect::Market { effect, .. } => Some(*effect),
+            _ => None,
+        });
+        assert!(matches!(market, Some(MarketModeEffect::Boost)));
     }
 
     /// A potato shortfall is prorated evenly across the population, rather

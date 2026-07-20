@@ -844,6 +844,7 @@ fn load_system(
 fn query_farm_system(
     In(idx): In<usize>,
     mut farms: ResMut<FarmsResource>,
+    cw: Res<ConstructedCity>,
 ) -> Result<Vec<String>, String> {
     if idx >= farms.farms.len() {
         return Err(format!("no such farm: {idx}"));
@@ -851,8 +852,9 @@ fn query_farm_system(
     let id = FarmId::new(idx);
     farms.ensure_adjacency();
     let event = farms.farm_event(id);
+    let storage = crate::place::storage_totals(&cw);
     let mut lines = vec![format!("farm {idx}")];
-    lines.extend(farm_breakdown(&mut farms, id, event, None));
+    lines.extend(farm_breakdown(&mut farms, id, event, None, &storage));
     Ok(lines)
 }
 
