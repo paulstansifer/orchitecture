@@ -34,7 +34,7 @@ use crate::population::{Individual, Population};
 use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResource};
 use crate::surroundings::farmstead::{
     known_farm_plentifulness, FarmId, FarmProduction, FarmsResource, MarketModeEffect,
-    NewProduction,
+    NewProduction, MARKET_BOOST,
 };
 use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 
@@ -279,7 +279,6 @@ pub enum CityEffect {
         farm_idx: FarmId,
         travel_cost: u32,
         potato_contributed: u32,
-        wanted_resource: UniformResource,
         inedible_contributed: (UniformResource, u32),
         effect: MarketModeEffect,
     },
@@ -301,7 +300,7 @@ impl CityEffect {
             } => {
                 let i = *farm_idx;
                 match effect {
-                    MarketModeEffect::Boost { granted, .. } => ctx.farms[i].boost = *granted as i32,
+                    MarketModeEffect::Boost => ctx.farms[i].boost += MARKET_BOOST,
                     MarketModeEffect::Adopt => {
                         ctx.farms[i].boost -= 10;
                         ctx.population.individuals.push(Individual::default());
@@ -347,11 +346,8 @@ impl CityEffect {
     pub fn describe(&self) -> String {
         match self {
             CityEffect::Market { effect, .. } => match effect {
-                MarketModeEffect::Boost { granted, .. } if *granted > 0 => {
-                    format!("A farm receives {granted} of its wanted resource.")
-                }
-                MarketModeEffect::Boost { .. } => {
-                    "A farm found none of its wanted resource at market.".to_string()
+                MarketModeEffect::Boost => {
+                    format!("A farm trades at the market: +{MARKET_BOOST} production.")
                 }
                 MarketModeEffect::Reconfigure {
                     new_production: NewProduction::RandomRegular,
@@ -629,8 +625,6 @@ mod tests {
             area: 5.0,
             fertility: 1.0,
             production: FarmProduction::Regular(Straw),
-            wanted_resource: Timber,
-            want_max: 5,
             potato_stockpile: potato,
             inedible_stockpile: 0,
             boost: 0,
@@ -708,74 +702,6 @@ mod tests {
                 _ => None,
             })
             .expect("a TravelerVisit effect should be present")
-    }
-
-    fn market_boost_granted(effects: &MonthEffects, idx: FarmId) -> u32 {
-        effects
-            .effects
-            .iter()
-            .find_map(|e| match e {
-                CityEffect::Market {
-                    farm_idx,
-                    effect: MarketModeEffect::Boost { granted, .. },
-                    ..
-                } if *farm_idx == idx => Some(*granted),
-                _ => None,
-            })
-            .expect("farm should have a Boost market effect")
-    }
-
-    #[test]
-    fn traveler_outranks_farms_own_market_participation() {
-        // Farm 0 produces Straw and contributes 10 to the shared pool. Farm 1
-        // wants Straw and would happily Boost with all 10 if nothing else
-        // claimed it first. A traveler also wants 5 Straw -- it should get
-        // its full demand, leaving only the remainder (5) for farm 1's own
-        // Boost, even though farms are resolved as `CityEffect::Market`.
-        let mut supplier = mk_farm(0);
-        supplier.production = FarmProduction::Regular(Straw);
-        supplier.inedible_stockpile = 10;
-        let mut wanter = mk_farm(0);
-        wanter.wanted_resource = Straw;
-        wanter.want_max = 10;
-
-        let farms = farms_with(vec![supplier, wanter]);
-        let cw = ConstructedCity::new(Vec::new());
-        let pending = ProposedCity::new();
-        let pop = population(0);
-
-        let mut traveler_state = no_traveler();
-        traveler_state.invited = true;
-        traveler_state.current_offer = Some(IndividualTraveler {
-            config_index: 0,
-            demands: vec![(Straw, 5)],
-            reward: ResolvedReward::Resource(Potato, 1),
-            path: Vec::new(),
-        });
-
-        let material_list = MaterialList::default();
-        let effects = compute_month_effects(
-            &farms,
-            &cw,
-            &pending,
-            &pop,
-            &traveler_state,
-            &material_list,
-            false,
-        );
-
-        let t = traveler_of(&effects);
-        assert!(t.affordable, "traveler should get first dibs on Straw");
-        assert_eq!(
-            t.demands,
-            vec![(Straw, 5, 5, 0)],
-            "traveler's full demand should be granted from inflow"
-        );
-        assert_eq!(
-            market_boost_granted(&effects, FarmId::new(1)),
-            5,
-            "farm 1 should only get the 5 Straw left over after the traveler's claim"
-        );
     }
 
     #[test]

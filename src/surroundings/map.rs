@@ -242,9 +242,6 @@ pub fn build_farms_resource(rng: &mut impl rand::Rng) -> FarmsResource {
         resource_acres[res_idx] += area;
 
         let fertility = rng.random_range(0.75..1.25_f32);
-        let wanted_offset = rng.random_range(1..farmable.len());
-        let wanted_resource = farmable[(res_idx + wanted_offset) % farmable.len()];
-        let want_max = (area.round() as u32).max(3);
 
         let base_production = area.round() as u32;
         let startup_months = rng.random_range(1..=3);
@@ -256,8 +253,6 @@ pub fn build_farms_resource(rng: &mut impl rand::Rng) -> FarmsResource {
             area,
             fertility,
             production: crate::surroundings::farmstead::FarmProduction::Regular(resource),
-            wanted_resource,
-            want_max,
             potato_stockpile: initial_stockpiles,
             inedible_stockpile: initial_stockpiles,
             boost: 0,

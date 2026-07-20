@@ -486,9 +486,37 @@ pub fn build_ui_system(
                         ui.heading("Places");
                         ui.separator();
                         let mut switch_to_furniture = false;
+                        // Where each extant place of each kind lives, so the
+                        // per-instance buttons below can jump to its hierarchy.
+                        let mut instances: Vec<Vec<SlotCoord>> =
+                            vec![Vec::new(); world.constructed.places.len()];
+                        for (id, pp) in world.constructed.placed_places.iter() {
+                            instances[pp.place].push(SlotCoord {
+                                cube: crate::place::place_location(&world.constructed, id),
+                                slot: Slot::Room,
+                            });
+                        }
                         for place_idx in 0..world.constructed.places.len() {
                             let name = world.constructed.places[place_idx].name.clone();
-                            ui.collapsing(name, |ui| {
+                            let locs = &instances[place_idx];
+                            ui.collapsing(format!("{} ({})", name, locs.len()), |ui| {
+                                if !locs.is_empty() {
+                                    ui.horizontal_wrapped(|ui| {
+                                        for &loc in locs {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new("")
+                                                        .min_size(egui::vec2(14.0, 14.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                next_places_view =
+                                                    Some(PlacesView::Hierarchy { loc });
+                                            }
+                                        }
+                                    });
+                                    ui.separator();
+                                }
                                 place_requirements_ui(
                                     ui,
                                     &world.constructed.places,

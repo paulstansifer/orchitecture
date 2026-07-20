@@ -307,8 +307,6 @@ mod tests {
             area: 5.0,
             fertility: 1.0,
             production: crate::surroundings::farmstead::FarmProduction::Regular(Straw),
-            wanted_resource: Timber,
-            want_max: 5,
             potato_stockpile: 10,
             inedible_stockpile: 4,
             boost: 0,

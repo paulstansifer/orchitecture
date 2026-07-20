@@ -606,13 +606,12 @@ impl HeadlessSession {
                     .enumerate()
                     .map(|(i, f)| {
                         format!(
-                            "{i} pos=({:.1},{:.1}) area={:.1} produces={} wanted={} potatoes={} \
+                            "{i} pos=({:.1},{:.1}) area={:.1} produces={} potatoes={} \
                              inedible={} boost={} invited={}",
                             f.seed.x,
                             f.seed.y,
                             f.area,
                             f.produced_resource().label(),
-                            f.wanted_resource.label(),
                             f.potato_stockpile,
                             f.inedible_stockpile,
                             f.boost,

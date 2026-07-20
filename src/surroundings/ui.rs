@@ -7,7 +7,7 @@ use crate::{col_format, label};
 
 use super::farmstead::{
     compute_market, farm_breakdown, market_effect, FarmEvent, FarmId, FarmProduction,
-    FarmsResource, MarketModeEffect, NewProduction, SurroundingsState,
+    FarmsResource, MarketModeEffect, NewProduction, SurroundingsState, MARKET_BOOST,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
 use crate::city_effect::CityEffect;
@@ -144,12 +144,12 @@ pub fn surroundings_ui_system(
     farms.ensure_roads();
     let preview = compute_market(&*farms);
     // Predicted boost for a farm, if it is invited in `Market` mode.
-    let predicted_boost = |id: FarmId| -> u32 {
+    let predicted_boost = |id: FarmId| -> i32 {
         match preview.farm_effects.get(&id) {
             Some(CityEffect::Market {
-                effect: MarketModeEffect::Boost { granted, .. },
+                effect: MarketModeEffect::Boost,
                 ..
-            }) => *granted,
+            }) => MARKET_BOOST,
             _ => 0,
         }
     };
@@ -330,16 +330,6 @@ pub fn surroundings_ui_system(
                                 )));
                             }
                             label!(ui, format!("{}", farm.inedible_stockpile));
-                        });
-
-                        // Wanted resource
-                        ui.horizontal(|ui| {
-                            label!(ui, format!("Wants {}", farm.want_max));
-                            if let Some(&tex) = icon_textures_sm.get(&farm.wanted_resource) {
-                                ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                                    tex, SMALL_SIZE,
-                                )));
-                            }
                         });
 
                         ui.horizontal(|ui| {

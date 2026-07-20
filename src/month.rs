@@ -21,8 +21,7 @@ use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::sparse3d::SlotCoord;
 use crate::surroundings::farmstead::{
-    apply_production, compute_production, reset_farm_events, update_wanted_resources,
-    FarmsResource, GameClock,
+    apply_production, compute_production, reset_farm_events, FarmsResource, GameClock,
 };
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{roll_traveler_offer, TravelerState};
@@ -107,7 +106,6 @@ pub fn advance_month(
 
     let plan = compute_production(farms, rng);
     apply_production(farms, &plan);
-    update_wanted_resources(farms);
     for farm in &mut farms.farms {
         farm.invited = false;
     }
