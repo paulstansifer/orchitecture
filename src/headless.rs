@@ -261,12 +261,12 @@ impl HeadlessSession {
                     .map(|f| parse_facing(f))
                     .transpose()?
                     .unwrap_or(0);
-                let n = self
+                let outcome = self
                     .world()
                     .run_system_once_with(place_system, (SlotCoord { cube, slot }, Some(id), dir))
                     .map_err(|e| e.to_string())?;
                 self.maybe_construct();
-                Ok(vec![format!("changed={n}")])
+                Ok(place_outcome_lines(outcome))
             }
 
             "remove" => {
@@ -275,12 +275,12 @@ impl HeadlessSession {
                 }
                 let cube = parse_ivec3(&args[0..3])?;
                 let slot = parse_slot(args[3])?;
-                let n = self
+                let outcome = self
                     .world()
                     .run_system_once_with(place_system, (SlotCoord { cube, slot }, None, 0))
                     .map_err(|e| e.to_string())?;
                 self.maybe_construct();
-                Ok(vec![format!("changed={n}")])
+                Ok(place_outcome_lines(outcome))
             }
 
             "build_box" => {
@@ -805,14 +805,45 @@ fn format_change_report(r: &ChangeReport) -> String {
 
 // ---- One-off systems, run via `World::run_system_once[_with]` ----
 
+/// Outcome of a `place`/`remove`: how many locations changed, and whether the
+/// target was silently refused because it sits in the road-forbidden zone (the
+/// starting crossroads). `place_at` skips such locations without erroring, so
+/// the harness reports the reason rather than leaving `changed=0` unexplained.
+struct PlaceOutcome {
+    changed: usize,
+    blocked_by_road: bool,
+}
+
 fn place_system(
     In((loc, item, dir)): In<(SlotCoord, Option<EorfId>, i32)>,
     cw: Res<ConstructedCity>,
     mut pending: ResMut<ProposedCity>,
-) -> usize {
-    pending
+) -> PlaceOutcome {
+    let changed = pending
         .place_at(&cw, loc, item, dir, BuildMaterialId::default())
-        .len()
+        .len();
+    let blocked_by_road = changed == 0
+        && item.is_some()
+        && cw.road_forbidden_zone
+        && crate::road::is_in_road_forbidden_zone(loc);
+    PlaceOutcome {
+        changed,
+        blocked_by_road,
+    }
+}
+
+/// Render a `place`/`remove` outcome for the REPL, appending a diagnostic note
+/// when the location was refused by the road-forbidden zone.
+fn place_outcome_lines(outcome: PlaceOutcome) -> Vec<String> {
+    let mut lines = vec![format!("changed={}", outcome.changed)];
+    if outcome.blocked_by_road {
+        lines.push(
+            "note: refused -- location is in the road-forbidden zone (the starting \
+             crossroads); build in the z<0 semiplane or at a higher y"
+                .to_string(),
+        );
+    }
+    lines
 }
 
 fn build_box_system(
