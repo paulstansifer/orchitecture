@@ -37,6 +37,7 @@ pub fn shared_ui_system(
     let icon_textures_lg = resource_icons.texture_ids_large(&mut contexts);
     let tool_texture_lg = resource_icons.tool_texture_id_large(&mut contexts);
     let book_texture_lg = resource_icons.book_texture_id_large(&mut contexts);
+    let unassigned_texture_lg = resource_icons.unassigned_storage_texture_id_large(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -222,7 +223,10 @@ pub fn shared_ui_system(
                     // Uncommitted storage: free capacity not dedicated to any
                     // particular resource, plus how much of it this month's
                     // projected leftover inflow will consume.
-                    ui.label(egui::RichText::new("?").size(LARGE_SIZE[1]));
+                    ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                        unassigned_texture_lg,
+                        LARGE_SIZE,
+                    )));
                     let uncommitted = &view.uncommitted_storage;
                     if uncommitted.delta < 0 {
                         label!(

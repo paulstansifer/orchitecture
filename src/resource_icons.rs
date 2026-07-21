@@ -16,6 +16,7 @@ pub struct ResourceIcons {
     small: HashMap<UniformResource, Handle<Image>>,
     tool_large: Handle<Image>,
     book_large: Handle<Image>,
+    unassigned_storage_large: Handle<Image>,
 }
 
 impl ResourceIcons {
@@ -44,6 +45,17 @@ impl ResourceIcons {
     /// handle.
     pub fn book_texture_id_large(&self, contexts: &mut EguiContexts) -> egui::TextureId {
         contexts.add_image(EguiTextureHandle::Strong(self.book_large.clone()))
+    }
+
+    /// Icon for the uncommitted (undedicated) storage row -- free capacity not
+    /// reserved for any particular resource.
+    pub fn unassigned_storage_texture_id_large(
+        &self,
+        contexts: &mut EguiContexts,
+    ) -> egui::TextureId {
+        contexts.add_image(EguiTextureHandle::Strong(
+            self.unassigned_storage_large.clone(),
+        ))
     }
 }
 
@@ -152,10 +164,15 @@ pub fn spawn_resource_icons(mut commands: Commands, mut images: ResMut<Assets<Im
         include_bytes!("../assets/generated/sprites/24x18/book.png"),
         &mut images,
     );
+    let unassigned_storage_large = load_png(
+        include_bytes!("../assets/generated/sprites/24x18/unassigned_storage.png"),
+        &mut images,
+    );
     commands.insert_resource(ResourceIcons {
         large,
         small,
         tool_large,
         book_large,
+        unassigned_storage_large,
     });
 }
