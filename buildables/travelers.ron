@@ -9,7 +9,7 @@
                 (Timber, (start: 5, end: 10)),
             ]),
         ],
-        reward: Tool(Whipsaw),
+        reward: Tool(CarpentersTools),
     ),
     (
         appear_chance: 0.4,

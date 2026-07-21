@@ -384,7 +384,8 @@ fn farm_menu_ui(
 ) {
     let current_event = farms.farm_event(menu_i);
     let is_specialized = matches!(farms[menu_i].production, FarmProduction::Specialized(_));
-    let whipsaw_in_storage = crate::place::total_tools_of(constructed, ToolKind::Whipsaw) >= 1;
+    let carpenters_tools_in_storage =
+        crate::place::total_tools_of(constructed, ToolKind::CarpentersTools) >= 1;
     // Snapshot of stored resources, so previews and affordability checks can
     // count the player's own potatoes toward a reconfigure's cost.
     let storage_totals = crate::place::storage_totals(constructed);
@@ -402,7 +403,7 @@ fn farm_menu_ui(
         farms,
         menu_i,
         FarmEvent::Market,
-        Some(FarmProduction::Specialized(ToolKind::Whipsaw)),
+        Some(FarmProduction::Specialized(ToolKind::CarpentersTools)),
         &storage_totals,
     );
     let adopt_lines = farm_breakdown(farms, menu_i, FarmEvent::Adopt, None, &storage_totals);
@@ -419,12 +420,12 @@ fn farm_menu_ui(
     // Specializing is also a reconfigure, so it must be affordable too (from the
     // market pool or the player's stored potatoes), not just have a spare tool.
     let can_specialize = !is_specialized
-        && whipsaw_in_storage
+        && carpenters_tools_in_storage
         && matches!(
             market_effect(
                 farms,
                 menu_i,
-                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::Whipsaw)),
+                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools)),
                 &storage_totals,
             ),
             Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
@@ -485,9 +486,9 @@ fn farm_menu_ui(
             render_event_option(
                 ui,
                 &mut chosen_event,
-                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::Whipsaw)),
+                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools)),
                 can_specialize,
-                "Process nearby timber into beams",
+                "Process nearby timber into planks",
                 &spec_lines,
                 None,
             );

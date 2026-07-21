@@ -121,7 +121,7 @@ pub struct FarmData {
     pub polygon: Vec<Vec2>,
     pub area: f32,
     pub fertility: f32,
-    /// What this farm produces every month (Regular resource or Specialized beam output).
+    /// What this farm produces every month (Regular resource or Specialized plank output).
     pub production: FarmProduction,
     pub potato_stockpile: u32,
     pub inedible_stockpile: u32,
@@ -856,12 +856,16 @@ mod tests {
     #[test]
     fn specialized_farm_is_supply_limited() {
         use UniformResource::Timber;
-        let s = mk_farm(FarmProduction::Specialized(ToolKind::Whipsaw), 10.0, 0); // capacity 10
+        let s = mk_farm(
+            FarmProduction::Specialized(ToolKind::CarpentersTools),
+            10.0,
+            0,
+        ); // capacity 10
         let t = mk_farm(FarmProduction::Regular(Timber), 3.0, 0); // produces 3 timber
         let u = mk_farm(FarmProduction::Regular(Timber), 4.0, 0); // produces 4 timber
         let fr = farms_with(vec![s, t, u], vec![vec![1, 2], vec![0], vec![0]]);
         let plan = compute_production(&fr, &mut rand::rng());
-        // Capacity 10 exceeds the 7 timber available, so beams == 7 and neighbours drained.
+        // Capacity 10 exceeds the 7 timber available, so planks == 7 and neighbours drained.
         assert_eq!(plan.inedible_add[0], 7);
         assert_eq!(plan.inedible_add[1], 0);
         assert_eq!(plan.inedible_add[2], 0);
@@ -870,7 +874,11 @@ mod tests {
     #[test]
     fn specialized_farm_is_capacity_limited() {
         use UniformResource::Timber;
-        let s = mk_farm(FarmProduction::Specialized(ToolKind::Whipsaw), 10.0, 0); // capacity 10
+        let s = mk_farm(
+            FarmProduction::Specialized(ToolKind::CarpentersTools),
+            10.0,
+            0,
+        ); // capacity 10
         let t = mk_farm(FarmProduction::Regular(Timber), 8.0, 0);
         let u = mk_farm(FarmProduction::Regular(Timber), 9.0, 0);
         let fr = farms_with(vec![s, t, u], vec![vec![1, 2], vec![0], vec![0]]);

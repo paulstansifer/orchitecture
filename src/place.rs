@@ -2000,7 +2000,7 @@ mod tests {
         cw.rack_restrictions.insert(b(0, 0), RackContents::Rugs);
         // b(0, 0) is dedicated to Rugs, so the tool must land via b(0, 1),
         // which defaults to Tools.
-        assert!(deposit_tool(&mut cw, ToolKind::Whipsaw));
+        assert!(deposit_tool(&mut cw, ToolKind::CarpentersTools));
         assert_eq!(total_tool_count(&cw), 1);
     }
 
@@ -2009,7 +2009,7 @@ mod tests {
         // A plain bin-backed storage room has no rack fulfillments at all, so
         // it's never returned by `rack_storage_ids` and can't receive a tool.
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], Inventory::new(20.0));
-        assert!(!deposit_tool(&mut cw, ToolKind::Whipsaw));
+        assert!(!deposit_tool(&mut cw, ToolKind::CarpentersTools));
         assert_eq!(total_tool_count(&cw), 0);
     }
 
@@ -2020,7 +2020,7 @@ mod tests {
         cw.rack_restrictions.insert(b(0, 0), RackContents::Rugs);
         // b(0, 1) defaults to Tools; deposit one so free capacity (10) no
         // longer equals the total ceiling (still 10, since it's per-cube).
-        deposit_tool(&mut cw, ToolKind::Whipsaw);
+        deposit_tool(&mut cw, ToolKind::CarpentersTools);
         assert_eq!(rack_capacity(&cw, RackContents::Tools), 10.0);
         assert_eq!(rack_capacity(&cw, RackContents::Rugs), 10.0);
         assert_eq!(total_rug_count(&cw), 0);

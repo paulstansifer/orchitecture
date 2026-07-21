@@ -358,7 +358,7 @@ impl HeadlessSession {
                     Some("market") => FarmEvent::Market,
                     Some("reroll") => FarmEvent::Reconfigure(NewProduction::RandomRegular),
                     Some("specialize") => {
-                        FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::Whipsaw))
+                        FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools))
                     }
                     Some("adopt") => FarmEvent::Adopt,
                     _ => {

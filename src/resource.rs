@@ -9,7 +9,6 @@ pub enum UniformResource {
     Potato,
     Timber,
     Straw,
-    WoodBeam,
     Canvas,
     Fieldstone,
     Block,
@@ -22,7 +21,6 @@ impl UniformResource {
         UniformResource::Potato,
         UniformResource::Timber,
         UniformResource::Straw,
-        UniformResource::WoodBeam,
         UniformResource::Canvas,
         UniformResource::Fieldstone,
         UniformResource::Block,
@@ -37,7 +35,6 @@ impl UniformResource {
             UniformResource::Potato => "Potatoes",
             UniformResource::Timber => "Timber",
             UniformResource::Straw => "Straw",
-            UniformResource::WoodBeam => "Wood beams",
             UniformResource::Canvas => "Canvas",
             UniformResource::Fieldstone => "Fieldstone",
             UniformResource::Block => "Blocks",
@@ -88,7 +85,7 @@ impl UniformResource {
 /// determines what a farm produces when it specializes with that tool.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum ToolKind {
-    Whipsaw,
+    CarpentersTools,
 }
 
 /// How a tool transforms neighbouring production when a farm specializes:
@@ -102,16 +99,16 @@ pub struct Specialization {
 impl ToolKind {
     pub fn label(self) -> &'static str {
         match self {
-            ToolKind::Whipsaw => "Whipsaw",
+            ToolKind::CarpentersTools => "Carpenter's tools",
         }
     }
 
     /// What this tool turns neighboring production into when a farm specializes.
     pub fn specialization(self) -> Specialization {
         match self {
-            ToolKind::Whipsaw => Specialization {
+            ToolKind::CarpentersTools => Specialization {
                 input: UniformResource::Timber,
-                output: UniformResource::WoodBeam,
+                output: UniformResource::Plank,
             },
         }
     }

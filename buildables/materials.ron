@@ -14,7 +14,7 @@
       costs: {
       WallLike: [(Timber, 4)],
       PillarLike: [(Timber, 1)],
-      // TODO: remove these for planks, or at least beams
+      // TODO: remove these for planks
       GroundFloorLike: [(Timber, 2)],
       CantileverFloorLike: [(Timber, 4)],
     },

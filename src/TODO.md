@@ -7,6 +7,7 @@
   * Don't derive `Clone` or `Copy` on resources; define conserving operations, and a `.clone_for_simulation()` to use when imagining outcomes 
   * Add "pane", which is brought by travelers, a requirement for windows.
     * Make doors more costly, too, since they'll be the early source of light.
+  * Add a notion of "minimum stock" to control workshop rates (and drive auto-invites for farms?). But how does it interact with long, expensive construction projects? -- I guess we only take-from-storage at a certain rate, but it seems pretty opaque.
 
 # Walk-around mode:
   * Make textures and try pixel-art texturing
