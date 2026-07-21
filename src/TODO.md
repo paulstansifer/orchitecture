@@ -7,11 +7,6 @@
   * Don't derive `Clone` or `Copy` on resources; define conserving operations, and a `.clone_for_simulation()` to use when imagining outcomes 
   * Add "pane", which is brought by travelers, a requirement for windows.
     * Make doors more costly, too, since they'll be the early source of light.
-  * Return resources (other than lime) for deconstructed buildings.
-  * "dining room" doesn't seem to form; why?
-  * Wings3D shapes wind up in the wrong spot, relative to their cube.
-  * The headless mode should only show "visible" farms.
-  * The headless mode should be deterministic.
 
 # Walk-around mode:
   * Make textures and try pixel-art texturing
@@ -31,13 +26,8 @@
     function or `ConstructedCity::find_structure_by_name` instead).
   * `src/bin/sprite_sheet.rs:59` `BULK_WORLD_UNITS = 0.0` permanently disables ~30 lines of
     mesh-inflation code (508-526, 597-623).
-  * `src/scene.rs:9,31-44` — commented-out fill-light constant and spawn loop.
-  * `src/build_ui.rs:655-723` — `station_resource_totals`/`construction_cost` look unreferenced
-    in this file; worth a crate-wide check.
 
 ## Duplicated logic (candidates for a shared helper)
-  * `src/qnn/adapter.rs`, `translate.rs:343`, `translate.rs:538-541` — the embedding tuple
-    `vec![semb.tall, semb.decorative, semb.passable, semb.striated]` is duplicated 3x.
   * `src/autotile/meshes.rs` — `spawn_autotile_rules` and `load_autotile_handles` both parse
     `structures.autotile` independently instead of sharing one parsed resource.
   * `src/cutaway.rs` — several internal duplications: `octant_hidden` vs. the `is_cut_face`

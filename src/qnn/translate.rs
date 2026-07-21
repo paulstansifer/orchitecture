@@ -866,25 +866,6 @@ mod tests {
     use super::*;
     use crate::sparse3d::Sparse3D;
 
-    // Commented out as it depends on a CNN model not provided
-    // #[test]
-    // fn test_voxel_cnn() -> Result<(), Box<dyn Error>> {
-    //     // Create dummy input data (replace with actual data loading)
-    //     // Batch size of 1, 16 channels, depth 14, height 30, width 30
-    //     let device = <Gpu as Backend>::Device::new(); // Modified backend initialization
-    //     let input_data = Tensor::<Gpu, 5>::random(
-    //         [1, EMBEDDING_SIZE as usize, INPUT_DEPTH as usize, INPUT_HEIGHT as usize, INPUT_WIDTH as usize],
-    //         burn::tensor::Distribution::Standard,
-    //         &device,
-    //     );
-
-    //     // Perform a forward pass and get the score
-    //     // let score = cnn.score(&input_data)?; // cnn is not defined
-    //     // println!("Predicted score: {}", score);
-
-    //     Ok(())
-    // }
-
     #[test]
     fn test_sparse3d_to_tensor() -> Result<(), Box<dyn Error>> {
         let si = crate::eorf::load_structure_info();
