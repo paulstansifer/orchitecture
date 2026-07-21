@@ -3,6 +3,7 @@ use crate::eorf::EorfList;
 use crate::materials::BuildMaterialId;
 use crate::resource::{
     Approximation, Inventory, RackContents, StorageKind, ToolKind, UniformResource, UniqueResource,
+    UniqueResourceKind,
 };
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use bevy::math::IVec3;
@@ -156,12 +157,18 @@ fn fill_default_quality_factors(info: &mut Place) {
 pub enum Porf {
     Furniture(String),
     Place(String),
+    /// A furniture cube with a `Tool` of this kind installed in one of its
+    /// slots (see `ConstructedCity::furniture_slots`). Fulfilled by that
+    /// furniture cube -- so it also stands in for "a table" when only tables
+    /// carry tool slots.
+    InstalledTool(ToolKind),
 }
 
 impl Porf {
     pub fn name(&self) -> &str {
         match self {
             Porf::Furniture(n) | Porf::Place(n) => n,
+            Porf::InstalledTool(kind) => kind.label(),
         }
     }
 }
@@ -413,6 +420,56 @@ fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Ve
     found
 }
 
+/// True if the furniture at `cube` has a `Tool(kind)` installed in one of its
+/// slots. Slots live on Room-slot furniture (keyed by cube), so no slot
+/// disambiguation is needed.
+fn has_installed_tool(cw: &ConstructedCity, cube: IVec3, kind: ToolKind) -> bool {
+    cw.furniture_slots.get(&cube).is_some_and(|slots| {
+        slots
+            .iter()
+            .flatten()
+            .any(|item| *item == UniqueResource::Tool(kind))
+    })
+}
+
+/// All furniture within `PLACE_DIST` (2D Manhattan, same y-layer) of `origin`
+/// that has a `Tool(kind)` installed. Returns the furniture's Room `SlotCoord`.
+fn furniture_with_installed_tool_near(
+    cw: &ConstructedCity,
+    origin: IVec3,
+    kind: ToolKind,
+) -> Vec<SlotCoord> {
+    let mut found = Vec::new();
+    for dx in -PLACE_DIST..=PLACE_DIST {
+        let zspan = PLACE_DIST - dx.abs();
+        for dz in -zspan..=zspan {
+            let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
+            if has_installed_tool(cw, cube, kind) {
+                found.push(SlotCoord {
+                    cube,
+                    slot: Slot::Room,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// All furniture (anywhere) with a `Tool(kind)` installed -- for core-candidate
+/// collection in `sync_places`.
+fn all_furniture_with_installed_tool(cw: &ConstructedCity, kind: ToolKind) -> Vec<IVec3> {
+    cw.furniture_slots
+        .iter()
+        .filter(|(_, slots)| {
+            slots
+                .iter()
+                .flatten()
+                .any(|item| *item == UniqueResource::Tool(kind))
+        })
+        .map(|(cube, _)| *cube)
+        .collect()
+}
+
 /// All placed places named `name` within `PLACE_DIST` of `origin`
 /// (measured from each candidate's own resolved location).
 fn places_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<PlacedPlaceId> {
@@ -455,6 +512,15 @@ fn candidates_near(
             .filter(|&id| cw.placed_places[id].restriction.allows(parent_name))
             .map(FulfilledPorf::Place)
             .collect(),
+        Porf::InstalledTool(kind) => furniture_with_installed_tool_near(cw, origin, *kind)
+            .into_iter()
+            .filter(|loc| {
+                cw.furniture_restrictions
+                    .get(&loc.cube)
+                    .is_none_or(|r| r.allows(parent_name))
+            })
+            .map(FulfilledPorf::Furniture)
+            .collect(),
     }
 }
 
@@ -471,6 +537,9 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
             .placed_places
             .get(*id)
             .is_some_and(|pp| cw.places[pp.place].name == *name),
+        (FulfilledPorf::Furniture(loc), Porf::InstalledTool(kind)) => {
+            has_installed_tool(cw, loc.cube, *kind)
+        }
         _ => false,
     }
 }
@@ -789,6 +858,14 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
                 })
                 .map(|(id, _)| place_location(cw, id))
                 .collect(),
+            Porf::InstalledTool(kind) => all_furniture_with_installed_tool(cw, *kind)
+                .into_iter()
+                .filter(|cube| {
+                    cw.furniture_restrictions
+                        .get(cube)
+                        .is_none_or(|r| r.allows(parent_name))
+                })
+                .collect(),
         };
         candidates.extend(cubes.into_iter().map(|cube| (cube, place_idx)));
     }
@@ -901,6 +978,90 @@ pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
             cw.placed_places[id]
                 .contents
                 .add_unique(UniqueResource::Tool(kind));
+            return true;
+        }
+    }
+    false
+}
+
+/// Every `UniqueResource` of `kind` currently held in public storage -- the
+/// pool the install pop-up offers to draw from. Installed resources have
+/// already been withdrawn, so they don't appear here.
+pub fn available_uniques_of_kind(
+    cw: &ConstructedCity,
+    kind: UniqueResourceKind,
+) -> Vec<UniqueResource> {
+    storage_ids(cw)
+        .into_iter()
+        .flat_map(|id| {
+            cw.placed_places[id]
+                .contents
+                .unique_items()
+                .filter(|item| kind.matches(item))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Remove one unique equal to `item` from the first storage place that holds
+/// it (used when installing it into a furniture slot). Returns `true` if one
+/// was removed.
+pub fn withdraw_unique(cw: &mut ConstructedCity, item: &UniqueResource) -> bool {
+    for id in storage_ids(cw) {
+        if cw.placed_places[id].contents.remove_unique(item) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Return `item` to public storage (used when removing it from a slot, or when
+/// the furniture holding it is removed/overwritten). Books go to bookcases,
+/// tools/rugs to their dedicated racks. Returns `false` (dropping the item) if
+/// there's nowhere with room -- the caller has no better recourse.
+pub fn deposit_unique(cw: &mut ConstructedCity, item: UniqueResource) -> bool {
+    match item {
+        UniqueResource::Tool(_) => deposit_into_rack(cw, item, RackContents::Tools),
+        UniqueResource::Rug { .. } => deposit_into_rack(cw, item, RackContents::Rugs),
+        UniqueResource::Book { .. } => deposit_into_bookcase(cw, item),
+    }
+}
+
+/// Deposit `item` into the first rack storage place dedicated to `contents`
+/// with room for it.
+fn deposit_into_rack(
+    cw: &mut ConstructedCity,
+    item: UniqueResource,
+    contents: RackContents,
+) -> bool {
+    for id in rack_storage_ids(cw) {
+        if rack_free_capacity_for(cw, &cw.placed_places[id], contents) >= 1.0 {
+            cw.placed_places[id].contents.add_unique(item);
+            return true;
+        }
+    }
+    false
+}
+
+/// Deposit a book into the first bookcase-backed storage place with room.
+fn deposit_into_bookcase(cw: &mut ConstructedCity, item: UniqueResource) -> bool {
+    let volume = item.volume();
+    for id in storage_ids(cw) {
+        let pp = &cw.placed_places[id];
+        let ceiling: f32 = pp
+            .fulfillments
+            .iter()
+            .filter_map(|f| match f {
+                FulfilledPorf::Furniture(loc) => {
+                    Some(slot_storage_capacity(cw, *loc, StorageKind::Book))
+                }
+                FulfilledPorf::Place(_) => None,
+            })
+            .sum();
+        let current = pp.contents.book_count() as f32 * volume;
+        if (ceiling - current).min(pp.contents.remaining_capacity()) >= volume {
+            cw.placed_places[id].contents.add_unique(item);
             return true;
         }
     }
@@ -1356,6 +1517,7 @@ mod tests {
                 vantage_evaluated: false,
                 storage_capacity: vec![(StorageKind::Bulk, 20.0)],
                 placeable: true,
+                slots: vec![],
             },
             EorfInfo {
                 name: "rack".to_string(),
@@ -1370,6 +1532,7 @@ mod tests {
                 vantage_evaluated: false,
                 storage_capacity: vec![(StorageKind::Rack, 10.0)],
                 placeable: true,
+                slots: vec![],
             },
             EorfInfo {
                 name: "bookcase".to_string(),
@@ -1384,6 +1547,7 @@ mod tests {
                 vantage_evaluated: false,
                 storage_capacity: vec![(StorageKind::Book, 10.0)],
                 placeable: true,
+                slots: vec![],
             },
             EorfInfo {
                 name: "table".to_string(),
@@ -1398,6 +1562,10 @@ mod tests {
                 vantage_evaluated: false,
                 storage_capacity: vec![],
                 placeable: true,
+                slots: vec![crate::eorf::FurnitureSlot {
+                    kind: crate::resource::UniqueResourceKind::Tool,
+                    render_offset: bevy::math::Vec3::ZERO,
+                }],
             },
             // A `WallPlop` piece -- lives in a wall slot, not the cube interior.
             EorfInfo {
@@ -1413,6 +1581,7 @@ mod tests {
                 vantage_evaluated: false,
                 storage_capacity: vec![],
                 placeable: true,
+                slots: vec![],
             },
         ]
     }
@@ -1756,6 +1925,53 @@ mod tests {
         );
     }
 
+    /// Exercises the `InstalledTool` requirement end-to-end through the real
+    /// headless REPL and the bundled `places.ron`/`furniture.ron`: a table's
+    /// tool slot must actually have carpenter's tools installed (not just a
+    /// bare table) before a "carpenter's workshop" forms alongside a bin and a
+    /// chair, and removing the tool dissolves it again.
+    #[test]
+    fn installing_carpenters_tools_on_a_table_forms_a_workshop() {
+        let mut session = HeadlessSession::new(1);
+
+        // Somewhere far from the initial furniture so nothing else is swept in.
+        dispatch_ok(&mut session, "place 100 0 100 room table");
+        dispatch_ok(&mut session, "place 100 0 101 room bin");
+        dispatch_ok(&mut session, "place 100 0 102 xwall chair");
+        dispatch_ok(&mut session, "tick");
+
+        // A bare table (no tool installed) isn't enough to form the workshop.
+        let places = dispatch_ok(&mut session, "query place 100 0 100");
+        assert!(
+            !places.iter().any(|l| l.contains("carpenter's_workshop")),
+            "workshop shouldn't form without an installed tool: {places:?}"
+        );
+
+        dispatch_ok(&mut session, "deposit_tool");
+        dispatch_ok(&mut session, "install 100 0 100 0");
+        dispatch_ok(&mut session, "tick");
+
+        let slots = dispatch_ok(&mut session, "query slots 100 0 100");
+        assert!(
+            slots.iter().any(|l| l.contains("Carpenter's tools")),
+            "expected the tool to show as installed: {slots:?}"
+        );
+        let places = dispatch_ok(&mut session, "query place 100 0 100");
+        assert!(
+            places.iter().any(|l| l.contains("carpenter's_workshop")),
+            "expected a carpenter's workshop to form: {places:?}"
+        );
+
+        // Removing the tool returns it to storage and dissolves the workshop.
+        dispatch_ok(&mut session, "uninstall 100 0 100 0");
+        dispatch_ok(&mut session, "tick");
+        let places = dispatch_ok(&mut session, "query place 100 0 100");
+        assert!(
+            !places.iter().any(|l| l.contains("carpenter's_workshop")),
+            "expected the workshop to dissolve once its tool is removed: {places:?}"
+        );
+    }
+
     // ── storage capacity helpers ────────────────────────────────────────────
 
     fn storage_place_def() -> Place {
@@ -1785,7 +2001,9 @@ mod tests {
     fn grid_with_storage_bins(def: Place, bins: &[IVec3], inv: Inventory) -> ConstructedCity {
         let furniture_name = match &def.requirements[0].requirement {
             Porf::Furniture(name) => name.clone(),
-            Porf::Place(_) => panic!("test helper expects a furniture-backed place"),
+            Porf::Place(_) | Porf::InstalledTool(_) => {
+                panic!("test helper expects a furniture-backed place")
+            }
         };
         let mut cw = ConstructedCity::new(test_structures());
         cw.road_forbidden_zone = false;

@@ -283,6 +283,7 @@ mod tests {
                 vantage_evaluated: false,
                 storage_capacity: Vec::new(),
                 placeable: true,
+                slots: Vec::new(),
             },
             EorfInfo {
                 name: "floor".to_string(),
@@ -302,6 +303,7 @@ mod tests {
                 vantage_evaluated: false,
                 storage_capacity: Vec::new(),
                 placeable: true,
+                slots: Vec::new(),
             },
         ]
     }

@@ -1,4 +1,5 @@
 use bevy::asset::{AssetServer, Handle};
+use bevy::math::Vec3;
 use bevy::prelude::{Res, ResMut, Resource};
 use bevy::scene::Scene;
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,18 @@ pub enum FurnitureOrElement {
     Element(crate::materials::ElementType),
 }
 
+/// A slot on a piece of furniture that can hold a single installed
+/// `UniqueResource` of a constrained `kind`. Installed resources are withdrawn
+/// from public storage (they don't act as public inventory while installed) --
+/// see `ConstructedCity::furniture_slots`. `render_offset` positions the
+/// installed item's mesh relative to the furniture (assets TBD).
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct FurnitureSlot {
+    pub kind: crate::resource::UniqueResourceKind,
+    #[serde(default)]
+    pub render_offset: Vec3,
+}
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct EorfInfo {
     pub name: String,
@@ -78,6 +91,9 @@ pub struct EorfInfo {
     /// UI (e.g. the starting "wagon" is placed once, at world generation,
     /// and shouldn't be player-buildable). Always `true` for elements.
     pub placeable: bool,
+    /// Slots this furniture exposes for installing `UniqueResource`s. Empty for
+    /// furniture (and always for elements) with no slots.
+    pub slots: Vec<FurnitureSlot>,
 }
 
 impl EorfInfo {
@@ -106,6 +122,10 @@ impl EorfInfo {
             FurnitureOrElement::Element(stype) => Some(stype),
             FurnitureOrElement::Furniture(_) => None,
         }
+    }
+
+    pub fn has_slots(&self) -> bool {
+        !self.slots.is_empty()
     }
 }
 
@@ -190,6 +210,8 @@ struct FurnitureRon {
     storage_capacity: Vec<(crate::resource::StorageKind, f32)>,
     #[serde(default = "default_true")]
     placeable: bool,
+    #[serde(default)]
+    slots: Vec<FurnitureSlot>,
 }
 
 /// Loads `buildables/elements.ron` and `buildables/furniture.ron`, in that
@@ -213,6 +235,7 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             vantage_evaluated: false,
             storage_capacity: Vec::new(),
             placeable: true,
+            slots: Vec::new(),
         })
         .chain(furniture.into_iter().map(|f| EorfInfo {
             name: f.name,
@@ -224,6 +247,7 @@ pub fn load_structure_info() -> Vec<EorfInfo> {
             vantage_evaluated: f.vantage_evaluated,
             storage_capacity: f.storage_capacity,
             placeable: f.placeable,
+            slots: f.slots,
         }))
         .collect()
 }

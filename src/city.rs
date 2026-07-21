@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::eorf::{EorfId, EorfInfo, EorfList};
 use crate::gi_material::{default_gi_image, GiExtension, GiMaterial, ShadowOnlyMaterial};
-use crate::resource::UniformResource;
+use crate::resource::{UniformResource, UniqueResource};
 use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 
 /// A score that may be an exact target or a one-sided inequality constraint.
@@ -301,6 +301,13 @@ pub struct ConstructedCity {
     /// `set_cell`/`take_cell` whenever the furniture there is overwritten or
     /// removed, since the dedication belongs to that specific placement.
     pub rack_restrictions: HashMap<IVec3, crate::resource::RackContents>,
+    /// Per-instance installed-resource slots, keyed by the cube the slotted
+    /// furniture is placed at. The vector runs parallel to the furniture type's
+    /// `EorfInfo::slots`; a `Some` entry is an installed `UniqueResource`
+    /// (withdrawn from public storage). Absent means every slot is empty. When
+    /// the furniture is overwritten or removed, `set_cell`/`take_cell` return
+    /// any installed resources to storage before clearing the entry.
+    pub furniture_slots: HashMap<IVec3, Vec<Option<UniqueResource>>>,
 }
 
 impl ConstructedCity {
@@ -314,6 +321,18 @@ impl ConstructedCity {
             furniture_restrictions: HashMap::new(),
             bin_resource_restrictions: HashMap::new(),
             rack_restrictions: HashMap::new(),
+            furniture_slots: HashMap::new(),
+        }
+    }
+
+    /// Return any resources installed in the furniture at `cube`'s slots to
+    /// public storage, and forget the slot entry. Called before a Room-slot
+    /// cell is overwritten or removed so installed items aren't destroyed.
+    fn evict_furniture_slots(&mut self, cube: IVec3) {
+        if let Some(installed) = self.furniture_slots.remove(&cube) {
+            for item in installed.into_iter().flatten() {
+                crate::place::deposit_unique(self, item);
+            }
         }
     }
 
@@ -324,6 +343,7 @@ impl ConstructedCity {
             self.furniture_restrictions.remove(&loc.cube);
             self.bin_resource_restrictions.remove(&loc.cube);
             self.rack_restrictions.remove(&loc.cube);
+            self.evict_furniture_slots(loc.cube);
         }
         self.contents.set(loc, cell);
     }
@@ -334,8 +354,43 @@ impl ConstructedCity {
             self.furniture_restrictions.remove(&loc.cube);
             self.bin_resource_restrictions.remove(&loc.cube);
             self.rack_restrictions.remove(&loc.cube);
+            self.evict_furniture_slots(loc.cube);
         }
         self.contents.take(loc)
+    }
+
+    /// The resource installed in slot `slot_idx` of the furniture at `cube`, if
+    /// any.
+    pub fn slot_contents(&self, cube: IVec3, slot_idx: usize) -> Option<&UniqueResource> {
+        self.furniture_slots
+            .get(&cube)
+            .and_then(|v| v.get(slot_idx))
+            .and_then(|o| o.as_ref())
+    }
+
+    /// Set (or clear, with `None`) the resource in slot `slot_idx` of the
+    /// furniture at `cube`. `slot_count` is the furniture type's slot count, so
+    /// the backing vector can be sized correctly. Does not touch storage --
+    /// callers withdraw/deposit around this. The entry is dropped when every
+    /// slot ends up empty, so `furniture_slots` stays absent-means-empty.
+    pub fn set_slot(
+        &mut self,
+        cube: IVec3,
+        slot_idx: usize,
+        slot_count: usize,
+        item: Option<UniqueResource>,
+    ) {
+        let v = self
+            .furniture_slots
+            .entry(cube)
+            .or_insert_with(|| vec![None; slot_count]);
+        if v.len() < slot_count {
+            v.resize(slot_count, None);
+        }
+        v[slot_idx] = item;
+        if v.iter().all(Option::is_none) {
+            self.furniture_slots.remove(&cube);
+        }
     }
 
     pub fn get_structure_names(&self) -> Vec<String> {
@@ -663,6 +718,13 @@ pub fn apply_changes(
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))
                 .id();
+            // TODO(installed-slots): when installed-resource assets exist, spawn a
+            // child entity per installed `UniqueResource` here -- one per filled
+            // `EorfInfo::slots` entry (looked up in `ConstructedCity::furniture_slots`
+            // by `loc.cube`) with a child `Transform` at the slot's
+            // `FurnitureSlot::render_offset`, parented to `entity` and pushed into
+            // the `cell_entities` vec below. The parent's rotation then applies
+            // automatically. (Requires threading the slot data into `apply_changes`.)
             assembled.cell_entities.insert(loc, vec![entity]);
         }
     }

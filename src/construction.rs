@@ -729,6 +729,7 @@ mod tests {
             vantage_evaluated: false,
             storage_capacity: Vec::new(),
             placeable: true,
+            slots: Vec::new(),
         }];
         let mut cw = ConstructedCity::new(structs);
         cw.road_forbidden_zone = false;
@@ -967,6 +968,7 @@ mod tests {
             vantage_evaluated: false,
             storage_capacity: vec![(StorageKind::Bulk, 999.0)],
             placeable: true,
+            slots: Vec::new(),
         });
         cw.contents.set(
             SlotCoord {

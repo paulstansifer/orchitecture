@@ -59,9 +59,13 @@ Commands (space-separated tokens, one per line):
   farm_event <farm_idx> market|reroll|specialize|adopt   set a farm's next market action
   set_production <farm_idx> <resource>             cheat: force a farm's produced resource
   set_inventory <resource> <qty>                   cheat: adjust city inventory of a resource(if possible)
+  deposit_tool                                     cheat: deposit a carpenter's tools into rack storage
+  install <x> <y> <z> <slot_idx>                   install the first available matching resource into a slot
+  uninstall <x> <y> <z> <slot_idx>                 remove an installed resource, returning it to storage
   query cell <x> <y> <z> <slot>                    inspect a grid location
   query structures                                 list placeable structures
   query places                                     list place types (Places form automatically)
+  query slots <x> <y> <z>                          list a furniture's slots and their contents
   query place <x> <y> <z>                          inspect the place owning a cube
   query valid_places <x> <y> <z>                   place types formable around a cube
   query population                                 each individual's home/work/fed/morale
@@ -418,6 +422,85 @@ impl HeadlessSession {
                 Ok(descr)
             }
 
+            "deposit_tool" => {
+                let mut cw = self.world().resource_mut::<ConstructedCity>();
+                if place::deposit_tool(&mut cw, ToolKind::CarpentersTools) {
+                    Ok(vec!["deposited carpenter's tools".to_string()])
+                } else {
+                    Err("no rack storage with room for a tool".to_string())
+                }
+            }
+
+            "install" => {
+                if args.len() < 4 {
+                    return Err("usage: install <x> <y> <z> <slot_idx>".to_string());
+                }
+                let cube = parse_ivec3(&args[0..3])?;
+                let slot_idx = parse_usize(args[3])?;
+                let loc = SlotCoord {
+                    cube,
+                    slot: Slot::Room,
+                };
+                let mut cw = self.world().resource_mut::<ConstructedCity>();
+                let eorf_idx = cw
+                    .contents
+                    .get(loc)
+                    .ok_or_else(|| "no furniture there".to_string())?
+                    .id
+                    .as_usize();
+                let slots = cw.eorfs[eorf_idx].slots.clone();
+                let slot = slots
+                    .get(slot_idx)
+                    .ok_or_else(|| format!("no slot {slot_idx} on this furniture"))?;
+                if cw.slot_contents(cube, slot_idx).is_some() {
+                    return Err("slot already filled".to_string());
+                }
+                let kind = slot.kind;
+                let item = place::available_uniques_of_kind(&cw, kind)
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("no {} available in storage", kind.label()))?;
+                place::withdraw_unique(&mut cw, &item);
+                let label = item.label();
+                cw.set_slot(cube, slot_idx, slots.len(), Some(item));
+                Ok(vec![format!("installed {label}")])
+            }
+
+            "uninstall" => {
+                if args.len() < 4 {
+                    return Err("usage: uninstall <x> <y> <z> <slot_idx>".to_string());
+                }
+                let cube = parse_ivec3(&args[0..3])?;
+                let slot_idx = parse_usize(args[3])?;
+                let loc = SlotCoord {
+                    cube,
+                    slot: Slot::Room,
+                };
+                let mut cw = self.world().resource_mut::<ConstructedCity>();
+                let eorf_idx = cw
+                    .contents
+                    .get(loc)
+                    .ok_or_else(|| "no furniture there".to_string())?
+                    .id
+                    .as_usize();
+                let slot_count = cw.eorfs[eorf_idx].slots.len();
+                let item = cw
+                    .slot_contents(cube, slot_idx)
+                    .cloned()
+                    .ok_or_else(|| "slot is empty".to_string())?;
+                cw.set_slot(cube, slot_idx, slot_count, None);
+                let deposited = place::deposit_unique(&mut cw, item.clone());
+                Ok(vec![format!(
+                    "removed {}{}",
+                    item.label(),
+                    if deposited {
+                        ""
+                    } else {
+                        " (no storage room -- dropped)"
+                    }
+                )])
+            }
+
             "query" => self.query(args),
 
             "dump" => {
@@ -503,6 +586,39 @@ impl HeadlessSession {
                     format!("real: {real_desc}"),
                     format!("proposed: {proposal_desc}"),
                 ])
+            }
+
+            "slots" => {
+                if args.len() < 3 {
+                    return Err("usage: query slots <x> <y> <z>".to_string());
+                }
+                let cube = parse_ivec3(&args[0..3])?;
+                let loc = SlotCoord {
+                    cube,
+                    slot: Slot::Room,
+                };
+                let cw = self.world().resource::<ConstructedCity>();
+                let eorf_idx = cw
+                    .contents
+                    .get(loc)
+                    .ok_or_else(|| "no furniture there".to_string())?
+                    .id
+                    .as_usize();
+                let slots = &cw.eorfs[eorf_idx].slots;
+                if slots.is_empty() {
+                    return Ok(vec!["no slots".to_string()]);
+                }
+                Ok(slots
+                    .iter()
+                    .enumerate()
+                    .map(|(i, slot)| {
+                        let contents = cw
+                            .slot_contents(cube, i)
+                            .map(|item| item.label())
+                            .unwrap_or_else(|| "empty".to_string());
+                        format!("{i} {}: {contents}", slot.kind.label())
+                    })
+                    .collect())
             }
 
             "structures" => {

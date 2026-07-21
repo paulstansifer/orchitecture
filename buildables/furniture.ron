@@ -27,6 +27,9 @@
         ),
         cost: [(Plank, 4)],
         vantage_evaluated: true,
+        slots: [
+            ( kind: Tool, render_offset: (0.0, 0.3, 0.0) ),
+        ],
     ),
     (
         name: "market stand",

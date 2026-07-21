@@ -121,6 +121,30 @@ pub enum UniqueResource {
     Tool(ToolKind),
 }
 
+/// The broad category of a `UniqueResource`, used to constrain what a piece of
+/// furniture's slot may hold (see `eorf::FurnitureSlot`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum UniqueResourceKind {
+    Book,
+    Rug,
+    Tool,
+}
+
+impl UniqueResourceKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            UniqueResourceKind::Book => "Book",
+            UniqueResourceKind::Rug => "Rug",
+            UniqueResourceKind::Tool => "Tool",
+        }
+    }
+
+    /// Whether `res` is of this kind.
+    pub fn matches(self, res: &UniqueResource) -> bool {
+        res.kind() == self
+    }
+}
+
 /// What a Rack is dedicated to holding. Unlike a bin's `UniformResource`
 /// restriction, a rack has no "unrestricted" option -- it always holds one or
 /// the other, defaulting to `Tools`. (Books live in bookcases, not racks --
@@ -154,6 +178,26 @@ impl RackContents {
 }
 
 impl UniqueResource {
+    pub fn kind(&self) -> UniqueResourceKind {
+        match self {
+            UniqueResource::Book { .. } => UniqueResourceKind::Book,
+            UniqueResource::Rug { .. } => UniqueResourceKind::Rug,
+            UniqueResource::Tool(_) => UniqueResourceKind::Tool,
+        }
+    }
+
+    /// A short human-readable description of this specific resource, for UI
+    /// lists (e.g. the install pop-up).
+    pub fn label(&self) -> String {
+        match self {
+            UniqueResource::Book { title } => format!("Book: {title}"),
+            UniqueResource::Rug { color } => {
+                format!("Rug ({}, {}, {})", color.r, color.g, color.b)
+            }
+            UniqueResource::Tool(kind) => kind.label().to_string(),
+        }
+    }
+
     pub fn volume(&self) -> f32 {
         match self {
             UniqueResource::Book { .. } => 0.05,
@@ -235,7 +279,7 @@ impl Inventory {
         })
     }
 
-    fn unique_items(&self) -> impl Iterator<Item = &UniqueResource> {
+    pub fn unique_items(&self) -> impl Iterator<Item = &UniqueResource> {
         self.contents
             .iter()
             .filter_map(|entry| match entry {

@@ -47,6 +47,9 @@ pub struct UiState {
     pub left_tab: LeftTab,
     pub places_view: PlacesView,
     pub show_population: bool,
+    /// When set, the install pop-up is open for slot `.1` of the furniture at
+    /// `.0`; the window lists the resources available to install there.
+    pub install_menu: Option<(SlotCoord, usize)>,
 }
 
 /// A right-click pick on a real furniture cell, produced by `building_input_system`
@@ -138,6 +141,7 @@ fn place_hierarchy_ui(
     icon_textures: &std::collections::HashMap<crate::resource::UniformResource, egui::TextureId>,
     loc: SlotCoord,
     next_places_view: &mut Option<PlacesView>,
+    open_install_menu: &mut Option<(SlotCoord, usize)>,
 ) -> Vec<SlotCoord> {
     let cube = loc.cube;
     let mut highlight = Vec::new();
@@ -315,9 +319,99 @@ fn place_hierarchy_ui(
                 &mut constructed.rack_restrictions,
             );
         }
+
+        // Installable slots: show each slot's contents with Install/Remove.
+        let slots = constructed.eorfs[eorf_idx].slots.clone();
+        if !slots.is_empty() {
+            ui.separator();
+            ui.label("Slots:");
+            let slot_count = slots.len();
+            for (slot_idx, slot) in slots.iter().enumerate() {
+                let installed = constructed.slot_contents(cube, slot_idx).cloned();
+                ui.horizontal(|ui| match installed {
+                    Some(item) => {
+                        ui.label(format!("{}: {}", slot.kind.label(), item.label()));
+                        if ui.button("Remove").clicked() {
+                            constructed.set_slot(cube, slot_idx, slot_count, None);
+                            crate::place::deposit_unique(constructed, item);
+                        }
+                    }
+                    None => {
+                        ui.label(format!("{}: (empty)", slot.kind.label()));
+                        if ui.button("Install").clicked() {
+                            *open_install_menu = Some((loc, slot_idx));
+                        }
+                    }
+                });
+            }
+        }
     }
 
     highlight
+}
+
+/// The install pop-up: lists every `UniqueResource` of the target slot's kind
+/// currently available in public storage. Picking one withdraws it from storage
+/// and installs it into the slot. Driven by `UiState::install_menu`.
+fn install_menu_window(
+    ctx: &egui::Context,
+    constructed: &mut ConstructedCity,
+    ui_state: &mut UiState,
+) {
+    let Some((loc, slot_idx)) = ui_state.install_menu else {
+        return;
+    };
+    let cube = loc.cube;
+    // The furniture (or its slot) may have vanished since the menu was opened.
+    let Some(cell) = constructed.contents.get(loc) else {
+        ui_state.install_menu = None;
+        return;
+    };
+    let eorf_idx = cell.id.as_usize();
+    let slots = constructed.eorfs[eorf_idx].slots.clone();
+    let Some(slot) = slots.get(slot_idx) else {
+        ui_state.install_menu = None;
+        return;
+    };
+    let kind = slot.kind;
+    let slot_count = slots.len();
+    let available = crate::place::available_uniques_of_kind(constructed, kind);
+
+    let mut keep_open = true;
+    let mut chosen: Option<crate::resource::UniqueResource> = None;
+    egui::Window::new(format!("Install {}", kind.label()))
+        .id(egui::Id::new((
+            "install_menu",
+            cube.x,
+            cube.y,
+            cube.z,
+            slot_idx,
+        )))
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut keep_open)
+        .show(ctx, |ui| {
+            if available.is_empty() {
+                ui.label(format!("No {} available in storage.", kind.label()));
+            } else {
+                for (i, item) in available.iter().enumerate() {
+                    ui.push_id(i, |ui| {
+                        if ui.button(item.label()).clicked() {
+                            chosen = Some(item.clone());
+                        }
+                    });
+                }
+            }
+        });
+
+    if let Some(item) = chosen {
+        if crate::place::withdraw_unique(constructed, &item) {
+            constructed.set_slot(cube, slot_idx, slot_count, Some(item));
+        }
+        ui_state.install_menu = None;
+    } else if !keep_open {
+        ui_state.install_menu = None;
+    }
 }
 
 /// The "Population" window: average morale and each individual's need bars.
@@ -409,6 +503,7 @@ pub fn build_ui_system(
     // `wall_grid`) immutably while rendering.
     let mut next_tab: Option<LeftTab> = None;
     let mut next_places_view: Option<PlacesView> = None;
+    let mut open_install_menu: Option<(SlotCoord, usize)> = None;
     let mut highlight: Vec<SlotCoord> = Vec::new();
     let tab = ui_state.left_tab;
     let places_view = ui_state.places_view;
@@ -534,6 +629,7 @@ pub fn build_ui_system(
                             &icon_textures,
                             loc,
                             &mut next_places_view,
+                            &mut open_install_menu,
                         );
                     }
                 },
@@ -543,6 +639,12 @@ pub fn build_ui_system(
     if ui_state.show_population {
         population_window(ctx, &mut ui_state, &population);
     }
+
+    // An "Install" click opens the pop-up for that slot.
+    if let Some(target) = open_install_menu {
+        ui_state.install_menu = Some(target);
+    }
+    install_menu_window(ctx, &mut world.constructed, &mut ui_state);
 
     // Apply the deferred tab-navigation mutations now that the panel closure has ended.
     if let Some(t) = next_tab {
@@ -741,6 +843,9 @@ fn place_requirements_ui(
                 } else {
                     ui.label(format!("{count}× {name}"));
                 }
+            }
+            crate::place::Porf::InstalledTool(kind) => {
+                ui.label(format!("{count}× {} (installed)", kind.label()));
             }
         }
     }

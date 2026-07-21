@@ -418,6 +418,7 @@ mod tests {
             vantage_evaluated: false,
             storage_capacity: vec![(StorageKind::Rack, 10.0)],
             placeable: true,
+            slots: vec![],
         };
         let mut cw = ConstructedCity::new(vec![rack]);
         let rack_id = cw.find_structure_by_name("rack").unwrap();

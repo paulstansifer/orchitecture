@@ -144,6 +144,32 @@
         ]
     ),
     (
+        name: "carpenter's workshop",
+        requirements: [
+            (
+                requirement: InstalledTool(CarpentersTools),
+                min: 1,
+                max: Some(1),
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+            (
+                requirement: Furniture("bin"),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+            (
+                requirement: Furniture("chair"),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            ),
+        ]
+    ),
+    (
         name: "inn",
             requirements: [
             (
