@@ -112,6 +112,10 @@ impl ToolKind {
             },
         }
     }
+
+    pub fn rate(self) -> f32 {
+        return 4.0;
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

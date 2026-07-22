@@ -64,6 +64,7 @@ use orchitecture_lib::{
     ui::shared_ui_system,
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
+    work::sync_work,
 };
 
 fn configure_fonts_once(mut contexts: EguiContexts, mut done: Local<bool>) {
@@ -186,6 +187,9 @@ fn main() {
                     sync_places_system.run_if(resource_changed::<ConstructedCity>),
                     rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
                     sync_assignments.run_if(
+                        resource_changed::<ConstructedCity>.or(resource_changed::<Population>),
+                    ),
+                    sync_work.run_if(
                         resource_changed::<ConstructedCity>.or(resource_changed::<Population>),
                     ),
                 )

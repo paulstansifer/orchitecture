@@ -15,12 +15,16 @@
 //! traveler's reward) and `storage` (a snapshot of pre-existing stock). Ordered
 //! claimants take from `inflow` first, then (if storage-eligible) from what's
 //! left of `storage`: Eat, then TravelerVisit, then farms' own market
-//! participation (Boost/Reroll/Specialize/Adopt), then Construction. Because Eat
-//! and the traveler claim before farms resolve their own boosts, population
-//! feeding and a traveler's demands (and its reward, which joins the same pool)
-//! take priority over what farms get to do with their own harvest. Whatever's
-//! left of `inflow` after that goes through the existing capacity-contention
-//! storage-fill/loss logic (`resource::distribute_incoming_resources`).
+//! participation (Boost/Reroll/Specialize/Adopt), then Construction, then
+//! Workshops. Because Eat and the traveler claim before farms resolve their own
+//! boosts, population feeding and a traveler's demands (and its reward, which
+//! joins the same pool) take priority over what farms get to do with their own
+//! harvest. Workshops resolve last, after construction, so they process only
+//! what those claimants left behind; their outputs join the same pool but are
+//! capped at the free storage capacity for the output (they block on back
+//! pressure rather than overproduce into loss). Whatever's left of `inflow`
+//! after that goes through the existing capacity-contention storage-fill/loss
+//! logic (`resource::distribute_incoming_resources`).
 
 use std::collections::HashMap;
 
@@ -52,6 +56,9 @@ pub enum LedgerSource {
     /// paving its own delivery routes — see `pave_fieldstone_routes`.
     Paving,
     Construction,
+    /// Staffed workshops converting stored/inflow inputs into outputs, resolved
+    /// after construction — see `Workshop` and `compute_workshop_effect`.
+    Workshop,
 }
 
 impl LedgerSource {
@@ -62,6 +69,7 @@ impl LedgerSource {
             LedgerSource::Traveler => "traveler",
             LedgerSource::Paving => "paving",
             LedgerSource::Construction => "construction",
+            LedgerSource::Workshop => "workshop",
         }
     }
 }
@@ -69,12 +77,13 @@ impl LedgerSource {
 /// Display order for the per-resource tooltip: the same order the effects are
 /// resolved in (Eat and the traveler get first dibs, then farms' own market
 /// participation, then road paving, then construction).
-const LEDGER_SOURCE_ORDER: [LedgerSource; 5] = [
+const LEDGER_SOURCE_ORDER: [LedgerSource; 6] = [
     LedgerSource::Eat,
     LedgerSource::Traveler,
     LedgerSource::Market,
     LedgerSource::Paving,
     LedgerSource::Construction,
+    LedgerSource::Workshop,
 ];
 
 /// One resource movement this month. `net` is the signed change to the
@@ -271,6 +280,40 @@ impl Eat {
     }
 }
 
+/// Staffed workshops' monthly production, resolved after construction. The
+/// resource accounting (inputs drawn, outputs produced) lives in the
+/// [`MonthLedger`] via [`compute_workshop_effect`]; `apply` only carries out the
+/// physical withdrawal of inputs taken from pre-existing storage (the inflow
+/// portion needs no withdrawal, and outputs are deposited by the shared
+/// leftover pass, exactly like a traveler's `Resource` reward).
+pub struct Workshop {
+    /// `(input resource, amount)` to physically withdraw from storage in `apply`.
+    pub input_draws: Vec<(UniformResource, u32)>,
+    /// `(input, output, qty)` conversions this month, for `describe`.
+    pub conversions: Vec<(UniformResource, UniformResource, u32)>,
+}
+
+impl Workshop {
+    pub fn apply(&self, constructed: &mut ConstructedCity) {
+        for (res, qty) in &self.input_draws {
+            if *qty > 0 {
+                place::consume_uniform(constructed, *res, *qty);
+            }
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        let parts: Vec<String> = self
+            .conversions
+            .iter()
+            .map(|(input, output, qty)| {
+                format!("{qty} {} → {qty} {}", input.label(), output.label())
+            })
+            .collect();
+        format!("Workshops process {}.", parts.join(", "))
+    }
+}
+
 /// One instance per invited farm's market participation, plus the three
 /// singleton kinds. There is no separate `FarmMarketEffect` type — the
 /// `Market` variant carries everything a farm's effect needs directly.
@@ -285,6 +328,7 @@ pub enum CityEffect {
     Eat(Eat),
     TravelerVisit(TravelerVisit),
     Construction(Construction),
+    Workshop(Workshop),
 }
 
 impl CityEffect {
@@ -351,6 +395,7 @@ impl CityEffect {
             CityEffect::Eat(e) => e.apply(ctx),
             CityEffect::TravelerVisit(t) => t.apply(ctx.constructed, ctx.farms),
             CityEffect::Construction(c) => c.apply(ctx.pending, ctx.constructed),
+            CityEffect::Workshop(w) => w.apply(ctx.constructed),
         }
     }
 
@@ -375,6 +420,7 @@ impl CityEffect {
             CityEffect::Eat(e) => e.describe(),
             CityEffect::TravelerVisit(t) => t.describe(),
             CityEffect::Construction(c) => c.describe(),
+            CityEffect::Workshop(w) => w.describe(),
         }
     }
 }
@@ -450,6 +496,75 @@ impl MonthEffects {
             _ => false,
         })
     }
+}
+
+/// Resolve every staffed workshop's monthly production against `pool` (after
+/// construction has taken its share), recording each input claim and output
+/// contribution in the ledger under [`LedgerSource::Workshop`]. Inputs are taken
+/// inflow-first then storage; outputs rejoin the pool's inflow (so they flow
+/// through the same leftover storage-contention as any other gain).
+///
+/// Workshops **block on back pressure**: each is capped so its output never
+/// exceeds the free storage capacity for that resource, and only the
+/// correspondingly reduced input is consumed. A workshop whose output has
+/// nowhere to go therefore does nothing (and keeps its input) rather than
+/// producing something that would be lost. Since a unit of input and its output
+/// are both one volume, this is exactly what keeps the prediction and the
+/// physical month in step. Returns the `Workshop` effect carrying the storage
+/// draws to physically withdraw, or `None` if nothing was produced.
+fn compute_workshop_effect(
+    constructed: &ConstructedCity,
+    population: &Population,
+    pool: &mut Pool,
+) -> Option<Workshop> {
+    use crate::place::WorkEffect;
+
+    let mut input_draws: Vec<(UniformResource, u32)> = Vec::new();
+    let mut conversions: Vec<(UniformResource, UniformResource, u32)> = Vec::new();
+    // Free storage room remaining for each output resource, decremented as
+    // workshops fill it (so several workshops sharing an output can't each
+    // assume the whole capacity).
+    let mut output_room: HashMap<UniformResource, u32> = HashMap::new();
+
+    for (id, pp) in constructed.placed_places.iter() {
+        let Some(effect) = &constructed.places[pp.place].work else {
+            continue;
+        };
+        let staffing = crate::work::workplace_staffing(&population.individuals, id);
+        if staffing <= 0.0 {
+            continue;
+        }
+        match effect {
+            WorkEffect::TodoEffect => {}
+            WorkEffect::ToolEffect => {
+                let Some(kind) = crate::work::installed_tool_in(constructed, id) else {
+                    continue;
+                };
+                let spec = kind.specialization();
+                let desired = (kind.rate() * staffing).round() as u32;
+                let room = output_room.entry(spec.output).or_insert_with(|| {
+                    place::storage_free_capacity(constructed, spec.output).floor() as u32
+                });
+                let want = desired.min(*room);
+                if want == 0 {
+                    continue;
+                }
+                let (granted, from_storage) = pool.claim(LedgerSource::Workshop, spec.input, want);
+                if granted == 0 {
+                    continue;
+                }
+                *room -= granted;
+                pool.contribute(LedgerSource::Workshop, spec.output, granted);
+                input_draws.push((spec.input, from_storage));
+                conversions.push((spec.input, spec.output, granted));
+            }
+        }
+    }
+
+    (!conversions.is_empty()).then_some(Workshop {
+        input_draws,
+        conversions,
+    })
 }
 
 /// Computes the full set of this month's effects, in claim-priority order:
@@ -589,6 +704,14 @@ pub fn compute_month_effects(
         effects.push(CityEffect::Construction(construction));
     }
 
+    // 4.5. Workshops: staffed workplaces convert inputs (from whatever inflow
+    // and storage the claimants above left behind) into outputs that rejoin the
+    // pool, so both movements show up in the ledger/prediction and the outputs
+    // flow through the same storage contention as any other gain.
+    if let Some(workshop) = compute_workshop_effect(constructed, population, &mut pool) {
+        effects.push(CityEffect::Workshop(workshop));
+    }
+
     // 5/6. Leftover inflow -> storage contention -> loss.
     let incoming_leftover: Vec<(UniformResource, u32)> = pool
         .inflow
@@ -683,6 +806,7 @@ mod tests {
             }),
             quality_factors: vec![],
             assignable_for: None,
+            work: None,
         }];
         cw.placed_places.insert(ParticularPlace {
             place: 0,
@@ -809,6 +933,173 @@ mod tests {
         assert_eq!(effects.storage_delta(Straw), -3);
         // Untouched resource.
         assert_eq!(effects.storage_delta(Fieldstone), 0);
+    }
+
+    /// A "bin" furniture providing `cap` units of `Bulk` storage.
+    fn bin_eorf(cap: f32) -> crate::eorf::EorfInfo {
+        use crate::eorf::{EorfInfo, FurnitureOrElement, PlacementStyle, StructureEmbedding};
+        use crate::resource::StorageKind;
+        EorfInfo {
+            name: "bin".to_string(),
+            placement_style: PlacementStyle::RoomPlop,
+            x_char: None,
+            z_char: None,
+            embedding: StructureEmbedding {
+                tall: 0.0,
+                passable: 0.0,
+                decorative: 0.0,
+                striated: 0.0,
+                temporary: 0.0,
+            },
+            kind: FurnitureOrElement::Furniture(vec![]),
+            vantage_evaluated: false,
+            storage_capacity: vec![(StorageKind::Bulk, cap)],
+            placeable: true,
+            slots: vec![],
+        }
+    }
+
+    /// A city with a `bin`-backed storage room (capacity `cap`, holding
+    /// `timber`) and a single full-time carpenter's workshop. Returns the city,
+    /// a matching population, and the workshop's id.
+    fn city_with_workshop(
+        cap: f32,
+        timber: u16,
+    ) -> (ConstructedCity, Population, crate::place::PlacedPlaceId) {
+        use crate::city::Cell;
+        use crate::eorf::EorfId;
+        use crate::materials::BuildMaterialId;
+        use crate::place::{FulfilledPorf, Place, WorkEffect};
+        use crate::resource::{ToolKind, UniqueResource};
+        use crate::sparse3d::{Facing, Slot, SlotCoord};
+        use bevy::math::IVec3;
+
+        let mut cw = ConstructedCity::new(vec![bin_eorf(cap)]);
+        cw.places = vec![
+            crate::place::Place {
+                name: "storage room".to_string(),
+                requirements: vec![],
+                public_storage: true,
+                accounting: None,
+                quality_factors: vec![],
+                assignable_for: None,
+                work: None,
+            },
+            Place {
+                name: "carpenter's workshop".to_string(),
+                requirements: vec![],
+                public_storage: false,
+                accounting: None,
+                quality_factors: vec![],
+                assignable_for: None,
+                work: Some(WorkEffect::ToolEffect),
+            },
+        ];
+
+        // A bin at the origin, backing a storage room holding `timber` Timber.
+        let bin_cube = IVec3::new(0, 0, 0);
+        cw.contents.set(
+            SlotCoord {
+                cube: bin_cube,
+                slot: Slot::Room,
+            },
+            Cell {
+                id: EorfId(0),
+                facing: Facing::default(),
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            },
+        );
+        let mut inv = Inventory::new(cap);
+        inv.add_uniform(Timber, timber);
+        cw.placed_places.insert(ParticularPlace {
+            place: 0,
+            fulfillments: vec![FulfilledPorf::Furniture(SlotCoord {
+                cube: bin_cube,
+                slot: Slot::Room,
+            })],
+            contents: inv,
+            restriction: ParentRestriction::Unrestricted,
+        });
+
+        // A workshop cored on a table with carpenter's tools installed.
+        let core = IVec3::new(5, 0, 5);
+        let workshop_id = cw.placed_places.insert(ParticularPlace {
+            place: 1,
+            fulfillments: vec![FulfilledPorf::Furniture(SlotCoord {
+                cube: core,
+                slot: Slot::Room,
+            })],
+            contents: Inventory::new(0.0),
+            restriction: ParentRestriction::Unrestricted,
+        });
+        cw.furniture_slots.insert(
+            core,
+            vec![Some(UniqueResource::Tool(ToolKind::CarpentersTools))],
+        );
+
+        let mut pop = population(1);
+        pop.individuals[0].work_jobs = vec![(workshop_id, 1.0)];
+        (cw, pop, workshop_id)
+    }
+
+    fn workshop_effects(cw: &ConstructedCity, pop: &Population) -> MonthEffects {
+        compute_month_effects(
+            &farms_with(vec![]),
+            cw,
+            &ProposedCity::new(),
+            pop,
+            &no_traveler(),
+            &MaterialList::default(),
+            false,
+        )
+    }
+
+    #[test]
+    fn staffed_workshop_records_conversion_in_ledger() {
+        // Storage capacity 100, holding 10 Timber: plenty of room for the output.
+        let (cw, pop, _) = city_with_workshop(100.0, 10);
+        let effects = workshop_effects(&cw, &pop);
+
+        // A full-time carpenter converts rate(4.0) Timber into Plank, recorded
+        // in the ledger under the Workshop source (Timber drawn from storage,
+        // Plank deposited via the leftover pass).
+        assert_eq!(effects.ledger.net_for(LedgerSource::Workshop, Timber), -4);
+        assert_eq!(effects.ledger.net_for(LedgerSource::Workshop, Plank), 4);
+        assert_eq!(effects.ledger.storage_draw_for(Timber), 4);
+        assert_eq!(effects.storage_delta(Timber), -4);
+        assert_eq!(effects.storage_delta(Plank), 4);
+        // The Workshop effect resolves after Construction (none here, so last).
+        assert!(matches!(
+            effects.effects.last(),
+            Some(CityEffect::Workshop(_))
+        ));
+    }
+
+    #[test]
+    fn workshop_blocks_on_back_pressure() {
+        // Storage is full (capacity 10, all Timber): there's no room for any
+        // Plank, so the workshop produces nothing and keeps all its Timber.
+        let (cw, pop, _) = city_with_workshop(10.0, 10);
+        let effects = workshop_effects(&cw, &pop);
+
+        assert_eq!(effects.ledger.net_for(LedgerSource::Workshop, Timber), 0);
+        assert_eq!(effects.ledger.net_for(LedgerSource::Workshop, Plank), 0);
+        assert_eq!(effects.storage_delta(Timber), 0);
+        assert_eq!(effects.storage_delta(Plank), 0);
+    }
+
+    #[test]
+    fn workshop_partially_blocks_when_room_is_tight() {
+        // Capacity 12 holding 10 Timber leaves room for only 2 Plank, so the
+        // workshop converts 2 (not the full 4) and consumes just 2 Timber.
+        let (cw, pop, _) = city_with_workshop(12.0, 10);
+        let effects = workshop_effects(&cw, &pop);
+
+        assert_eq!(effects.ledger.net_for(LedgerSource::Workshop, Timber), -2);
+        assert_eq!(effects.ledger.net_for(LedgerSource::Workshop, Plank), 2);
+        assert_eq!(effects.storage_delta(Timber), -2);
+        assert_eq!(effects.storage_delta(Plank), 2);
     }
 
     #[test]

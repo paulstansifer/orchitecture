@@ -308,6 +308,12 @@ pub struct ConstructedCity {
     /// the furniture is overwritten or removed, `set_cell`/`take_cell` return
     /// any installed resources to storage before clearing the entry.
     pub furniture_slots: HashMap<IVec3, Vec<Option<UniqueResource>>>,
+    /// Per-workplace `WorkPriority`, keyed by the workplace place's core cube
+    /// (`place::place_location`). Set in the UI; absent means the default
+    /// (`WorkPriority::Medium`). Cleared via `set_cell`/`take_cell` whenever the
+    /// core furniture there is overwritten or removed, since the priority
+    /// belongs to that specific workplace. See `work::assign_work`.
+    pub work_priorities: HashMap<IVec3, crate::work::WorkPriority>,
 }
 
 impl ConstructedCity {
@@ -322,6 +328,7 @@ impl ConstructedCity {
             bin_resource_restrictions: HashMap::new(),
             rack_restrictions: HashMap::new(),
             furniture_slots: HashMap::new(),
+            work_priorities: HashMap::new(),
         }
     }
 
@@ -343,6 +350,7 @@ impl ConstructedCity {
             self.furniture_restrictions.remove(&loc.cube);
             self.bin_resource_restrictions.remove(&loc.cube);
             self.rack_restrictions.remove(&loc.cube);
+            self.work_priorities.remove(&loc.cube);
             self.evict_furniture_slots(loc.cube);
         }
         self.contents.set(loc, cell);
@@ -354,6 +362,7 @@ impl ConstructedCity {
             self.furniture_restrictions.remove(&loc.cube);
             self.bin_resource_restrictions.remove(&loc.cube);
             self.rack_restrictions.remove(&loc.cube);
+            self.work_priorities.remove(&loc.cube);
             self.evict_furniture_slots(loc.cube);
         }
         self.contents.take(loc)

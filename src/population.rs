@@ -13,6 +13,10 @@ pub struct Individual {
     /// than leaving some individuals fully fed and others starved — see
     /// `city_effect::Eat::apply`.
     pub fed_fraction: f32,
+    /// Workplaces this orc staffs and the effectiveness of each (1.0 full-time,
+    /// 0.4 when doubled up across two half-time jobs). Empty for the unemployed.
+    /// Assigned by priority, not through `assignments` — see `work::assign_work`.
+    pub work_jobs: Vec<(PlacedPlaceId, f32)>,
 }
 
 impl Individual {
@@ -122,10 +126,10 @@ pub fn assign_places(
     changed
 }
 
-/// Every flavor of assignment individuals can hold, in the order
-/// `sync_assignments` processes them.
-const ALL_ASSIGNMENT_FLAVORS: [AssignmentFlavor; 2] =
-    [AssignmentFlavor::Sleep, AssignmentFlavor::Work];
+/// Every flavor of one-to-one assignment `sync_assignments` processes. Work is
+/// *not* here: workplaces are staffed by the priority-based `work::assign_work`,
+/// which supports doubled-up half-time jobs the one-to-one path can't express.
+const ALL_ASSIGNMENT_FLAVORS: [AssignmentFlavor; 1] = [AssignmentFlavor::Sleep];
 
 /// Re-runs `assign_places` for every `AssignmentFlavor` whenever the world
 /// (place count) or the population (individual count) changes.
@@ -169,6 +173,7 @@ mod tests {
             accounting: None,
             quality_factors: vec![],
             assignable_for: Some(AssignmentFlavor::Sleep),
+            work: None,
         }
     }
 

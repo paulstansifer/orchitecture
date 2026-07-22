@@ -34,6 +34,15 @@ pub enum QualityAspect {
     //Light,
 }
 
+/// Effect of assigning a worker
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum WorkEffect {
+    /// Find the tool installed in the place, and apply its effect
+    ToolEffect,
+    /// Currently no effect; implement one later!
+    TodoEffect,
+}
+
 /// Which "need" an `Individual` can satisfy by being assigned to a `Place`.
 /// See `population::assign_places`.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -213,6 +222,11 @@ pub struct Place {
     /// `population::assign_places`.
     #[serde(default)]
     pub assignable_for: Option<AssignmentFlavor>,
+    /// If set, this place kind is a *workplace*: placed instances are staffed
+    /// by workers (see `work::assign_work`) and apply this effect, scaled by
+    /// how staffed they are, every month (see `work::apply_work_effects`).
+    #[serde(default)]
+    pub work: Option<WorkEffect>,
 }
 
 /// What actually fulfills one slot of a placed `Place`'s requirements. A
@@ -245,6 +259,15 @@ pub struct ParticularPlace {
 /// city changes and positional indices would silently shift.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PlacedPlaceId(u32);
+
+impl PlacedPlaceId {
+    /// This place's shadow priority: a per-instance tiebreak used to order
+    /// workplaces within a single priority level (see `work::assign_work`).
+    /// Derived from the id for now; may become independently settable later.
+    pub fn shadow(&self) -> f32 {
+        self.0 as f32
+    }
+}
 
 impl std::fmt::Display for PlacedPlaceId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1600,6 +1623,7 @@ mod tests {
             accounting: None,
             quality_factors: vec![],
             assignable_for: None,
+            work: None,
         }
     }
 
@@ -1681,6 +1705,7 @@ mod tests {
             accounting: None,
             quality_factors: vec![],
             assignable_for: None,
+            work: None,
         }];
 
         put(
@@ -1742,6 +1767,7 @@ mod tests {
             accounting: None,
             quality_factors: vec![],
             assignable_for: None,
+            work: None,
         }];
 
         let core = SlotCoord {
@@ -1991,6 +2017,7 @@ mod tests {
             }),
             quality_factors: vec![],
             assignable_for: None,
+            work: None,
         }
     }
 
@@ -2155,6 +2182,7 @@ mod tests {
             accounting: None,
             quality_factors: vec![],
             assignable_for: None,
+            work: None,
         }
     }
 
@@ -2172,6 +2200,7 @@ mod tests {
             accounting: None,
             quality_factors: vec![],
             assignable_for: None,
+            work: None,
         }
     }
 

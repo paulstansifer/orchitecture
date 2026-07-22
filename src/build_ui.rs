@@ -256,6 +256,38 @@ fn place_hierarchy_ui(
                         .unwrap_or_else(|| "(unassigned)".to_string())
                 ));
             }
+
+            // Workplaces: a priority control plus the current workers/staffing.
+            if constructed.places[place_def_idx].work.is_some() {
+                let core = crate::place::place_location(constructed, idx);
+                ui.label("Work priority:");
+                priority_dropdown(
+                    ui,
+                    ("work-priority", idx),
+                    core,
+                    &mut constructed.work_priorities,
+                );
+                let workers: Vec<String> = population
+                    .individuals
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, ind)| {
+                        ind.work_jobs
+                            .iter()
+                            .find(|(id, _)| *id == idx)
+                            .map(|(_, eff)| format!("Individual {} ({:.0}%)", i + 1, eff * 100.0))
+                    })
+                    .collect();
+                let staffing = crate::work::workplace_staffing(&population.individuals, idx);
+                if workers.is_empty() {
+                    ui.label("Workers: (none)");
+                } else {
+                    ui.label(format!("Workers ({:.0}%):", staffing * 100.0));
+                    for w in &workers {
+                        ui.label(format!("  {w}"));
+                    }
+                }
+            }
             ui.separator();
         }
         // Highlight the innermost place's furniture in 3D, each at its own
@@ -939,6 +971,26 @@ fn rack_restriction_dropdown(
             ui.selectable_value(&mut current, RackContents::Rugs, RackContents::Rugs.label());
         });
     restrictions.insert(cube, current);
+}
+
+/// Dropdown selecting a workplace's `WorkPriority`, keyed by its core cube.
+/// Absent means the default (`Medium`).
+fn priority_dropdown(
+    ui: &mut egui::Ui,
+    id_source: impl std::hash::Hash,
+    cube: bevy::math::IVec3,
+    priorities: &mut std::collections::HashMap<bevy::math::IVec3, crate::work::WorkPriority>,
+) {
+    let mut current = priorities.get(&cube).copied().unwrap_or_default();
+    egui::ComboBox::from_id_salt(id_source)
+        .selected_text(current.label())
+        .show_ui(ui, |ui| {
+            // Highest first reads most naturally in the list.
+            for prio in crate::work::WorkPriority::ALL.iter().rev() {
+                ui.selectable_value(&mut current, *prio, prio.label());
+            }
+        });
+    priorities.insert(cube, current);
 }
 
 fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {

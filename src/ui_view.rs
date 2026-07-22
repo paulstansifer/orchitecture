@@ -168,6 +168,14 @@ pub fn month_panel_view(
             resources.push(*r);
         }
     }
+    // Anything this month's effects move in or out of storage (e.g. a
+    // workshop's freshly produced output, not yet held) gets a row so its
+    // projected delta is visible.
+    for &res in UniformResource::ALL {
+        if !resources.contains(&res) && effects.storage_delta(res) != 0 {
+            resources.push(res);
+        }
+    }
     // Potatoes are the population's food, so their row (and its need/applied
     // as this month's food need/granted) is always shown.
     if !resources.contains(&UniformResource::Potato) {
@@ -447,6 +455,7 @@ mod tests {
             accounting: None,
             quality_factors: vec![],
             assignable_for: None,
+            work: None,
         }];
         cw.placed_places.insert(ParticularPlace {
             place: 0,

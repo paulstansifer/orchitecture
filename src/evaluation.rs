@@ -290,6 +290,7 @@ mod tests {
             accounting: None,
             quality_factors,
             assignable_for: None,
+            work: None,
         }
     }
 

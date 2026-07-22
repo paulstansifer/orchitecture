@@ -60,6 +60,7 @@ Commands (space-separated tokens, one per line):
   set_production <farm_idx> <resource>             cheat: force a farm's produced resource
   set_inventory <resource> <qty>                   cheat: adjust city inventory of a resource(if possible)
   deposit_tool                                     cheat: deposit a carpenter's tools into rack storage
+  set_priority <x> <y> <z> <level>                 set a workplace's priority (very_low|low|medium|high|very_high)
   install <x> <y> <z> <slot_idx>                   install the first available matching resource into a slot
   uninstall <x> <y> <z> <slot_idx>                 remove an installed resource, returning it to storage
   query cell <x> <y> <z> <slot>                    inspect a grid location
@@ -169,6 +170,8 @@ impl HeadlessSession {
                 rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
                 sync_assignments
                     .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
+                crate::work::sync_work
+                    .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
             )
                 .chain(),
         );
@@ -176,7 +179,8 @@ impl HeadlessSession {
             Update,
             report_changes_system
                 .after(rebuild_navigation_grid)
-                .after(sync_assignments),
+                .after(sync_assignments)
+                .after(crate::work::sync_work),
         );
 
         // Settle the initial world (nav grid, home assignment) before the first
@@ -420,6 +424,31 @@ impl HeadlessSession {
                     descr.push(format!("{withdrawn} withdrawn"));
                 }
                 Ok(descr)
+            }
+
+            "set_priority" => {
+                if args.len() < 4 {
+                    return Err(
+                        "usage: set_priority <x> <y> <z> <very_low|low|medium|high|very_high>"
+                            .to_string(),
+                    );
+                }
+                let cube = parse_ivec3(&args[0..3])?;
+                let prio = match args[3] {
+                    "very_low" => crate::work::WorkPriority::VeryLow,
+                    "low" => crate::work::WorkPriority::Low,
+                    "medium" => crate::work::WorkPriority::Medium,
+                    "high" => crate::work::WorkPriority::High,
+                    "very_high" => crate::work::WorkPriority::VeryHigh,
+                    other => return Err(format!("unknown priority level {other:?}")),
+                };
+                let mut cw = self.world().resource_mut::<ConstructedCity>();
+                let core = match place::place_id_at(&cw, cube) {
+                    Some(id) => place::place_location(&cw, id),
+                    None => return Err("no place there".to_string()),
+                };
+                cw.work_priorities.insert(core, prio);
+                Ok(vec![format!("priority at {core} = {}", prio.label())])
             }
 
             "deposit_tool" => {
@@ -723,13 +752,19 @@ impl HeadlessSession {
                         .iter()
                         .enumerate()
                         .map(|(i, ind)| {
+                            let work = if ind.work_jobs.is_empty() {
+                                "none".to_string()
+                            } else {
+                                ind.work_jobs
+                                    .iter()
+                                    .map(|(id, eff)| format!("{id}@{eff:.1}"))
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            };
                             format!(
-                                "{i} home={} work={} fed={} morale={:.3}",
+                                "{i} home={} work={work} fed={} morale={:.3}",
                                 ind.home()
                                     .map(|h| h.to_string())
-                                    .unwrap_or_else(|| "none".to_string()),
-                                ind.assigned(crate::place::AssignmentFlavor::Work)
-                                    .map(|w| w.to_string())
                                     .unwrap_or_else(|| "none".to_string()),
                                 ind.fed_fraction,
                                 ind.morale()
@@ -1044,6 +1079,11 @@ fn advance_month_system(
     mut headless_rng: ResMut<HeadlessRng>,
     sandbox: Res<SandboxFlag>,
 ) -> Vec<String> {
+    // The graphical app keeps assignments current via change-detection systems,
+    // so a month's worker effects see up-to-date staffing. The headless harness
+    // has no such systems, so refresh work assignment inline *before* advancing.
+    crate::work::assign_work(&mut population.individuals, &constructed);
+
     let outcome = crate::month::advance_month(
         &mut clock,
         &mut farms,
@@ -1083,11 +1123,7 @@ fn advance_month_system(
         &mut population.individuals,
         &constructed,
     );
-    assign_places(
-        crate::place::AssignmentFlavor::Work,
-        &mut population.individuals,
-        &constructed,
-    );
+    crate::work::assign_work(&mut population.individuals, &constructed);
     lines.push(format!("month={}", clock.month()));
     lines
 }

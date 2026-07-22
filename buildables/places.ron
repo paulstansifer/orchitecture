@@ -110,7 +110,8 @@
                 worker_visit_weight: 0.2,
                 worker_visit_duration: 1.0,
             ),
-        ]
+        ],
+        work: Some(TodoEffect),
     ),
     (
         name: "dining room",
@@ -167,7 +168,8 @@
                 worker_visit_weight: 1.0,
                 worker_visit_duration: 1.0,
             ),
-        ]
+        ],
+        work: Some(ToolEffect),
     ),
     (
         name: "inn",
