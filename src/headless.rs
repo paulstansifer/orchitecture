@@ -1048,10 +1048,16 @@ fn load_system(
     construction::load_from_offline(&mut cw, &mut pending, new_contents);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn query_farm_system(
     In(idx): In<usize>,
     mut farms: ResMut<FarmsResource>,
     cw: Res<ConstructedCity>,
+    pending: Res<ProposedCity>,
+    population: Res<Population>,
+    traveler_state: Res<TravelerState>,
+    material_list: Res<MaterialList>,
+    sandbox: Res<SandboxFlag>,
 ) -> Result<Vec<String>, String> {
     if idx >= farms.farms.len() {
         return Err(format!("no such farm: {idx}"));
@@ -1059,9 +1065,16 @@ fn query_farm_system(
     let id = FarmId::new(idx);
     farms.ensure_adjacency();
     let event = farms.farm_event(id);
-    let storage = crate::place::storage_totals(&cw);
+    let inputs = crate::city_effect::MonthInputs {
+        constructed: &cw,
+        pending: &pending,
+        population: &population,
+        traveler_state: &traveler_state,
+        material_list: &material_list,
+        sandbox_enabled: sandbox.0,
+    };
     let mut lines = vec![format!("farm {idx}")];
-    lines.extend(farm_breakdown(&mut farms, id, event, None, &storage));
+    lines.extend(farm_breakdown(&mut farms, id, event, None, inputs));
     Ok(lines)
 }
 

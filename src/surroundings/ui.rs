@@ -6,11 +6,11 @@ use crate::ui_util::FontSizes;
 use crate::{col_format, label, note_label};
 
 use super::farmstead::{
-    compute_market, farm_breakdown, market_effect, FarmEvent, FarmId, FarmProduction,
-    FarmsResource, MarketModeEffect, NewProduction, SurroundingsState, MARKET_BOOST,
+    farm_breakdown, market_effect, FarmEvent, FarmId, FarmProduction, FarmsResource,
+    MarketModeEffect, NewProduction, SurroundingsState, MARKET_BOOST,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
-use crate::city_effect::CityEffect;
+use crate::city_effect::{CityEffect, MonthInputs};
 use crate::resource::ToolKind;
 
 const PIXELS_PER_UNIT: f32 = 8.0;
@@ -123,11 +123,17 @@ pub fn exit_surroundings_mode(mut commands: Commands) {
     commands.remove_resource::<SurroundingsState>();
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn surroundings_ui_system(
     mut contexts: EguiContexts,
     mut farms: ResMut<FarmsResource>,
     mut state: ResMut<SurroundingsState>,
     constructed: Res<crate::city::ConstructedCity>,
+    pending: Res<crate::city::ProposedCity>,
+    population: Res<crate::population::Population>,
+    traveler_state: Res<crate::traveler::TravelerState>,
+    material_list: Res<crate::materials::MaterialList>,
+    sandbox: Res<crate::game_mode::SandboxMode>,
     resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {
@@ -139,14 +145,25 @@ pub fn surroundings_ui_system(
         return;
     };
 
+    // Everything the full month pipeline needs, so farm previews reflect
+    // feeding and a traveler's claim ahead of the market (see `MonthInputs`).
+    let inputs = MonthInputs {
+        constructed: &constructed,
+        pending: &pending,
+        population: &population,
+        traveler_state: &traveler_state,
+        material_list: &material_list,
+        sandbox_enabled: sandbox.enabled,
+    };
+
     // Market preview for farm boost display.
     farms.ensure_adjacency();
     farms.ensure_roads();
-    let storage_totals = crate::place::storage_totals(&constructed);
-    let preview = compute_market(&*farms, &storage_totals);
+    let preview = inputs.compute(&farms);
+    let preview_market = preview.market_effects();
     // Predicted boost for a farm, if it is invited in `Market` mode.
     let predicted_boost = |id: FarmId| -> i32 {
-        match preview.farm_effects.get(&id) {
+        match preview_market.get(&id).copied() {
             Some(CityEffect::Market {
                 effect: MarketModeEffect::Boost,
                 ..
@@ -358,7 +375,7 @@ pub fn surroundings_ui_system(
         if menu_i.index() >= farms.farms.len() || !farms[menu_i].invited {
             state.open_farm_menu = None;
         } else {
-            farm_menu_ui(ctx, &mut farms, &constructed, menu_i, &mut state);
+            farm_menu_ui(ctx, &mut farms, inputs, menu_i, &mut state);
         }
     }
 
@@ -378,42 +395,39 @@ pub fn surroundings_ui_system(
 fn farm_menu_ui(
     ctx: &egui::Context,
     farms: &mut FarmsResource,
-    constructed: &crate::city::ConstructedCity,
+    inputs: MonthInputs,
     menu_i: FarmId,
     state: &mut SurroundingsState,
 ) {
     let current_event = farms.farm_event(menu_i);
     let is_specialized = matches!(farms[menu_i].production, FarmProduction::Specialized(_));
     let carpenters_tools_in_storage =
-        crate::place::total_tools_of(constructed, ToolKind::CarpentersTools) >= 1;
-    // Snapshot of stored resources, so previews and affordability checks can
-    // count the player's own potatoes toward a reconfigure's cost.
-    let storage_totals = crate::place::storage_totals(constructed);
+        crate::place::total_tools_of(inputs.constructed, ToolKind::CarpentersTools) >= 1;
 
-    // Breakdowns via the same shared compute path.
-    let market_lines = farm_breakdown(farms, menu_i, FarmEvent::Market, None, &storage_totals);
+    // Breakdowns via the same shared full-month compute path.
+    let market_lines = farm_breakdown(farms, menu_i, FarmEvent::Market, None, inputs);
     let change_lines = farm_breakdown(
         farms,
         menu_i,
         FarmEvent::Reconfigure(NewProduction::RandomRegular),
         None,
-        &storage_totals,
+        inputs,
     );
     let spec_lines = farm_breakdown(
         farms,
         menu_i,
         FarmEvent::Market,
         Some(FarmProduction::Specialized(ToolKind::CarpentersTools)),
-        &storage_totals,
+        inputs,
     );
-    let adopt_lines = farm_breakdown(farms, menu_i, FarmEvent::Adopt, None, &storage_totals);
+    let adopt_lines = farm_breakdown(farms, menu_i, FarmEvent::Adopt, None, inputs);
 
     let can_change = matches!(
         market_effect(
             farms,
             menu_i,
             FarmEvent::Reconfigure(NewProduction::RandomRegular),
-            &storage_totals,
+            inputs,
         ),
         Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
     );
@@ -426,7 +440,7 @@ fn farm_menu_ui(
                 farms,
                 menu_i,
                 FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools)),
-                &storage_totals,
+                inputs,
             ),
             Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
         );

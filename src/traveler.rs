@@ -16,21 +16,21 @@ const MAX_TRAVELER_TRAVEL_COST: f32 = 250.0;
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TravelerDemand {
     /// One option is chosen at random when rolling an offer.
-    pub options: Vec<(UniformResource, std::ops::Range<u16>)>,
+    pub options: Vec<(UniformResource, std::ops::Range<u32>)>,
 }
 
 /// What a traveler gives in exchange for their demands being met.
 #[derive(Serialize, Deserialize, Clone)]
 pub enum TravelerReward {
     Tool(ToolKind),
-    Resource(UniformResource, std::ops::Range<u16>),
+    Resource(UniformResource, std::ops::Range<u32>),
 }
 
 /// A resolved `TravelerReward`, with any quantity range rolled to a concrete value.
 #[derive(Serialize, Deserialize, Clone)]
 pub enum ResolvedReward {
     Tool(ToolKind),
-    Resource(UniformResource, u16),
+    Resource(UniformResource, u32),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -44,7 +44,7 @@ pub struct Traveler {
 pub struct IndividualTraveler {
     pub config_index: usize,
     /// Resolved demands: one `(resource, quantity)` per `TravelerDemand`.
-    pub demands: Vec<(UniformResource, u16)>,
+    pub demands: Vec<(UniformResource, u32)>,
     pub reward: ResolvedReward,
     /// Path from the traveler's starting position toward the map origin.
     pub path: Vec<Vec2>,

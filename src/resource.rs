@@ -219,7 +219,7 @@ impl UniqueResource {
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum InventoryEntry {
-    Uniform(UniformResource, u16),
+    Uniform(UniformResource, u32),
     Collection(Vec<UniqueResource>),
 }
 
@@ -276,7 +276,7 @@ impl Inventory {
 
     /// Adds a quantity of a uniform resource, merging into an existing entry of the
     /// same kind if present.
-    pub fn add_uniform(&mut self, res: UniformResource, qty: u16) {
+    pub fn add_uniform(&mut self, res: UniformResource, qty: u32) {
         for entry in &mut self.contents {
             if let InventoryEntry::Uniform(existing, existing_qty) = entry {
                 if *existing == res {
@@ -290,7 +290,7 @@ impl Inventory {
 
     /// Per-kind totals of uniform resources held in this inventory. `add_uniform`
     /// keeps at most one `Uniform` entry per resource, so no merging is needed here.
-    pub fn uniform_totals(&self) -> Vec<(UniformResource, u16)> {
+    pub fn uniform_totals(&self) -> Vec<(UniformResource, u32)> {
         self.contents
             .iter()
             .filter_map(|entry| match entry {
@@ -364,7 +364,7 @@ impl Inventory {
         true
     }
 
-    pub fn subtract_uniform(&mut self, res: UniformResource, qty: u16) {
+    pub fn subtract_uniform(&mut self, res: UniformResource, qty: u32) {
         for entry in &mut self.contents {
             if let InventoryEntry::Uniform(existing, existing_qty) = entry {
                 if *existing == res {
@@ -640,11 +640,12 @@ pub enum Precision {
 }
 
 // Simulate bookkeepping limitations; returns the rounded value and precision info
-pub fn round(orig: u16, approx: Approximation) -> (u16, Precision) {
-    let capped = orig > approx.max;
-    let res = orig.min(approx.max);
+pub fn round(orig: u32, approx: Approximation) -> (u32, Precision) {
+    let max = approx.max as u32;
+    let capped = orig > max;
+    let res = orig.min(max);
 
-    let too_long = u16::pow(10, approx.digits.into());
+    let too_long = u32::pow(10, approx.digits.into());
 
     let mut res_digits = res;
     let mut res_zeroes = 1;

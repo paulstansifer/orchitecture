@@ -26,7 +26,7 @@
 //! after that goes through the existing capacity-contention storage-fill/loss
 //! logic (`resource::distribute_incoming_resources`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::city::{ConstructedCity, ProposedCity};
 use crate::construction::{
@@ -489,6 +489,21 @@ impl MonthEffects {
         stored - self.ledger.storage_draw_for(res) as i64
     }
 
+    /// Per-farm market participation, projected out of this month's effects and
+    /// keyed by farm — the same shape `farmstead::compute_market` produces in
+    /// isolation, but reflecting the full monthly pipeline (feeding and a
+    /// traveler claim ahead of farms, so a reconfigure's affordability here
+    /// accounts for that contention). Drives the farm previews.
+    pub fn market_effects(&self) -> BTreeMap<FarmId, &CityEffect> {
+        self.effects
+            .iter()
+            .filter_map(|e| match e {
+                CityEffect::Market { farm_idx, .. } => Some((*farm_idx, e)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// This month's traveler visit, if a traveler is offering one.
     pub fn traveler_visit(&self) -> Option<&TravelerVisit> {
         self.effects.iter().find_map(|e| match e {
@@ -592,6 +607,36 @@ fn compute_workshop_effect(
     })
 }
 
+/// Everything `compute_month_effects` needs besides the farms, bundled so
+/// preview callers (which run the month pipeline speculatively, sometimes with
+/// a farm temporarily mutated) can thread it as one value instead of a long
+/// argument list. Farms stay a separate argument since previews mutate-and-
+/// restore them.
+#[derive(Clone, Copy)]
+pub struct MonthInputs<'a> {
+    pub constructed: &'a ConstructedCity,
+    pub pending: &'a ProposedCity,
+    pub population: &'a Population,
+    pub traveler_state: &'a TravelerState,
+    pub material_list: &'a MaterialList,
+    pub sandbox_enabled: bool,
+}
+
+impl MonthInputs<'_> {
+    /// Run the full month pipeline for `farms` under these inputs.
+    pub fn compute(&self, farms: &FarmsResource) -> MonthEffects {
+        compute_month_effects(
+            farms,
+            self.constructed,
+            self.pending,
+            self.population,
+            self.traveler_state,
+            self.material_list,
+            self.sandbox_enabled,
+        )
+    }
+}
+
 /// Computes the full set of this month's effects, in claim-priority order:
 /// Eat, then TravelerVisit, then market delivery (farms' own participation),
 /// then Construction. Every resource movement is threaded through a single
@@ -614,7 +659,11 @@ pub fn compute_month_effects(
 ) -> MonthEffects {
     use crate::surroundings::farmstead::{resolve_market, seed_market};
 
-    let mut pool = Pool::new(place::storage_totals(constructed));
+    // A snapshot of pre-existing storage. `compute_month_effects` never mutates
+    // `constructed`, so this is stable for the whole computation and is reused
+    // by the leftover-distribution pass below rather than re-scanned.
+    let storage_snapshot = place::storage_totals(constructed);
+    let mut pool = Pool::new(storage_snapshot.clone());
     // Invited farms deliver their stockpiles into the pool up front, so the
     // claimants below can take from that inflow in priority order.
     let invited = seed_market(farms, &mut pool);
@@ -651,18 +700,17 @@ pub fn compute_month_effects(
             && offer
                 .demands
                 .iter()
-                .all(|&(res, qty)| pool.available(res) >= qty as u32);
+                .all(|&(res, qty)| pool.available(res) >= qty);
         let invited_traveler = traveler_state.invited;
         let demands = offer
             .demands
             .iter()
             .map(|&(res, qty)| {
                 if invited_traveler && affordable {
-                    let (granted, from_storage) =
-                        pool.claim(LedgerSource::Traveler, res, qty as u32);
-                    (res, qty as u32, granted, from_storage)
+                    let (granted, from_storage) = pool.claim(LedgerSource::Traveler, res, qty);
+                    (res, qty, granted, from_storage)
                 } else {
-                    (res, qty as u32, 0, 0)
+                    (res, qty, 0, 0)
                 }
             })
             .collect();
@@ -675,7 +723,7 @@ pub fn compute_month_effects(
         // leftover.
         if invited_traveler && affordable {
             if let ResolvedReward::Resource(res, qty) = &offer.reward {
-                pool.contribute(LedgerSource::Traveler, *res, *qty as u32);
+                pool.contribute(LedgerSource::Traveler, *res, *qty);
             }
         }
         effects.push(CityEffect::TravelerVisit(TravelerVisit {
@@ -755,7 +803,7 @@ pub fn compute_month_effects(
         .collect();
     let leftover = distribute_incoming_resources(
         &incoming_leftover,
-        &place::storage_totals(constructed),
+        &storage_snapshot,
         &storage_free_capacity,
         place::storage_overall_free_capacity(constructed),
         &known_farm_output,
@@ -1006,7 +1054,7 @@ mod tests {
     /// a matching population, and the workshop's id.
     fn city_with_workshop(
         cap: f32,
-        timber: u16,
+        timber: u32,
     ) -> (ConstructedCity, Population, crate::place::PlacedPlaceId) {
         use crate::city::Cell;
         use crate::eorf::EorfId;

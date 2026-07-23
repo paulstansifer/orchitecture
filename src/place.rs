@@ -1253,7 +1253,7 @@ pub fn total_uniform(cw: &ConstructedCity, res: UniformResource) -> u32 {
         .into_iter()
         .flat_map(|id| cw.placed_places[id].contents.uniform_totals())
         .filter(|(r, _)| *r == res)
-        .map(|(_, q)| q as u32)
+        .map(|(_, q)| q)
         .sum()
 }
 
@@ -1274,13 +1274,11 @@ pub fn consume_uniform(cw: &mut ConstructedCity, res: UniformResource, qty: u32)
             .uniform_totals()
             .into_iter()
             .find(|(r, _)| *r == res)
-            .map(|(_, q)| q as u32)
+            .map(|(_, q)| q)
             .unwrap_or(0);
         let take = here.min(remaining);
         if take > 0 {
-            cw.placed_places[id]
-                .contents
-                .subtract_uniform(res, take as u16);
+            cw.placed_places[id].contents.subtract_uniform(res, take);
             remaining -= take;
         }
     }
@@ -1294,7 +1292,7 @@ pub fn storage_totals(cw: &ConstructedCity) -> HashMap<UniformResource, u32> {
     let mut totals = HashMap::new();
     for id in storage_ids(cw) {
         for (res, qty) in cw.placed_places[id].contents.uniform_totals() {
-            *totals.entry(res).or_insert(0) += qty as u32;
+            *totals.entry(res).or_insert(0) += qty;
         }
     }
     totals
@@ -1320,7 +1318,7 @@ pub fn place_resource_totals(
         for (res, qty) in place.contents.uniform_totals() {
             let (rounded, precision) = round(qty, accounting);
             let entry = map.entry(res).or_insert((0, Precision::Exact));
-            entry.0 += rounded as u32;
+            entry.0 += rounded;
             if precision != Precision::Exact {
                 entry.1 = precision;
             }
@@ -1469,7 +1467,7 @@ pub fn deposit_uniform_with_capacity(
         let free = place_free_capacity_for(cw, &cw.placed_places[id], res);
         let take = (free.floor().max(0.0) as u32).min(remaining);
         if take > 0 {
-            cw.placed_places[id].contents.add_uniform(res, take as u16);
+            cw.placed_places[id].contents.add_uniform(res, take);
             remaining -= take;
             deposited += take;
         }

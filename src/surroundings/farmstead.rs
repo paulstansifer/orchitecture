@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::city_effect::{CityEffect, LedgerSource, Pool};
+use crate::city_effect::{CityEffect, LedgerSource, MonthInputs, Pool};
 use crate::resource::{ToolKind, UniformResource};
 use crate::surroundings::road_network::{RoadNetwork, INITIAL_TRIPS};
 
@@ -610,16 +610,18 @@ pub fn apply_production(fr: &mut FarmsResource, plan: &ProductionPlan) {
     }
 }
 
-/// Human-readable breakdown of what farm `idx` would do this month under the given
-/// event, computed with the same `compute_market` / `compute_production` as the executor.
-/// Optionally overrides the farm's production type for the preview (used by the Specialize
+/// Human-readable breakdown of what farm `idx` would do this month under the
+/// given event, computed with the same full month pipeline (`compute_month_effects`
+/// via `inputs`) and `compute_production` as the executor — so feeding and a
+/// traveler's claim ahead of the market are reflected here too. Optionally
+/// overrides the farm's production type for the preview (used by the Specialize
 /// option to show what the farm would produce if it were Specialized).
 pub fn farm_breakdown(
     fr: &mut FarmsResource,
     idx: FarmId,
     event: FarmEvent,
     temp_production: Option<FarmProduction>,
-    storage: &HashMap<UniformResource, u32>,
+    inputs: MonthInputs,
 ) -> Vec<String> {
     fr.ensure_adjacency();
     fr.ensure_roads();
@@ -629,42 +631,38 @@ pub fn farm_breakdown(
     if let Some(prod) = temp_production {
         fr[idx].production = prod;
     }
-    let lines = describe_farm_effect(fr, idx, storage);
+    let lines = describe_farm_effect(fr, idx, inputs);
     fr.set_farm_event(idx, saved_event);
     fr[idx].production = saved_prod;
     lines
 }
 
-/// The market effect farm `idx` would produce under a hypothetical event, computed
-/// with the shared `compute_market`. `None` if the farm is not currently invited.
+/// The market effect farm `idx` would produce under a hypothetical event,
+/// computed with the full month pipeline (so a reconfigure's affordability
+/// reflects feeding/traveler contention). `None` if the farm is not currently
+/// invited.
 pub fn market_effect(
     fr: &mut FarmsResource,
     idx: FarmId,
     event: FarmEvent,
-    storage: &HashMap<UniformResource, u32>,
+    inputs: MonthInputs,
 ) -> Option<MarketModeEffect> {
     fr.ensure_adjacency();
     let saved = fr.farm_event(idx);
     fr.set_farm_event(idx, event);
     fr.ensure_roads();
-    let effect = compute_market(fr, storage)
-        .farm_effects
-        .get(&idx)
-        .and_then(|e| match e {
-            CityEffect::Market { effect, .. } => Some(*effect),
-            _ => None,
-        });
+    let effects = inputs.compute(fr);
+    let effect = effects.market_effects().get(&idx).and_then(|e| match e {
+        CityEffect::Market { effect, .. } => Some(*effect),
+        _ => None,
+    });
     fr.set_farm_event(idx, saved);
     effect
 }
 
-fn describe_farm_effect(
-    fr: &FarmsResource,
-    idx: FarmId,
-    storage: &HashMap<UniformResource, u32>,
-) -> Vec<String> {
+fn describe_farm_effect(fr: &FarmsResource, idx: FarmId, inputs: MonthInputs) -> Vec<String> {
     let mut lines = Vec::new();
-    let outcome = compute_market(fr, storage);
+    let outcome = inputs.compute(fr);
     let farm = &fr[idx];
 
     if let Some(CityEffect::Market {
@@ -673,7 +671,7 @@ fn describe_farm_effect(
         inedible_contributed,
         effect,
         ..
-    }) = outcome.farm_effects.get(&idx)
+    }) = outcome.market_effects().get(&idx).copied()
     {
         let (res, qty) = *inedible_contributed;
         lines.push(format!(

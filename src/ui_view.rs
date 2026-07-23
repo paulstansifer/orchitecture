@@ -79,7 +79,7 @@ pub struct UniqueResourceRow {
 
 /// This month's traveler offer, if any, and whether it's currently affordable.
 pub struct TravelerOfferView {
-    pub demands: Vec<(UniformResource, u16)>,
+    pub demands: Vec<(UniformResource, u32)>,
     pub reward_desc: String,
     pub affordable: bool,
 }
