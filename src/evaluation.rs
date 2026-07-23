@@ -271,7 +271,7 @@ mod tests {
     use crate::place::{
         FulfilledPorf, ParticularPlace, Place, PlaceReq, Porf, QualityAspect, QualityFactor,
     };
-    use crate::resource::Inventory;
+    use crate::resource::{Inventory, StorageKind};
     use crate::sparse3d::{Facing, RelSlot, Slot, SlotCoord};
 
     use super::{compute_outdoorsness, compute_spaciousness, evaluate_place};
@@ -318,7 +318,7 @@ mod tests {
                 cube: core,
                 slot: Slot::Room,
             })],
-            contents: Inventory::new(20.0),
+            contents: Inventory::new([(StorageKind::Bulk, 20.0)]),
             restriction: crate::place::ParentRestriction::Unrestricted,
         })
     }

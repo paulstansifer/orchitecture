@@ -70,14 +70,20 @@ impl UniformResource {
         )
     }
 
-    pub fn inedible_farmables() -> &'static [UniformResource] {
-        &[
-            UniformResource::Canvas,
-            UniformResource::Straw,
-            UniformResource::Timber,
-            UniformResource::Lime,
-            UniformResource::Fieldstone,
-        ]
+    /// Whether this resource is food. Potato is the sole edible resource (see
+    /// `Eat` / `POTATOES_PER_INDIVIDUAL`).
+    pub fn edible(self) -> bool {
+        matches!(self, UniformResource::Potato)
+    }
+
+    /// Every farmable resource that isn't food — the pool a farm produces or
+    /// re-rolls into. Derived from `farmable()` so the two can't drift apart.
+    pub fn inedible_farmables() -> Vec<UniformResource> {
+        Self::ALL
+            .iter()
+            .copied()
+            .filter(|r| r.farmable() && !r.edible())
+            .collect()
     }
 }
 
@@ -114,7 +120,7 @@ impl ToolKind {
     }
 
     pub fn rate(self) -> f32 {
-        return 4.0;
+        4.0
     }
 }
 
@@ -220,15 +226,52 @@ pub enum InventoryEntry {
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Inventory {
     contents: Vec<InventoryEntry>,
-    max_volume: f32,
+    /// Capacity per `StorageKind`, tracked separately so that -- on a place
+    /// like the starting wagon, whose furniture provides both `Bulk` and
+    /// `Rack` capacity -- filling one up can never eat into the other's room.
+    capacities: HashMap<StorageKind, f32>,
 }
 
 impl Inventory {
-    pub fn new(max_volume: f32) -> Self {
+    pub fn new(capacities: impl IntoIterator<Item = (StorageKind, f32)>) -> Self {
         Inventory {
             contents: Vec::new(),
-            max_volume,
+            capacities: capacities.into_iter().collect(),
         }
+    }
+
+    fn capacity_for(&self, kind: StorageKind) -> f32 {
+        self.capacities.get(&kind).copied().unwrap_or(0.0)
+    }
+
+    /// Volume currently occupied within `kind`'s own pool: uniform resources
+    /// for `Bulk`, or the matching `UniqueResource` subtype's volume for
+    /// `Rack`/`Book`.
+    fn volume_of_kind(&self, kind: StorageKind) -> f32 {
+        match kind {
+            StorageKind::Bulk => self
+                .uniform_totals()
+                .into_iter()
+                .map(|(_, qty)| qty as f32)
+                .sum(),
+            StorageKind::Rack => self
+                .unique_items()
+                .filter(|i| matches!(i, UniqueResource::Tool(_) | UniqueResource::Rug { .. }))
+                .map(UniqueResource::volume)
+                .sum(),
+            StorageKind::Book => self
+                .unique_items()
+                .filter(|i| matches!(i, UniqueResource::Book { .. }))
+                .map(UniqueResource::volume)
+                .sum(),
+        }
+    }
+
+    /// Remaining volume this inventory can accept for `kind` before hitting
+    /// its own dedicated capacity -- independent of how full any other kind's
+    /// pool is.
+    pub fn remaining_capacity(&self, kind: StorageKind) -> f32 {
+        (self.capacity_for(kind) - self.volume_of_kind(kind)).max(0.0)
     }
 
     /// Adds a quantity of a uniform resource, merging into an existing entry of the
@@ -255,23 +298,6 @@ impl Inventory {
                 InventoryEntry::Collection(_) => None,
             })
             .collect()
-    }
-
-    pub fn total_volume(&self) -> f32 {
-        let mut res = 0.0;
-        for entry in &self.contents {
-            use crate::resource::InventoryEntry::*;
-            match entry {
-                Uniform(_, item_qty) => res += *item_qty as f32,
-                Collection(items) => res += items.iter().map(|i| i.volume()).sum::<f32>(),
-            }
-        }
-        res
-    }
-
-    /// Remaining volume this inventory can accept before hitting `max_volume`.
-    pub fn remaining_capacity(&self) -> f32 {
-        (self.max_volume - self.total_volume()).max(0.0)
     }
 
     /// The `Collection` entry holding this inventory's unique items, if any
@@ -672,5 +698,33 @@ mod tests {
     fn round_truncates_significant_digits() {
         // Under the cap but more than one significant digit: 47 -> 40.
         assert_eq!(round(47, ACCT), (40, Precision::Approximate));
+    }
+
+    /// Regression test: a single `Inventory` can back furniture (like the
+    /// starting wagon) that provides both `Bulk` and `Rack` capacity. Each
+    /// kind must have its own independent pool, so filling one all the way
+    /// up never reduces the other's remaining capacity.
+    #[test]
+    fn bulk_and_rack_capacity_are_independent_pools() {
+        let mut inv = Inventory::new([(StorageKind::Bulk, 8.0), (StorageKind::Rack, 2.0)]);
+        inv.add_uniform(UniformResource::Plank, 8);
+        assert_eq!(inv.remaining_capacity(StorageKind::Bulk), 0.0);
+        assert_eq!(
+            inv.remaining_capacity(StorageKind::Rack),
+            2.0,
+            "a full Bulk pool must not eat into Rack's own capacity"
+        );
+
+        inv.add_unique(UniqueResource::Tool(ToolKind::CarpentersTools));
+        assert_eq!(
+            inv.remaining_capacity(StorageKind::Rack),
+            1.5,
+            "a Tool occupies 0.5 volume within Rack's own pool"
+        );
+        assert_eq!(
+            inv.remaining_capacity(StorageKind::Bulk),
+            0.0,
+            "storing a tool must not eat into Bulk's own capacity"
+        );
     }
 }

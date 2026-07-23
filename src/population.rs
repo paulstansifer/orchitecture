@@ -184,7 +184,7 @@ mod tests {
                 cube: IVec3::ZERO,
                 slot: Slot::Room,
             })],
-            contents: crate::resource::Inventory::new(1.0),
+            contents: crate::resource::Inventory::new([]),
             restriction: crate::place::ParentRestriction::Unrestricted,
         }
     }

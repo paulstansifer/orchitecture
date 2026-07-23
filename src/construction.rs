@@ -1001,7 +1001,7 @@ mod tests {
                 cube: IVec3::new(5, 0, 5),
                 slot: Slot::Room,
             })],
-            contents: Inventory::new(100.0),
+            contents: Inventory::new([(StorageKind::Bulk, 100.0)]),
             restriction: ParentRestriction::Unrestricted,
         });
 

@@ -216,7 +216,7 @@ mod tests {
                     cube: *cube,
                     slot: Slot::Room,
                 })],
-                contents: Inventory::new(0.0),
+                contents: Inventory::new([]),
                 restriction: ParentRestriction::Unrestricted,
             });
             cw.work_priorities.insert(*cube, *prio);

@@ -38,7 +38,7 @@ use crate::population::{Individual, Population};
 use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResource};
 use crate::surroundings::farmstead::{
     known_farm_plentifulness, FarmId, FarmProduction, FarmsResource, MarketModeEffect,
-    NewProduction, MARKET_BOOST,
+    NewProduction, ADOPT_PENALTY, MARKET_BOOST,
 };
 use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 
@@ -62,6 +62,18 @@ pub enum LedgerSource {
 }
 
 impl LedgerSource {
+    /// Every variant. `LEDGER_SOURCE_ORDER` must be a permutation of this (see
+    /// `ledger_source_order_is_complete`); the exhaustive `tag()` match below
+    /// forces this list to be updated whenever a variant is added.
+    pub const ALL: [LedgerSource; 6] = [
+        LedgerSource::Market,
+        LedgerSource::Eat,
+        LedgerSource::Traveler,
+        LedgerSource::Paving,
+        LedgerSource::Construction,
+        LedgerSource::Workshop,
+    ];
+
     pub fn tag(self) -> &'static str {
         match self {
             LedgerSource::Market => "market",
@@ -77,7 +89,7 @@ impl LedgerSource {
 /// Display order for the per-resource tooltip: the same order the effects are
 /// resolved in (Eat and the traveler get first dibs, then farms' own market
 /// participation, then road paving, then construction).
-const LEDGER_SOURCE_ORDER: [LedgerSource; 6] = [
+const LEDGER_SOURCE_ORDER: [LedgerSource; LedgerSource::ALL.len()] = [
     LedgerSource::Eat,
     LedgerSource::Traveler,
     LedgerSource::Market,
@@ -232,6 +244,19 @@ impl Pool {
         }
         take
     }
+
+    /// Whatever nonzero inflow remains, as the player's gains — sorted by
+    /// resource for a deterministic order.
+    pub fn gains(&self) -> Vec<(UniformResource, u32)> {
+        let mut gains: Vec<(UniformResource, u32)> = self
+            .inflow
+            .iter()
+            .filter(|(_, &q)| q > 0)
+            .map(|(&r, &q)| (r, q))
+            .collect();
+        gains.sort_by_key(|&(r, _)| r);
+        gains
+    }
 }
 
 /// Everything an `Effect::apply()` might need to mutate. Bundled so the
@@ -346,7 +371,7 @@ impl CityEffect {
                 match effect {
                     MarketModeEffect::Boost => ctx.farms[i].boost += MARKET_BOOST,
                     MarketModeEffect::Adopt => {
-                        ctx.farms[i].boost -= 8;
+                        ctx.farms[i].boost -= ADOPT_PENALTY;
                         ctx.population.individuals.push(Individual::default());
                     }
                     MarketModeEffect::Reconfigure {
@@ -610,10 +635,23 @@ pub fn compute_month_effects(
     // drives the "Invite" checkbox), but resources are only actually claimed
     // when the visit is both affordable and invited.
     if let Some(offer) = &traveler_state.current_offer {
-        let affordable = offer
-            .demands
-            .iter()
-            .all(|&(res, qty)| pool.available(res) >= qty as u32);
+        // A `Resource` reward is never lost for lack of storage room (see
+        // below), but a `Tool` reward is deposited directly into rack
+        // storage by `TravelerVisit::apply`, which silently no-ops if there's
+        // no room. Fold that into `affordable` so the "Invite" checkbox
+        // (which `affordable` drives) isn't enabled for a reward the city
+        // has nowhere to put.
+        let reward_deliverable = match &offer.reward {
+            ResolvedReward::Tool(_) => {
+                place::rack_free_capacity(constructed, crate::resource::RackContents::Tools) >= 1.0
+            }
+            ResolvedReward::Resource(..) => true,
+        };
+        let affordable = reward_deliverable
+            && offer
+                .demands
+                .iter()
+                .all(|&(res, qty)| pool.available(res) >= qty as u32);
         let invited_traveler = traveler_state.invited;
         let demands = offer
             .demands
@@ -670,16 +708,7 @@ pub fn compute_month_effects(
 
     // Whatever inflow farms left in the pool is the player's gains, and this
     // month's inflow for Construction and the leftover-distribution pass below.
-    let player_gains: Vec<(UniformResource, u32)> = {
-        let mut gains: Vec<(UniformResource, u32)> = pool
-            .inflow
-            .iter()
-            .filter(|(_, &q)| q > 0)
-            .map(|(&r, &q)| (r, q))
-            .collect();
-        gains.sort_by_key(|&(r, _)| r);
-        gains
-    };
+    let player_gains = pool.gains();
 
     // 4. Construction: inflow first, then leftover storage.
     if pending.num_changes() > 0 {
@@ -747,7 +776,7 @@ mod tests {
     use crate::city::ConstructedCity;
     use crate::place::{ParentRestriction, ParticularPlace};
     use crate::population::Individual;
-    use crate::resource::{Approximation, Inventory, UniformResource::*};
+    use crate::resource::{Approximation, Inventory, StorageKind, UniformResource::*};
     use crate::surroundings::farmstead::{FarmData, FarmEvent};
     use crate::traveler::{IndividualTraveler, ResolvedReward};
     use bevy::prelude::Vec2;
@@ -837,6 +866,19 @@ mod tests {
                 _ => None,
             })
             .expect("a TravelerVisit effect should be present")
+    }
+
+    #[test]
+    fn ledger_source_order_is_complete() {
+        // The tooltip's display order must cover every ledger source exactly
+        // once — otherwise a source's movements would silently never appear.
+        assert_eq!(LEDGER_SOURCE_ORDER.len(), LedgerSource::ALL.len());
+        for source in LedgerSource::ALL {
+            assert!(
+                LEDGER_SOURCE_ORDER.contains(&source),
+                "{source:?} missing from LEDGER_SOURCE_ORDER"
+            );
+        }
     }
 
     #[test]
@@ -1010,7 +1052,7 @@ mod tests {
                 build_material: BuildMaterialId::default(),
             },
         );
-        let mut inv = Inventory::new(cap);
+        let mut inv = Inventory::new([(StorageKind::Bulk, cap)]);
         inv.add_uniform(Timber, timber);
         cw.placed_places.insert(ParticularPlace {
             place: 0,
@@ -1030,7 +1072,7 @@ mod tests {
                 cube: core,
                 slot: Slot::Room,
             })],
-            contents: Inventory::new(0.0),
+            contents: Inventory::new([]),
             restriction: ParentRestriction::Unrestricted,
         });
         cw.furniture_slots.insert(
@@ -1114,7 +1156,7 @@ mod tests {
         farm.inedible_stockpile = 8; // produces Straw (see `mk_farm`)
         let farms = farms_with(vec![farm]);
 
-        let mut inv = Inventory::new(100.0);
+        let mut inv = Inventory::new([(StorageKind::Bulk, 100.0)]);
         inv.add_uniform(Potato, 20);
         let cw = grid_with_storage(inv);
         let pending = ProposedCity::new();
@@ -1160,7 +1202,7 @@ mod tests {
     #[test]
     fn eat_falls_back_to_pre_existing_storage_when_inflow_short() {
         let farms = farms_with(vec![]); // no inflow at all
-        let mut inv = Inventory::new(100.0);
+        let mut inv = Inventory::new([(StorageKind::Bulk, 100.0)]);
         inv.add_uniform(Potato, 20);
         let cw = grid_with_storage(inv);
         let pending = ProposedCity::new();
@@ -1249,6 +1291,50 @@ mod tests {
         // so it claimed nothing from the pool.
         assert!(t.affordable);
         assert_eq!(effects.ledger.net_for(LedgerSource::Traveler, Potato), 0);
+    }
+
+    /// Regression test for a bug where a `Tool` reward's "Invite" checkbox
+    /// was enabled purely on demand affordability, ignoring whether there was
+    /// any rack room to actually receive the tool: `TravelerVisit::apply`
+    /// deposits `Tool` rewards via `place::deposit_tool`, which silently
+    /// no-ops without room, so the reward vanished with no warning. Unlike a
+    /// `Resource` reward (see `plank_reward_pays_off_pending_furniture_with_no_storage_room_yet`
+    /// below), a `Tool` reward has no fallback path into this month's pool, so
+    /// `affordable` -- and thus the checkbox -- must account for storage room.
+    #[test]
+    fn tool_reward_is_unaffordable_without_rack_room() {
+        use crate::resource::ToolKind;
+
+        let farms = farms_with(vec![]);
+        let cw = ConstructedCity::new(Vec::new()); // no storage at all
+        let pending = ProposedCity::new();
+        let pop = population(0);
+
+        let mut traveler_state = no_traveler();
+        traveler_state.invited = true;
+        traveler_state.current_offer = Some(IndividualTraveler {
+            config_index: 0,
+            demands: vec![], // trivially affordable
+            reward: ResolvedReward::Tool(ToolKind::CarpentersTools),
+            path: Vec::new(),
+        });
+
+        let material_list = MaterialList::default();
+        let effects = compute_month_effects(
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &traveler_state,
+            &material_list,
+            false,
+        );
+
+        let t = traveler_of(&effects);
+        assert!(
+            !t.affordable,
+            "no rack storage exists to receive the tool, so the checkbox must be disabled"
+        );
     }
 
     /// A brand-new city has no storage room yet (the very first one, "bin",
@@ -1347,7 +1433,7 @@ mod tests {
         let mut farms = farms_with(vec![farm]);
 
         // The player has 20 stored potatoes to draw on.
-        let mut inv = Inventory::new(100.0);
+        let mut inv = Inventory::new([(StorageKind::Bulk, 100.0)]);
         inv.add_uniform(Potato, 20);
         let mut cw = grid_with_storage(inv);
         let pending = ProposedCity::new();
@@ -1411,7 +1497,7 @@ mod tests {
         farm.event = FarmEvent::Reconfigure(NewProduction::RandomRegular);
         let farms = farms_with(vec![farm]);
 
-        let mut inv = Inventory::new(100.0);
+        let mut inv = Inventory::new([(StorageKind::Bulk, 100.0)]);
         inv.add_uniform(Potato, 5); // not enough, even from storage
         let cw = grid_with_storage(inv);
         let pending = ProposedCity::new();

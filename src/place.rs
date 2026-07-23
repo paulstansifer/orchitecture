@@ -742,19 +742,20 @@ pub fn commit_assignment(cw: &mut ConstructedCity, cube: IVec3, place_idx: usize
         cw.placed_places.remove(*id);
     }
 
-    let max_volume: f32 = plan
-        .chosen
-        .iter()
-        .map(|f| match f {
-            FulfilledPorf::Furniture(loc) => {
-                slot_storage_capacity(cw, *loc, StorageKind::Bulk)
-                    + slot_storage_capacity(cw, *loc, StorageKind::Rack)
-                    + slot_storage_capacity(cw, *loc, StorageKind::Book)
-            }
-            FulfilledPorf::Place(_) => 0.0,
-        })
-        .sum();
-    let mut contents = Inventory::new(max_volume);
+    let capacity_for = |kind: StorageKind| -> f32 {
+        plan.chosen
+            .iter()
+            .map(|f| match f {
+                FulfilledPorf::Furniture(loc) => slot_storage_capacity(cw, *loc, kind),
+                FulfilledPorf::Place(_) => 0.0,
+            })
+            .sum()
+    };
+    let mut contents = Inventory::new([
+        (StorageKind::Bulk, capacity_for(StorageKind::Bulk)),
+        (StorageKind::Rack, capacity_for(StorageKind::Rack)),
+        (StorageKind::Book, capacity_for(StorageKind::Book)),
+    ]);
     if cw.places[place_idx].name == "camp" {
         contents.add_uniform(UniformResource::Plank, 18);
         contents.add_uniform(UniformResource::Canvas, 6);
@@ -1083,7 +1084,7 @@ fn deposit_into_bookcase(cw: &mut ConstructedCity, item: UniqueResource) -> bool
             })
             .sum();
         let current = pp.contents.book_count() as f32 * volume;
-        if (ceiling - current).min(pp.contents.remaining_capacity()) >= volume {
+        if (ceiling - current).min(pp.contents.remaining_capacity(StorageKind::Book)) >= volume {
             cw.placed_places[id].contents.add_unique(item);
             return true;
         }
@@ -1163,8 +1164,9 @@ fn rack_capacity_ceiling(
 }
 
 /// Free volume `pp` can currently accept for `contents` (Tools or Rugs):
-/// bounded by its racks' dedication (`rack_capacity_ceiling`) and by its
-/// overall room volume.
+/// bounded by its racks' dedication (`rack_capacity_ceiling`) and by the
+/// place's own `Rack`-pool volume (shared with Bulk goods only through the
+/// same furniture's total capacity, never through their contents).
 fn rack_free_capacity_for(
     cw: &ConstructedCity,
     pp: &ParticularPlace,
@@ -1175,7 +1177,7 @@ fn rack_free_capacity_for(
         RackContents::Rugs => pp.contents.rug_count(),
     } as f32;
     let ceiling_free = (rack_capacity_ceiling(cw, pp, contents) - current).max(0.0);
-    ceiling_free.min(pp.contents.remaining_capacity())
+    ceiling_free.min(pp.contents.remaining_capacity(StorageKind::Rack))
 }
 
 /// Free volume available for `contents` (Tools or Rugs) across all rack
@@ -1347,8 +1349,8 @@ fn place_capacity_ceiling(cw: &ConstructedCity, pp: &ParticularPlace, res: Unifo
 }
 
 /// Free volume `pp` can currently accept for `res`: bounded by its bins'
-/// individual resource restrictions (via `place_capacity_ceiling`) and by its
-/// overall room volume.
+/// individual resource restrictions (via `place_capacity_ceiling`) and by the
+/// place's own `Bulk`-pool volume.
 fn place_free_capacity_for(
     cw: &ConstructedCity,
     pp: &ParticularPlace,
@@ -1362,7 +1364,7 @@ fn place_free_capacity_for(
         .map(|(_, q)| q as f32)
         .unwrap_or(0.0);
     let ceiling_free = (place_capacity_ceiling(cw, pp, res) - current).max(0.0);
-    ceiling_free.min(pp.contents.remaining_capacity())
+    ceiling_free.min(pp.contents.remaining_capacity(StorageKind::Bulk))
 }
 
 /// Free volume available for `res` across all storage places, honoring each
@@ -1384,7 +1386,11 @@ pub fn storage_free_capacity(cw: &ConstructedCity, res: UniformResource) -> f32 
 pub fn storage_overall_free_capacity(cw: &ConstructedCity) -> f32 {
     storage_ids(cw)
         .into_iter()
-        .map(|id| cw.placed_places[id].contents.remaining_capacity())
+        .map(|id| {
+            cw.placed_places[id]
+                .contents
+                .remaining_capacity(StorageKind::Bulk)
+        })
         .sum()
 }
 
@@ -1825,7 +1831,7 @@ mod tests {
         let donor = grid.placed_places.insert(ParticularPlace {
             place: 0,
             fulfillments: vec![f(b(0, 1)), f(b(0, 2))],
-            contents: Inventory::new(40.0),
+            contents: Inventory::new([(StorageKind::Bulk, 40.0)]),
             restriction: ParentRestriction::Unrestricted,
         });
 
@@ -1856,7 +1862,7 @@ mod tests {
         let id = grid.placed_places.insert(ParticularPlace {
             place: 0,
             fulfillments: vec![f(b(0, 0))],
-            contents: Inventory::new(20.0),
+            contents: Inventory::new([(StorageKind::Bulk, 20.0)]),
             restriction: ParentRestriction::Unrestricted,
         });
         assert_eq!(place_id_at(&grid, b(0, 0)), Some(id));
@@ -2065,7 +2071,7 @@ mod tests {
 
     #[test]
     fn storage_totals_sums_across_places() {
-        let mut inv = Inventory::new(20.0);
+        let mut inv = Inventory::new([(StorageKind::Bulk, 20.0)]);
         inv.add_uniform(UniformResource::Timber, 5);
         let cw = grid_with_storage(storage_place_def(), inv);
         assert_eq!(storage_totals(&cw).get(&UniformResource::Timber), Some(&5));
@@ -2073,7 +2079,7 @@ mod tests {
 
     #[test]
     fn storage_free_capacity_reflects_remaining_volume() {
-        let mut inv = Inventory::new(20.0);
+        let mut inv = Inventory::new([(StorageKind::Bulk, 20.0)]);
         inv.add_uniform(UniformResource::Timber, 12);
         let cw = grid_with_storage(storage_place_def(), inv);
         assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 8.0);
@@ -2081,7 +2087,7 @@ mod tests {
 
     #[test]
     fn deposit_with_capacity_caps_at_remaining_volume() {
-        let inv = Inventory::new(5.0);
+        let inv = Inventory::new([(StorageKind::Bulk, 5.0)]);
         let mut cw = grid_with_storage(storage_place_def(), inv);
         let deposited = deposit_uniform_with_capacity(&mut cw, UniformResource::Timber, 12);
         assert_eq!(deposited, 5);
@@ -2090,7 +2096,7 @@ mod tests {
 
     #[test]
     fn bin_restricted_to_a_resource_excludes_others_from_capacity() {
-        let mut inv = Inventory::new(20.0);
+        let mut inv = Inventory::new([(StorageKind::Bulk, 20.0)]);
         inv.add_uniform(UniformResource::Timber, 5);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], inv);
         cw.bin_resource_restrictions
@@ -2101,7 +2107,7 @@ mod tests {
 
     #[test]
     fn one_restricted_and_one_unrestricted_bin_split_capacity_per_resource() {
-        let inv = Inventory::new(40.0);
+        let inv = Inventory::new([(StorageKind::Bulk, 40.0)]);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
         cw.bin_resource_restrictions
             .insert(b(0, 0), UniformResource::Timber);
@@ -2113,7 +2119,7 @@ mod tests {
 
     #[test]
     fn deposit_with_capacity_refuses_to_overfill_a_restricted_bin() {
-        let inv = Inventory::new(20.0);
+        let inv = Inventory::new([(StorageKind::Bulk, 20.0)]);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], inv);
         cw.bin_resource_restrictions
             .insert(b(0, 0), UniformResource::Timber);
@@ -2124,7 +2130,7 @@ mod tests {
 
     #[test]
     fn shared_ceiling_excludes_dedicated_bins() {
-        let inv = Inventory::new(40.0);
+        let inv = Inventory::new([(StorageKind::Bulk, 40.0)]);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
         cw.bin_resource_restrictions
             .insert(b(0, 0), UniformResource::Timber);
@@ -2138,7 +2144,7 @@ mod tests {
 
     #[test]
     fn uncommitted_capacity_excludes_dedicated_room_even_when_empty() {
-        let inv = Inventory::new(40.0);
+        let inv = Inventory::new([(StorageKind::Bulk, 40.0)]);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
         cw.bin_resource_restrictions
             .insert(b(0, 0), UniformResource::Timber);
@@ -2153,7 +2159,7 @@ mod tests {
 
     #[test]
     fn uncommitted_capacity_counts_overflow_into_shared_bins() {
-        let mut inv = Inventory::new(40.0);
+        let mut inv = Inventory::new([(StorageKind::Bulk, 40.0)]);
         inv.add_uniform(UniformResource::Timber, 25);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0), b(0, 1)], inv);
         cw.bin_resource_restrictions
@@ -2209,7 +2215,7 @@ mod tests {
         let cw = grid_with_storage_bins(
             bookroom_place_def(),
             &[b(0, 0), b(0, 1)],
-            Inventory::new(30.0),
+            Inventory::new([(StorageKind::Book, 30.0)]),
         );
         // Two bookcases at 10 each back a book capacity of 20...
         assert_eq!(book_capacity(&cw), 20.0);
@@ -2220,21 +2226,33 @@ mod tests {
 
     #[test]
     fn racks_provide_no_book_capacity() {
-        let cw = grid_with_storage_bins(rack_place_def(), &[b(0, 0)], Inventory::new(10.0));
+        let cw = grid_with_storage_bins(
+            rack_place_def(),
+            &[b(0, 0)],
+            Inventory::new([(StorageKind::Rack, 10.0)]),
+        );
         assert_eq!(book_capacity(&cw), 0.0);
         assert_eq!(rack_capacity(&cw, RackContents::Tools), 10.0);
     }
 
     #[test]
     fn rack_defaults_to_tools_when_unset() {
-        let cw = grid_with_storage_bins(rack_place_def(), &[b(0, 0)], Inventory::new(10.0));
+        let cw = grid_with_storage_bins(
+            rack_place_def(),
+            &[b(0, 0)],
+            Inventory::new([(StorageKind::Rack, 10.0)]),
+        );
         assert_eq!(rack_free_capacity(&cw, RackContents::Tools), 10.0);
         assert_eq!(rack_free_capacity(&cw, RackContents::Rugs), 0.0);
     }
 
     #[test]
     fn rack_dedicated_to_rugs_excludes_tools() {
-        let mut cw = grid_with_storage_bins(rack_place_def(), &[b(0, 0)], Inventory::new(10.0));
+        let mut cw = grid_with_storage_bins(
+            rack_place_def(),
+            &[b(0, 0)],
+            Inventory::new([(StorageKind::Rack, 10.0)]),
+        );
         cw.rack_restrictions.insert(b(0, 0), RackContents::Rugs);
         assert_eq!(rack_free_capacity(&cw, RackContents::Rugs), 10.0);
         assert_eq!(rack_free_capacity(&cw, RackContents::Tools), 0.0);
@@ -2242,8 +2260,11 @@ mod tests {
 
     #[test]
     fn deposit_tool_only_lands_in_a_tools_rack_with_room() {
-        let mut cw =
-            grid_with_storage_bins(rack_place_def(), &[b(0, 0), b(0, 1)], Inventory::new(10.0));
+        let mut cw = grid_with_storage_bins(
+            rack_place_def(),
+            &[b(0, 0), b(0, 1)],
+            Inventory::new([(StorageKind::Rack, 10.0)]),
+        );
         cw.rack_restrictions.insert(b(0, 0), RackContents::Rugs);
         // b(0, 0) is dedicated to Rugs, so the tool must land via b(0, 1),
         // which defaults to Tools.
@@ -2255,15 +2276,22 @@ mod tests {
     fn bins_never_hold_tools_or_rugs() {
         // A plain bin-backed storage room has no rack fulfillments at all, so
         // it's never returned by `rack_storage_ids` and can't receive a tool.
-        let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], Inventory::new(20.0));
+        let mut cw = grid_with_storage_bins(
+            storage_place_def(),
+            &[b(0, 0)],
+            Inventory::new([(StorageKind::Bulk, 20.0)]),
+        );
         assert!(!deposit_tool(&mut cw, ToolKind::CarpentersTools));
         assert_eq!(total_tool_count(&cw), 0);
     }
 
     #[test]
     fn rack_capacity_reflects_total_ceiling_not_just_free_room() {
-        let mut cw =
-            grid_with_storage_bins(rack_place_def(), &[b(0, 0), b(0, 1)], Inventory::new(20.0));
+        let mut cw = grid_with_storage_bins(
+            rack_place_def(),
+            &[b(0, 0), b(0, 1)],
+            Inventory::new([(StorageKind::Rack, 20.0)]),
+        );
         cw.rack_restrictions.insert(b(0, 0), RackContents::Rugs);
         // b(0, 1) defaults to Tools; deposit one so free capacity (10) no
         // longer equals the total ceiling (still 10, since it's per-cube).

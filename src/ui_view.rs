@@ -257,13 +257,17 @@ pub fn month_panel_view(
     ]
     .into_iter()
     .filter_map(|category| {
-        let capacity = match category {
+        // The nominal ceiling dedicated to this category -- used only to
+        // decide whether the row appears at all (e.g. once a rack has been
+        // built), since it stays stable regardless of how full the place
+        // currently is.
+        let ceiling = match category {
             UniqueCategory::Tools => crate::place::rack_capacity(constructed, RackContents::Tools),
             UniqueCategory::Rugs => crate::place::rack_capacity(constructed, RackContents::Rugs),
             UniqueCategory::Books => crate::place::book_capacity(constructed),
         };
         let incoming = category == UniqueCategory::Tools && tools_incoming;
-        if capacity <= 0.0 && !incoming {
+        if ceiling <= 0.0 && !incoming {
             return None;
         }
         let current = match category {
@@ -271,10 +275,27 @@ pub fn month_panel_view(
             UniqueCategory::Rugs => crate::place::total_rug_count(constructed),
             UniqueCategory::Books => crate::place::total_book_count(constructed),
         };
+        // The capacity actually shown is bounded by free room right now, not
+        // just the nominal ceiling: a rack sharing its place's volume with
+        // Bulk goods (e.g. the starting wagon) can have less real headroom
+        // than its dedicated ceiling once that shared volume fills up.
+        // Regression: the ceiling alone read as "20 tools free" even when
+        // the wagon's Bulk contents had already used up the shared volume,
+        // leaving no actual room for a tool.
+        let free = match category {
+            UniqueCategory::Tools => {
+                crate::place::rack_free_capacity(constructed, RackContents::Tools)
+            }
+            UniqueCategory::Rugs => {
+                crate::place::rack_free_capacity(constructed, RackContents::Rugs)
+            }
+            UniqueCategory::Books => ceiling - current as f32,
+        };
+        let capacity = current as f32 + free;
         Some(UniqueResourceRow {
             category,
             current,
-            capacity: (capacity > 0.0).then_some(capacity.round() as u32),
+            capacity: (ceiling > 0.0).then_some(capacity.round() as u32),
         })
     })
     .collect();
@@ -402,7 +423,7 @@ mod tests {
         use crate::place::{
             FulfilledPorf, ParentRestriction, ParticularPlace, Place, PlaceReq, Porf,
         };
-        use crate::resource::{Inventory, RackContents};
+        use crate::resource::Inventory;
         use bevy::math::IVec3;
 
         use crate::eorf::{EorfInfo, FurnitureOrElement, PlacementStyle, StructureEmbedding};
@@ -463,7 +484,7 @@ mod tests {
                 cube: IVec3::ZERO,
                 slot: Slot::Room,
             })],
-            contents: Inventory::new(10.0),
+            contents: Inventory::new([(StorageKind::Rack, 10.0)]),
             restriction: ParentRestriction::Unrestricted,
         });
 
@@ -490,6 +511,121 @@ mod tests {
         assert_eq!(view.rack_rows[0].category, UniqueCategory::Tools);
         assert_eq!(view.rack_rows[0].current, 0);
         assert_eq!(view.rack_rows[0].capacity, Some(10));
+    }
+
+    /// Regression test for a bug where a place like the starting wagon --
+    /// which dedicates part of its volume to `Rack` and part to `Bulk` --
+    /// tracked both in one shared `Inventory` pool, so Bulk goods filling
+    /// that pool left no real headroom for tools even though the Tools row
+    /// still showed the full nominal ceiling. `Inventory` now tracks a
+    /// separate capacity per `StorageKind`, so Bulk contents can never eat
+    /// into Rack room (or vice versa): filling Bulk to and past its own
+    /// capacity leaves Rack space fully free.
+    #[test]
+    fn bulk_contents_never_reduce_rack_capacity() {
+        use crate::place::{
+            FulfilledPorf, ParentRestriction, ParticularPlace, Place, PlaceReq, Porf,
+        };
+        use crate::resource::{Inventory, RackContents};
+        use bevy::math::IVec3;
+
+        use crate::eorf::{EorfInfo, FurnitureOrElement, PlacementStyle, StructureEmbedding};
+        use crate::materials::BuildMaterialId;
+        use crate::resource::StorageKind;
+        use crate::sparse3d::{Facing, Slot, SlotCoord};
+
+        // A wagon-like furniture: 8 Bulk + 2 Rack.
+        let wagon = EorfInfo {
+            name: "wagon".to_string(),
+            placement_style: PlacementStyle::RoomPlop,
+            x_char: None,
+            z_char: None,
+            embedding: StructureEmbedding {
+                tall: 0.0,
+                passable: 0.0,
+                decorative: 0.0,
+                striated: 0.0,
+                temporary: 1.0,
+            },
+            kind: FurnitureOrElement::Furniture(vec![]),
+            vantage_evaluated: false,
+            storage_capacity: vec![(StorageKind::Bulk, 8.0), (StorageKind::Rack, 2.0)],
+            placeable: false,
+            slots: vec![],
+        };
+        let mut cw = ConstructedCity::new(vec![wagon]);
+        let wagon_id = cw.find_structure_by_name("wagon").unwrap();
+        let loc = SlotCoord {
+            cube: IVec3::ZERO,
+            slot: Slot::Room,
+        };
+        cw.contents.set(
+            loc,
+            crate::city::Cell {
+                id: wagon_id,
+                facing: Facing::default(),
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            },
+        );
+        cw.places = vec![Place {
+            name: "camp".to_string(),
+            requirements: vec![PlaceReq {
+                requirement: Porf::Furniture("wagon".to_string()),
+                min: 1,
+                max: None,
+                worker_visit_weight: 1.0,
+                worker_visit_duration: 1.0,
+            }],
+            public_storage: true,
+            accounting: None,
+            quality_factors: vec![],
+            assignable_for: None,
+            work: None,
+        }];
+        let mut contents = Inventory::new([(StorageKind::Bulk, 8.0), (StorageKind::Rack, 2.0)]);
+        // Fill Bulk to its own 8-unit capacity -- if it shared a pool with
+        // Rack, this would leave no room for tools.
+        contents.add_uniform(UniformResource::Plank, 8);
+        cw.placed_places.insert(ParticularPlace {
+            place: 0,
+            fulfillments: vec![FulfilledPorf::Furniture(loc)],
+            contents,
+            restriction: ParentRestriction::Unrestricted,
+        });
+        assert_eq!(
+            crate::place::rack_free_capacity(&cw, RackContents::Tools),
+            2.0,
+            "a full Bulk pool must not eat into Rack's own capacity"
+        );
+
+        let farms = farms_with(vec![]);
+        let pending = crate::city::ProposedCity::new();
+        let pop = Population {
+            individuals: vec![],
+        };
+        let traveler_state = no_traveler();
+        let material_list = MaterialList::default();
+
+        let view = month_panel_view(
+            1,
+            &farms,
+            &cw,
+            &pending,
+            &pop,
+            &traveler_state,
+            &material_list,
+            false,
+        );
+
+        assert_eq!(view.rack_rows.len(), 1);
+        assert_eq!(view.rack_rows[0].category, UniqueCategory::Tools);
+        assert_eq!(view.rack_rows[0].current, 0);
+        assert_eq!(
+            view.rack_rows[0].capacity,
+            Some(2),
+            "the Tools row must show the full 2-unit Rack capacity, unaffected by Bulk being full"
+        );
     }
 
     /// An invited farm makes the panel active and reports the market gain in

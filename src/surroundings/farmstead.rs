@@ -15,6 +15,12 @@ pub const MARKET_RADIUS: f32 = 50.0;
 /// How much a farm's production is boosted by attending the market.
 pub const MARKET_BOOST: i32 = 4;
 
+/// The declining production penalty a farm takes on for the "Adopt" action.
+/// Also the minimum production capacity required to adopt (`can_adopt`): the
+/// penalty may bring capacity all the way to zero, so a farm at exactly this
+/// much still qualifies.
+pub const ADOPT_PENALTY: i32 = 8;
+
 /// How many potatoes the market pool must supply for a farm to reconfigure its
 /// production. The reconfiguring farm also burns its own potato stockpile
 /// rather than contributing it to the pool (see `seed_market`).
@@ -147,10 +153,10 @@ impl FarmData {
     }
 
     /// Whether this farm's total production is large enough to take on the
-    /// "Adopt" action's -8 declining penalty. The penalty may bring capacity all
-    /// the way to zero, so a farm at exactly 8 still qualifies.
+    /// "Adopt" action's declining penalty. The penalty may bring capacity all
+    /// the way to zero, so a farm at exactly `ADOPT_PENALTY` still qualifies.
     pub fn can_adopt(&self) -> bool {
-        self.production_capacity() >= 8
+        self.production_capacity() >= ADOPT_PENALTY as u32
     }
 
     pub fn specialized_tool(&self) -> Option<ToolKind> {
@@ -371,7 +377,8 @@ pub enum MarketModeEffect {
         paid_from_storage: u32,
         new_production: NewProduction,
     },
-    /// `Adopt` event: population grows by one, production takes a -10 declining penalty.
+    /// `Adopt` event: population grows by one, production takes an
+    /// `ADOPT_PENALTY` declining penalty.
     Adopt,
 }
 
@@ -493,18 +500,6 @@ pub fn resolve_market(
     farm_effects
 }
 
-/// Whatever inflow is left in the pool becomes the player's gains, sorted for a
-/// deterministic order.
-fn gains_from_pool(inflow: &HashMap<UniformResource, u32>) -> Vec<(UniformResource, u32)> {
-    let mut gains: Vec<(UniformResource, u32)> = inflow
-        .iter()
-        .filter(|(_, &qty)| qty > 0)
-        .map(|(&res, &qty)| (res, qty))
-        .collect();
-    gains.sort_by_key(|&(res, _)| res);
-    gains
-}
-
 /// Compute what the next market run would do on its own — no feeding or traveler
 /// in the mix — without mutating state or using RNG. `storage` is a snapshot of
 /// the player's pre-existing stock, so a reconfigure's potato cost can draw on it
@@ -522,7 +517,7 @@ pub fn compute_market(
     let farm_effects = resolve_market(fr, &invited, &mut pool);
     MarketOutcome {
         farm_effects,
-        player_gains: gains_from_pool(&pool.inflow),
+        player_gains: pool.gains(),
     }
 }
 
@@ -711,7 +706,9 @@ fn describe_farm_effect(
                 }
             }
             MarketModeEffect::Adopt => {
-                lines.push("Adopts a family: population +1, production -8 (declining)".to_string());
+                lines.push(format!(
+                    "Adopts a family: population +1, production -{ADOPT_PENALTY} (declining)"
+                ));
             }
         }
     } else {
