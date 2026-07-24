@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
-use crate::city::City;
+use crate::city::{City, ConstructedCity, ProposedCity};
+use crate::city_effect::{MonthEffects, MonthInputs};
 use crate::game_mode::{GameMode, SandboxMode};
 use crate::materials::MaterialList;
 use crate::month::AdvanceMonthRequested;
@@ -13,6 +14,67 @@ use crate::traveler::TravelerState;
 use crate::ui_view::{month_panel_view, AdvanceState, UniqueCategory};
 use crate::{col_format, heading_label, label, note_label};
 
+/// This month's projected effects, computed once per frame by
+/// [`update_economy_cache`] and shared by every UI that needs it (the resource
+/// panel here and the surroundings map), so the non-trivial month pipeline runs
+/// once rather than once per consumer.
+///
+/// NOTE: this dedups the computation but still runs it every frame. We *could*
+/// skip recomputes when no input changed, but naively gating on
+/// `resource_changed` fails today: egui widgets bind straight to resource fields
+/// (e.g. `&mut farm.invited`), so `DerefMut` marks the resource changed every
+/// frame it's rendered, even when the value is identical.
+///
+/// The envisioned fix is a wrapper over the input resources (a `SystemParam`
+/// bundle) exposing either plain `&` read access, or — for the few widgets that
+/// edit an input — a scoped per-field proxy: it hands egui a working copy and,
+/// on `Drop`, writes back and calls `set_changed()` *only if the value actually
+/// differs* (a scoped `set_if_neq`, holding the resource via
+/// `bypass_change_detection` until then). That makes Bevy's own change signal
+/// accurate, so the cache can just gate on `resource_changed` — no separate
+/// dirty bit to keep in sync. Crucially it degrades safely: an edit that skips
+/// the proxy still marks the resource dirty, so the worst case is an unnecessary
+/// recompute (today's behavior), never a stale preview. The only real cost is a
+/// small generic "field of a resource" proxy helper. Deferred until profiling
+/// shows the per-frame compute matters.
+#[derive(Resource, Default)]
+pub struct MonthEffectsCache(pub Option<MonthEffects>);
+
+/// Recomputes [`MonthEffectsCache`] once per frame, before any UI reads it.
+/// Runs unconditionally (see the note on `MonthEffectsCache`): both the shared
+/// resource panel and the surroundings map consume it, so this replaces what
+/// used to be two independent per-frame computes.
+#[allow(clippy::too_many_arguments)]
+pub fn update_economy_cache(
+    mut cache: ResMut<MonthEffectsCache>,
+    mut farms: ResMut<FarmsResource>,
+    constructed: Res<ConstructedCity>,
+    pending: Res<ProposedCity>,
+    population: Res<Population>,
+    traveler_state: Res<TravelerState>,
+    material_list: Res<MaterialList>,
+    sandbox: Res<SandboxMode>,
+) {
+    // Populate the farms' lazy adjacency/road caches (read by the economy
+    // computation) through `bypass_change_detection`, so building them doesn't
+    // mark `FarmsResource` changed — the road graph only needs (re)building when
+    // absent; `advance_month` keeps its distances current after that.
+    let farms = farms.bypass_change_detection();
+    farms.ensure_adjacency();
+    if farms.roads.is_none() {
+        farms.ensure_roads();
+    }
+    let inputs = MonthInputs {
+        constructed: &constructed,
+        pending: &pending,
+        population: &population,
+        traveler_state: &traveler_state,
+        material_list: &material_list,
+        sandbox_enabled: sandbox.enabled,
+    };
+    cache.0 = Some(inputs.compute(farms));
+}
+
 pub fn shared_ui_system(
     mut contexts: EguiContexts,
     clock: Res<GameClock>,
@@ -23,7 +85,7 @@ pub fn shared_ui_system(
     current_mode: Res<State<GameMode>>,
     mut advance_month: MessageWriter<AdvanceMonthRequested>,
     mut traveler_state: ResMut<TravelerState>,
-    population: Res<Population>,
+    cache: Res<MonthEffectsCache>,
     sandbox: Res<SandboxMode>,
     material_list: Res<MaterialList>,
 ) {
@@ -41,13 +103,17 @@ pub fn shared_ui_system(
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
+    // Populated by `update_economy_cache`, which is ordered before this system.
+    let Some(effects) = cache.0.as_ref() else {
+        return;
+    };
 
     let view = month_panel_view(
         clock.month() + 1,
+        effects,
         &farms,
         &constructed,
         &pending,
-        &population,
         &traveler_state,
         &material_list,
         sandbox.enabled,
@@ -330,5 +396,49 @@ pub fn shared_ui_system(
     }
     if let Some(mode) = next_mode {
         next_game_mode.set(mode);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traveler::TravelerState;
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::math::Vec2;
+
+    /// `update_economy_cache` fills the cache (starting empty) by running the
+    /// month pipeline — the piece the graphical schedule exercises that the
+    /// headless harness doesn't. Covers the `bypass_change_detection` ensure_*
+    /// path building the road graph on first use.
+    #[test]
+    fn update_economy_cache_populates_an_empty_cache() {
+        let mut world = World::new();
+        world.init_resource::<MonthEffectsCache>();
+        world.insert_resource(FarmsResource {
+            farms: Vec::new(),
+            circle_pos: Vec2::ZERO,
+            traveler_reveals: Vec::new(),
+            neighbors: Vec::new(),
+            road_trips: Vec::new(),
+            road_paved: Vec::new(),
+            roads: None,
+        });
+        world.insert_resource(ConstructedCity::new(Vec::new()));
+        world.insert_resource(ProposedCity::new());
+        world.insert_resource(Population::default());
+        world.insert_resource(TravelerState {
+            configs: Vec::new(),
+            current_offer: None,
+            invited: false,
+        });
+        world.insert_resource(MaterialList::default());
+        world.insert_resource(SandboxMode::default());
+
+        assert!(world.resource::<MonthEffectsCache>().0.is_none());
+        world.run_system_once(update_economy_cache).unwrap();
+        assert!(
+            world.resource::<MonthEffectsCache>().0.is_some(),
+            "the cache should be populated after the system runs"
+        );
     }
 }

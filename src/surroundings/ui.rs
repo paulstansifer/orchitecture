@@ -134,6 +134,7 @@ pub fn surroundings_ui_system(
     traveler_state: Res<crate::traveler::TravelerState>,
     material_list: Res<crate::materials::MaterialList>,
     sandbox: Res<crate::game_mode::SandboxMode>,
+    cache: Res<crate::ui::MonthEffectsCache>,
     resource_icons: bevy::prelude::Res<crate::resource_icons::ResourceIcons>,
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {
@@ -145,8 +146,10 @@ pub fn surroundings_ui_system(
         return;
     };
 
-    // Everything the full month pipeline needs, so farm previews reflect
-    // feeding and a traveler's claim ahead of the market (see `MonthInputs`).
+    // Everything the full month pipeline needs, so the farm-config popup's
+    // previews reflect feeding and a traveler's claim ahead of the market (see
+    // `MonthInputs`). The popup runs hypotheticals (a farm temporarily mutated),
+    // so it can't use the shared cache below.
     let inputs = MonthInputs {
         constructed: &constructed,
         pending: &pending,
@@ -156,11 +159,14 @@ pub fn surroundings_ui_system(
         sandbox_enabled: sandbox.enabled,
     };
 
-    // Market preview for farm boost display.
-    farms.ensure_adjacency();
-    farms.ensure_roads();
-    let preview = inputs.compute(&farms);
-    let preview_market = preview.market_effects();
+    // Market preview for farm boost display: read from the shared cache that
+    // `crate::ui::update_economy_cache` fills once per frame (before this
+    // system), rather than recomputing the whole month pipeline here.
+    let preview_market = cache
+        .0
+        .as_ref()
+        .map(|e| e.market_effects())
+        .unwrap_or_default();
     // Predicted boost for a farm, if it is invited in `Market` mode.
     let predicted_boost = |id: FarmId| -> i32 {
         match preview_market.get(&id).copied() {

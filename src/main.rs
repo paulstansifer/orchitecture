@@ -61,7 +61,7 @@ use orchitecture_lib::{
         GameClock,
     },
     traveler::setup_travelers,
-    ui::shared_ui_system,
+    ui::{shared_ui_system, update_economy_cache, MonthEffectsCache},
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
     work::sync_work,
@@ -122,6 +122,7 @@ fn main() {
         .insert_resource(PlaceHighlight::default())
         .insert_resource(HoveredFurniture::default())
         .insert_resource(GameClock::default())
+        .init_resource::<MonthEffectsCache>()
         .insert_resource(MaterialList::load())
         .insert_resource(DebugNav::default())
         .add_message::<AdvanceMonthRequested>()
@@ -207,6 +208,11 @@ fn main() {
             EguiPrimaryContextPass,
             (
                 configure_fonts_once,
+                // Computes the shared economy cache once per frame, before any
+                // UI reads it (see `MonthEffectsCache`).
+                update_economy_cache
+                    .before(shared_ui_system)
+                    .before(surroundings_ui_system),
                 shared_ui_system,
                 build_ui_system.run_if(in_state(GameMode::Build)),
                 walk_ui_system.run_if(in_state(GameMode::Walk)),

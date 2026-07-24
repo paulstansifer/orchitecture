@@ -7,9 +7,8 @@
 use std::collections::HashMap;
 
 use crate::city::{ConstructedCity, ProposedCity};
-use crate::city_effect::{compute_month_effects, CityEffect, LedgerSource};
+use crate::city_effect::{CityEffect, LedgerSource, MonthEffects};
 use crate::materials::MaterialList;
-use crate::population::Population;
 use crate::resource::{Precision, RackContents, UniformResource};
 use crate::surroundings::farmstead::FarmsResource;
 use crate::traveler::{ResolvedReward, TravelerState};
@@ -113,28 +112,18 @@ fn reward_desc(reward: &ResolvedReward) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn month_panel_view(
     month: u32,
+    // This month's effects (market participation, feeding, a traveler's visit,
+    // construction absorption), computed once per frame by
+    // `crate::ui::update_economy_cache` and shared by every consumer. Same
+    // computation `advance_month` uses to actually apply things.
+    effects: &MonthEffects,
     farms: &FarmsResource,
     constructed: &ConstructedCity,
     pending: &ProposedCity,
-    population: &Population,
     traveler_state: &TravelerState,
     material_list: &MaterialList,
     sandbox_enabled: bool,
 ) -> MonthPanelView {
-    // This month's effects (market participation, feeding, a traveler's
-    // visit, construction absorption) — computed once and shared by the
-    // resource preview, the per-resource tooltip, and the traveler
-    // checkbox's affordability. Same computation `advance_month` uses to
-    // actually apply things, just not mutated here.
-    let effects = compute_month_effects(
-        farms,
-        constructed,
-        pending,
-        population,
-        traveler_state,
-        material_list,
-        sandbox_enabled,
-    );
     let station_totals = crate::place::place_resource_totals(constructed);
 
     // Remaining construction need (non-sandbox only).
@@ -342,11 +331,47 @@ pub fn month_panel_view(
 mod tests {
     use super::*;
     use crate::city::ConstructedCity;
+    use crate::city_effect::compute_month_effects;
     use crate::materials::MaterialList;
-    use crate::population::Individual;
+    use crate::population::{Individual, Population};
     use crate::resource::UniformResource::*;
     use crate::surroundings::farmstead::{FarmData, FarmEvent, FarmsResource};
     use bevy::math::Vec2;
+
+    /// Test helper: run the month pipeline, then build the panel view from it —
+    /// mirroring how `update_economy_cache` + `shared_ui_system` split the work
+    /// in the real app.
+    #[allow(clippy::too_many_arguments)]
+    fn panel_view(
+        month: u32,
+        farms: &FarmsResource,
+        constructed: &ConstructedCity,
+        pending: &ProposedCity,
+        population: &Population,
+        traveler_state: &TravelerState,
+        material_list: &MaterialList,
+        sandbox_enabled: bool,
+    ) -> MonthPanelView {
+        let effects = compute_month_effects(
+            farms,
+            constructed,
+            pending,
+            population,
+            traveler_state,
+            material_list,
+            sandbox_enabled,
+        );
+        month_panel_view(
+            month,
+            &effects,
+            farms,
+            constructed,
+            pending,
+            traveler_state,
+            material_list,
+            sandbox_enabled,
+        )
+    }
 
     fn mk_farm(invited: bool) -> FarmData {
         FarmData {
@@ -397,7 +422,7 @@ mod tests {
         let traveler_state = no_traveler();
         let material_list = MaterialList::default();
 
-        let view = month_panel_view(
+        let view = panel_view(
             1,
             &farms,
             &cw,
@@ -496,7 +521,7 @@ mod tests {
         let traveler_state = no_traveler();
         let material_list = MaterialList::default();
 
-        let view = month_panel_view(
+        let view = panel_view(
             1,
             &farms,
             &cw,
@@ -607,7 +632,7 @@ mod tests {
         let traveler_state = no_traveler();
         let material_list = MaterialList::default();
 
-        let view = month_panel_view(
+        let view = panel_view(
             1,
             &farms,
             &cw,
@@ -641,7 +666,7 @@ mod tests {
         let traveler_state = no_traveler();
         let material_list = MaterialList::default();
 
-        let view = month_panel_view(
+        let view = panel_view(
             3,
             &farms,
             &cw,
