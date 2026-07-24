@@ -2,6 +2,7 @@ pub mod farmstead;
 pub mod map;
 pub mod road_network;
 pub mod ui;
+pub mod ui_view;
 
 pub use farmstead::{FarmData, FarmsResource, GameClock, SurroundingsState};
 pub use map::generate_farms;

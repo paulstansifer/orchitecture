@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+use std::hash::Hash;
+
+use bevy_egui::egui::{self, Response, Ui};
 use bevy_egui::egui::{Color32, FontId};
 
 /// Font sizes used throughout the UI. Adjust these for consistent scaling.
@@ -143,4 +147,52 @@ macro_rules! note_label {
     ($ui:expr, $($segment:expr),+ $(,)?) => {
         $crate::styled_label!($ui, $crate::ui_util::FontSizes::small(), true, $($segment),+)
     };
+}
+
+/// Renders a single fixed-size icon image. Thin wrapper over the
+/// `egui::Image`/`SizedTexture` boilerplate that recurs at every icon cell.
+pub fn icon(ui: &mut Ui, tex: egui::TextureId, size: [f32; 2]) -> Response {
+    ui.add(egui::Image::new(egui::load::SizedTexture::new(tex, size)))
+}
+
+/// Renders the icon for `key` if `textures` has one registered, or falls back
+/// to a plain text label (e.g. `""` for a blank cell). Used for the resource
+/// grid's icon column, where not every key is guaranteed a texture.
+pub fn resource_icon_cell<K: Eq + Hash>(
+    ui: &mut Ui,
+    textures: &HashMap<K, egui::TextureId>,
+    key: &K,
+    size: [f32; 2],
+    fallback: &str,
+) -> Response {
+    match textures.get(key) {
+        Some(&tex) => icon(ui, tex, size),
+        None => ui.label(fallback),
+    }
+}
+
+/// Colored text for a signed quantity this month projects: preview-blue for a
+/// gain, problem-red for a loss, `None` at zero (callers typically fall back
+/// to an empty segment or omit the piece entirely). `plus_prefix`/`minus_prefix`
+/// let call sites vary the wording, e.g. `" +"`/" –" or "+"/"-".
+pub fn signed_delta(delta: i64, plus_prefix: &str, minus_prefix: &str) -> Option<FormattedText> {
+    if delta > 0 {
+        Some(col_format_helper(
+            FontColors::preview(),
+            format!("{plus_prefix}{delta}"),
+        ))
+    } else if delta < 0 {
+        Some(col_format_helper(
+            FontColors::problem(),
+            format!("{minus_prefix}{}", -delta),
+        ))
+    } else {
+        None
+    }
+}
+
+fn col_format_helper(color: Color32, txt: String) -> FormattedText {
+    let mut fmt = default_text_format();
+    fmt.color = color;
+    FormattedText { txt, fmt }
 }

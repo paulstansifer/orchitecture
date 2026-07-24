@@ -1,17 +1,19 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
+use crate::resource::UniformResource;
 use crate::resource_icons::SMALL_SIZE;
-use crate::ui_util::FontSizes;
+use crate::ui_util::{icon, FontSizes};
 use crate::{col_format, label, note_label};
 
 use super::farmstead::{
-    farm_breakdown, market_effect, FarmEvent, FarmId, FarmProduction, FarmsResource,
-    MarketModeEffect, NewProduction, SurroundingsState, MARKET_BOOST,
+    FarmEvent, FarmId, FarmsResource, MarketModeEffect, SurroundingsState, MARKET_BOOST,
 };
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
+use super::ui_view::{farm_menu_view, farm_panel_view, FarmMenuView, FarmPanelView};
 use crate::city_effect::{CityEffect, MonthInputs};
-use crate::resource::ToolKind;
 
 const PIXELS_PER_UNIT: f32 = 8.0;
 const CIRCLE_RADIUS: f32 = 18.0;
@@ -112,6 +114,107 @@ fn build_fog_mesh(panel_rect: egui::Rect, view: &MapView, paths: &[Vec<Vec2>]) -
     mesh
 }
 
+/// Pass 1 of the map render: polygon fills (under fog), culled to `expanded`.
+/// Returns the revealed farms' `(id, screen centroid)` — farms with fog below
+/// [`REVEAL_THRESHOLD`] at their centroid, with a panel reach that still
+/// overlaps `panel_rect` (see [`PANEL_H_MAX`]) — for the info-panel pass.
+fn draw_farm_fills(
+    painter: &egui::Painter,
+    view: &MapView,
+    farms: &FarmsResource,
+    expanded: egui::Rect,
+    panel_rect: egui::Rect,
+) -> Vec<(FarmId, egui::Pos2)> {
+    use egui::{Color32, Pos2, Shape, Stroke};
+
+    let mut revealed = Vec::new();
+    for (i, farm) in farms.farms.iter().enumerate() {
+        let screen_pts: Vec<Pos2> = farm.polygon.iter().map(|&p| view.to_screen(p)).collect();
+        if !screen_pts.iter().any(|p| expanded.contains(*p)) {
+            continue;
+        }
+
+        let fill = farm_color(farm.fertility);
+        let stroke = Stroke::new(1.0, Color32::from_gray(40));
+        painter.add(Shape::convex_polygon(screen_pts, fill, stroke));
+
+        let map_centroid = farm.centroid();
+        if fog_alpha_at(map_centroid, &farms.traveler_reveals) < REVEAL_THRESHOLD {
+            let centroid = view.to_screen(map_centroid);
+            // Since the panel is centered on `centroid`, it can still have a
+            // visible sliver even once `centroid` itself is off-panel.
+            let panel_reach = panel_rect.expand2(egui::Vec2::new(PANEL_W / 2.0, PANEL_H_MAX / 2.0));
+            if panel_reach.contains(centroid) {
+                revealed.push((FarmId::new(i), centroid));
+            }
+        }
+    }
+    revealed
+}
+
+/// Pass 2 of the map render: roads (under fog) — dirt fades in brown as it
+/// develops; a paved fraction (from the city-side end) is solid gray instead.
+fn draw_roads(
+    painter: &egui::Painter,
+    view: &MapView,
+    roads: &crate::surroundings::RoadNetwork,
+    expanded: egui::Rect,
+) {
+    use egui::{Color32, Stroke};
+
+    for edge in &roads.edges {
+        let dev = edge.development();
+        let paved = edge.paved.clamp(0.0, 1.0);
+        if dev <= 0.0 && paved <= 0.0 {
+            continue;
+        }
+        let (near, far) = if roads.dist_to_city(edge.a) <= roads.dist_to_city(edge.b) {
+            (edge.a, edge.b)
+        } else {
+            (edge.b, edge.a)
+        };
+        let near_map = roads.nodes[near];
+        let far_map = roads.nodes[far];
+        let near_pt = view.to_screen(near_map);
+        let far_pt = view.to_screen(far_map);
+        if !expanded.contains(near_pt) && !expanded.contains(far_pt) {
+            continue;
+        }
+        let split = near_map.lerp(far_map, paved);
+        let split_pt = view.to_screen(split);
+
+        if paved > 0.0 {
+            let gray = Color32::from_rgba_unmultiplied(150, 150, 150, ROAD_MAX_ALPHA);
+            painter.line_segment([near_pt, split_pt], Stroke::new(2.0, gray));
+        }
+        if paved < 1.0 && dev > 0.0 {
+            let alpha = (dev * ROAD_MAX_ALPHA as f32) as u8;
+            let brown = Color32::from_rgba_unmultiplied(120, 80, 40, alpha);
+            let width = 1.0 + dev * 1.5;
+            painter.line_segment([split_pt, far_pt], Stroke::new(width, brown));
+        }
+    }
+}
+
+/// Pass 4 of the map render (after the fog mesh, so it draws above it): the
+/// navigation circle back to Build mode. Returns its screen-space centre, for
+/// the click hit-test.
+fn draw_nav_circle(painter: &egui::Painter, view: &MapView, circle_pos: Vec2) -> egui::Pos2 {
+    use egui::{Color32, Pos2, Stroke};
+
+    let cs = view.to_screen(circle_pos);
+    painter.circle_filled(cs, CIRCLE_RADIUS, Color32::WHITE);
+    painter.circle_stroke(cs, CIRCLE_RADIUS, Stroke::new(2.0, Color32::from_gray(40)));
+    painter.text(
+        Pos2::new(cs.x, cs.y + CIRCLE_RADIUS + 9.0),
+        egui::Align2::CENTER_CENTER,
+        "Build",
+        FontSizes::body(),
+        Color32::from_gray(20),
+    );
+    cs
+}
+
 pub fn enter_surroundings_mode(mut commands: Commands) {
     commands.insert_resource(SurroundingsState {
         viewport_offset: Vec2::ZERO,
@@ -139,7 +242,7 @@ pub fn surroundings_ui_system(
     mut next_game_mode: ResMut<NextState<crate::game_mode::GameMode>>,
 ) {
     use crate::game_mode::GameMode;
-    use egui::{Color32, Pos2, Sense, Shape, Stroke};
+    use egui::Sense;
 
     let icon_textures_sm = resource_icons.texture_ids_small(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -192,93 +295,23 @@ pub fn surroundings_ui_system(
             panel_rect = ui.max_rect();
             let screen_centre = panel_rect.center();
 
-            painter.rect_filled(panel_rect, 0.0, Color32::from_rgb(30, 30, 30));
+            painter.rect_filled(panel_rect, 0.0, egui::Color32::from_rgb(30, 30, 30));
 
             let view = MapView {
                 screen_centre,
                 offset: state.viewport_offset,
             };
-
-            let circle_pos = farms.circle_pos;
             let expanded = panel_rect.expand(300.0);
 
-            // ── Pass 1: polygon fills (under fog) ─────────────────────────────
-            for (i, farm) in farms.farms.iter().enumerate() {
-                let screen_pts: Vec<Pos2> =
-                    farm.polygon.iter().map(|&p| view.to_screen(p)).collect();
-                if !screen_pts.iter().any(|p| expanded.contains(*p)) {
-                    continue;
-                }
-
-                let fill = farm_color(farm.fertility);
-                let stroke = Stroke::new(1.0, Color32::from_gray(40));
-                painter.add(Shape::convex_polygon(screen_pts, fill, stroke));
-
-                let map_centroid = farm.centroid();
-                if fog_alpha_at(map_centroid, &farms.traveler_reveals) < REVEAL_THRESHOLD {
-                    let centroid = view.to_screen(map_centroid);
-                    // Since the panel is centered on `centroid`, it can still have a
-                    // visible sliver even once `centroid` itself is off-panel.
-                    let panel_reach =
-                        panel_rect.expand2(egui::Vec2::new(PANEL_W / 2.0, PANEL_H_MAX / 2.0));
-                    if panel_reach.contains(centroid) {
-                        revealed.push((FarmId::new(i), centroid));
-                    }
-                }
-            }
-
-            // ── Pass 2: roads (under fog) — dirt fades in brown as it develops;
-            // a paved fraction (from the city-side end) is solid gray instead. ──
+            revealed = draw_farm_fills(&painter, &view, &farms, expanded, panel_rect);
             if let Some(roads) = farms.roads.as_ref() {
-                for edge in &roads.edges {
-                    let dev = edge.development();
-                    let paved = edge.paved.clamp(0.0, 1.0);
-                    if dev <= 0.0 && paved <= 0.0 {
-                        continue;
-                    }
-                    let (near, far) = if roads.dist_to_city(edge.a) <= roads.dist_to_city(edge.b) {
-                        (edge.a, edge.b)
-                    } else {
-                        (edge.b, edge.a)
-                    };
-                    let near_map = roads.nodes[near];
-                    let far_map = roads.nodes[far];
-                    let near_pt = view.to_screen(near_map);
-                    let far_pt = view.to_screen(far_map);
-                    if !expanded.contains(near_pt) && !expanded.contains(far_pt) {
-                        continue;
-                    }
-                    let split = near_map.lerp(far_map, paved);
-                    let split_pt = view.to_screen(split);
-
-                    if paved > 0.0 {
-                        let gray = Color32::from_rgba_unmultiplied(150, 150, 150, ROAD_MAX_ALPHA);
-                        painter.line_segment([near_pt, split_pt], Stroke::new(2.0, gray));
-                    }
-                    if paved < 1.0 && dev > 0.0 {
-                        let alpha = (dev * ROAD_MAX_ALPHA as f32) as u8;
-                        let brown = Color32::from_rgba_unmultiplied(120, 80, 40, alpha);
-                        let width = 1.0 + dev * 1.5;
-                        painter.line_segment([split_pt, far_pt], Stroke::new(width, brown));
-                    }
-                }
+                draw_roads(&painter, &view, roads, expanded);
             }
 
-            // ── Fog-of-war mesh ───────────────────────────────────────────────
             let fog_mesh = build_fog_mesh(panel_rect, &view, &farms.traveler_reveals);
             painter.add(egui::Shape::mesh(fog_mesh));
 
-            // ── Navigation circle (above fog) ─────────────────────────────────
-            let cs = view.to_screen(circle_pos);
-            painter.circle_filled(cs, CIRCLE_RADIUS, Color32::WHITE);
-            painter.circle_stroke(cs, CIRCLE_RADIUS, Stroke::new(2.0, Color32::from_gray(40)));
-            painter.text(
-                Pos2::new(cs.x, cs.y + CIRCLE_RADIUS + 9.0),
-                egui::Align2::CENTER_CENTER,
-                "Build",
-                FontSizes::body(),
-                Color32::from_gray(20),
-            );
+            let cs = draw_nav_circle(&painter, &view, farms.circle_pos);
 
             let response = ui.allocate_rect(panel_rect, Sense::click_and_drag());
             if response.dragged() {
@@ -304,76 +337,24 @@ pub fn surroundings_ui_system(
 
     for (id, centroid) in revealed {
         let current_event = farms.farm_event(id);
+        let panel_view = farm_panel_view(
+            &farms[id],
+            current_event,
+            predicted_boost(id),
+            invite_limit_reached,
+        );
         let farm = &mut farms[id];
-
-        egui::Area::new(egui::Id::new(("farm_panel", id)))
-            .fixed_pos(centroid)
-            .pivot(egui::Align2::CENTER_CENTER)
-            .constrain(false)
-            .show(ctx, |ui| {
-                ui.set_clip_rect(panel_rect);
-                egui::Frame::new()
-                    .fill(Color32::from_rgba_unmultiplied(15, 15, 15, 210))
-                    .inner_margin(egui::Margin::same(4))
-                    .corner_radius(4.0)
-                    .show(ui, |ui| {
-                        ui.set_max_width(PANEL_W);
-
-                        // Production information: acres + boost (+ predicted_bonus)
-                        ui.horizontal(|ui| {
-                            label!(
-                                ui,
-                                format!("{:.0} ac", farm.area),
-                                (farm.boost != 0).then_some(format!("{:+}", farm.boost)),
-                                (farm.invited && predicted_boost(id) > 0).then_some(col_format!(
-                                    preview,
-                                    "+ {}",
-                                    predicted_boost(id)
-                                ))
-                            );
-                        });
-
-                        // Stockpiles on same line
-                        ui.horizontal(|ui| {
-                            // Potato stockpile
-                            if let Some(&tex) =
-                                icon_textures_sm.get(&crate::resource::UniformResource::Potato)
-                            {
-                                ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                                    tex, SMALL_SIZE,
-                                )));
-                            }
-                            label!(ui, format!("{}", farm.potato_stockpile));
-
-                            ui.add_space(4.0);
-
-                            // Inedible resource stockpile (tool output while specialized)
-                            if let Some(&tex) = icon_textures_sm.get(&farm.produced_resource()) {
-                                ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                                    tex, SMALL_SIZE,
-                                )));
-                            }
-                            label!(ui, format!("{}", farm.inedible_stockpile));
-                        });
-
-                        ui.horizontal(|ui| {
-                            let can_invite = farm.invited || !invite_limit_reached;
-                            ui.add_enabled(
-                                can_invite,
-                                egui::Checkbox::new(
-                                    &mut farm.invited,
-                                    current_event.checkbox_label(),
-                                ),
-                            );
-                            if ui
-                                .add_enabled(farm.invited, egui::Button::new("…"))
-                                .clicked()
-                            {
-                                state.open_farm_menu = Some(id);
-                            }
-                        });
-                    });
-            });
+        if let Some(opened) = farm_info_panel(
+            ctx,
+            panel_rect,
+            id,
+            centroid,
+            &panel_view,
+            &mut farm.invited,
+            &icon_textures_sm,
+        ) {
+            state.open_farm_menu = Some(opened);
+        }
     }
 
     // ── Farm configuration ("…") popup ────────────────────────────────────────
@@ -395,9 +376,79 @@ pub fn surroundings_ui_system(
     }
 }
 
-/// The "Farm options" popup for `menu_i` (already known to be invited): each
-/// possible next-month action, its resource breakdown (via the shared
-/// `farm_breakdown` compute path), and whether it's currently choosable.
+/// Renders one revealed farm's info panel at `centroid`. `invited` binds the
+/// checkbox directly to the farm's live state, since the view-model is
+/// read-only. Returns `Some(id)` if the "…" button was clicked (requesting
+/// the farm menu popup open for it).
+fn farm_info_panel(
+    ctx: &egui::Context,
+    panel_rect: egui::Rect,
+    id: FarmId,
+    centroid: egui::Pos2,
+    view: &FarmPanelView,
+    invited: &mut bool,
+    icon_textures_sm: &HashMap<UniformResource, egui::TextureId>,
+) -> Option<FarmId> {
+    let mut open_menu = None;
+    egui::Area::new(egui::Id::new(("farm_panel", id)))
+        .fixed_pos(centroid)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .constrain(false)
+        .show(ctx, |ui| {
+            ui.set_clip_rect(panel_rect);
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(15, 15, 15, 210))
+                .inner_margin(egui::Margin::same(4))
+                .corner_radius(4.0)
+                .show(ui, |ui| {
+                    ui.set_max_width(PANEL_W);
+
+                    // Production information: acres + boost (+ predicted_bonus)
+                    ui.horizontal(|ui| {
+                        label!(
+                            ui,
+                            format!("{:.0} ac", view.area),
+                            (view.boost != 0).then_some(format!("{:+}", view.boost)),
+                            (*invited && view.predicted_boost > 0).then_some(col_format!(
+                                preview,
+                                "+ {}",
+                                view.predicted_boost
+                            ))
+                        );
+                    });
+
+                    // Stockpiles on same line
+                    ui.horizontal(|ui| {
+                        if let Some(&tex) = icon_textures_sm.get(&UniformResource::Potato) {
+                            icon(ui, tex, SMALL_SIZE);
+                        }
+                        label!(ui, format!("{}", view.potato_stockpile));
+
+                        ui.add_space(4.0);
+
+                        // Inedible resource stockpile (tool output while specialized)
+                        if let Some(&tex) = icon_textures_sm.get(&view.produced_resource) {
+                            icon(ui, tex, SMALL_SIZE);
+                        }
+                        label!(ui, format!("{}", view.inedible_stockpile));
+                    });
+
+                    ui.horizontal(|ui| {
+                        ui.add_enabled(
+                            view.can_invite,
+                            egui::Checkbox::new(invited, view.checkbox_label),
+                        );
+                        if ui.add_enabled(*invited, egui::Button::new("…")).clicked() {
+                            open_menu = Some(id);
+                        }
+                    });
+                });
+        });
+    open_menu
+}
+
+/// The "Farm options" popup for `menu_i` (already known to be invited),
+/// rendering the choices computed by [`farm_menu_view`].
 fn farm_menu_ui(
     ctx: &egui::Context,
     farms: &mut FarmsResource,
@@ -405,77 +456,7 @@ fn farm_menu_ui(
     menu_i: FarmId,
     state: &mut SurroundingsState,
 ) {
-    let current_event = farms.farm_event(menu_i);
-    let is_specialized = matches!(farms[menu_i].production, FarmProduction::Specialized(_));
-    let carpenters_tools_in_storage =
-        crate::place::total_tools_of(inputs.constructed, ToolKind::CarpentersTools) >= 1;
-
-    // Breakdowns via the same shared full-month compute path.
-    let market_lines = farm_breakdown(farms, menu_i, FarmEvent::Market, None, inputs);
-    let change_lines = farm_breakdown(
-        farms,
-        menu_i,
-        FarmEvent::Reconfigure(NewProduction::RandomRegular),
-        None,
-        inputs,
-    );
-    let spec_lines = farm_breakdown(
-        farms,
-        menu_i,
-        FarmEvent::Market,
-        Some(FarmProduction::Specialized(ToolKind::CarpentersTools)),
-        inputs,
-    );
-    let adopt_lines = farm_breakdown(farms, menu_i, FarmEvent::Adopt, None, inputs);
-
-    let can_change = matches!(
-        market_effect(
-            farms,
-            menu_i,
-            FarmEvent::Reconfigure(NewProduction::RandomRegular),
-            inputs,
-        ),
-        Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
-    );
-    // Specializing is also a reconfigure, so it must be affordable too (from the
-    // market pool or the player's stored potatoes), not just have a spare tool.
-    let can_specialize = !is_specialized
-        && carpenters_tools_in_storage
-        && matches!(
-            market_effect(
-                farms,
-                menu_i,
-                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools)),
-                inputs,
-            ),
-            Some(MarketModeEffect::Reconfigure { paid, .. }) if paid > 0
-        );
-    let can_adopt = farms[menu_i].can_adopt();
-
-    let render_event_option = |ui: &mut egui::Ui,
-                               chosen: &mut Option<FarmEvent>,
-                               event: FarmEvent,
-                               enabled: bool,
-                               title: &str,
-                               lines: &[String],
-                               disabled_note: Option<&str>| {
-        let selected = current_event == event;
-        if ui
-            .add_enabled(enabled, egui::Button::selectable(selected, title))
-            .clicked()
-        {
-            *chosen = Some(event);
-        }
-        if !enabled {
-            if let Some(note) = disabled_note {
-                note_label!(ui, note);
-            }
-        }
-        for line in lines {
-            label!(ui, format!("    • {}", line));
-        }
-        ui.add_space(4.0);
-    };
+    let FarmMenuView { options } = farm_menu_view(farms, inputs, menu_i);
 
     let mut keep_open = true;
     let mut chosen_event: Option<FarmEvent> = None;
@@ -485,42 +466,26 @@ fn farm_menu_ui(
         .resizable(false)
         .open(&mut keep_open)
         .show(ctx, |ui| {
-            render_event_option(
-                ui,
-                &mut chosen_event,
-                FarmEvent::Market,
-                true,
-                "Participate in the market",
-                &market_lines,
-                None,
-            );
-            render_event_option(
-                ui,
-                &mut chosen_event,
-                FarmEvent::Reconfigure(NewProduction::RandomRegular),
-                can_change,
-                "Select a different secondary resource",
-                &change_lines,
-                None,
-            );
-            render_event_option(
-                ui,
-                &mut chosen_event,
-                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools)),
-                can_specialize,
-                "Process nearby timber into planks",
-                &spec_lines,
-                None,
-            );
-            render_event_option(
-                ui,
-                &mut chosen_event,
-                FarmEvent::Adopt,
-                can_adopt,
-                "Adopt a family",
-                &adopt_lines,
-                Some("Total production must be at least 8"),
-            );
+            for option in &options {
+                if ui
+                    .add_enabled(
+                        option.enabled,
+                        egui::Button::selectable(option.selected, option.title),
+                    )
+                    .clicked()
+                {
+                    chosen_event = Some(option.event);
+                }
+                if !option.enabled {
+                    if let Some(note) = option.disabled_note {
+                        note_label!(ui, note);
+                    }
+                }
+                for line in &option.lines {
+                    label!(ui, format!("    • {}", line));
+                }
+                ui.add_space(4.0);
+            }
         });
 
     if !keep_open {
