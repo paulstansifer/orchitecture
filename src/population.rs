@@ -174,6 +174,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: Some(AssignmentFlavor::Sleep),
             work: None,
+            gate: None,
         }
     }
 

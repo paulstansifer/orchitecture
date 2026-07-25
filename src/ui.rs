@@ -94,6 +94,7 @@ pub fn shared_ui_system(
     cache: Res<MonthEffectsCache>,
     sandbox: Res<SandboxMode>,
     material_list: Res<MaterialList>,
+    mut idea_window: ResMut<crate::idea_ui::IdeaWindowState>,
 ) {
     let City {
         constructed,
@@ -128,6 +129,7 @@ pub fn shared_ui_system(
 
     let mut go_advance_month = false;
     let mut next_mode: Option<GameMode> = None;
+    let mut toggle_ideas = false;
 
     egui::SidePanel::right("resources")
         .min_width(130.0)
@@ -155,7 +157,7 @@ pub fn shared_ui_system(
             heading_label!(ui, "Travelers");
             travelers_section(ui, &view, &mut traveler_state);
 
-            next_mode = mode_buttons(ui, &current_mode);
+            next_mode = mode_buttons(ui, &current_mode, &mut toggle_ideas);
         });
 
     // ── Apply deferred actions ────────────────────────────────────────────────
@@ -166,6 +168,9 @@ pub fn shared_ui_system(
     }
     if let Some(mode) = next_mode {
         next_game_mode.set(mode);
+    }
+    if toggle_ideas {
+        idea_window.open = !idea_window.open;
     }
 }
 
@@ -416,9 +421,15 @@ fn travelers_section(ui: &mut egui::Ui, view: &MonthPanelView, traveler_state: &
 }
 
 /// Mode buttons pushed to the bottom of the panel: every mode but the
-/// current one, each switchable to directly. Returns the mode just clicked,
-/// if any.
-fn mode_buttons(ui: &mut egui::Ui, current_mode: &State<GameMode>) -> Option<GameMode> {
+/// current one, each switchable to directly, plus the Ideas window toggle
+/// (which isn't a mode -- the window floats over whichever one you're in).
+/// Returns the mode just clicked, if any; sets `toggle_ideas` if that button
+/// was clicked.
+fn mode_buttons(
+    ui: &mut egui::Ui,
+    current_mode: &State<GameMode>,
+    toggle_ideas: &mut bool,
+) -> Option<GameMode> {
     const MODE_BUTTONS: [(GameMode, &str); 3] = [
         (GameMode::Build, "Build"),
         (GameMode::Walk, "Walk Around"),
@@ -426,6 +437,9 @@ fn mode_buttons(ui: &mut egui::Ui, current_mode: &State<GameMode>) -> Option<Gam
     ];
     let mut next_mode = None;
     ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+        if ui.button("Ideas").clicked() {
+            *toggle_ideas = true;
+        }
         for (mode, label) in MODE_BUTTONS {
             if mode == *current_mode.get() {
                 continue;

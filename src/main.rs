@@ -31,6 +31,8 @@ use orchitecture_lib::{
     gi_material::GiPlugin,
     global_illumination::update_global_illumination,
     grid_preview::GridPreviewPlugin,
+    idea::{sync_idea_progress, IdeaState},
+    idea_ui::{idea_ui_system, IdeaWindowState},
     input::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
         update_room_cursor_mesh, BuildState, CursorEntities,
@@ -123,6 +125,8 @@ fn main() {
         .insert_resource(HoveredFurniture::default())
         .insert_resource(GameClock::default())
         .init_resource::<MonthEffectsCache>()
+        .init_resource::<IdeaState>()
+        .init_resource::<IdeaWindowState>()
         .insert_resource(MaterialList::load())
         .insert_resource(DebugNav::default())
         .add_message::<AdvanceMonthRequested>()
@@ -185,6 +189,10 @@ fn main() {
                 sync_cutaway_shadow_material.after(update_cutaway_system),
                 update_global_illumination.run_if(resource_changed::<ConstructedCity>),
                 (
+                    // Refreshes the understood-segment cache on `ConstructedCity`
+                    // before place formation reads it, so learning a segment
+                    // unlocks a gated place on the same frame.
+                    sync_idea_progress.run_if(resource_changed::<IdeaState>),
                     sync_places_system.run_if(resource_changed::<ConstructedCity>),
                     rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
                     sync_assignments.run_if(
@@ -217,6 +225,8 @@ fn main() {
                 build_ui_system.run_if(in_state(GameMode::Build)),
                 walk_ui_system.run_if(in_state(GameMode::Walk)),
                 surroundings_ui_system.run_if(in_state(GameMode::Surroundings)),
+                // Floating window, reachable from every mode.
+                idea_ui_system.after(shared_ui_system),
             ),
         )
         .run();

@@ -2,7 +2,8 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::city::ConstructedCity;
-use crate::resource::{ToolKind, UniformResource};
+use crate::idea::{Idea, IdeaState};
+use crate::resource::{ToolKind, UniformResource, UniqueResource};
 use crate::surroundings::RoadNetwork;
 
 pub const TRAVELER_CAPACITY: usize = 1;
@@ -24,6 +25,11 @@ pub struct TravelerDemand {
 pub enum TravelerReward {
     Tool(ToolKind),
     Resource(UniformResource, std::ops::Range<u32>),
+    /// A book teaching `segments` segments of some idea, rolled when the offer
+    /// is made (see `idea::roll_book`).
+    Book {
+        segments: u32,
+    },
 }
 
 /// A resolved `TravelerReward`, with any quantity range rolled to a concrete value.
@@ -31,6 +37,14 @@ pub enum TravelerReward {
 pub enum ResolvedReward {
     Tool(ToolKind),
     Resource(UniformResource, u32),
+    /// A specific book: which idea it covers, which of its segments, and the
+    /// title it'll carry once it's on a shelf. Rolled up front so the player
+    /// can see what they're being offered before inviting.
+    Book {
+        idea: usize,
+        segments: u64,
+        title: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -113,6 +127,7 @@ pub fn roll_traveler_offer(
     state: &mut TravelerState,
     view_radius: f32,
     roads: &RoadNetwork,
+    ideas: &[Idea],
     rng: &mut impl rand::Rng,
 ) {
     state.invited = false;
@@ -142,6 +157,14 @@ pub fn roll_traveler_offer(
             TravelerReward::Tool(kind) => ResolvedReward::Tool(*kind),
             TravelerReward::Resource(res, range) => {
                 ResolvedReward::Resource(*res, rng.random_range(range.start..range.end))
+            }
+            TravelerReward::Book { segments } => {
+                let (idea, mask) = crate::idea::roll_book(ideas, *segments, rng);
+                ResolvedReward::Book {
+                    idea,
+                    segments: mask,
+                    title: crate::idea::book_title(&ideas[idea].name, rng),
+                }
             }
         };
 
@@ -182,16 +205,17 @@ impl TravelerVisit {
 
     /// Deducts the storage-backed portion of each demand (the inflow-backed
     /// portion needs no physical action — it was simply never deposited),
-    /// deposits a `Tool` reward into the first storage place, and reveals
-    /// the traveler's path. A `Resource` reward needs no action here: it was
-    /// folded into this month's inflow by `compute_month_effects`, so it's
-    /// already been claimed by Construction and/or deposited by the normal
-    /// storage-fill/loss pass. No-op unless the visit was both affordable
-    /// and invited.
+    /// deposits a `Tool` reward into the first storage place, shelves a `Book`
+    /// reward and learns what it teaches, and reveals the traveler's path. A
+    /// `Resource` reward needs no action here: it was folded into this month's
+    /// inflow by `compute_month_effects`, so it's already been claimed by
+    /// Construction and/or deposited by the normal storage-fill/loss pass.
+    /// No-op unless the visit was both affordable and invited.
     pub fn apply(
         &self,
         constructed: &mut ConstructedCity,
         farms: &mut crate::surroundings::farmstead::FarmsResource,
+        idea_state: &mut IdeaState,
     ) {
         if !self.active() {
             return;
@@ -201,8 +225,28 @@ impl TravelerVisit {
                 crate::place::consume_uniform(constructed, res, from_storage);
             }
         }
-        if let ResolvedReward::Tool(kind) = &self.reward {
-            crate::place::deposit_tool(constructed, *kind);
+        match &self.reward {
+            ResolvedReward::Tool(kind) => {
+                crate::place::deposit_tool(constructed, *kind);
+            }
+            ResolvedReward::Resource(..) => {}
+            ResolvedReward::Book {
+                idea,
+                segments,
+                title,
+            } => {
+                // Reading is what teaches, and it happens on arrival: the
+                // segments are learned permanently even though the physical
+                // book can later be lost with its bookcase. `affordable`
+                // already required shelf room, so the deposit should succeed.
+                idea_state.learn(*idea, *segments);
+                crate::place::deposit_unique(
+                    constructed,
+                    UniqueResource::Book {
+                        title: title.clone(),
+                    },
+                );
+            }
         }
         farms.traveler_reveals.push(self.path.clone());
     }
@@ -223,6 +267,82 @@ mod tests {
     use super::*;
     use rand::{rngs::StdRng, SeedableRng};
 
+    /// The bookseller end-to-end through the real month pipeline: a book offer
+    /// is only affordable once there's shelf room, and accepting one both
+    /// learns its segments and puts the book on a shelf. Driven through the
+    /// headless REPL so the whole chain -- `roll_traveler_offer` ->
+    /// `compute_month_effects`' `reward_deliverable` -> `TravelerVisit::apply`
+    /// -> `IdeaState` -> `sync_idea_progress` -- is genuinely exercised.
+    #[test]
+    fn a_bookseller_visit_shelves_the_book_and_teaches_it() {
+        use crate::headless::HeadlessSession;
+
+        let mut session = HeadlessSession::new(1);
+        let dispatch = |session: &mut HeadlessSession, cmd: &str| {
+            session
+                .dispatch(cmd)
+                .unwrap_or_else(|e| panic!("{cmd}: {e}"))
+        };
+
+        // A bookroom (2 bookcases + a chair) is the only thing that gives books
+        // anywhere to go; without it every book offer is unaffordable. The bin
+        // is for the potatoes/canvas the bookseller wants in trade.
+        dispatch(&mut session, "place 100 0 100 room bookcase");
+        dispatch(&mut session, "place 100 0 101 room bookcase");
+        dispatch(&mut session, "place 100 0 102 xwall chair");
+        dispatch(&mut session, "place 100 0 103 room bin");
+        dispatch(&mut session, "tick");
+
+        // Advance until the bookseller turns up (they're behind two other
+        // configs in a first-match-wins roll, so it takes a few months).
+        let mut months = 0;
+        let offer = loop {
+            assert!(months < 200, "no book offer in 200 months");
+            dispatch(&mut session, "advance");
+            months += 1;
+            let line = dispatch(&mut session, "query traveler").join(" ");
+            if line.contains("reward=book_") {
+                break line;
+            }
+        };
+
+        // Stock what they ask for (potatoes plus one of canvas/straw) right
+        // before accepting, so months of eating haven't drained it.
+        dispatch(&mut session, "set_inventory Potato 40");
+        dispatch(&mut session, "set_inventory Canvas 30");
+        dispatch(&mut session, "set_inventory Straw 30");
+
+        let before = dispatch(&mut session, "query ideas").join("\n");
+        dispatch(&mut session, "invite_traveler");
+        dispatch(&mut session, "advance");
+        dispatch(&mut session, "tick");
+        let after = dispatch(&mut session, "query ideas").join("\n");
+
+        assert_ne!(
+            before, after,
+            "accepting a book offer ({offer}) should change what the city knows"
+        );
+        let learned: u32 = dispatch(&mut session, "query ideas")
+            .iter()
+            .filter_map(|l| {
+                let (u, p) = (l.find("understood=")?, l.find("pending=")?);
+                let understood: u32 = l[u + 11..l[u..].find('/').unwrap() + u].parse().ok()?;
+                let pending: u32 = l[p + 8..].trim().parse().ok()?;
+                Some(understood + pending)
+            })
+            .sum();
+        assert_eq!(
+            learned, 30,
+            "a book teaches exactly 30 segments, understood or not"
+        );
+
+        let inventory = dispatch(&mut session, "query inventory").join(" ");
+        assert!(
+            inventory.to_lowercase().contains("book"),
+            "the book itself should end up on a shelf: {inventory}"
+        );
+    }
+
     /// A chain of `squares` unit-length squares along the x-axis, city at the
     /// origin corner. Every edge has `trips == 0` (untouched, factor
     /// `FIELD_FACTOR == 5.0`), so the node `n` squares from the city costs
@@ -240,6 +360,100 @@ mod tests {
         let mut roads = RoadNetwork::build(&polygons, Vec2::ZERO);
         roads.recompute_dist();
         roads
+    }
+
+    fn book_seller() -> Traveler {
+        Traveler {
+            appear_chance: 1.0,
+            demands: vec![TravelerDemand {
+                options: vec![(UniformResource::Potato, 10..15)],
+            }],
+            reward: TravelerReward::Book { segments: 30 },
+        }
+    }
+
+    /// A book offer is fully resolved when it's rolled, not when it's accepted:
+    /// the player has to be able to see which idea (and how much of it) they're
+    /// buying before deciding to invite.
+    #[test]
+    fn a_book_reward_resolves_to_a_concrete_idea_and_segment_set() {
+        let ideas = crate::idea::load_idea_info();
+        let roads = chain_network(60);
+        let mut rng = StdRng::seed_from_u64(11);
+
+        for _ in 0..50 {
+            let mut state = TravelerState {
+                configs: vec![book_seller()],
+                current_offer: None,
+                invited: false,
+            };
+            roll_traveler_offer(&mut state, 10.0, &roads, &ideas, &mut rng);
+
+            let offer = state.current_offer.expect("appear_chance 1.0 always hits");
+            let ResolvedReward::Book {
+                idea,
+                segments,
+                title,
+            } = offer.reward
+            else {
+                panic!("a Book config must resolve to a Book reward");
+            };
+            assert!(idea < ideas.len());
+            assert_eq!(segments.count_ones(), 30);
+            assert!(
+                title.contains(&ideas[idea].name),
+                "the title should name the idea it covers: {title:?}"
+            );
+        }
+    }
+
+    /// Accepting the offer both shelves the book and teaches its segments; the
+    /// two are deliberately independent, so losing the book later doesn't
+    /// unlearn anything.
+    #[test]
+    fn accepting_a_book_learns_its_segments() {
+        let mut idea_state = IdeaState::new(3);
+        let mut constructed = ConstructedCity::new(Vec::new());
+        let mut farms =
+            crate::surroundings::map::build_farms_resource(&mut StdRng::seed_from_u64(0));
+
+        let visit = TravelerVisit {
+            demands: vec![],
+            reward: ResolvedReward::Book {
+                idea: 1,
+                segments: 0b1011,
+                title: "Concerning Organization".to_string(),
+            },
+            path: vec![],
+            affordable: true,
+            invited: true,
+        };
+        visit.apply(&mut constructed, &mut farms, &mut idea_state);
+        assert_eq!(idea_state.learned[1], 0b1011);
+        assert_eq!(idea_state.learned[0], 0);
+    }
+
+    /// An offer the player never invited must not teach anything.
+    #[test]
+    fn declining_a_book_learns_nothing() {
+        let mut idea_state = IdeaState::new(3);
+        let mut constructed = ConstructedCity::new(Vec::new());
+        let mut farms =
+            crate::surroundings::map::build_farms_resource(&mut StdRng::seed_from_u64(0));
+
+        let visit = TravelerVisit {
+            demands: vec![],
+            reward: ResolvedReward::Book {
+                idea: 1,
+                segments: 0b1011,
+                title: "Concerning Organization".to_string(),
+            },
+            path: vec![],
+            affordable: true,
+            invited: false,
+        };
+        visit.apply(&mut constructed, &mut farms, &mut idea_state);
+        assert_eq!(idea_state.learned[1], 0);
     }
 
     #[test]

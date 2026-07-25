@@ -1,0 +1,17 @@
+// The idea DAG. Each idea is `idea::SEGMENTS` numbered segments; the dependency
+// is per-segment, so segment #13 of "Arithmetic" is only understood once segment
+// #13 of *both* "Specialization" and "Organization" is understood.
+//
+// Order here doesn't matter -- `idea::load_idea_info` topologically sorts.
+[
+    (
+        name: "Specialization",
+    ),
+    (
+        name: "Organization",
+    ),
+    (
+        name: "Arithmetic",
+        depends_on: ["Specialization", "Organization"],
+    ),
+]

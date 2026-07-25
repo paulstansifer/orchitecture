@@ -99,10 +99,22 @@ pub struct MonthPanelView {
     pub traveler: Option<TravelerOfferView>,
 }
 
-fn reward_desc(reward: &ResolvedReward) -> String {
+fn reward_desc(reward: &ResolvedReward, ideas: &[crate::idea::Idea]) -> String {
     match reward {
         ResolvedReward::Tool(kind) => format!("1 {}", kind.label()),
         ResolvedReward::Resource(res, qty) => format!("{} {}", qty, res.label()),
+        // What the book teaches matters more than its title, since a book on
+        // something you have no prerequisites for is still worth taking (the
+        // segments keep, even if you can't use them yet).
+        ResolvedReward::Book {
+            idea,
+            segments,
+            title,
+        } => format!(
+            "\"{title}\" -- {} segments of {}",
+            segments.count_ones(),
+            ideas[*idea].name
+        ),
     }
 }
 
@@ -304,7 +316,7 @@ pub fn month_panel_view(
         .as_ref()
         .map(|offer| TravelerOfferView {
             demands: offer.demands.clone(),
-            reward_desc: reward_desc(&offer.reward),
+            reward_desc: reward_desc(&offer.reward, &constructed.ideas),
             affordable: effects.traveler_affordable(),
         });
 
@@ -502,6 +514,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }];
         cw.placed_places.insert(ParticularPlace {
             place: 0,
@@ -607,6 +620,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }];
         let mut contents = Inventory::new([(StorageKind::Bulk, 8.0), (StorageKind::Rack, 2.0)]);
         // Fill Bulk to its own 8-unit capacity -- if it shared a pool with

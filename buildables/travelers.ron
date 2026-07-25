@@ -23,4 +23,17 @@
         ],
         reward: Resource(Plank, (start: 4, end: 9)),
     ),
+    // The bookseller. Needs somewhere to put the book (a bookcase in a
+    // public-storage place), or the offer isn't affordable.
+    (
+        appear_chance: 0.3,
+        demands: [
+            (options: [(Potato, (start: 10, end: 15))]),
+            (options: [
+                (Canvas, (start: 5, end: 10)),
+                (Straw, (start: 5, end: 10)),
+            ]),
+        ],
+        reward: Book(segments: 30),
+    ),
 ]

@@ -202,6 +202,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: Some(WorkEffect::TodoEffect),
+            gate: None,
         }
     }
 

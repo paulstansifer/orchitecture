@@ -967,6 +967,7 @@ mod tests {
             pending: &mut pending,
             population: &mut population,
             farms: &mut fr,
+            idea_state: &mut crate::idea::IdeaState::default(),
             rng: &mut rng,
         });
 
