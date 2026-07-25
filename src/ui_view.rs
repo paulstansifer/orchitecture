@@ -76,10 +76,44 @@ pub struct UniqueResourceRow {
     pub capacity: Option<u32>,
 }
 
+/// What a traveler is bringing, in a form the panel can render. A book gets
+/// its own variant rather than being flattened to text, because it's clickable:
+/// it opens the Ideas window focused on the idea it covers.
+pub enum RewardView {
+    /// Anything with nothing to click through to.
+    Plain(String),
+    Book {
+        /// Index into `ConstructedCity::ideas`.
+        idea: usize,
+        idea_name: String,
+        title: String,
+        /// Fraction of the idea this book covers, in `0.0..=1.0`.
+        coverage: f32,
+    },
+}
+
+impl RewardView {
+    /// One-line description for the "Brings:" row.
+    pub fn describe(&self) -> String {
+        match self {
+            RewardView::Plain(text) => text.clone(),
+            RewardView::Book {
+                idea_name,
+                title,
+                coverage,
+                ..
+            } => format!(
+                "\"{title}\" — {}% of {idea_name}",
+                (coverage * 100.0).round() as u32
+            ),
+        }
+    }
+}
+
 /// This month's traveler offer, if any, and whether it's currently affordable.
 pub struct TravelerOfferView {
     pub demands: Vec<(UniformResource, u32)>,
-    pub reward_desc: String,
+    pub reward: RewardView,
     pub affordable: bool,
 }
 
@@ -99,10 +133,10 @@ pub struct MonthPanelView {
     pub traveler: Option<TravelerOfferView>,
 }
 
-fn reward_desc(reward: &ResolvedReward, ideas: &[crate::idea::Idea]) -> String {
+fn reward_view(reward: &ResolvedReward, ideas: &[crate::idea::Idea]) -> RewardView {
     match reward {
-        ResolvedReward::Tool(kind) => format!("1 {}", kind.label()),
-        ResolvedReward::Resource(res, qty) => format!("{} {}", qty, res.label()),
+        ResolvedReward::Tool(kind) => RewardView::Plain(format!("1 {}", kind.label())),
+        ResolvedReward::Resource(res, qty) => RewardView::Plain(format!("{} {}", qty, res.label())),
         // What the book teaches matters more than its title, since a book on
         // something you have no prerequisites for is still worth taking (the
         // segments keep, even if you can't use them yet).
@@ -110,11 +144,12 @@ fn reward_desc(reward: &ResolvedReward, ideas: &[crate::idea::Idea]) -> String {
             idea,
             segments,
             title,
-        } => format!(
-            "\"{title}\" -- {} segments of {}",
-            segments.count_ones(),
-            ideas[*idea].name
-        ),
+        } => RewardView::Book {
+            idea: *idea,
+            idea_name: ideas[*idea].name.clone(),
+            title: title.clone(),
+            coverage: segments.count_ones() as f32 / crate::idea::SEGMENTS as f32,
+        },
     }
 }
 
@@ -316,7 +351,7 @@ pub fn month_panel_view(
         .as_ref()
         .map(|offer| TravelerOfferView {
             demands: offer.demands.clone(),
-            reward_desc: reward_desc(&offer.reward, &constructed.ideas),
+            reward: reward_view(&offer.reward, &constructed.ideas),
             affordable: effects.traveler_affordable(),
         });
 

@@ -35,7 +35,13 @@ Game parts:
     callers can gate on idea progress without threading a second resource.
   * idea_view.rs / idea_ui.rs: the Ideas window -- a scrollable segment-bar view
     of the DAG, opened from the right-hand resource panel. Three segment colors:
-    understood, learned-but-blocked, and unread.
+    understood, learned-but-blocked, and unread. Each idea carries a `?`/`✓`
+    marker (at `idea_view::CONFIDENT_AT`) whose hover lists the places it gates.
+    The window also opens itself: clicking the book a traveler offers focuses
+    that idea (an `IdeaHighlight`, drawn as a rounded rectangle), and gaining
+    knowledge pops it up and cross-fades the affected segments from their old
+    colors (`announce_new_knowledge`, which must run *after*
+    `advance_month_system` or egui gets a frame showing the gain un-faded).
   * scene.rs: ground, roads, and exterior lighting
   * ceiling_lights.rs: Adds lighting inside the city grid (abandoned in favor of global illumination)
 

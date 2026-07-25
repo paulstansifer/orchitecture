@@ -130,6 +130,7 @@ pub fn shared_ui_system(
     let mut go_advance_month = false;
     let mut next_mode: Option<GameMode> = None;
     let mut toggle_ideas = false;
+    let mut focus_idea: Option<crate::idea_ui::IdeaHighlight> = None;
 
     egui::SidePanel::right("resources")
         .min_width(130.0)
@@ -155,7 +156,7 @@ pub fn shared_ui_system(
 
             ui.separator();
             heading_label!(ui, "Travelers");
-            travelers_section(ui, &view, &mut traveler_state);
+            travelers_section(ui, &view, &mut traveler_state, &mut focus_idea);
 
             next_mode = mode_buttons(ui, &current_mode, &mut toggle_ideas);
         });
@@ -171,6 +172,13 @@ pub fn shared_ui_system(
     }
     if toggle_ideas {
         idea_window.open = !idea_window.open;
+        idea_window.focus = None;
+    }
+    // Clicking the book opens the window rather than toggling it: you asked to
+    // see that idea, not to hide whatever's showing.
+    if let Some(highlight) = focus_idea {
+        idea_window.open = true;
+        idea_window.focus = Some(highlight);
     }
 }
 
@@ -391,7 +399,12 @@ fn rack_row(
 
 /// The Travelers section: the current offer (if any), with an Invite
 /// checkbox that mutates `traveler_state` directly.
-fn travelers_section(ui: &mut egui::Ui, view: &MonthPanelView, traveler_state: &mut TravelerState) {
+fn travelers_section(
+    ui: &mut egui::Ui,
+    view: &MonthPanelView,
+    traveler_state: &mut TravelerState,
+    focus_idea: &mut Option<crate::idea_ui::IdeaHighlight>,
+) {
     if let Some(traveler) = &view.traveler {
         egui::Frame::new()
             .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 30, 200))
@@ -403,10 +416,31 @@ fn travelers_section(ui: &mut egui::Ui, view: &MonthPanelView, traveler_state: &
                 for (res, qty) in &traveler.demands {
                     label!(ui, format!("Wants {} {}", qty, res.label()));
                 }
-                label!(
-                    ui,
-                    format!("Brings: {} + reveals a path", traveler.reward_desc)
-                );
+                match &traveler.reward {
+                    crate::ui_view::RewardView::Plain(text) => {
+                        label!(ui, format!("Brings: {text} + reveals a path"));
+                    }
+                    // A book is clickable: the title alone doesn't tell you
+                    // whether it's worth trading for, so the button jumps to
+                    // the idea it covers in the Ideas window.
+                    book @ crate::ui_view::RewardView::Book { idea, .. } => {
+                        label!(ui, "Brings a book (+ reveals a path):");
+                        let resp = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(book.describe())
+                                    .font(crate::ui_util::FontSizes::body()),
+                            )
+                            .wrap(),
+                        );
+                        if resp.clicked() {
+                            *focus_idea = Some(crate::idea_ui::IdeaHighlight {
+                                idea: *idea,
+                                note: book.describe(),
+                            });
+                        }
+                        resp.on_hover_text("Show this idea in the Ideas window");
+                    }
+                }
                 ui.add_enabled(
                     traveler.affordable || traveler_state.invited,
                     egui::Checkbox::new(&mut traveler_state.invited, "Invite"),

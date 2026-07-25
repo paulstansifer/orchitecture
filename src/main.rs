@@ -32,7 +32,7 @@ use orchitecture_lib::{
     global_illumination::update_global_illumination,
     grid_preview::GridPreviewPlugin,
     idea::{sync_idea_progress, IdeaState},
-    idea_ui::{idea_ui_system, IdeaWindowState},
+    idea_ui::{announce_new_knowledge, idea_ui_system, IdeaWindowState},
     input::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
         update_room_cursor_mesh, BuildState, CursorEntities,
@@ -212,6 +212,18 @@ fn main() {
         )
         .add_systems(Update, (handle_file_save, handle_file_load))
         .add_systems(Update, advance_month_system)
+        // Pops the Ideas window open when the city learns something. Must run
+        // *after* the month that did the learning: otherwise it first sees the
+        // gain a frame late, and egui gets one frame in between showing the new
+        // state un-faded, which reads as a flash of the answer followed by the
+        // reveal. Recomputes understanding itself, so it needs no ordering
+        // relative to `sync_idea_progress`.
+        .add_systems(
+            Update,
+            announce_new_knowledge
+                .after(advance_month_system)
+                .run_if(resource_changed::<IdeaState>),
+        )
         .add_systems(
             EguiPrimaryContextPass,
             (

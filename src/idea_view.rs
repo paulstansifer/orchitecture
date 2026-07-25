@@ -3,6 +3,13 @@
 //! [`crate::ui_view`], so the interesting logic is testable headlessly).
 
 use crate::idea::{Idea, SEGMENTS};
+use crate::place::Place;
+
+/// Progress at which an idea stops being marked "?" and starts being marked
+/// with a check: the point where the city can be said to have the gist of it.
+/// Independent of any particular [`crate::place::IdeaGate`] threshold -- it's a
+/// reading of the idea itself, not of what it happens to unlock.
+pub const CONFIDENT_AT: f32 = 0.5;
 
 /// How one segment of one idea should be drawn.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -14,6 +21,40 @@ pub enum SegmentState {
     LearnedOnly,
     /// Never read.
     Unknown,
+}
+
+/// Where a place gated on this idea currently stands.
+#[derive(Clone, PartialEq, Debug)]
+pub enum GateStatus {
+    /// Not formable yet; the idea needs to reach this progress first.
+    Locked { unlock_at: f32 },
+    /// Formable, working at this fraction of full output.
+    Unlocked { efficiency: f32 },
+}
+
+/// A place kind gated on this idea, for the marker's hover text.
+#[derive(Clone, PartialEq, Debug)]
+pub struct GatedPlaceView {
+    pub name: String,
+    pub status: GateStatus,
+}
+
+impl GatedPlaceView {
+    /// One hover line, e.g. "carpenter's workshop — 40% efficiency".
+    pub fn describe(&self) -> String {
+        match self.status {
+            GateStatus::Locked { unlock_at } => format!(
+                "{} — needs {}%",
+                self.name,
+                (unlock_at * 100.0).round() as u32
+            ),
+            GateStatus::Unlocked { efficiency } => format!(
+                "{} — unlocked, {}% efficiency",
+                self.name,
+                (efficiency * 100.0).round() as u32
+            ),
+        }
+    }
 }
 
 pub struct IdeaRow {
@@ -29,12 +70,30 @@ pub struct IdeaRow {
     /// Indices into `IdeaTreeView::rows` of this idea's prerequisites. Always
     /// less than this row's own index, since ideas are topologically sorted.
     pub prereqs: Vec<usize>,
+    /// Every place kind gated on this idea, locked or not — what the marker's
+    /// hover text lists.
+    pub gated_places: Vec<GatedPlaceView>,
 }
 
 impl IdeaRow {
     /// Fraction of this idea that's understood, in `0.0..=1.0`.
     pub fn progress(&self) -> f32 {
         self.understood as f32 / SEGMENTS as f32
+    }
+
+    /// Whether the city has the gist of this idea — drives the "?" / check
+    /// marker after its name.
+    pub fn confident(&self) -> bool {
+        self.progress() >= CONFIDENT_AT
+    }
+
+    /// The marker drawn after the name.
+    pub fn marker(&self) -> &'static str {
+        if self.confident() {
+            "✓"
+        } else {
+            "?"
+        }
     }
 
     /// The line under the name, e.g. "32/50 understood, 9 awaiting
@@ -58,6 +117,7 @@ pub fn idea_tree_view(
     deps: &[Vec<usize>],
     learned: &[u64],
     understood: &[u64],
+    places: &[Place],
 ) -> IdeaTreeView {
     let mut depths: Vec<usize> = Vec::with_capacity(ideas.len());
     let mut rows = Vec::with_capacity(ideas.len());
@@ -84,6 +144,23 @@ pub fn idea_tree_view(
             })
             .collect();
 
+        let progress = understood[idx].count_ones() as f32 / SEGMENTS as f32;
+        let gated_places = places
+            .iter()
+            .filter_map(|place| {
+                let gate = place.gate.as_ref().filter(|g| g.idea == idea.name)?;
+                Some(GatedPlaceView {
+                    name: place.name.clone(),
+                    status: match gate.efficiency(progress) {
+                        Some(efficiency) => GateStatus::Unlocked { efficiency },
+                        None => GateStatus::Locked {
+                            unlock_at: gate.unlock_at,
+                        },
+                    },
+                })
+            })
+            .collect();
+
         rows.push(IdeaRow {
             name: idea.name.clone(),
             depth,
@@ -91,6 +168,7 @@ pub fn idea_tree_view(
             pending: (learned[idx] & !understood[idx]).count_ones(),
             segments,
             prereqs: deps[idx].clone(),
+            gated_places,
         });
     }
 
@@ -120,10 +198,14 @@ mod tests {
     }
 
     fn view(learned: &[u64]) -> IdeaTreeView {
+        view_with_places(learned, &[])
+    }
+
+    fn view_with_places(learned: &[u64], places: &[Place]) -> IdeaTreeView {
         let ideas = ideas();
         let deps = dep_indices(&ideas);
         let understood = compute_understood(&deps, learned);
-        idea_tree_view(&ideas, &deps, learned, &understood)
+        idea_tree_view(&ideas, &deps, learned, &understood, places)
     }
 
     /// The three-way split is the whole point of the view: a segment you've read
@@ -162,6 +244,71 @@ mod tests {
         assert_eq!(v.rows[1].depth, 0);
         assert_eq!(v.rows[2].depth, 1);
         assert_eq!(v.rows[2].prereqs, vec![0, 1]);
+    }
+
+    fn gated_place(name: &str, idea: &str, unlock_at: f32) -> Place {
+        let mut place = Place {
+            name: name.to_string(),
+            requirements: vec![],
+            public_storage: false,
+            accounting: None,
+            quality_factors: vec![],
+            assignable_for: None,
+            work: None,
+            gate: None,
+        };
+        place.gate = Some(crate::place::IdeaGate {
+            idea: idea.to_string(),
+            unlock_at,
+            full_at: 1.0,
+        });
+        place
+    }
+
+    /// The marker is a reading of the idea itself, so it flips at
+    /// `CONFIDENT_AT` regardless of what any gate's threshold happens to be.
+    #[test]
+    fn the_marker_flips_at_the_confidence_threshold() {
+        let below = (1u64 << 24) - 1; // 24/50
+        let at = (1u64 << 25) - 1; // 25/50 == 50%
+        let v = view(&[below, at, 0]);
+        assert_eq!(v.rows[0].marker(), "?");
+        assert!(!v.rows[0].confident());
+        assert_eq!(v.rows[1].marker(), "✓");
+        assert!(v.rows[1].confident());
+    }
+
+    /// A place gated on an idea shows up under that idea only, with its live
+    /// status -- that's what the marker's hover has to say.
+    #[test]
+    fn gated_places_are_listed_under_their_own_idea_with_live_status() {
+        let places = vec![
+            gated_place("carpenter's workshop", "Specialization", 0.5),
+            gated_place("counting house", "Arithmetic", 0.25),
+        ];
+
+        // Nothing understood: both gates locked.
+        let v = view_with_places(&[0, 0, 0], &places);
+        assert_eq!(
+            v.rows[0].gated_places[0].status,
+            GateStatus::Locked { unlock_at: 0.5 }
+        );
+        assert_eq!(v.rows[1].gated_places, vec![], "Organization gates nothing");
+        assert_eq!(
+            v.rows[0].gated_places[0].describe(),
+            "carpenter's workshop — needs 50%"
+        );
+
+        // Three quarters of Specialization: unlocked, halfway up the ramp.
+        let v = view_with_places(&[(1u64 << 38) - 1, 0, 0], &places);
+        let GateStatus::Unlocked { efficiency } = v.rows[0].gated_places[0].status else {
+            panic!("should be unlocked");
+        };
+        assert!((efficiency - 0.52).abs() < 0.01, "got {efficiency}");
+        assert_eq!(
+            v.rows[0].gated_places[0].describe(),
+            "carpenter's workshop — unlocked, 52% efficiency"
+        );
     }
 
     #[test]

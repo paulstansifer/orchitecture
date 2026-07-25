@@ -252,6 +252,17 @@ pub struct IdeaGate {
     pub full_at: f32,
 }
 
+impl IdeaGate {
+    /// The ramp itself, given how far along the gating idea is: `None` below
+    /// `unlock_at`, otherwise `0.0..=1.0`. Pure, so the UI can describe a gate
+    /// without a `ConstructedCity` in hand.
+    pub fn efficiency(&self, progress: f32) -> Option<f32> {
+        (progress >= self.unlock_at).then(|| {
+            ((progress - self.unlock_at) / (self.full_at - self.unlock_at)).clamp(0.0, 1.0)
+        })
+    }
+}
+
 /// What actually fulfills one slot of a placed `Place`'s requirements. A
 /// `Furniture` fulfillment carries the full `SlotCoord` (not just the cube) so
 /// that wall-mounted furniture -- e.g. a `WallPlop` chair in a dining room --
@@ -441,13 +452,8 @@ pub fn gate_efficiency_of(cw: &ConstructedCity, place: &Place) -> Option<f32> {
     // test city may carry places the idea list doesn't know about; treat that
     // as locked rather than panicking mid-frame.
     let idx = crate::idea::idea_by_name(&cw.ideas, &gate.idea)?;
-    let progress = crate::idea::progress(&cw.understood, idx);
-    if progress < gate.unlock_at {
-        return None;
-    }
-    Some(((progress - gate.unlock_at) / (gate.full_at - gate.unlock_at)).clamp(0.0, 1.0))
+    gate.efficiency(crate::idea::progress(&cw.understood, idx))
 }
-
 
 /// Maximum 2D Manhattan distance (within a single y-layer) for a requirement
 /// to count as belonging to a place. Tunable: the 4×3 starting room spans ~5.

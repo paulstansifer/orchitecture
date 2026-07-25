@@ -180,12 +180,15 @@ pub fn progress(masks: &[u64], idea: usize) -> f32 {
     masks[idea].count_ones() as f32 / SEGMENTS as f32
 }
 
-/// Rolls a book: an idea chosen uniformly (prerequisites deliberately ignored —
-/// a book on something you can't yet follow is a normal outcome) and
-/// `n_segments` distinct segments of it, via a partial Fisher–Yates shuffle.
-/// `n_segments` is clamped to [`SEGMENTS`].
-pub fn roll_book(ideas: &[Idea], n_segments: u32, rng: &mut impl rand::Rng) -> (usize, u64) {
-    let idea = rng.random_range(0..ideas.len());
+/// Rolls a book: an idea chosen uniformly from `candidates` (prerequisites
+/// deliberately ignored — a book on something you can't yet follow is a normal
+/// outcome) and `n_segments` distinct segments of it, via a partial
+/// Fisher–Yates shuffle. `n_segments` is clamped to [`SEGMENTS`].
+///
+/// `candidates` are indices into the idea list; callers that accept any idea
+/// pass every index (see `traveler::BookSpec::candidates`).
+pub fn roll_book(candidates: &[usize], n_segments: u32, rng: &mut impl rand::Rng) -> (usize, u64) {
+    let idea = candidates[rng.random_range(0..candidates.len())];
 
     let mut pool: Vec<u32> = (0..SEGMENTS).collect();
     let mut mask = 0u64;
@@ -347,25 +350,29 @@ mod tests {
 
     #[test]
     fn roll_book_picks_distinct_segments_of_one_idea() {
-        let ideas = vec![
-            idea("Specialization", &[]),
-            idea("Organization", &[]),
-            idea("Arithmetic", &["Specialization", "Organization"]),
-        ];
         let mut rng = StdRng::seed_from_u64(7);
         for _ in 0..100 {
-            let (which, mask) = roll_book(&ideas, 30, &mut rng);
-            assert!(which < ideas.len());
+            let (which, mask) = roll_book(&[0, 1, 2], 30, &mut rng);
+            assert!(which < 3);
             assert_eq!(mask.count_ones(), 30, "segments must be distinct");
             assert_eq!(mask & !ALL_SEGMENTS, 0, "no segments beyond SEGMENTS");
         }
     }
 
+    /// A traveler restricted to particular ideas must never roll another one.
+    #[test]
+    fn roll_book_only_picks_from_its_candidates() {
+        let mut rng = StdRng::seed_from_u64(5);
+        for _ in 0..100 {
+            let (which, _) = roll_book(&[2], 10, &mut rng);
+            assert_eq!(which, 2);
+        }
+    }
+
     #[test]
     fn roll_book_clamps_to_the_segment_count() {
-        let ideas = vec![idea("Specialization", &[])];
         let mut rng = StdRng::seed_from_u64(3);
-        let (_, mask) = roll_book(&ideas, 1000, &mut rng);
+        let (_, mask) = roll_book(&[0], 1000, &mut rng);
         assert_eq!(mask, ALL_SEGMENTS);
     }
 }

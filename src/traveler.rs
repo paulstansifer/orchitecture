@@ -20,16 +20,54 @@ pub struct TravelerDemand {
     pub options: Vec<(UniformResource, std::ops::Range<u32>)>,
 }
 
+/// Which books a traveler might be carrying. Both fields describe a range of
+/// possibilities rather than a fixed value, so one config can be a generalist
+/// pedlar (any idea, a thin scattering) or a specialist (one subject, in depth).
+#[derive(Serialize, Deserialize, Clone)]
+pub struct BookSpec {
+    /// Names of the ideas this traveler might carry a book on. Empty means any
+    /// idea. Every name must exist in `ideas.ron` (see
+    /// `validate_traveler_info`).
+    #[serde(default)]
+    pub ideas: Vec<String>,
+    /// Fraction of the idea's segments the book covers, in `0.0..=1.0`. A
+    /// degenerate range (`start >= end`) means exactly `start`.
+    pub coverage: std::ops::Range<f32>,
+}
+
+impl BookSpec {
+    /// The idea indices this spec may roll, as `idea::roll_book` wants them.
+    /// An empty `ideas` list opens it up to everything.
+    fn candidates(&self, ideas: &[Idea]) -> Vec<usize> {
+        if self.ideas.is_empty() {
+            return (0..ideas.len()).collect();
+        }
+        self.ideas
+            .iter()
+            .map(|name| {
+                crate::idea::idea_by_name(ideas, name)
+                    .expect("validate_traveler_info rejects unknown ideas")
+            })
+            .collect()
+    }
+
+    /// How many segments this book teaches, rolled from `coverage`.
+    fn roll_segment_count(&self, rng: &mut impl rand::Rng) -> u32 {
+        let coverage = if self.coverage.start < self.coverage.end {
+            rng.random_range(self.coverage.start..self.coverage.end)
+        } else {
+            self.coverage.start
+        };
+        (coverage.clamp(0.0, 1.0) * crate::idea::SEGMENTS as f32).round() as u32
+    }
+}
+
 /// What a traveler gives in exchange for their demands being met.
 #[derive(Serialize, Deserialize, Clone)]
 pub enum TravelerReward {
     Tool(ToolKind),
     Resource(UniformResource, std::ops::Range<u32>),
-    /// A book teaching `segments` segments of some idea, rolled when the offer
-    /// is made (see `idea::roll_book`).
-    Book {
-        segments: u32,
-    },
+    Book(BookSpec),
 }
 
 /// A resolved `TravelerReward`, with any quantity range rolled to a concrete value.
@@ -71,9 +109,37 @@ pub struct TravelerState {
     pub invited: bool,
 }
 
+/// Panics if a traveler's book spec names an idea that doesn't exist, or asks
+/// for a nonsensical coverage -- either would otherwise surface much later, as
+/// a book on nothing or a book that teaches nothing.
+fn validate_traveler_info(configs: &[Traveler], ideas: &[Idea]) {
+    for (idx, config) in configs.iter().enumerate() {
+        let TravelerReward::Book(spec) = &config.reward else {
+            continue;
+        };
+        for name in &spec.ideas {
+            assert!(
+                crate::idea::idea_by_name(ideas, name).is_some(),
+                "traveler {idx} offers a book on unknown idea {name:?} in travelers.ron"
+            );
+        }
+        assert!(
+            spec.coverage.start > 0.0 && spec.coverage.start <= 1.0,
+            "traveler {idx}'s book coverage must start within 0.0..=1.0, got {:?}",
+            spec.coverage
+        );
+        assert!(
+            spec.coverage.end <= 1.0,
+            "traveler {idx}'s book coverage can't exceed 1.0, got {:?}",
+            spec.coverage
+        );
+    }
+}
+
 pub fn setup_travelers(mut commands: Commands) {
     let ron_content = include_str!("../buildables/travelers.ron");
     let configs: Vec<Traveler> = ron::from_str(ron_content).expect("bad travelers.ron");
+    validate_traveler_info(&configs, &crate::idea::load_idea_info());
     commands.insert_resource(TravelerState {
         configs,
         current_offer: None,
@@ -158,8 +224,10 @@ pub fn roll_traveler_offer(
             TravelerReward::Resource(res, range) => {
                 ResolvedReward::Resource(*res, rng.random_range(range.start..range.end))
             }
-            TravelerReward::Book { segments } => {
-                let (idea, mask) = crate::idea::roll_book(ideas, *segments, rng);
+            TravelerReward::Book(spec) => {
+                let candidates = spec.candidates(ideas);
+                let n = spec.roll_segment_count(rng);
+                let (idea, mask) = crate::idea::roll_book(&candidates, n, rng);
                 ResolvedReward::Book {
                     idea,
                     segments: mask,
@@ -368,7 +436,10 @@ mod tests {
             demands: vec![TravelerDemand {
                 options: vec![(UniformResource::Potato, 10..15)],
             }],
-            reward: TravelerReward::Book { segments: 30 },
+            reward: TravelerReward::Book(BookSpec {
+                ideas: vec![],
+                coverage: 0.6..0.6,
+            }),
         }
     }
 
@@ -405,6 +476,93 @@ mod tests {
                 "the title should name the idea it covers: {title:?}"
             );
         }
+    }
+
+    /// A spec restricted to one idea must never roll another, and coverage
+    /// must translate into that fraction of the segment count.
+    #[test]
+    fn a_book_spec_honours_its_idea_list_and_coverage() {
+        let ideas = crate::idea::load_idea_info();
+        let roads = chain_network(60);
+        let mut rng = StdRng::seed_from_u64(21);
+
+        let mut config = book_seller();
+        config.reward = TravelerReward::Book(BookSpec {
+            ideas: vec!["Arithmetic".to_string()],
+            coverage: 0.2..0.2,
+        });
+
+        for _ in 0..30 {
+            let mut state = TravelerState {
+                configs: vec![config.clone()],
+                current_offer: None,
+                invited: false,
+            };
+            roll_traveler_offer(&mut state, 10.0, &roads, &ideas, &mut rng);
+            let ResolvedReward::Book { idea, segments, .. } =
+                state.current_offer.expect("always appears").reward
+            else {
+                panic!("expected a book");
+            };
+            assert_eq!(ideas[idea].name, "Arithmetic");
+            assert_eq!(segments.count_ones(), 10, "20% of 50 segments");
+        }
+    }
+
+    /// A non-degenerate coverage range should actually vary between offers,
+    /// and always stay inside the range it was given.
+    #[test]
+    fn a_coverage_range_varies_between_offers() {
+        let ideas = crate::idea::load_idea_info();
+        let roads = chain_network(60);
+        let mut rng = StdRng::seed_from_u64(33);
+
+        let mut config = book_seller();
+        config.reward = TravelerReward::Book(BookSpec {
+            ideas: vec![],
+            coverage: 0.2..0.8,
+        });
+
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..60 {
+            let mut state = TravelerState {
+                configs: vec![config.clone()],
+                current_offer: None,
+                invited: false,
+            };
+            roll_traveler_offer(&mut state, 10.0, &roads, &ideas, &mut rng);
+            let ResolvedReward::Book { segments, .. } =
+                state.current_offer.expect("always appears").reward
+            else {
+                panic!("expected a book");
+            };
+            let n = segments.count_ones();
+            assert!((10..=40).contains(&n), "{n} segments is outside 0.2..0.8");
+            seen.insert(n);
+        }
+        assert!(
+            seen.len() > 1,
+            "a range should not always roll the same size"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown idea")]
+    fn traveler_validation_rejects_a_book_on_an_unknown_idea() {
+        let mut config = book_seller();
+        config.reward = TravelerReward::Book(BookSpec {
+            ideas: vec!["Astrology".to_string()],
+            coverage: 0.5..0.5,
+        });
+        validate_traveler_info(&[config], &crate::idea::load_idea_info());
+    }
+
+    /// The bundled file has to pass its own validation.
+    #[test]
+    fn the_bundled_travelers_validate() {
+        let configs: Vec<Traveler> =
+            ron::from_str(include_str!("../buildables/travelers.ron")).expect("bad travelers.ron");
+        validate_traveler_info(&configs, &crate::idea::load_idea_info());
     }
 
     /// Accepting the offer both shelves the book and teaches its segments; the
