@@ -59,8 +59,8 @@ impl GatedPlaceView {
 
 pub struct IdeaRow {
     pub name: String,
-    /// Longest path from a root, used to indent dependents under their
-    /// prerequisites.
+    /// Longest path from a root. Determines which screen row this idea is
+    /// drawn in, so dependents always sit below their prerequisites.
     pub depth: usize,
     /// Exactly [`SEGMENTS`] entries, in segment order.
     pub segments: Vec<SegmentState>,
@@ -110,6 +110,28 @@ impl IdeaRow {
 pub struct IdeaTreeView {
     /// In topological order, so a row's prerequisites always precede it.
     pub rows: Vec<IdeaRow>,
+}
+
+impl IdeaTreeView {
+    /// Row indices bucketed by depth: `layers()[d]` is every idea whose longest
+    /// path from a root is `d`, in view order. The window draws one layer per
+    /// screen row, so an idea always sits below everything it depends on.
+    ///
+    /// This has to bucket rather than scan: topological order guarantees a
+    /// prerequisite *precedes* its dependent, not that depth increases
+    /// monotonically along it. Given roots A and C and B depending on A, a
+    /// perfectly good topological order is A, B, C — depths 0, 1, 0.
+    pub fn layers(&self) -> Vec<Vec<usize>> {
+        let depth = self.rows.iter().map(|row| row.depth).max();
+        let Some(depth) = depth else {
+            return Vec::new();
+        };
+        let mut layers = vec![Vec::new(); depth + 1];
+        for (idx, row) in self.rows.iter().enumerate() {
+            layers[row.depth].push(idx);
+        }
+        layers
+    }
 }
 
 pub fn idea_tree_view(
@@ -309,6 +331,45 @@ mod tests {
             v.rows[0].gated_places[0].describe(),
             "carpenter's workshop — unlocked, 52% efficiency"
         );
+    }
+
+    /// Ideas at the same depth share a screen row, and bucketing (rather than
+    /// scanning the topologically-sorted list) is what makes that reliable.
+    #[test]
+    fn layers_group_ideas_by_depth() {
+        let v = view(&[0, 0, 0]);
+        assert_eq!(v.layers(), vec![vec![0, 1], vec![2]]);
+    }
+
+    /// Regression guard for the bucketing: a topological order can perfectly
+    /// well run root, dependent, root -- depths 0, 1, 0 -- so a layer's members
+    /// need not be contiguous in `rows`.
+    #[test]
+    fn layers_handle_depth_that_dips_back_down() {
+        let ideas = vec![
+            Idea {
+                name: "A".to_string(),
+                depends_on: vec![],
+            },
+            Idea {
+                name: "B".to_string(),
+                depends_on: vec!["A".to_string()],
+            },
+            Idea {
+                name: "C".to_string(),
+                depends_on: vec![],
+            },
+        ];
+        let deps = dep_indices(&ideas);
+        let learned = [0, 0, 0];
+        let understood = compute_understood(&deps, &learned);
+        let v = idea_tree_view(&ideas, &deps, &learned, &understood, &[]);
+
+        assert_eq!(
+            v.rows.iter().map(|r| r.depth).collect::<Vec<_>>(),
+            vec![0, 1, 0]
+        );
+        assert_eq!(v.layers(), vec![vec![0, 2], vec![1]]);
     }
 
     #[test]

@@ -1,12 +1,15 @@
-//! The Ideas window: a scrollable view of the idea DAG, one 50-segment bar per
-//! idea, with dependency lines from each prerequisite down to its dependents.
+//! The Ideas window: the idea DAG drawn as a layered graph, one 50-segment bar
+//! per idea.
 //!
-//! Layout is intentionally one-idea-per-row rather than a free-form graph:
-//! rows come out of [`crate::idea_view::idea_tree_view`] topologically sorted
-//! and indented by depth, so a dependent is always below and to the right of
-//! everything it needs, and a connector never has to route upward. Connectors
-//! run in a reserved gutter to the left of every bar, so they never cross the
-//! rows they pass.
+//! Layout comes straight from the depths [`crate::idea_view::idea_tree_view`]
+//! computes: an idea's depth (its longest path from a root) is the screen row it
+//! goes in, so every idea sits below everything it depends on, and ideas at the
+//! same depth sit side by side. Dependency lines are painted *under* the cards
+//! — reserved with `Painter::add` before the row is laid out and filled in once
+//! every card's rect is known — so a line passing a layer disappears behind it
+//! rather than scribbling through it. Edges may skip a layer; they're drawn
+//! straight and left for the reader to follow, on the assumption that ideas
+//! aren't usually more than a layer or two apart.
 //!
 //! The window opens itself two ways besides the panel button: clicking the book
 //! a traveler is offering (which also *focuses* that idea — see
@@ -27,16 +30,16 @@ use crate::{heading_label, note_label};
 const REVEAL_SECS: f32 = 1.2;
 /// Height of a segment bar.
 const BAR_HEIGHT: f32 = 14.0;
-/// Horizontal indent per level of DAG depth.
-const DEPTH_INDENT: f32 = 12.0;
 /// Gap between adjacent segments. Segments are drawn at least 1px wide, so a
-/// narrow window degrades to a solid bar rather than to nothing.
+/// narrow card degrades to a solid bar rather than to nothing.
 const SEGMENT_GAP: f32 = 1.0;
-/// Width reserved at the left of every row for dependency connectors. Bars
-/// start after it, so a connector routed inside it can never cross a bar.
-const LANE_GUTTER: f32 = 20.0;
-/// Horizontal spacing between connector lanes within the gutter.
-const LANE_WIDTH: f32 = 5.0;
+/// Narrowest a card may get before a layer wraps instead of squeezing further.
+/// Below about this, 50 segments stop being individually readable.
+const CARD_MIN_WIDTH: f32 = 170.0;
+/// Horizontal gap between cards sharing a layer.
+const CARD_GAP: f32 = 8.0;
+/// Vertical gap between layers — the room dependency lines have to be visible in.
+const LAYER_GAP: f32 = 18.0;
 
 /// An idea to call out, with a line of context explaining why. Set by clicking
 /// the book a traveler is offering; the idea gets a rounded rectangle drawn
@@ -170,41 +173,59 @@ pub fn idea_ui_system(
     let mut dismiss_focus = false;
     egui::Window::new("Ideas")
         .open(&mut open)
-        .default_width(440.0)
+        .default_width(560.0)
         .default_height(420.0)
         .resizable(true)
         .show(ctx, |ui| {
             legend(ui);
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let gutter_left = ui.max_rect().left();
-                // Each row's bar rect, so a dependent can connect back to its
-                // prerequisites; topological order guarantees every
-                // prerequisite's rect is already recorded. `lanes` tracks how
-                // far down the gutter each connector lane is already occupied.
-                let mut bars: Vec<egui::Rect> = Vec::with_capacity(view.rows.len());
-                let mut lanes: Vec<f32> = Vec::new();
-                for (idx, row) in view.rows.iter().enumerate() {
-                    let focus = window
-                        .focus
-                        .as_ref()
-                        .filter(|highlight| highlight.idea == idx);
-                    let geometry = idea_row(
-                        ui,
-                        idx,
-                        row,
-                        focus.map(|highlight| highlight.note.as_str()),
-                        window.reveal.as_ref().zip(fade),
-                    );
-                    if focus.is_some() {
-                        highlight_ring(ui, geometry.full);
-                    }
-                    for &prereq in &row.prereqs {
-                        connector(ui, gutter_left, bars[prereq], geometry.bar, &mut lanes);
-                    }
-                    bars.push(geometry.bar);
+                // Reserve a slot for the dependency lines before any card is
+                // drawn, so they end up beneath every card in paint order. The
+                // shapes themselves can't be built until every card's rect is
+                // known, which is why this is a placeholder rather than a draw.
+                let painter = ui.painter().clone();
+                let edges = painter.add(egui::Shape::Noop);
+
+                let full_width = ui.available_width();
+                let mut cards: Vec<egui::Rect> = vec![egui::Rect::NOTHING; view.rows.len()];
+
+                for layer in view.layers() {
+                    let count = layer.len().max(1) as f32;
+                    let card_width =
+                        ((full_width - (count - 1.0) * CARD_GAP) / count).max(CARD_MIN_WIDTH);
+                    // Wrapping rather than clipping: a layer too crowded to fit
+                    // spills onto another line, which muddles the depth reading
+                    // but keeps every idea visible and readable. `Align::Min`
+                    // rather than `horizontal_wrapped`'s centering, so cards in
+                    // a layer line up along their tops however tall each gets.
+                    let layout = egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true);
+                    ui.with_layout(layout, |ui| {
+                        ui.spacing_mut().item_spacing.x = CARD_GAP;
+                        for &idx in &layer {
+                            let focus = window
+                                .focus
+                                .as_ref()
+                                .filter(|highlight| highlight.idea == idx);
+                            let rect = idea_card(
+                                ui,
+                                idx,
+                                &view.rows[idx],
+                                card_width,
+                                focus.map(|highlight| highlight.note.as_str()),
+                                window.reveal.as_ref().zip(fade),
+                            );
+                            if focus.is_some() {
+                                highlight_ring(ui, rect);
+                            }
+                            cards[idx] = rect;
+                        }
+                    });
+                    ui.add_space(LAYER_GAP);
                 }
-                ui.add_space(4.0);
+
+                painter.set(edges, egui::Shape::Vec(dependency_lines(&view, &cards)));
+
                 if window.focus.is_some() {
                     ui.separator();
                     dismiss_focus = ui.button("Clear highlight").clicked();
@@ -238,39 +259,74 @@ fn legend(ui: &mut egui::Ui) {
     });
 }
 
-/// Where a drawn row ended up: `bar` for connectors to attach to, `full` for
-/// the focus ring to enclose.
-struct RowGeometry {
-    bar: egui::Rect,
-    full: egui::Rect,
+/// One line per dependency, from the bottom of the prerequisite's card to the
+/// top of its dependent's. Where a card has several prerequisites the arrival
+/// points are fanned across its top edge, so two lines into the same idea stay
+/// tellable apart instead of converging on one pixel.
+fn dependency_lines(
+    view: &crate::idea_view::IdeaTreeView,
+    cards: &[egui::Rect],
+) -> Vec<egui::Shape> {
+    let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(105));
+    let mut lines = Vec::new();
+    for (idx, row) in view.rows.iter().enumerate() {
+        let to = cards[idx];
+        if !to.is_positive() {
+            continue;
+        }
+        let fan = row.prereqs.len() as f32 + 1.0;
+        for (i, &prereq) in row.prereqs.iter().enumerate() {
+            let from = cards[prereq];
+            if !from.is_positive() {
+                continue;
+            }
+            let arrival = egui::pos2(to.left() + to.width() * (i as f32 + 1.0) / fan, to.top());
+            lines.push(egui::Shape::line_segment(
+                [from.center_bottom(), arrival],
+                stroke,
+            ));
+        }
+    }
+    lines
 }
 
-/// Draws one idea's heading (with its confidence marker), summary, optional
-/// focus note, and segment bar.
-fn idea_row(
+/// Draws one idea as a card `width` wide: heading (with its confidence marker),
+/// summary, optional focus note, and segment bar. Returns the card's rect, which
+/// is what the dependency lines attach to.
+fn idea_card(
     ui: &mut egui::Ui,
     idx: usize,
     row: &IdeaRow,
+    width: f32,
     focus_note: Option<&str>,
     reveal: Option<(&Reveal, f32)>,
-) -> RowGeometry {
-    ui.add_space(4.0);
-    let mut bar = egui::Rect::NOTHING;
-    let full = ui
-        .horizontal(|ui| {
-            ui.add_space(LANE_GUTTER + row.depth as f32 * DEPTH_INDENT);
-            ui.vertical(|ui| {
-                heading(ui, row);
-                note_label!(ui, row.summary());
-                if let Some(note) = focus_note {
-                    note_label!(ui, crate::col_format!(preview, "{}", note));
-                }
-                bar = segment_bar(ui, idx, row, reveal);
-            });
-        })
-        .response
-        .rect;
-    RowGeometry { bar, full }
+) -> egui::Rect {
+    // The layout has to be stated: `allocate_ui` would inherit the enclosing
+    // left-to-right one and lay the card's own contents out in a single line.
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, 0.0),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            // An opaque fill is what makes "lines underneath" read as underneath:
+            // a line passing this layer is hidden here and reappears in the gap.
+            egui::Frame::new()
+                .fill(egui::Color32::from_gray(38))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(58)))
+                .inner_margin(egui::Margin::same(6))
+                .corner_radius(4.0)
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    heading(ui, row);
+                    note_label!(ui, row.summary());
+                    if let Some(note) = focus_note {
+                        note_label!(ui, crate::col_format!(preview, "{}", note));
+                    }
+                    segment_bar(ui, idx, row, reveal);
+                });
+        },
+    )
+    .response
+    .rect
 }
 
 /// The idea's name plus a "?"/check marker. The marker is its own widget so it
@@ -314,51 +370,13 @@ fn heading(ui: &mut egui::Ui, row: &IdeaRow) {
 }
 
 /// The rounded rectangle drawn around a focused idea. A stroke rather than a
-/// fill, so it can be painted after the row without covering it.
+/// fill, so it can be painted after the card without covering it.
 fn highlight_ring(ui: &egui::Ui, rect: egui::Rect) {
     ui.painter().rect_stroke(
-        rect.expand(3.0),
+        rect.expand(2.0),
         6.0,
         egui::Stroke::new(1.5, FontColors::preview()),
         egui::StrokeKind::Outside,
-    );
-}
-
-/// Routes a prerequisite-to-dependent connector as three segments: left out of
-/// the prerequisite's bar into a free lane, straight down that lane, then right
-/// into the dependent's bar. Lanes are assigned greedily to the first one whose
-/// occupied extent has already been passed, so two connectors only share a lane
-/// when their vertical spans don't overlap.
-fn connector(
-    ui: &egui::Ui,
-    gutter_left: f32,
-    from: egui::Rect,
-    to: egui::Rect,
-    lanes: &mut Vec<f32>,
-) {
-    let (top, bottom) = (from.bottom(), to.top());
-    let lane = match lanes.iter().position(|&occupied_to| occupied_to <= top) {
-        Some(lane) => lane,
-        None => {
-            lanes.push(top);
-            lanes.len() - 1
-        }
-    };
-    lanes[lane] = bottom;
-
-    // More concurrent edges than the gutter has room for is a cosmetic problem
-    // (two connectors overlap), not a correctness one -- so wrap rather than
-    // letting a lane escape the gutter and cross the bars.
-    let max_lanes = (LANE_GUTTER / LANE_WIDTH).floor().max(1.0) as usize;
-    let x = gutter_left + (lane % max_lanes) as f32 * LANE_WIDTH + LANE_WIDTH * 0.5;
-
-    let stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(95));
-    let painter = ui.painter();
-    painter.line_segment([egui::pos2(from.left(), top), egui::pos2(x, top)], stroke);
-    painter.line_segment([egui::pos2(x, top), egui::pos2(x, bottom)], stroke);
-    painter.line_segment(
-        [egui::pos2(x, bottom), egui::pos2(to.left(), bottom)],
-        stroke,
     );
 }
 
@@ -379,16 +397,10 @@ fn lerp_color(from: egui::Color32, to: egui::Color32, t: f32) -> egui::Color32 {
     )
 }
 
-/// Paints `row`'s segments across the available width and returns the rect they
-/// occupy. During a reveal, each segment cross-fades from the color it had
-/// before the gain to the one it has now — so what a book actually bought you
-/// is the only thing moving on screen.
-fn segment_bar(
-    ui: &mut egui::Ui,
-    idx: usize,
-    row: &IdeaRow,
-    reveal: Option<(&Reveal, f32)>,
-) -> egui::Rect {
+/// Paints `row`'s segments across the available width. During a reveal, each
+/// segment cross-fades from the color it had before the gain to the one it has
+/// now — so what a book actually bought you is the only thing moving on screen.
+fn segment_bar(ui: &mut egui::Ui, idx: usize, row: &IdeaRow, reveal: Option<(&Reveal, f32)>) {
     let width = ui.available_width().max(row.segments.len() as f32);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, BAR_HEIGHT), egui::Sense::hover());
@@ -436,10 +448,7 @@ fn segment_bar(
             );
         }
     });
-
-    rect
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

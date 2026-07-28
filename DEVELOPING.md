@@ -33,8 +33,13 @@ Game parts:
     configured in `buildables/ideas.ron`; `sync_idea_progress` caches the derived
     understood-masks onto `ConstructedCity`, so the many `&ConstructedCity`
     callers can gate on idea progress without threading a second resource.
-  * idea_view.rs / idea_ui.rs: the Ideas window -- a scrollable segment-bar view
-    of the DAG, opened from the right-hand resource panel. Three segment colors:
+  * idea_view.rs / idea_ui.rs: the Ideas window -- the DAG drawn as a layered
+    graph, opened from the right-hand resource panel. An idea's `depth` (longest
+    path from a root, via `IdeaTreeView::layers`) is the screen row it goes in,
+    so ideas at the same depth sit side by side and dependents sit below their
+    prerequisites; dependency lines are painted *under* the cards (reserved with
+    `Painter::add`, filled in once every card rect is known), so an edge that
+    skips a layer vanishes behind it. Three segment colors:
     understood, learned-but-blocked, and unread. Each idea carries a `?`/`✓`
     marker (at `idea_view::CONFIDENT_AT`) whose hover lists the places it gates.
     The window also opens itself: clicking the book a traveler offers focuses
