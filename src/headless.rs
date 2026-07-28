@@ -56,10 +56,12 @@ Commands (space-separated tokens, one per line):
   advance [n]                                      advance the game clock by n months (default 1)
   tick                                             run one Bevy Update pass (change detection!)
   invite <farm_idx> / uninvite <farm_idx>          toggle a farm's market invitation
+  invite_traveler / uninvite_traveler              accept or decline this month's traveler offer
   farm_event <farm_idx> market|reroll|specialize|adopt   set a farm's next market action
   set_production <farm_idx> <resource>             cheat: force a farm's produced resource
   set_inventory <resource> <qty>                   cheat: adjust city inventory of a resource(if possible)
   deposit_tool                                     cheat: deposit a carpenter's tools into rack storage
+  learn <idea> <count>                             cheat: learn an idea's first <count> segments
   set_priority <x> <y> <z> <level>                 set a workplace's priority (very_low|low|medium|high|very_high)
   install <x> <y> <z> <slot_idx>                   install the first available matching resource into a slot
   uninstall <x> <y> <z> <slot_idx>                 remove an installed resource, returning it to storage
@@ -69,6 +71,7 @@ Commands (space-separated tokens, one per line):
   query slots <x> <y> <z>                          list a furniture's slots and their contents
   query place <x> <y> <z>                          inspect the place owning a cube
   query valid_places <x> <y> <z>                   place types formable around a cube
+  query ideas                                      per-idea learned/understood segments, and idea-gated places
   query population                                 each individual's home/work/fed/morale
   query farms                                      list all farms
   query farm <idx>                                 detailed farm info + market/production preview
@@ -111,6 +114,7 @@ struct ChangeReport {
     population: bool,
     farms: bool,
     nav_grid: bool,
+    ideas: bool,
 }
 
 fn report_changes_system(
@@ -120,12 +124,14 @@ fn report_changes_system(
     population: Res<Population>,
     farms: Res<FarmsResource>,
     nav_grid: Option<Res<NavigationGrid>>,
+    idea_state: Res<crate::idea::IdeaState>,
 ) {
     report.constructed_city = constructed.is_changed();
     report.proposed_city = pending.is_changed();
     report.population = population.is_changed();
     report.farms = farms.is_changed();
     report.nav_grid = nav_grid.is_some_and(|g| g.is_changed());
+    report.ideas = idea_state.is_changed();
 }
 
 pub struct HeadlessSession {
@@ -140,7 +146,7 @@ impl HeadlessSession {
         let mut rng = StdRng::seed_from_u64(seed);
         let structures = load_structure_info();
         let mut constructed = ConstructedCity::new(structures);
-        constructed.places = place::load_place_info(&constructed.eorfs);
+        constructed.places = place::load_place_info(&constructed.eorfs, &constructed.ideas);
         place::place_initial_places(&mut constructed);
 
         // Draws from the same seeded stream as everything else below, so the
@@ -150,6 +156,7 @@ impl HeadlessSession {
         app.insert_resource(constructed);
         app.insert_resource(ProposedCity::new());
         app.insert_resource(Population::default());
+        app.insert_resource(crate::idea::IdeaState::default());
         app.insert_resource(GameClock::default());
         app.insert_resource(MaterialList::load());
         app.insert_resource(farms);
@@ -166,6 +173,7 @@ impl HeadlessSession {
         app.add_systems(
             Update,
             (
+                crate::idea::sync_idea_progress.run_if(resource_changed::<crate::idea::IdeaState>),
                 place::sync_places_system.run_if(resource_changed::<ConstructedCity>),
                 rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
                 sync_assignments
@@ -360,6 +368,18 @@ impl HeadlessSession {
                 Ok(vec![format!("farm {idx} invited={invited}")])
             }
 
+            // The graphical UI sets this from the traveler panel's checkbox;
+            // `advance` reads it when resolving the visit.
+            "invite_traveler" | "uninvite_traveler" => {
+                let invited = cmd == "invite_traveler";
+                let mut traveler_state = self.world().resource_mut::<TravelerState>();
+                if traveler_state.current_offer.is_none() {
+                    return Err("no traveler offer this month".to_string());
+                }
+                traveler_state.invited = invited;
+                Ok(vec![format!("traveler invited={invited}")])
+            }
+
             "farm_event" => {
                 let idx = parse_usize(args.first().copied().unwrap_or(""))?;
                 let event = match args.get(1).copied() {
@@ -458,6 +478,36 @@ impl HeadlessSession {
                 } else {
                     Err("no rack storage with room for a tool".to_string())
                 }
+            }
+
+            // A book's worth of segments, but deterministic: tests need to
+            // land on an exact progress fraction (e.g. 25/50 == the
+            // carpenter's workshop's unlock threshold), which a random roll
+            // can't promise.
+            "learn" => {
+                if args.len() < 2 {
+                    return Err("usage: learn <idea> <count>".to_string());
+                }
+                let name = args[0].replace('_', " ");
+                let count = parse_usize(args[1])?;
+                let idea = {
+                    let cw = self.world().resource::<ConstructedCity>();
+                    crate::idea::idea_by_name(&cw.ideas, &name)
+                        .ok_or_else(|| format!("no such idea: {name}"))?
+                };
+                let count = count.min(crate::idea::SEGMENTS as usize);
+                let mask = if count == 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << count) - 1
+                };
+                let mut idea_state = self.world().resource_mut::<crate::idea::IdeaState>();
+                idea_state.learn(idea, mask);
+                let learned = idea_state.learned[idea].count_ones();
+                Ok(vec![format!(
+                    "{name}: {learned}/{} segments learned",
+                    crate::idea::SEGMENTS
+                )])
             }
 
             "install" => {
@@ -580,10 +630,12 @@ impl HeadlessSession {
 
     fn query(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
         let Some((&sub, args)) = args.split_first() else {
-            return Err("usage: query <cell|structures|places|place|valid_places|\
+            return Err(
+                "usage: query <cell|structures|places|place|valid_places|ideas|\
                  population|farms|farm|roads|outdoorness|month|traveler|inventory|proposals|\
                  changed|path|connected> ..."
-                .to_string());
+                    .to_string(),
+            );
         };
         match sub {
             "cell" => {
@@ -742,6 +794,42 @@ impl HeadlessSession {
                 }
             }
 
+            "ideas" => {
+                let idea_state = self.world().resource::<crate::idea::IdeaState>().clone();
+                let cw = self.world().resource::<ConstructedCity>();
+                let segments = crate::idea::SEGMENTS;
+                let mut lines: Vec<String> = cw
+                    .ideas
+                    .iter()
+                    .enumerate()
+                    .map(|(i, idea)| {
+                        let understood = cw.understood[i].count_ones();
+                        let pending = (idea_state.learned[i] & !cw.understood[i]).count_ones();
+                        format!(
+                            "{i} {} understood={understood}/{segments} pending={pending}",
+                            idea.name.replace(' ', "_")
+                        )
+                    })
+                    .collect();
+                // Gated place kinds and where they currently stand, since that's
+                // the point of tracking ideas at all.
+                for (i, def) in cw.places.iter().enumerate() {
+                    let Some(gate) = &def.gate else { continue };
+                    let status = match place::gate_efficiency(cw, i) {
+                        None => "locked".to_string(),
+                        Some(eff) => format!("efficiency={eff:.2}"),
+                    };
+                    lines.push(format!(
+                        "gated {} on {} ({}-{}): {status}",
+                        def.name.replace(' ', "_"),
+                        gate.idea.replace(' ', "_"),
+                        gate.unlock_at,
+                        gate.full_at
+                    ));
+                }
+                Ok(lines)
+            }
+
             "population" => {
                 let population = self.world().resource::<Population>();
                 if population.individuals.is_empty() {
@@ -853,18 +941,36 @@ impl HeadlessSession {
             )]),
 
             "traveler" => {
+                // Idea names come from `ConstructedCity`, so read the offer out
+                // before borrowing the world a second time.
                 let state = self.world().resource::<TravelerState>();
-                let Some(offer) = &state.current_offer else {
+                let Some(offer) = state.current_offer.as_ref() else {
                     return Ok(vec!["(none)".to_string()]);
                 };
                 let origin = offer.path.first().copied().unwrap_or(Vec2::ZERO);
+                let invited = state.invited;
+                let path_len = offer.path.len();
+                let reward = offer.reward.clone();
+                let reward = match &reward {
+                    crate::traveler::ResolvedReward::Tool(kind) => kind.label().to_string(),
+                    crate::traveler::ResolvedReward::Resource(res, qty) => {
+                        format!("{qty}_{}", res.label())
+                    }
+                    crate::traveler::ResolvedReward::Book { idea, segments, .. } => {
+                        let cw = self.world().resource::<ConstructedCity>();
+                        format!(
+                            "book_{}_{}",
+                            cw.ideas[*idea].name.replace(' ', "_"),
+                            segments.count_ones()
+                        )
+                    }
+                };
                 Ok(vec![format!(
-                    "origin=({:.1},{:.1}) origin_dist={:.1} invited={} path_len={}",
+                    "origin=({:.1},{:.1}) origin_dist={:.1} invited={invited} \
+                     path_len={path_len} reward={reward}",
                     origin.x,
                     origin.y,
                     origin.length(),
-                    state.invited,
-                    offer.path.len(),
                 )])
             }
 
@@ -876,6 +982,16 @@ impl HeadlessSession {
                     if total > 0 {
                         lines.push(format!("{}: {total}", res.label()));
                     }
+                }
+                // Unique resources are stored separately (racks and bookcases,
+                // not bins), but they're inventory just the same.
+                let tools = place::total_tools_of(cw, ToolKind::CarpentersTools);
+                if tools > 0 {
+                    lines.push(format!("Carpenter's tools: {tools}"));
+                }
+                let books = place::total_book_count(cw);
+                if books > 0 {
+                    lines.push(format!("Books: {books}"));
                 }
                 if lines.is_empty() {
                     lines.push("(empty)".to_string());
@@ -949,8 +1065,8 @@ impl HeadlessSession {
 
 fn format_change_report(r: &ChangeReport) -> String {
     format!(
-        "constructed_city={} proposed_city={} population={} farms={} nav_grid={}",
-        r.constructed_city, r.proposed_city, r.population, r.farms, r.nav_grid
+        "constructed_city={} proposed_city={} population={} farms={} nav_grid={} ideas={}",
+        r.constructed_city, r.proposed_city, r.population, r.farms, r.nav_grid, r.ideas
     )
 }
 
@@ -1088,6 +1204,7 @@ fn advance_month_system(
     mut pending: ResMut<ProposedCity>,
     mut population: ResMut<Population>,
     mut traveler_state: ResMut<TravelerState>,
+    mut idea_state: ResMut<crate::idea::IdeaState>,
     material_list: Res<MaterialList>,
     mut headless_rng: ResMut<HeadlessRng>,
     sandbox: Res<SandboxFlag>,
@@ -1104,6 +1221,7 @@ fn advance_month_system(
         &mut pending,
         &mut population,
         &mut traveler_state,
+        &mut idea_state,
         &material_list,
         sandbox.0,
         &mut headless_rng.0,

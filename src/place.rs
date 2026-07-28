@@ -227,6 +227,40 @@ pub struct Place {
     /// how staffed they are, every month (see `work::apply_work_effects`).
     #[serde(default)]
     pub work: Option<WorkEffect>,
+    /// If set, this place kind doesn't exist until an idea is understood well
+    /// enough, and works at reduced efficiency until it's understood fully.
+    #[serde(default)]
+    pub gate: Option<IdeaGate>,
+}
+
+/// Gates a place kind on progress through an idea (see [`crate::idea`]).
+///
+/// Below `unlock_at` the place simply can't form -- it's not offered, and
+/// arranging the furniture for it does nothing. From `unlock_at` to `full_at`
+/// its efficiency ramps linearly from 0 to 1, so a freshly-unlocked workplace
+/// is real but produces nothing until understanding pushes past the threshold.
+///
+/// Since learning is permanent, progress is monotonic and a gate never
+/// re-locks.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct IdeaGate {
+    /// Name of the gating idea; must exist in `ideas.ron`.
+    pub idea: String,
+    /// Progress at which the place becomes formable, in `0.0..=1.0`.
+    pub unlock_at: f32,
+    /// Progress at which it reaches full efficiency, in `0.0..=1.0`.
+    pub full_at: f32,
+}
+
+impl IdeaGate {
+    /// The ramp itself, given how far along the gating idea is: `None` below
+    /// `unlock_at`, otherwise `0.0..=1.0`. Pure, so the UI can describe a gate
+    /// without a `ConstructedCity` in hand.
+    pub fn efficiency(&self, progress: f32) -> Option<f32> {
+        (progress >= self.unlock_at).then(|| {
+            ((progress - self.unlock_at) / (self.full_at - self.unlock_at)).clamp(0.0, 1.0)
+        })
+    }
 }
 
 /// What actually fulfills one slot of a placed `Place`'s requirements. A
@@ -342,21 +376,25 @@ impl std::ops::IndexMut<PlacedPlaceId> for PlacedPlaces {
 }
 
 /// Loads the place definitions bundled at compile time, panicking on any
-/// reference to a furniture or place name that doesn't exist.
-pub fn load_place_info(eorfs: &[crate::eorf::EorfInfo]) -> Vec<Place> {
+/// reference to a furniture, place, or idea name that doesn't exist.
+pub fn load_place_info(eorfs: &[crate::eorf::EorfInfo], ideas: &[crate::idea::Idea]) -> Vec<Place> {
     let ron_content = include_str!("../buildables/places.ron");
     let mut infos: Vec<Place> = ron::from_str(ron_content).unwrap();
     for info in &mut infos {
         fill_default_quality_factors(info);
     }
-    validate_place_info(&infos, eorfs);
+    validate_place_info(&infos, eorfs, ideas);
     infos
 }
 
-/// Panics if any place definition cross-references an unknown furniture or
-/// place name -- a typo in places.ron would otherwise just silently never
-/// match anything.
-fn validate_place_info(places: &[Place], eorfs: &[crate::eorf::EorfInfo]) {
+/// Panics if any place definition cross-references an unknown furniture,
+/// place, or idea name -- a typo in places.ron would otherwise just silently
+/// never match anything (or, for a gate, silently lock the place forever).
+fn validate_place_info(
+    places: &[Place],
+    eorfs: &[crate::eorf::EorfInfo],
+    ideas: &[crate::idea::Idea],
+) {
     let furniture_exists = |name: &str| eorfs.iter().any(|e| e.is_furniture() && e.name == name);
     let place_exists = |name: &str| places.iter().any(|p| p.name == name);
 
@@ -381,7 +419,40 @@ fn validate_place_info(places: &[Place], eorfs: &[crate::eorf::EorfInfo]) {
                 }
             }
         }
+        if let Some(gate) = &place.gate {
+            if crate::idea::idea_by_name(ideas, &gate.idea).is_none() {
+                bad("idea", &gate.idea);
+            }
+            assert!(
+                gate.unlock_at < gate.full_at,
+                "place {:?} has a gate whose unlock_at ({}) isn't below its full_at ({})",
+                place.name,
+                gate.unlock_at,
+                gate.full_at
+            );
+        }
     }
+}
+
+/// How well a place kind works, given how far along its gating idea is:
+/// `None` when the gate isn't met at all (the place can't form), otherwise a
+/// factor in `0.0..=1.0` scaling whatever the place produces. Ungated places
+/// are always `Some(1.0)`.
+pub fn gate_efficiency(cw: &ConstructedCity, place_idx: usize) -> Option<f32> {
+    gate_efficiency_of(cw, &cw.places[place_idx])
+}
+
+/// [`gate_efficiency`] by definition rather than index, for the paths that
+/// already hold a `&Place`.
+pub fn gate_efficiency_of(cw: &ConstructedCity, place: &Place) -> Option<f32> {
+    let Some(gate) = &place.gate else {
+        return Some(1.0);
+    };
+    // An unknown idea is rejected by `validate_place_info`, but a hand-built
+    // test city may carry places the idea list doesn't know about; treat that
+    // as locked rather than panicking mid-frame.
+    let idx = crate::idea::idea_by_name(&cw.ideas, &gate.idea)?;
+    gate.efficiency(crate::idea::progress(&cw.understood, idx))
 }
 
 /// Maximum 2D Manhattan distance (within a single y-layer) for a requirement
@@ -567,8 +638,19 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
     }
 }
 
-/// True if `core` has at least `min` of every requirement within range.
+/// True if `place`'s idea gate is met and `core` has at least `min` of every
+/// requirement within range.
+///
+/// The gate check lives here, rather than at each call site, because this is
+/// the single choke point every path runs through: formation (via
+/// `plan_assignment` -> `choose_core`), the dissolve pass in `sync_places`, and
+/// `valid_places_for`. A gated place therefore can't form, isn't offered, and
+/// -- were progress ever to regress, which permanent learning rules out -- would
+/// dissolve.
 fn requirements_met(cw: &ConstructedCity, core: IVec3, place: &Place) -> bool {
+    if gate_efficiency_of(cw, place).is_none() {
+        return false;
+    }
     place.requirements.iter().all(|req| {
         candidates_near(cw, core, &req.requirement, &place.name).len() >= req.min as usize
     })
@@ -1072,24 +1154,50 @@ fn deposit_into_rack(
 fn deposit_into_bookcase(cw: &mut ConstructedCity, item: UniqueResource) -> bool {
     let volume = item.volume();
     for id in storage_ids(cw) {
-        let pp = &cw.placed_places[id];
-        let ceiling: f32 = pp
-            .fulfillments
-            .iter()
-            .filter_map(|f| match f {
-                FulfilledPorf::Furniture(loc) => {
-                    Some(slot_storage_capacity(cw, *loc, StorageKind::Book))
-                }
-                FulfilledPorf::Place(_) => None,
-            })
-            .sum();
-        let current = pp.contents.book_count() as f32 * volume;
-        if (ceiling - current).min(pp.contents.remaining_capacity(StorageKind::Book)) >= volume {
+        if book_free_capacity_for(cw, &cw.placed_places[id]) >= volume {
             cw.placed_places[id].contents.add_unique(item);
             return true;
         }
     }
     false
+}
+
+/// Shelf volume still free in one storage place: whichever is smaller of the
+/// room left on its own bookcases and the room left in its inventory's `Book`
+/// pool.
+fn book_free_capacity_for(cw: &ConstructedCity, pp: &ParticularPlace) -> f32 {
+    let ceiling: f32 = pp
+        .fulfillments
+        .iter()
+        .filter_map(|f| match f {
+            FulfilledPorf::Furniture(loc) => {
+                Some(slot_storage_capacity(cw, *loc, StorageKind::Book))
+            }
+            FulfilledPorf::Place(_) => None,
+        })
+        .sum();
+    let current = pp.contents.book_count() as f32 * book_volume();
+    (ceiling - current)
+        .min(pp.contents.remaining_capacity(StorageKind::Book))
+        .max(0.0)
+}
+
+/// The shelf volume one book occupies.
+pub fn book_volume() -> f32 {
+    UniqueResource::Book {
+        title: String::new(),
+    }
+    .volume()
+}
+
+/// Shelf volume still free across all storage places -- the book counterpart of
+/// `rack_free_capacity`, used to decide whether a book a traveler is offering
+/// has anywhere to go.
+pub fn book_free_capacity(cw: &ConstructedCity) -> f32 {
+    storage_ids(cw)
+        .into_iter()
+        .map(|id| book_free_capacity_for(cw, &cw.placed_places[id]))
+        .sum()
 }
 
 fn is_public_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
@@ -1628,6 +1736,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 
@@ -1710,6 +1819,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }];
 
         put(
@@ -1772,6 +1882,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }];
 
         let core = SlotCoord {
@@ -1792,7 +1903,10 @@ mod tests {
     #[test]
     fn bundled_place_definitions_cross_reference_cleanly() {
         // Panics if places.ron names a furniture/place that doesn't exist.
-        let infos = load_place_info(&crate::eorf::load_structure_info());
+        let infos = load_place_info(
+            &crate::eorf::load_structure_info(),
+            &crate::idea::load_idea_info(),
+        );
         assert!(!infos.is_empty());
     }
 
@@ -1800,7 +1914,32 @@ mod tests {
     #[should_panic(expected = "unknown furniture")]
     fn validation_rejects_unknown_furniture_reference() {
         let places = vec![place_def(1, None)]; // requires furniture "bin"
-        validate_place_info(&places, &[]); // ...but no eorfs exist
+        validate_place_info(&places, &[], &[]); // ...but no eorfs exist
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown idea")]
+    fn validation_rejects_a_gate_on_an_unknown_idea() {
+        let mut place = place_def(1, None);
+        place.gate = Some(IdeaGate {
+            idea: "Astrology".to_string(),
+            unlock_at: 0.5,
+            full_at: 1.0,
+        });
+        validate_place_info(&[place], &test_structures(), &crate::idea::load_idea_info());
+    }
+
+    /// A gate that never ramps would divide by zero when computing efficiency.
+    #[test]
+    #[should_panic(expected = "isn't below its full_at")]
+    fn validation_rejects_a_gate_with_an_empty_ramp() {
+        let mut place = place_def(1, None);
+        place.gate = Some(IdeaGate {
+            idea: "Specialization".to_string(),
+            unlock_at: 1.0,
+            full_at: 1.0,
+        });
+        validate_place_info(&[place], &test_structures(), &crate::idea::load_idea_info());
     }
 
     #[test]
@@ -1960,9 +2099,15 @@ mod tests {
     /// tool slot must actually have carpenter's tools installed (not just a
     /// bare table) before a "carpenter's workshop" forms alongside a bin and a
     /// chair, and removing the tool dissolves it again.
+    ///
+    /// The workshop is also idea-gated, so this starts by learning enough
+    /// Specialization to clear the gate -- see
+    /// `an_idea_gate_hides_the_carpenters_workshop_until_it_is_met` for the
+    /// gate's own coverage.
     #[test]
     fn installing_carpenters_tools_on_a_table_forms_a_workshop() {
         let mut session = HeadlessSession::new(1);
+        dispatch_ok(&mut session, "learn Specialization 50");
 
         // Somewhere far from the initial furniture so nothing else is swept in.
         dispatch_ok(&mut session, "place 100 0 100 room table");
@@ -2002,6 +2147,69 @@ mod tests {
         );
     }
 
+    /// The gate, end-to-end through the real systems: with the furniture and
+    /// the installed tool all in place, a carpenter's workshop still doesn't
+    /// exist until Specialization is half understood -- and it isn't even
+    /// *offered* (`valid_places`) below the threshold. Crossing it mid-session
+    /// forms the workshop with no further edit, which is the cascade
+    /// `sync_idea_progress` -> `sync_places_system` doing its job.
+    #[test]
+    fn an_idea_gate_hides_the_carpenters_workshop_until_it_is_met() {
+        let mut session = HeadlessSession::new(1);
+
+        dispatch_ok(&mut session, "place 100 0 100 room table");
+        dispatch_ok(&mut session, "place 100 0 101 room bin");
+        dispatch_ok(&mut session, "place 100 0 102 xwall chair");
+        dispatch_ok(&mut session, "deposit_tool");
+        dispatch_ok(&mut session, "install 100 0 100 0");
+        dispatch_ok(&mut session, "tick");
+
+        let workshop_formed = |session: &mut HeadlessSession| {
+            dispatch_ok(session, "query place 100 0 100")
+                .iter()
+                .any(|l| l.contains("carpenter's_workshop"))
+        };
+        let workshop_offered = |session: &mut HeadlessSession| {
+            dispatch_ok(session, "query valid_places 100 0 100")
+                .iter()
+                .any(|l| l.contains("carpenter's_workshop"))
+        };
+
+        assert!(
+            !workshop_formed(&mut session),
+            "no Specialization at all: the workshop must not form"
+        );
+        assert!(
+            !workshop_offered(&mut session),
+            "a locked place kind shouldn't be offered either"
+        );
+
+        // 24/50 is 48% -- still short of the 50% threshold.
+        dispatch_ok(&mut session, "learn Specialization 24");
+        dispatch_ok(&mut session, "tick");
+        assert!(
+            !workshop_formed(&mut session),
+            "48% understood is below the 50% gate"
+        );
+
+        // 25/50 is exactly 50%: unlocked, though at zero efficiency.
+        dispatch_ok(&mut session, "learn Specialization 25");
+        dispatch_ok(&mut session, "tick");
+        assert!(
+            workshop_formed(&mut session),
+            "crossing the threshold should form the workshop with no further edit"
+        );
+        assert!(workshop_offered(&mut session));
+
+        let ideas = dispatch_ok(&mut session, "query ideas");
+        assert!(
+            ideas
+                .iter()
+                .any(|l| l.contains("carpenter's_workshop") && l.contains("efficiency=0.00")),
+            "at exactly the unlock threshold the workshop should be useless: {ideas:?}"
+        );
+    }
+
     // ── storage capacity helpers ────────────────────────────────────────────
 
     fn storage_place_def() -> Place {
@@ -2022,6 +2230,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 
@@ -2187,6 +2396,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 
@@ -2205,6 +2415,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 

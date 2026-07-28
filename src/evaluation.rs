@@ -291,6 +291,7 @@ mod tests {
             quality_factors,
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 

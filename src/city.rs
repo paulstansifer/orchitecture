@@ -284,6 +284,17 @@ pub struct ConstructedCity {
     pub eorfs: Vec<EorfInfo>,
     /// Duplicated from the `Res<>` for simplicity:
     pub places: Vec<crate::place::Place>,
+    /// The idea DAG, topologically sorted. Loaded from `ideas.ron` at
+    /// construction; constant thereafter.
+    pub ideas: Vec<crate::idea::Idea>,
+    /// `ideas`' dependencies as indices, resolved once.
+    pub idea_deps: Vec<Vec<usize>>,
+    /// Per-idea *understood* segment masks — derived from `IdeaState`'s learned
+    /// masks by `idea::sync_idea_progress`, and cached here so that the many
+    /// functions taking only `&ConstructedCity` (place formation, workshop
+    /// output) can gate on idea progress without threading a second resource
+    /// through their signatures.
+    pub understood: Vec<u64>,
     /// Per-instance `ParentRestriction` for furniture, keyed by the cube it's
     /// placed at. Set in the UI; absent means `Unrestricted`. Cleared via
     /// `set_cell`/`take_cell` whenever the furniture there is overwritten or
@@ -318,10 +329,19 @@ pub struct ConstructedCity {
 
 impl ConstructedCity {
     pub fn new(eorfs: Vec<EorfInfo>) -> Self {
+        // Ideas come straight from the bundled file rather than being installed
+        // by a caller (the way `places` is), so every city -- including the ones
+        // test helpers build by hand -- has the real DAG available to gate on.
+        let ideas = crate::idea::load_idea_info();
+        let idea_deps = crate::idea::dep_indices(&ideas);
+        let understood = vec![0; ideas.len()];
         ConstructedCity {
             eorfs,
             contents: Sparse3D::new(),
             places: Vec::new(),
+            ideas,
+            idea_deps,
+            understood,
             placed_places: crate::place::PlacedPlaces::default(),
             road_forbidden_zone: true,
             furniture_restrictions: HashMap::new(),
@@ -1046,7 +1066,7 @@ pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<Eor
         .map(|s| s.info.clone())
         .collect();
     let mut constructed = ConstructedCity::new(infos);
-    constructed.places = crate::place::load_place_info(&constructed.eorfs);
+    constructed.places = crate::place::load_place_info(&constructed.eorfs, &constructed.ideas);
     commands.insert_resource(constructed);
     commands.insert_resource(ProposedCity::new());
     commands.insert_resource(AssembledCity::new());

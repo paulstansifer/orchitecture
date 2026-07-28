@@ -994,6 +994,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }];
         cw.placed_places.insert(ParticularPlace {
             place: 0,
