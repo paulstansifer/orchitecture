@@ -1,14 +1,96 @@
 use std::collections::HashMap;
+use std::ops::Range;
 
 use bevy::math::{IVec3, Vec3};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use serde::{Deserialize, Serialize};
 
 use crate::city::{Cell, ConstructedCity};
 use crate::eorf::EorfInfo;
 use crate::flood_fill::{flood_fill, has_sky_above};
-use crate::place::{count_named_near, place_location, FulfilledPorf, PlacedPlaceId, QualityAspect};
+use crate::place::{count_named_near, place_location, FulfilledPorf, Place, PlacedPlaceId};
 use crate::sparse3d::{RelSlot, RelSlotCoord, SlotCoord, Sparse3D};
+
+/// What a `QualityFactor` measures about a `Place`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum QualityAspect {
+    /// TODO: unimplemented -- always scores 1.0. See `raw_score`.
+    FloorArea,
+    /// Average distance (in cells) to the first sightline-blocking structure,
+    /// along rays cast horizontally or upward. See `compute_spaciousness`.
+    Spaciousness { sightline_max: u8 },
+    /// TODO: unimplemented -- always scores 1.0. See `raw_score`.
+    Quiet,
+    /// Average quality of directly-nested `Place`s (skipped entirely if there are none).
+    Subplaces,
+    /// How sheltered from the outdoors this place is (`1.0 - outdoorsness`).
+    Indoors,
+    /// Count of `Porf`s (furniture or places) named `porf_name` near this place.
+    NumberOf { porf_name: String },
+    /// How well-lit this place is, per the GI system's sky illuminance.
+    /// Scaled so complete darkness (0.0 illuminance) scores 0.25 and full
+    /// light (1.0 illuminance) scores 1.25. See `raw_score`.
+    Light,
+}
+
+impl QualityAspect {
+    /// Short human-readable label for UI display.
+    pub fn label(&self) -> String {
+        match self {
+            QualityAspect::FloorArea => "Floor area".to_string(),
+            QualityAspect::Spaciousness { .. } => "Spaciousness".to_string(),
+            QualityAspect::Quiet => "Quiet".to_string(),
+            QualityAspect::Subplaces => "Subplaces".to_string(),
+            QualityAspect::Indoors => "Indoors".to_string(),
+            QualityAspect::NumberOf { porf_name } => format!("Number of {porf_name}"),
+            QualityAspect::Light => "Light".to_string(),
+        }
+    }
+}
+
+/// One weighted contributor to a `Place`'s overall quality score. Overall
+/// quality is the product of every factor's range-clamped raw score raised
+/// to its `strength`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct QualityFactor {
+    pub aspect: QualityAspect,
+    /// Exponent applied to the clamped raw score before multiplying in.
+    pub strength: f32,
+    /// Clamps the raw score to a sane input range before it's raised to
+    /// `strength` and multiplied in. Not every aspect can reach every score.
+    pub range: Range<f32>,
+}
+
+/// `Place`s that don't explicitly list a `QualityFactor` for these aspects
+/// implicitly get one of these, unless already present.
+fn implicit_quality_factors() -> [QualityFactor; 2] {
+    [
+        QualityFactor {
+            aspect: QualityAspect::Indoors,
+            strength: 1.0,
+            range: 0.5..1.0,
+        },
+        QualityFactor {
+            aspect: QualityAspect::Subplaces,
+            strength: 1.0,
+            range: 0.0..1.2,
+        },
+    ]
+}
+
+/// Adds any `implicit_quality_factors` whose aspect isn't already listed.
+pub fn fill_default_quality_factors(info: &mut Place) {
+    for default in implicit_quality_factors() {
+        let has_it = info
+            .quality_factors
+            .iter()
+            .any(|f| std::mem::discriminant(&f.aspect) == std::mem::discriminant(&default.aspect));
+        if !has_it {
+            info.quality_factors.push(default);
+        }
+    }
+}
 
 /// Falloff per hop through open air (and through any structure that isn't a
 /// window or a doorway).
@@ -169,6 +251,7 @@ fn raw_score(
     origin: IVec3,
     aspect: &QualityAspect,
     outdoorsness: &HashMap<IVec3, f32>,
+    illuminance: &HashMap<IVec3, f32>,
 ) -> Option<f32> {
     match aspect {
         // TODO: derive from the place's actual floor area.
@@ -186,7 +269,9 @@ fn raw_score(
                 .fulfillments
                 .iter()
                 .filter_map(|f| match f {
-                    FulfilledPorf::Place(inner) => Some(evaluate_place(cw, *inner, outdoorsness)),
+                    FulfilledPorf::Place(inner) => {
+                        Some(evaluate_place(cw, *inner, outdoorsness, illuminance))
+                    }
                     FulfilledPorf::Furniture(_) => None,
                 })
                 .collect();
@@ -195,6 +280,9 @@ fn raw_score(
         QualityAspect::NumberOf { porf_name } => {
             Some(count_named_near(cw, origin, porf_name) as f32)
         }
+        // Scaled so complete darkness (0.0) scores 0.25 and full light (1.0)
+        // scores 1.25.
+        QualityAspect::Light => Some(0.25 + illuminance.get(&origin).copied().unwrap_or(0.0)),
     }
 }
 
@@ -219,6 +307,7 @@ pub fn evaluate_place_breakdown(
     cw: &ConstructedCity,
     id: PlacedPlaceId,
     outdoorsness: &HashMap<IVec3, f32>,
+    illuminance: &HashMap<IVec3, f32>,
 ) -> (f32, Vec<QualityFactorResult>) {
     let origin = place_location(cw, id);
     let def = &cw.places[cw.placed_places[id].place];
@@ -227,7 +316,7 @@ pub fn evaluate_place_breakdown(
         .quality_factors
         .iter()
         .map(|factor| {
-            let raw = raw_score(cw, id, origin, &factor.aspect, outdoorsness);
+            let raw = raw_score(cw, id, origin, &factor.aspect, outdoorsness, illuminance);
             let (clamped, contribution) = match raw {
                 Some(raw) => {
                     let clamped = raw.clamp(factor.range.start, factor.range.end);
@@ -257,24 +346,26 @@ pub fn evaluate_place(
     cw: &ConstructedCity,
     id: PlacedPlaceId,
     outdoorsness: &HashMap<IVec3, f32>,
+    illuminance: &HashMap<IVec3, f32>,
 ) -> f32 {
-    evaluate_place_breakdown(cw, id, outdoorsness).0
+    evaluate_place_breakdown(cw, id, outdoorsness, illuminance).0
 }
 
 #[cfg(test)]
 mod tests {
     use assert2::check;
     use bevy::math::IVec3;
+    use std::collections::HashMap;
 
     use crate::build_helpers::Builder;
     use crate::city::ConstructedCity;
     use crate::eorf::load_structure_info;
     use crate::materials::BuildMaterialId;
-    use crate::place::{
-        FulfilledPorf, ParticularPlace, Place, PlaceReq, Porf, QualityAspect, QualityFactor,
-    };
+    use crate::place::{FulfilledPorf, ParticularPlace, Place, PlaceReq, Porf};
     use crate::resource::{Inventory, StorageKind};
     use crate::sparse3d::{Facing, RelSlot, Slot, SlotCoord};
+
+    use super::{QualityAspect, QualityFactor};
 
     use super::{compute_outdoorsness, compute_spaciousness, evaluate_place};
 
@@ -340,7 +431,7 @@ mod tests {
         }]);
         let idx = place_at(&mut cw, def, IVec3::new(0, 0, 0));
 
-        let score = evaluate_place(&cw, idx, &Default::default());
+        let score = evaluate_place(&cw, idx, &Default::default(), &Default::default());
         // One bin (the core itself); within the 0.0..2.0 clamp range, so the
         // raw score of 1.0 passes through unchanged.
         check!(score == 1.0);
@@ -360,7 +451,7 @@ mod tests {
 
         // No nested places -> the factor contributes no multiplier, so the
         // (otherwise-empty) product stays 1.0 rather than being dragged to 0.
-        let score = evaluate_place(&cw, idx, &Default::default());
+        let score = evaluate_place(&cw, idx, &Default::default(), &Default::default());
         check!(score == 1.0);
     }
 
@@ -379,7 +470,7 @@ mod tests {
             range: 2.0..3.0,
         }]);
         let idx_low = place_at(&mut cw, low, IVec3::new(10, 0, 10));
-        check!(evaluate_place(&cw, idx_low, &Default::default()) == 2.0);
+        check!(evaluate_place(&cw, idx_low, &Default::default(), &Default::default()) == 2.0);
 
         // A range of 0.0..0.5 is entirely below the raw score of 1, so it
         // clamps down to 0.5.
@@ -391,7 +482,27 @@ mod tests {
             range: 0.0..0.5,
         }]);
         let idx_high = place_at(&mut cw, high, IVec3::new(20, 0, 20));
-        check!(evaluate_place(&cw, idx_high, &Default::default()) == 0.5);
+        check!(evaluate_place(&cw, idx_high, &Default::default(), &Default::default()) == 0.5);
+    }
+
+    #[test]
+    fn light_scales_illuminance_between_0_25_and_1_25() {
+        let structure_infos = load_structure_info();
+        let mut cw = ConstructedCity::new(structure_infos);
+        cw.road_forbidden_zone = false;
+        let def = place_def(vec![QualityFactor {
+            aspect: QualityAspect::Light,
+            strength: 1.0,
+            range: 0.0..2.0,
+        }]);
+        let origin = IVec3::new(0, 0, 0);
+        let idx = place_at(&mut cw, def, origin);
+
+        let dark = HashMap::from([(origin, 0.0)]);
+        check!(evaluate_place(&cw, idx, &Default::default(), &dark) == 0.25);
+
+        let bright = HashMap::from([(origin, 1.0)]);
+        check!(evaluate_place(&cw, idx, &Default::default(), &bright) == 1.25);
     }
 
     #[test]

@@ -43,6 +43,16 @@
                 worker_visit_duration: 1.0,
             ),
         ],
+        quality_factors: [
+            (
+                aspect: Light,
+                strength: 1.0,
+                range: (
+                    start: 0.25,
+                    end: 1.25
+                )
+            ),
+        ],
         public_storage: true,
     ),
     (

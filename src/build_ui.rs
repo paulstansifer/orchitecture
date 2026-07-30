@@ -187,6 +187,10 @@ fn place_hierarchy_ui(
     } else {
         let outdoorsness =
             crate::evaluation::compute_outdoorsness(&constructed.contents, &constructed.eorfs);
+        let illuminance = crate::global_illumination::compute_sky_illuminance(
+            &constructed.contents,
+            &constructed.eorfs,
+        );
         for &idx in chain.iter().rev() {
             let (place_def_idx, place_name, fulfillments, totals) = {
                 let ps = &constructed.placed_places[idx];
@@ -198,8 +202,12 @@ fn place_hierarchy_ui(
                     ps.contents.uniform_totals(),
                 )
             };
-            let (quality, breakdown) =
-                crate::evaluation::evaluate_place_breakdown(constructed, idx, &outdoorsness);
+            let (quality, breakdown) = crate::evaluation::evaluate_place_breakdown(
+                constructed,
+                idx,
+                &outdoorsness,
+                &illuminance,
+            );
             ui.label(egui::RichText::new(&place_name).heading());
             ui.label(format!("Quality: {:.3}", quality));
             for factor in &breakdown {

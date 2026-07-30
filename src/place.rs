@@ -1,5 +1,6 @@
 use crate::city::{apply_changes, AssembledCity, Cell, ConstructedCity};
 use crate::eorf::EorfList;
+use crate::evaluation::{fill_default_quality_factors, QualityAspect, QualityFactor};
 use crate::materials::BuildMaterialId;
 use crate::resource::{
     Approximation, Inventory, RackContents, StorageKind, ToolKind, UniformResource, UniqueResource,
@@ -10,28 +11,6 @@ use bevy::math::IVec3;
 use bevy::prelude::{Commands, DetectChangesMut, Res, ResMut};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::ops::Range;
-
-/// What a `QualityFactor` measures about a `Place`.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub enum QualityAspect {
-    /// TODO: unimplemented -- always scores 1.0. See `evaluation::raw_score`.
-    FloorArea,
-    /// Average distance (in cells) to the first sightline-blocking structure,
-    /// along rays cast horizontally or upward. See `evaluation::compute_spaciousness`.
-    Spaciousness { sightline_max: u8 },
-    /// TODO: unimplemented -- always scores 1.0. See `evaluation::raw_score`.
-    Quiet,
-    /// Average quality of directly-nested `Place`s (skipped entirely if there are none).
-    Subplaces,
-    /// How sheltered from the outdoors this place is (`1.0 - outdoorsness`).
-    Indoors,
-    /// Count of `Porf`s (furniture or places) named `porf_name` near this place.
-    NumberOf { porf_name: String },
-    // TODO:
-    // How well-lit (according to the GI system) the place is
-    //Light,
-}
 
 /// Effect of assigning a worker
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -105,63 +84,6 @@ pub fn eligible_parent_kinds(places: &[Place], porf: &Porf) -> Vec<String> {
         })
         .map(|p| p.name.clone())
         .collect()
-}
-
-impl QualityAspect {
-    /// Short human-readable label for UI display.
-    pub fn label(&self) -> String {
-        match self {
-            QualityAspect::FloorArea => "Floor area".to_string(),
-            QualityAspect::Spaciousness { .. } => "Spaciousness".to_string(),
-            QualityAspect::Quiet => "Quiet".to_string(),
-            QualityAspect::Subplaces => "Subplaces".to_string(),
-            QualityAspect::Indoors => "Indoors".to_string(),
-            QualityAspect::NumberOf { porf_name } => format!("Number of {porf_name}"),
-        }
-    }
-}
-
-/// One weighted contributor to a `Place`'s overall quality score. Overall
-/// quality is the product of every factor's range-clamped raw score raised
-/// to its `strength`.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct QualityFactor {
-    pub aspect: QualityAspect,
-    /// Exponent applied to the clamped raw score before multiplying in.
-    pub strength: f32,
-    /// Clamps the raw score to a sane input range before it's raised to
-    /// `strength` and multiplied in. Not every aspect can reach every score.
-    pub range: Range<f32>,
-}
-
-/// `Place`s that don't explicitly list a `QualityFactor` for these aspects
-/// implicitly get one of these, unless already present.
-fn implicit_quality_factors() -> [QualityFactor; 2] {
-    [
-        QualityFactor {
-            aspect: QualityAspect::Indoors,
-            strength: 1.0,
-            range: 0.5..1.0,
-        },
-        QualityFactor {
-            aspect: QualityAspect::Subplaces,
-            strength: 1.0,
-            range: 0.0..1.2,
-        },
-    ]
-}
-
-/// Adds any `implicit_quality_factors` whose aspect isn't already listed.
-fn fill_default_quality_factors(info: &mut Place) {
-    for default in implicit_quality_factors() {
-        let has_it = info
-            .quality_factors
-            .iter()
-            .any(|f| std::mem::discriminant(&f.aspect) == std::mem::discriminant(&default.aspect));
-        if !has_it {
-            info.quality_factors.push(default);
-        }
-    }
 }
 
 /// What a `Place` requirement can be fulfilled by: a piece of Furniture, or
