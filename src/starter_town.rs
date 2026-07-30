@@ -64,14 +64,13 @@ pub fn build_starter_town(eorfs: &[EorfInfo]) -> Sparse3D<Cell> {
 
     // Slightly fancier building (TODO: add more, and maybe turn it into an inn)
     build_box_with_door(&mut builder, v(15, 0, 8), v(20, 2, 14), 17);
-    builder.build_plane(v(15,3,8), v(20,3,14), RelSlot::Floor, Some("roof"));
+    builder.build_plane(v(15, 3, 8), v(20, 3, 14), RelSlot::Floor, Some("roof"));
 
-    builder.build_plane(v(15,1,11), v(19,1,14), RelSlot::Floor, Some("floor"));
-    builder.wall_off_drops(v(16,1,11), v(19,1,14), "railing");
-    builder.room_plop(v(15,0,10), "stairs");
+    builder.build_plane(v(15, 1, 11), v(19, 1, 14), RelSlot::Floor, Some("floor"));
+    builder.wall_off_drops(v(16, 1, 11), v(19, 1, 14), "railing");
+    builder.room_plop(v(15, 0, 10), "stairs");
 
     build_box_with_door(&mut builder, v(17, 1, 12), v(18, 1, 14), 17);
-
 
     builder.get()
 }

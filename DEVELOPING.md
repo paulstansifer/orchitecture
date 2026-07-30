@@ -25,28 +25,8 @@ Game parts:
   * main.rs: initialization
   * camera.rs: 3rd-person camera
   * ui.rs: UI
-  * idea.rs: `Idea`s -- the tech "tree". Each idea is 50 numbered *segments*, and
-    ideas depend on each other **per segment**: segment #13 of an idea is only
-    *understood* once segment #13 of every idea it depends on is. Segments are
-    *learned* from books travelers bring, permanently (`IdeaState` only ever
-    gains bits), so "learned" routinely runs ahead of "understood". The DAG is
-    configured in `buildables/ideas.ron`; `sync_idea_progress` caches the derived
-    understood-masks onto `ConstructedCity`, so the many `&ConstructedCity`
-    callers can gate on idea progress without threading a second resource.
-  * idea_view.rs / idea_ui.rs: the Ideas window -- the DAG drawn as a layered
-    graph, opened from the right-hand resource panel. An idea's `depth` (longest
-    path from a root, via `IdeaTreeView::layers`) is the screen row it goes in,
-    so ideas at the same depth sit side by side and dependents sit below their
-    prerequisites; dependency lines are painted *under* the cards (reserved with
-    `Painter::add`, filled in once every card rect is known), so an edge that
-    skips a layer vanishes behind it. Three segment colors:
-    understood, learned-but-blocked, and unread. Each idea carries a `?`/`✓`
-    marker (at `idea_view::CONFIDENT_AT`) whose hover lists the places it gates.
-    The window also opens itself: clicking the book a traveler offers focuses
-    that idea (an `IdeaHighlight`, drawn as a rounded rectangle), and gaining
-    knowledge pops it up and cross-fades the affected segments from their old
-    colors (`announce_new_knowledge`, which must run *after*
-    `advance_month_system` or egui gets a frame showing the gain un-faded).
+  * idea.rs: `Idea`s are arranged in a DAG and gained piecemeal from books.
+  * idea_view.rs / idea_ui.rs: the UI for `Idea`s.
   * scene.rs: ground, roads, and exterior lighting
   * ceiling_lights.rs: Adds lighting inside the city grid (abandoned in favor of global illumination)
 
@@ -66,11 +46,6 @@ City grid and related concepts:
     run after every edit) — e.g. a bedroom formed around a pallet. A `Place`'s
     location is its core (first) requirement's location, resolved recursively
     through `Porf` (Place-or-Furniture) requirements.
-    A `Place` may also carry an `IdeaGate`: below its `unlock_at` the kind can't
-    form at all, and between `unlock_at` and `full_at` its efficiency ramps from
-    0 to 1 (see `gate_efficiency`, applied to workshop output in `city_effect`).
-    This is the general unlock pattern; the carpenter's workshop is its first
-    user, gated on `Specialization`.
   * serialization.rs: text format for `Sparse3D<Cell>`
   * pathing.rs: route-finding and connectedness over the city grid, via `bevy_northstar`
   * flood_fill.rs: generic multi-source flood fill over a cubic grid, plus

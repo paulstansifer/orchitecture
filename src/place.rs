@@ -22,8 +22,7 @@ pub enum QualityAspect {
     Spaciousness { sightline_max: u8 },
     /// TODO: unimplemented -- always scores 1.0. See `evaluation::raw_score`.
     Quiet,
-    /// Average quality of directly-nested `Place`s (skipped entirely -- no
-    /// contribution -- if there are none).
+    /// Average quality of directly-nested `Place`s (skipped entirely if there are none).
     Subplaces,
     /// How sheltered from the outdoors this place is (`1.0 - outdoorsness`).
     Indoors,

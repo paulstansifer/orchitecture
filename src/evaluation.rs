@@ -204,6 +204,7 @@ pub struct QualityFactorResult {
     pub raw: Option<f32>,
     pub normalized: Option<f32>,
     pub strength: f32,
+    pub range: std::ops::Range<f32>,
     /// `normalized.powf(strength)`, or `1.0` (no effect) if `raw` is `None`.
     pub contribution: f32,
 }
@@ -240,6 +241,7 @@ pub fn evaluate_place_breakdown(
                 raw,
                 normalized,
                 strength: factor.strength,
+                range: factor.range.clone(),
                 contribution,
             }
         })

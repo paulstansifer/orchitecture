@@ -202,25 +202,15 @@ fn place_hierarchy_ui(
                 crate::evaluation::evaluate_place_breakdown(constructed, idx, &outdoorsness);
             ui.label(egui::RichText::new(&place_name).heading());
             ui.label(format!("Quality: {:.3}", quality));
-            ui.label("Quality breakdown:");
             for factor in &breakdown {
-                match (factor.raw, factor.normalized) {
-                    (Some(raw), Some(normalized)) => {
-                        ui.label(format!(
-                            "  {}: raw {:.2}, normalized {:.2}, strength {:.2} → ×{:.3}",
-                            factor.aspect.label(),
-                            raw,
-                            normalized,
-                            factor.strength,
-                            factor.contribution
-                        ));
-                    }
-                    _ => {
-                        ui.label(format!(
-                            "  {}: n/a (no contribution)",
-                            factor.aspect.label()
-                        ));
-                    }
+                if let Some(raw) = factor.raw {
+                    ui.label(format!(
+                        "  - {}: {:.2} ({:.1}-{:.1})",
+                        factor.aspect.label(),
+                        raw,
+                        factor.range.start,
+                        factor.range.end
+                    ));
                 }
             }
 
