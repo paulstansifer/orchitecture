@@ -173,10 +173,12 @@ fn raw_score(
     match aspect {
         // TODO: derive from the place's actual floor area.
         QualityAspect::FloorArea => Some(1.0),
-        // TODO: derive from nearby noise sources.
+        // TODO: derive from simulation.
         QualityAspect::Quiet => Some(1.0),
         QualityAspect::Spaciousness { sightline_max } => {
-            Some(compute_spaciousness(cw, origin, *sightline_max))
+            // `compute_spaciousness` returns an average in number-of-cells.
+            // We'll say that a 3-cell-radius hemisphere is 1.0.
+            Some(compute_spaciousness(cw, origin, *sightline_max) / 3.0)
         }
         QualityAspect::Indoors => Some(1.0 - outdoorsness.get(&origin).copied().unwrap_or(0.0)),
         QualityAspect::Subplaces => {
@@ -202,10 +204,10 @@ fn raw_score(
 pub struct QualityFactorResult {
     pub aspect: QualityAspect,
     pub raw: Option<f32>,
-    pub normalized: Option<f32>,
+    pub clamped: Option<f32>,
     pub strength: f32,
     pub range: std::ops::Range<f32>,
-    /// `normalized.powf(strength)`, or `1.0` (no effect) if `raw` is `None`.
+    /// `clamped.powf(strength)`, or `1.0` (no effect) if `raw` is `None`.
     pub contribution: f32,
 }
 
@@ -226,12 +228,10 @@ pub fn evaluate_place_breakdown(
         .iter()
         .map(|factor| {
             let raw = raw_score(cw, id, origin, &factor.aspect, outdoorsness);
-            let (normalized, contribution) = match raw {
+            let (clamped, contribution) = match raw {
                 Some(raw) => {
-                    let normalized = ((raw - factor.range.start)
-                        / (factor.range.end - factor.range.start))
-                        .clamp(0.0, 1.0);
-                    (Some(normalized), normalized.powf(factor.strength))
+                    let clamped = raw.clamp(factor.range.start, factor.range.end);
+                    (Some(clamped), clamped.powf(factor.strength))
                 }
                 None => (None, 1.0),
             };
@@ -239,7 +239,7 @@ pub fn evaluate_place_breakdown(
             QualityFactorResult {
                 aspect: factor.aspect.clone(),
                 raw,
-                normalized,
+                clamped,
                 strength: factor.strength,
                 range: factor.range.clone(),
                 contribution,
@@ -250,9 +250,9 @@ pub fn evaluate_place_breakdown(
 }
 
 /// Overall quality of the place at `placed_places[idx]`: the product of every
-/// `QualityFactor`'s normalized score raised to its `strength`. `outdoorsness`
-/// should be computed once (via `compute_outdoorsness`) and shared across all
-/// place evaluations rather than recomputed per place.
+/// `QualityFactor`'s range-clamped raw score raised to its `strength`.
+/// `outdoorsness` should be computed once (via `compute_outdoorsness`) and
+/// shared across all place evaluations rather than recomputed per place.
 pub fn evaluate_place(
     cw: &ConstructedCity,
     id: PlacedPlaceId,
@@ -341,8 +341,9 @@ mod tests {
         let idx = place_at(&mut cw, def, IVec3::new(0, 0, 0));
 
         let score = evaluate_place(&cw, idx, &Default::default());
-        // One bin (the core itself) out of a 0.0..2.0 range -> normalized 0.5.
-        check!(score == 0.5);
+        // One bin (the core itself); within the 0.0..2.0 clamp range, so the
+        // raw score of 1.0 passes through unchanged.
+        check!(score == 1.0);
     }
 
     #[test]
@@ -364,31 +365,33 @@ mod tests {
     }
 
     #[test]
-    fn quality_factor_normalizes_raw_score_through_its_range() {
+    fn quality_factor_clamps_raw_score_to_its_range() {
         let structure_infos = load_structure_info();
         let mut cw = ConstructedCity::new(structure_infos);
         cw.road_forbidden_zone = false;
         // NumberOf raw score is exactly 1 (the core bin itself); a range of
-        // 1.0..1.0-plus-epsilon-free 1.0..3.0 puts it at the bottom (0.0).
+        // 2.0..3.0 is entirely above it, so it clamps up to 2.0.
         let low = place_def(vec![QualityFactor {
             aspect: QualityAspect::NumberOf {
                 porf_name: "bin".to_string(),
             },
             strength: 1.0,
-            range: 1.0..3.0,
+            range: 2.0..3.0,
         }]);
         let idx_low = place_at(&mut cw, low, IVec3::new(10, 0, 10));
-        check!(evaluate_place(&cw, idx_low, &Default::default()) == 0.0);
+        check!(evaluate_place(&cw, idx_low, &Default::default()) == 2.0);
 
+        // A range of 0.0..0.5 is entirely below the raw score of 1, so it
+        // clamps down to 0.5.
         let high = place_def(vec![QualityFactor {
             aspect: QualityAspect::NumberOf {
                 porf_name: "bin".to_string(),
             },
             strength: 1.0,
-            range: 0.0..1.0,
+            range: 0.0..0.5,
         }]);
         let idx_high = place_at(&mut cw, high, IVec3::new(20, 0, 20));
-        check!(evaluate_place(&cw, idx_high, &Default::default()) == 1.0);
+        check!(evaluate_place(&cw, idx_high, &Default::default()) == 0.5);
     }
 
     #[test]

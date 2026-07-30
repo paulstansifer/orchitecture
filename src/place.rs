@@ -121,16 +121,16 @@ impl QualityAspect {
     }
 }
 
-/// One weighted, normalized contributor to a `Place`'s overall quality score.
-/// Overall quality is the product of every factor's normalized score raised
+/// One weighted contributor to a `Place`'s overall quality score. Overall
+/// quality is the product of every factor's range-clamped raw score raised
 /// to its `strength`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct QualityFactor {
     pub aspect: QualityAspect,
-    /// Exponent applied to the normalized [0,1] score before multiplying in.
+    /// Exponent applied to the clamped raw score before multiplying in.
     pub strength: f32,
-    /// Maps a raw score to \[0.0, 1.0\] (clamped): `range.start` -> 0.0 (bad),
-    /// `range.end` -> 1.0 (nice). Not every aspect can reach every score.
+    /// Clamps the raw score to a sane input range before it's raised to
+    /// `strength` and multiplied in. Not every aspect can reach every score.
     pub range: Range<f32>,
 }
 
