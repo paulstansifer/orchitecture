@@ -16,7 +16,7 @@ use bevy_picking::mesh_picking::ray_cast::RayMeshHit;
 use bevy_picking::prelude::{MeshRayCast, MeshRayCastSettings};
 
 use crate::camera::{cursor_to_viewport, GameCamera};
-use crate::city::{slot_center, ConstructedCity, GridCellMarker, PlaceHighlight};
+use crate::city::{slot_center, ConstructedCity, GridCellMarker, PlaceAccessibleRange, PlaceHighlight};
 use crate::cutaway::CutawayHidden;
 use crate::sparse3d::{Slot, SlotCoord};
 
@@ -44,11 +44,11 @@ pub fn raycast_grid_cell(
 
 /// Marker components whose entities (or descendants thereof) should never be
 /// hit by a grid-cell ray cast:
-/// - `HoverHighlightMarker`/`PlaceHighlightMarker`: this crate's own overlay
-///   geometry, which sits in front of the real mesh it's marking -- otherwise
-///   hit-testing would flicker between the overlay (no `GridCellMarker`
-///   ancestor, so no hit) and the real mesh frame to frame, and right-clicks
-///   landing on an overlay would silently do nothing.
+/// - `HoverHighlightMarker`/`PlaceHighlightMarker`/`AccessibleRangeMarker`:
+///   this crate's own overlay geometry, which sits in front of the real mesh
+///   it's marking -- otherwise hit-testing would flicker between the overlay
+///   (no `GridCellMarker` ancestor, so no hit) and the real mesh frame to
+///   frame, and right-clicks landing on an overlay would silently do nothing.
 /// - `CutawayHidden`: cells hidden by the cutaway view. They stay fully
 ///   present as geometry (only their *material* is swapped to
 ///   `ShadowOnlyMaterial`, so they keep casting shadows -- see
@@ -62,6 +62,7 @@ pub type ExcludeFromPickQuery<'w, 's> = Query<
     Or<(
         With<HoverHighlightMarker>,
         With<PlaceHighlightMarker>,
+        With<AccessibleRangeMarker>,
         With<CutawayHidden>,
     )>,
 >;
@@ -329,5 +330,63 @@ pub fn animate_selection_rings(
         if let Some(mat) = materials.get_mut(&handle.0) {
             mat.params.x = time.elapsed_secs();
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Accessible-range overlay: a faint yellow 1x1 square hovering 0.15 units
+// above the unit grid, for each cube in `PlaceAccessibleRange`.
+// ---------------------------------------------------------------------------
+
+#[derive(Component)]
+pub struct AccessibleRangeMarker;
+
+#[derive(Resource)]
+pub struct AccessibleRangeAssets {
+    mesh: Handle<Mesh>,
+    material: Handle<StandardMaterial>,
+}
+
+pub fn spawn_accessible_range_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let mesh = meshes.add(Plane3d::default().mesh().size(1.0, 1.0));
+    let material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.95, 0.3, 0.25),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    });
+    commands.insert_resource(AccessibleRangeAssets { mesh, material });
+}
+
+/// Despawns prior range-overlay squares and spawns one per cube in
+/// `PlaceAccessibleRange` whenever it changes.
+pub fn update_accessible_range(
+    mut commands: Commands,
+    range: Res<PlaceAccessibleRange>,
+    assets: Option<Res<AccessibleRangeAssets>>,
+    existing: Query<Entity, With<AccessibleRangeMarker>>,
+) {
+    if !range.is_changed() {
+        return;
+    }
+    let Some(assets) = assets else {
+        return;
+    };
+    for entity in &existing {
+        commands.entity(entity).despawn();
+    }
+    for &cube in &range.0 {
+        let center = Vec3::new(cube.x as f32 + 0.5, cube.y as f32 + 0.15, cube.z as f32 + 0.5);
+        commands.spawn((
+            Mesh3d(assets.mesh.clone()),
+            MeshMaterial3d(assets.material.clone()),
+            Transform::from_translation(center),
+            AccessibleRangeMarker,
+        ));
     }
 }

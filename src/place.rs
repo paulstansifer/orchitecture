@@ -463,6 +463,14 @@ fn manhattan2d(a: IVec3, b: IVec3) -> i32 {
     (a.x - b.x).abs() + (a.z - b.z).abs()
 }
 
+/// True if `loc` is within `PLACE_DIST` (2D Manhattan, same y-layer) of any of
+/// `anchors`.
+fn near_any_anchor(anchors: &[IVec3], loc: IVec3) -> bool {
+    anchors
+        .iter()
+        .any(|&a| a.y == loc.y && manhattan2d(a, loc) <= PLACE_DIST)
+}
+
 /// The world location of a placed place: its core fulfillment's location,
 /// resolved recursively through nested places. `None` when `id` (or a nested
 /// place it points through) no longer exists.
@@ -492,20 +500,22 @@ fn fulfillment_location(cw: &ConstructedCity, f: &FulfilledPorf) -> IVec3 {
 const FURNITURE_SLOTS: [Slot; 3] = [Slot::Room, Slot::XLoWall, Slot::ZLoWall];
 
 /// All furniture named `name` within `PLACE_DIST` (2D Manhattan, same y-layer)
-/// of `origin`, at whatever slot they occupy (room or wall). Includes furniture
-/// at `origin` itself when it qualifies.
-fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<SlotCoord> {
+/// of any of `anchors`, at whatever slot they occupy (room or wall). Includes
+/// furniture at an anchor itself when it qualifies.
+fn furniture_of_name_near(cw: &ConstructedCity, anchors: &[IVec3], name: &str) -> Vec<SlotCoord> {
     let mut found = Vec::new();
-    for dx in -PLACE_DIST..=PLACE_DIST {
-        let zspan = PLACE_DIST - dx.abs();
-        for dz in -zspan..=zspan {
-            let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
-            for slot in FURNITURE_SLOTS {
-                let loc = SlotCoord { cube, slot };
-                if let Some(cell) = cw.contents.get(loc) {
-                    let info = &cw.eorfs[cell.id.as_usize()];
-                    if info.is_furniture() && info.name == name {
-                        found.push(loc);
+    for &origin in anchors {
+        for dx in -PLACE_DIST..=PLACE_DIST {
+            let zspan = PLACE_DIST - dx.abs();
+            for dz in -zspan..=zspan {
+                let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
+                for slot in FURNITURE_SLOTS {
+                    let loc = SlotCoord { cube, slot };
+                    if let Some(cell) = cw.contents.get(loc) {
+                        let info = &cw.eorfs[cell.id.as_usize()];
+                        if info.is_furniture() && info.name == name && !found.contains(&loc) {
+                            found.push(loc);
+                        }
                     }
                 }
             }
@@ -526,27 +536,22 @@ fn has_installed_tool(cw: &ConstructedCity, cube: IVec3, kind: ToolKind) -> bool
     })
 }
 
-/// All furniture within `PLACE_DIST` (2D Manhattan, same y-layer) of `origin`
-/// that has a `Tool(kind)` installed. Returns the furniture's Room `SlotCoord`.
+/// All furniture within `PLACE_DIST` (2D Manhattan, same y-layer) of any of
+/// `anchors` that has a `Tool(kind)` installed. Returns the furniture's Room
+/// `SlotCoord`.
 fn furniture_with_installed_tool_near(
     cw: &ConstructedCity,
-    origin: IVec3,
+    anchors: &[IVec3],
     kind: ToolKind,
 ) -> Vec<SlotCoord> {
-    let mut found = Vec::new();
-    for dx in -PLACE_DIST..=PLACE_DIST {
-        let zspan = PLACE_DIST - dx.abs();
-        for dz in -zspan..=zspan {
-            let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
-            if has_installed_tool(cw, cube, kind) {
-                found.push(SlotCoord {
-                    cube,
-                    slot: Slot::Room,
-                });
-            }
-        }
-    }
-    found
+    all_furniture_with_installed_tool(cw, kind)
+        .into_iter()
+        .filter(|&cube| near_any_anchor(anchors, cube))
+        .map(|cube| SlotCoord {
+            cube,
+            slot: Slot::Room,
+        })
+        .collect()
 }
 
 /// All furniture (anywhere) with a `Tool(kind)` installed -- for core-candidate
@@ -564,14 +569,13 @@ fn all_furniture_with_installed_tool(cw: &ConstructedCity, kind: ToolKind) -> Ve
         .collect()
 }
 
-/// All placed places named `name` within `PLACE_DIST` of `origin`
+/// All placed places named `name` within `PLACE_DIST` of any of `anchors`
 /// (measured from each candidate's own resolved location).
-fn places_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<PlacedPlaceId> {
+fn places_of_name_near(cw: &ConstructedCity, anchors: &[IVec3], name: &str) -> Vec<PlacedPlaceId> {
     cw.placed_places
         .iter()
         .filter(|(id, pp)| {
-            cw.places[pp.place].name == name
-                && manhattan2d(place_location(cw, *id), origin) <= PLACE_DIST
+            cw.places[pp.place].name == name && near_any_anchor(anchors, place_location(cw, *id))
         })
         .map(|(id, _)| id)
         .collect()
@@ -580,19 +584,22 @@ fn places_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<P
 /// Count of `Porf`s (furniture or places) named `name` near `origin` -- for
 /// the `QualityAspect::NumberOf` factor.
 pub fn count_named_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> usize {
-    furniture_of_name_near(cw, origin, name).len() + places_of_name_near(cw, origin, name).len()
+    let anchors = [origin];
+    furniture_of_name_near(cw, &anchors, name).len()
+        + places_of_name_near(cw, &anchors, name).len()
 }
 
-/// Every cube/place fulfilling `req` within range of `origin`, eligible to be
-/// claimed by a `Place` named `parent_name` (see `ParentRestriction`).
+/// Every cube/place fulfilling `req` within range of any of `anchors`,
+/// eligible to be claimed by a `Place` named `parent_name` (see
+/// `ParentRestriction`).
 fn candidates_near(
     cw: &ConstructedCity,
-    origin: IVec3,
+    anchors: &[IVec3],
     req: &Porf,
     parent_name: &str,
 ) -> Vec<FulfilledPorf> {
     match req {
-        Porf::Furniture(name) => furniture_of_name_near(cw, origin, name)
+        Porf::Furniture(name) => furniture_of_name_near(cw, anchors, name)
             .into_iter()
             .filter(|loc| {
                 cw.furniture_restrictions
@@ -601,12 +608,12 @@ fn candidates_near(
             })
             .map(FulfilledPorf::Furniture)
             .collect(),
-        Porf::Place(name) => places_of_name_near(cw, origin, name)
+        Porf::Place(name) => places_of_name_near(cw, anchors, name)
             .into_iter()
             .filter(|&id| cw.placed_places[id].restriction.allows(parent_name))
             .map(FulfilledPorf::Place)
             .collect(),
-        Porf::InstalledTool(kind) => furniture_with_installed_tool_near(cw, origin, *kind)
+        Porf::InstalledTool(kind) => furniture_with_installed_tool_near(cw, anchors, *kind)
             .into_iter()
             .filter(|loc| {
                 cw.furniture_restrictions
@@ -616,6 +623,77 @@ fn candidates_near(
             .map(FulfilledPorf::Furniture)
             .collect(),
     }
+}
+
+/// Grows a seed core location into the full connected set of core-type
+/// (`requirements[0]`) anchors reachable through a chain of same-type cores
+/// each within `PLACE_DIST` of the next -- so a long row of e.g. bins forms
+/// one large place regardless of which bin the chain started from. Also
+/// restricted, at each step, to fulfillments a `place` named `parent_name`
+/// would actually be allowed to claim (see `ParentRestriction`).
+fn grow_core_anchors(cw: &ConstructedCity, place: &Place, seed: IVec3) -> Vec<IVec3> {
+    let Some(core_req) = place.requirements.first() else {
+        return vec![seed];
+    };
+    let mut anchors = vec![seed];
+    loop {
+        let reached: Vec<IVec3> = candidates_near(cw, &anchors, &core_req.requirement, &place.name)
+            .into_iter()
+            .map(|f| fulfillment_location(cw, &f))
+            .collect();
+        let mut grew = false;
+        for loc in reached {
+            if !anchors.contains(&loc) {
+                anchors.push(loc);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    anchors
+}
+
+/// The full connected set of core-type anchors for an already-placed
+/// instance, re-derived (rather than trusted from its stored fulfillments,
+/// which may be capped by the core requirement's `max`) from any one of its
+/// current core-type fulfillments. Used to compute a placed place's
+/// accessible range for display. Falls back to the place's resolved location
+/// if, somehow, none of its fulfillments still match the core requirement.
+pub fn placed_core_anchors(cw: &ConstructedCity, id: PlacedPlaceId) -> Vec<IVec3> {
+    let pp = &cw.placed_places[id];
+    let place = &cw.places[pp.place];
+    let core_req = place.requirements.first().map(|r| &r.requirement);
+    let seed = core_req
+        .and_then(|req| {
+            pp.fulfillments
+                .iter()
+                .find(|f| fulfillment_matches(cw, f, req))
+        })
+        .map(|f| fulfillment_location(cw, f))
+        .unwrap_or_else(|| place_location(cw, id));
+    grow_core_anchors(cw, place, seed)
+}
+
+/// The full accessible range of a placed instance: every cube within
+/// `PLACE_DIST` of any of its core-type anchors (see `placed_core_anchors`),
+/// deduplicated. Used to paint the "accessible range" overlay for the
+/// currently-selected place.
+pub fn place_accessible_range(cw: &ConstructedCity, id: PlacedPlaceId) -> Vec<IVec3> {
+    let mut cubes = Vec::new();
+    for anchor in placed_core_anchors(cw, id) {
+        for dx in -PLACE_DIST..=PLACE_DIST {
+            let zspan = PLACE_DIST - dx.abs();
+            for dz in -zspan..=zspan {
+                let cube = IVec3::new(anchor.x + dx, anchor.y, anchor.z + dz);
+                if !cubes.contains(&cube) {
+                    cubes.push(cube);
+                }
+            }
+        }
+    }
+    cubes
 }
 
 /// True if a fulfillment still satisfies the named requirement it was chosen
@@ -638,8 +716,9 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
     }
 }
 
-/// True if `place`'s idea gate is met and `core` has at least `min` of every
-/// requirement within range.
+/// True if `place`'s idea gate is met and `anchors` (the connected set of
+/// core-type fulfillments) has at least `min` of every requirement within
+/// range.
 ///
 /// The gate check lives here, rather than at each call site, because this is
 /// the single choke point every path runs through: formation (via
@@ -647,28 +726,33 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
 /// `valid_places_for`. A gated place therefore can't form, isn't offered, and
 /// -- were progress ever to regress, which permanent learning rules out -- would
 /// dissolve.
-fn requirements_met(cw: &ConstructedCity, core: IVec3, place: &Place) -> bool {
+fn requirements_met(cw: &ConstructedCity, anchors: &[IVec3], place: &Place) -> bool {
     if gate_efficiency_of(cw, place).is_none() {
         return false;
     }
     place.requirements.iter().all(|req| {
-        candidates_near(cw, core, &req.requirement, &place.name).len() >= req.min as usize
+        candidates_near(cw, anchors, &req.requirement, &place.name).len() >= req.min as usize
     })
 }
 
-/// Choose the core fulfillment for `place_idx` nearest to `cube` (the cube
-/// itself preferred) whose surroundings satisfy every requirement.
-fn choose_core(cw: &ConstructedCity, cube: IVec3, place_idx: usize) -> Option<FulfilledPorf> {
+/// Choose the core anchor set for `place_idx` grown from whichever qualifying
+/// core is nearest to `cube` (the cube itself preferred), whose combined
+/// surroundings satisfy every requirement. Every core-type fulfillment
+/// transitively chained (each within `PLACE_DIST` of the next) into the
+/// resulting set can equally well serve as the anchor -- it doesn't matter
+/// which one gets picked first.
+fn choose_core(cw: &ConstructedCity, cube: IVec3, place_idx: usize) -> Option<Vec<IVec3>> {
     let place = &cw.places[place_idx];
     let core_req = &place.requirements[0].requirement;
-    let mut cores = candidates_near(cw, cube, core_req, &place.name);
+    let mut cores = candidates_near(cw, &[cube], core_req, &place.name);
     cores.sort_by_key(|c| {
         let loc = fulfillment_location(cw, c);
         (loc != cube, manhattan2d(loc, cube))
     });
-    cores
-        .into_iter()
-        .find(|core| requirements_met(cw, fulfillment_location(cw, core), place))
+    cores.into_iter().find_map(|core| {
+        let anchors = grow_core_anchors(cw, place, fulfillment_location(cw, &core));
+        requirements_met(cw, &anchors, place).then_some(anchors)
+    })
 }
 
 /// Places (indices into `cw.places`) that could be formed around `cube`.
@@ -739,8 +823,7 @@ pub fn plan_assignment(
     cube: IVec3,
     place_idx: usize,
 ) -> Option<AssignmentPlan> {
-    let core = choose_core(cw, cube, place_idx)?;
-    let core_loc = fulfillment_location(cw, &core);
+    let anchors = choose_core(cw, cube, place_idx)?;
     let place = &cw.places[place_idx];
 
     let mut chosen: Vec<FulfilledPorf> = Vec::new();
@@ -756,7 +839,7 @@ pub fn plan_assignment(
         // already owned by another place, keeping each owner's id.
         let mut free: Vec<FulfilledPorf> = Vec::new();
         let mut assigned: Vec<(FulfilledPorf, PlacedPlaceId)> = Vec::new();
-        for c in candidates_near(cw, core_loc, &req.requirement, &place.name) {
+        for c in candidates_near(cw, &anchors, &req.requirement, &place.name) {
             if chosen.contains(&c) {
                 continue;
             }
@@ -927,7 +1010,8 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
     loop {
         let stale = cw.placed_places.iter().find_map(|(id, pp)| {
             let def = &cw.places[pp.place];
-            let ok = try_place_location(cw, id).is_some_and(|loc| requirements_met(cw, loc, def));
+            let ok = try_place_location(cw, id).is_some()
+                && requirements_met(cw, &placed_core_anchors(cw, id), def);
             (!ok).then_some(id)
         });
         match stale {
@@ -1959,6 +2043,23 @@ mod tests {
         assert!(plan.chosen.contains(&f(b(0, 0))));
         assert!(plan.chosen.contains(&f(b(0, 1))));
         assert!(!plan.chosen.contains(&f(b(10, 0))));
+    }
+
+    #[test]
+    fn a_chain_of_cores_forms_one_large_place_regardless_of_which_end_is_clicked() {
+        // Each neighbor is 5 apart (within PLACE_DIST), but the chain spans 10,
+        // which is itself beyond PLACE_DIST -- only reachable by chaining
+        // through the middle bin.
+        let grid = grid_with_bins(place_def(1, None), &[b(0, 0), b(5, 0), b(10, 0)]);
+
+        for &click in &[b(0, 0), b(5, 0), b(10, 0)] {
+            let plan = plan_assignment(&grid, click, 0).unwrap();
+            assert_eq!(
+                plan.chosen.len(),
+                3,
+                "clicking {click:?} should chain through the whole row"
+            );
+        }
     }
 
     #[test]
