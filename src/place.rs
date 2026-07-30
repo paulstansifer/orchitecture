@@ -96,6 +96,11 @@ pub fn eligible_parent_kinds(places: &[Place], porf: &Porf) -> Vec<String> {
             p.requirements.iter().any(|r| match (&r.requirement, porf) {
                 (Porf::Furniture(a), Porf::Furniture(b)) => a == b,
                 (Porf::Place(a), Porf::Place(b)) => a == b,
+                // A furniture kind is eligible to nest in a place that wants a
+                // tool installed in it, regardless of whether the tool is
+                // actually installed yet -- the player may be reserving it
+                // for that purpose.
+                (Porf::InstalledTool(_, furniture_name), Porf::Furniture(b)) => furniture_name == b,
                 _ => false,
             })
         })
@@ -166,18 +171,17 @@ fn fill_default_quality_factors(info: &mut Place) {
 pub enum Porf {
     Furniture(String),
     Place(String),
-    /// A furniture cube with a `Tool` of this kind installed in one of its
-    /// slots (see `ConstructedCity::furniture_slots`). Fulfilled by that
-    /// furniture cube -- so it also stands in for "a table" when only tables
-    /// carry tool slots.
-    InstalledTool(ToolKind),
+    /// A furniture cube of the named kind with a `Tool` of this kind installed
+    /// in one of its slots (see `ConstructedCity::furniture_slots`). Fulfilled
+    /// by that furniture cube.
+    InstalledTool(ToolKind, String),
 }
 
 impl Porf {
     pub fn name(&self) -> &str {
         match self {
             Porf::Furniture(n) | Porf::Place(n) => n,
-            Porf::InstalledTool(kind) => kind.label(),
+            Porf::InstalledTool(_, furniture_name) => furniture_name,
         }
     }
 }
@@ -443,31 +447,46 @@ fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Ve
     found
 }
 
-/// True if the furniture at `cube` has a `Tool(kind)` installed in one of its
-/// slots. Slots live on Room-slot furniture (keyed by cube), so no slot
-/// disambiguation is needed.
-fn has_installed_tool(cw: &ConstructedCity, cube: IVec3, kind: ToolKind) -> bool {
-    cw.furniture_slots.get(&cube).is_some_and(|slots| {
-        slots
-            .iter()
-            .flatten()
-            .any(|item| *item == UniqueResource::Tool(kind))
-    })
+/// True if the furniture at `cube` is named `furniture_name` and has a
+/// `Tool(kind)` installed in one of its slots. Slots live on Room-slot
+/// furniture (keyed by cube), so no slot disambiguation is needed.
+fn has_installed_tool(
+    cw: &ConstructedCity,
+    cube: IVec3,
+    kind: ToolKind,
+    furniture_name: &str,
+) -> bool {
+    let is_named_furniture = cw
+        .contents
+        .get(SlotCoord {
+            cube,
+            slot: Slot::Room,
+        })
+        .is_some_and(|c| cw.eorfs[c.id.as_usize()].name == furniture_name);
+    is_named_furniture
+        && cw.furniture_slots.get(&cube).is_some_and(|slots| {
+            slots
+                .iter()
+                .flatten()
+                .any(|item| *item == UniqueResource::Tool(kind))
+        })
 }
 
 /// All furniture within `PLACE_DIST` (2D Manhattan, same y-layer) of `origin`
-/// that has a `Tool(kind)` installed. Returns the furniture's Room `SlotCoord`.
+/// named `furniture_name` that has a `Tool(kind)` installed. Returns the
+/// furniture's Room `SlotCoord`.
 fn furniture_with_installed_tool_near(
     cw: &ConstructedCity,
     origin: IVec3,
     kind: ToolKind,
+    furniture_name: &str,
 ) -> Vec<SlotCoord> {
     let mut found = Vec::new();
     for dx in -PLACE_DIST..=PLACE_DIST {
         let zspan = PLACE_DIST - dx.abs();
         for dz in -zspan..=zspan {
             let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
-            if has_installed_tool(cw, cube, kind) {
+            if has_installed_tool(cw, cube, kind, furniture_name) {
                 found.push(SlotCoord {
                     cube,
                     slot: Slot::Room,
@@ -478,16 +497,27 @@ fn furniture_with_installed_tool_near(
     found
 }
 
-/// All furniture (anywhere) with a `Tool(kind)` installed -- for core-candidate
-/// collection in `sync_places`.
-fn all_furniture_with_installed_tool(cw: &ConstructedCity, kind: ToolKind) -> Vec<IVec3> {
+/// All furniture (anywhere) named `furniture_name` with a `Tool(kind)`
+/// installed -- for core-candidate collection in `sync_places`.
+fn all_furniture_with_installed_tool(
+    cw: &ConstructedCity,
+    kind: ToolKind,
+    furniture_name: &str,
+) -> Vec<IVec3> {
     cw.furniture_slots
         .iter()
-        .filter(|(_, slots)| {
+        .filter(|(cube, slots)| {
             slots
                 .iter()
                 .flatten()
                 .any(|item| *item == UniqueResource::Tool(kind))
+                && cw
+                    .contents
+                    .get(SlotCoord {
+                        cube: **cube,
+                        slot: Slot::Room,
+                    })
+                    .is_some_and(|c| cw.eorfs[c.id.as_usize()].name == furniture_name)
         })
         .map(|(cube, _)| *cube)
         .collect()
@@ -535,15 +565,17 @@ fn candidates_near(
             .filter(|&id| cw.placed_places[id].restriction.allows(parent_name))
             .map(FulfilledPorf::Place)
             .collect(),
-        Porf::InstalledTool(kind) => furniture_with_installed_tool_near(cw, origin, *kind)
-            .into_iter()
-            .filter(|loc| {
-                cw.furniture_restrictions
-                    .get(&loc.cube)
-                    .is_none_or(|r| r.allows(parent_name))
-            })
-            .map(FulfilledPorf::Furniture)
-            .collect(),
+        Porf::InstalledTool(kind, furniture_name) => {
+            furniture_with_installed_tool_near(cw, origin, *kind, furniture_name)
+                .into_iter()
+                .filter(|loc| {
+                    cw.furniture_restrictions
+                        .get(&loc.cube)
+                        .is_none_or(|r| r.allows(parent_name))
+                })
+                .map(FulfilledPorf::Furniture)
+                .collect()
+        }
     }
 }
 
@@ -560,8 +592,8 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
             .placed_places
             .get(*id)
             .is_some_and(|pp| cw.places[pp.place].name == *name),
-        (FulfilledPorf::Furniture(loc), Porf::InstalledTool(kind)) => {
-            has_installed_tool(cw, loc.cube, *kind)
+        (FulfilledPorf::Furniture(loc), Porf::InstalledTool(kind, furniture_name)) => {
+            has_installed_tool(cw, loc.cube, *kind, furniture_name)
         }
         _ => false,
     }
@@ -882,14 +914,16 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
                 })
                 .map(|(id, _)| place_location(cw, id))
                 .collect(),
-            Porf::InstalledTool(kind) => all_furniture_with_installed_tool(cw, *kind)
-                .into_iter()
-                .filter(|cube| {
-                    cw.furniture_restrictions
-                        .get(cube)
-                        .is_none_or(|r| r.allows(parent_name))
-                })
-                .collect(),
+            Porf::InstalledTool(kind, furniture_name) => {
+                all_furniture_with_installed_tool(cw, *kind, furniture_name)
+                    .into_iter()
+                    .filter(|cube| {
+                        cw.furniture_restrictions
+                            .get(cube)
+                            .is_none_or(|r| r.allows(parent_name))
+                    })
+                    .collect()
+            }
         };
         candidates.extend(cubes.into_iter().map(|cube| (cube, place_idx)));
     }
@@ -2032,7 +2066,7 @@ mod tests {
     fn grid_with_storage_bins(def: Place, bins: &[IVec3], inv: Inventory) -> ConstructedCity {
         let furniture_name = match &def.requirements[0].requirement {
             Porf::Furniture(name) => name.clone(),
-            Porf::Place(_) | Porf::InstalledTool(_) => {
+            Porf::Place(_) | Porf::InstalledTool(..) => {
                 panic!("test helper expects a furniture-backed place")
             }
         };

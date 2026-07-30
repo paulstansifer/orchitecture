@@ -5,6 +5,8 @@
     * Baskets, barrels, candles, clothes
   * Maybe refactor material assignment; seems like GI has added a bit of a mess.
   * Don't derive `Clone` or `Copy` on resources; define conserving operations, and a `.clone_for_simulation()` to use when imagining outcomes 
+  * Wings3D objects are rotated 180 degrees from how they should be rendered
+  * Make it so a hearth doesn't work unless it has a chimney running up to open space.
   * Add "pane", which is brought by travelers, a requirement for windows.
     * Make doors more costly, too, since they'll be the early source of light.
   * Add a notion of "minimum stock" to control workshop rates (and drive auto-invites for farms?). But how does it interact with long, expensive construction projects? -- I guess we only take-from-storage at a certain rate, but it seems pretty opaque.

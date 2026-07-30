@@ -148,7 +148,7 @@
         name: "carpenter's workshop",
         requirements: [
             (
-                requirement: InstalledTool(CarpentersTools),
+                requirement: InstalledTool(CarpentersTools, "table"),
                 min: 1,
                 max: Some(1),
                 worker_visit_weight: 1.0,

@@ -876,8 +876,11 @@ fn place_requirements_ui(
                     ui.label(format!("{count}× {name}"));
                 }
             }
-            crate::place::Porf::InstalledTool(kind) => {
-                ui.label(format!("{count}× {} (installed)", kind.label()));
+            crate::place::Porf::InstalledTool(kind, furniture_name) => {
+                ui.label(format!(
+                    "{count}× {} (installed in {furniture_name})",
+                    kind.label()
+                ));
             }
         }
     }
