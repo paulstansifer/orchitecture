@@ -16,7 +16,9 @@ use bevy_picking::mesh_picking::ray_cast::RayMeshHit;
 use bevy_picking::prelude::{MeshRayCast, MeshRayCastSettings};
 
 use crate::camera::{cursor_to_viewport, GameCamera};
-use crate::city::{slot_center, ConstructedCity, GridCellMarker, PlaceAccessibleRange, PlaceHighlight};
+use crate::city::{
+    slot_center, ConstructedCity, GridCellMarker, PlaceAccessibleRange, PlaceHighlight,
+};
 use crate::cutaway::CutawayHidden;
 use crate::sparse3d::{Slot, SlotCoord};
 
@@ -381,7 +383,11 @@ pub fn update_accessible_range(
         commands.entity(entity).despawn();
     }
     for &cube in &range.0 {
-        let center = Vec3::new(cube.x as f32 + 0.5, cube.y as f32 + 0.15, cube.z as f32 + 0.5);
+        let center = Vec3::new(
+            cube.x as f32 + 0.5,
+            cube.y as f32 + 0.15,
+            cube.z as f32 + 0.5,
+        );
         commands.spawn((
             Mesh3d(assets.mesh.clone()),
             MeshMaterial3d(assets.material.clone()),

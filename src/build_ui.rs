@@ -61,10 +61,10 @@ pub fn enable_ui_input_absorption(mut egui_settings: ResMut<EguiGlobalSettings>)
     egui_settings.enable_absorb_bevy_input_system = true;
 }
 
-/// The bottom control strip: keybinding hint, sandbox toggle, save/load
-/// controls, cutaway-mode picker. Returns any map load the player requested
-/// via [`map_file_controls_ui`], to be resolved and applied after the egui
-/// closure ends.
+/// The bottom control strip: keybinding hint, sandbox toggle, starter-town
+/// button, save/load controls, cutaway-mode picker. Returns any map load the
+/// player requested via [`map_file_controls_ui`], to be resolved and applied
+/// after the egui closure ends.
 #[allow(clippy::too_many_arguments)]
 fn bottom_controls_ui(
     ctx: &egui::Context,
@@ -98,6 +98,31 @@ fn bottom_controls_ui(
                     structure_list,
                     material_list,
                 );
+            }
+
+            ui.separator();
+            if ui.button("Starter town").clicked() {
+                let new_contents =
+                    crate::starter_town::build_starter_town(&world.constructed.eorfs);
+                crate::map_files::load_map(
+                    commands,
+                    &mut world.constructed,
+                    &mut world.pending,
+                    &mut world.assembled,
+                    viewable,
+                    structure_list,
+                    new_contents,
+                );
+                crate::place::sync_places(&mut world.constructed);
+                for &res in crate::resource::UniformResource::ALL {
+                    crate::place::deposit_uniform_with_capacity(&mut world.constructed, res, 20);
+                }
+                for _ in 0..20 {
+                    crate::place::deposit_tool(
+                        &mut world.constructed,
+                        crate::resource::ToolKind::CarpentersTools,
+                    );
+                }
             }
 
             load_request =

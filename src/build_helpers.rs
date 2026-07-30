@@ -21,7 +21,7 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn new(structures: &Vec<EorfInfo>) -> Self {
+    pub fn new(structures: &[EorfInfo]) -> Self {
         Self {
             map: Sparse3D::new(),
             structures: structures
@@ -211,6 +211,20 @@ impl Builder {
                 }
             }
         }
+    }
+
+    /// Places a `RoomPlop` structure (bin, rack, bookcase, pallet, market
+    /// stand, ...) at a single `Room` slot.
+    pub fn room_plop(&mut self, loc: IVec3, name: &str) {
+        self.map.set(
+            RelSlotCoord::new(loc.x, loc.y, loc.z, RelSlot::Room),
+            Cell {
+                id: EorfId(*self.structures.get(name).unwrap() as u32),
+                facing: Facing::arbitrary(),
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            },
+        );
     }
 
     pub fn set_vantage(

@@ -614,8 +614,7 @@ fn places_of_name_near(cw: &ConstructedCity, anchors: &[IVec3], name: &str) -> V
 /// the `QualityAspect::NumberOf` factor.
 pub fn count_named_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> usize {
     let anchors = [origin];
-    furniture_of_name_near(cw, &anchors, name).len()
-        + places_of_name_near(cw, &anchors, name).len()
+    furniture_of_name_near(cw, &anchors, name).len() + places_of_name_near(cw, &anchors, name).len()
 }
 
 /// Every cube/place fulfilling `req` within range of any of `anchors`,
