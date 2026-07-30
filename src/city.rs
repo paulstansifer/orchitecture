@@ -1058,6 +1058,13 @@ pub fn spawn_material_assets(
 #[derive(Resource, Default, PartialEq)]
 pub struct PlaceHighlight(pub Vec<SlotCoord>);
 
+/// Cubes (2D, at a fixed y-layer each) within the currently-inspected place's
+/// accessible range -- the union of `PLACE_DIST` diamonds around every
+/// core-type anchor it's chained through (see `place::placed_core_anchors`).
+/// Written by `ui_system`, rendered by `selection::update_accessible_range`.
+#[derive(Resource, Default, PartialEq)]
+pub struct PlaceAccessibleRange(pub Vec<IVec3>);
+
 /// Startup system: creates the four world resources from the already-populated EorfList.
 pub fn spawn_grid(mut commands: Commands, structure_list: bevy::prelude::Res<EorfList>) {
     let infos = structure_list

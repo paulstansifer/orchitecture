@@ -19,7 +19,7 @@ use orchitecture_lib::{
     },
     city::{
         spawn_grid, spawn_material_assets, spawn_proposal_overlay_assets, ConstructedCity,
-        PlaceHighlight,
+        PlaceAccessibleRange, PlaceHighlight,
     },
     cutaway::{
         propagate_render_layers_system, sync_cutaway_shadow_material, update_cutaway_system,
@@ -55,8 +55,9 @@ use orchitecture_lib::{
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
     selection::{
-        animate_selection_rings, spawn_ring_mesh_assets, update_hover_highlight,
-        update_selection_ring, HoveredFurniture, RingMaterial,
+        animate_selection_rings, spawn_accessible_range_assets, spawn_ring_mesh_assets,
+        update_accessible_range, update_hover_highlight, update_selection_ring, HoveredFurniture,
+        RingMaterial,
     },
     surroundings::{
         enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
@@ -122,6 +123,7 @@ fn main() {
         .insert_resource(SandboxMode::default())
         .insert_resource(FurnitureRightClick::default())
         .insert_resource(PlaceHighlight::default())
+        .insert_resource(PlaceAccessibleRange::default())
         .insert_resource(HoveredFurniture::default())
         .insert_resource(GameClock::default())
         .init_resource::<MonthEffectsCache>()
@@ -161,6 +163,7 @@ fn main() {
                 spawn_proposal_overlay_assets,
                 spawn_material_assets,
                 spawn_ring_mesh_assets,
+                spawn_accessible_range_assets,
                 discover_user_files,
                 spawn_resource_icons,
             ),
@@ -206,6 +209,7 @@ fn main() {
                 (
                     update_selection_ring,
                     animate_selection_rings,
+                    update_accessible_range,
                     update_hover_highlight.run_if(in_state(GameMode::Build)),
                 ),
             ),
