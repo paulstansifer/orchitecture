@@ -44,6 +44,22 @@ pub fn cursor_to_viewport(window: &Window, camera: &Camera, cursor: Vec2) -> Vec
     cursor * viewport_size / window_size
 }
 
+/// Tracks the primary window's cursor position across frames and returns the delta
+/// since the last call (zero if the cursor just appeared, moved off-window, or there's
+/// no primary window). `last_cursor` should be a system-local `Local<Option<Vec2>>`.
+pub fn track_cursor_delta(
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    last_cursor: &mut Option<Vec2>,
+) -> Vec2 {
+    let cursor = windows.single().ok().and_then(|w| w.cursor_position());
+    let delta = cursor
+        .zip(*last_cursor)
+        .map(|(now, prev)| now - prev)
+        .unwrap_or(Vec2::ZERO);
+    *last_cursor = cursor;
+    delta
+}
+
 /// Startup system: disables Egui's automatic primary-context creation, which would
 /// otherwise race with `spawn_camera`/`spawn_pixel_canvas` to decide which camera hosts
 /// it. `spawn_camera` attaches it explicitly instead, and `main.rs` hands it off to the
@@ -82,12 +98,7 @@ pub fn camera_input_system(
     let dt = time.delta_secs();
 
     // Track cursor delta for right-mouse drag.
-    let cursor = windows.single().map(|w| w.cursor_position()).ok().flatten();
-    let cursor_delta = cursor
-        .zip(*last_cursor)
-        .map(|(now, prev)| now - prev)
-        .unwrap_or(Vec2::ZERO);
-    *last_cursor = cursor;
+    let cursor_delta = track_cursor_delta(&windows, &mut last_cursor);
 
     if mouse_button.pressed(MouseButton::Right) {
         state.target_yaw -= cursor_delta.x * 0.005;

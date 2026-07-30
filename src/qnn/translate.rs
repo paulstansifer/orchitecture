@@ -141,11 +141,6 @@ fn augment_datum(s: (Sparse3D<Cell>, String)) -> Vec<(Sparse3D<Cell>, String)> {
         s.0.clone().rotate(crate::sparse3d::Rotation::Clockwise),
         format!("{}-cw", s.1),
     ));
-    // res.push(
-    //     s.clone()
-    //         .rotate(crate::sparse3d::Rotation::CounterClockwise),
-    // );
-    // res.push(s.clone().rotate(crate::sparse3d::Rotation::OneEighty));
     res.push(s);
     res
 }
@@ -242,10 +237,6 @@ pub fn load_training_data<B: Backend>(
             )
             .expect("Failed to deserialize");
 
-            // println!("== {:?} ==", path);
-            // let gt: GroundTruth<B> = ground_truth_at_vantage(&sparse_data);
-            // print_voxels(&gt.voxels);
-
             all_sparse_data.push((
                 sparse_data,
                 path.to_str()
@@ -271,31 +262,6 @@ pub fn load_training_data<B: Backend>(
             ))
         }
     }
-
-    // if metric == Metric::Order {
-    //     for exemplar in all_sparse_data.iter().take(6) {
-    //         println!("{}", exemplar.1);
-    //         print_voxels(
-    //             &ground_truth_at_vantage::<B>(exemplar, Metric::Order, &structures).voxels,
-    //         );
-    //         println!("{} messed up", exemplar.1);
-
-    //         print_voxels(
-    //             &ground_truth_at_vantage::<B>(
-    //                 &(
-    //                     crate::build_helpers::add_noise(exemplar.0.clone(), &structures, &mut rng)
-    //                         [0]
-    //                     .clone(),
-    //                     format!("---"),
-    //                 ),
-    //                 Metric::Order,
-    //                 &structures,
-    //             )
-    //             .voxels,
-    //         );
-    //     }
-    //     panic!()
-    // }
 
     use rand::seq::SliceRandom;
     all_sparse_data.shuffle(&mut rng);

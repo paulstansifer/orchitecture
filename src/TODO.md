@@ -19,58 +19,43 @@
 # LLM-suggested cleanups
 
 ## Dead / unwired code
-  * `src/ceiling_lights.rs` — `update_ceiling_lights` (`#[allow(dead_code)]`) and
-    `update_window_lights` (commented out in `src/main.rs:124`) are both unwired; the whole
-    file's four consts only serve this unused path.
-  * `src/qnn/translate.rs` — several large commented-out blocks (debug prints, a disabled test
-    at 499-516, alternate augmentation code at 143-147).
-  * `src/resource.rs:44` `UniformResource::farmable()` — no callers found.
-  * `src/structure.rs:73` `StructureList::find_by_name` — no callers (everything uses the free
-    function or `ConstructedCity::find_structure_by_name` instead).
+  * `src/ceiling_lights.rs` — `update_ceiling_lights` (`#[allow(dead_code)]`, explicitly "kept
+    for future use") and `update_window_lights` are both unwired; the whole file's four consts
+    only serve this unused path. Ask before deleting: this looks like a deliberately-staged
+    feature (interior/window lighting), not dead cruft.
   * `src/bin/sprite_sheet.rs:59` `BULK_WORLD_UNITS = 0.0` permanently disables ~30 lines of
-    mesh-inflation code (508-526, 597-623).
+    mesh-inflation code. The doc comment already says "0 = disabled", so this is a documented
+    toggle, not a mystery — worth asking whether to rip out the inflation code or keep the knob.
 
 ## Duplicated logic (candidates for a shared helper)
-  * `src/autotile/meshes.rs` — `spawn_autotile_rules` and `load_autotile_handles` both parse
-    `structures.autotile` independently instead of sharing one parsed resource.
-  * `src/cutaway.rs` — several internal duplications: `octant_hidden` vs. the `is_cut_face`
-    closure (515-557); three identical render-layer-sync loops (749-780); near-identical
-    diff-and-spawn blocks for regular vs. proposed cut entities (793-860).
+  * `src/cutaway.rs` — `octant_hidden` vs. the `is_cut_face` closure duplicate the same
+    half-space test (not identically — `is_cut_face` adds y/slot filtering); the near-identical
+    diff-and-spawn blocks for regular vs. proposed cut entities (~808-837 vs. 839-875) are still
+    fully duplicated. (The "three identical render-layer-sync loops" note is stale — one of the
+    three now toggles a `CutawayHidden` marker instead, so it's only two.) Touches active
+    per-frame ECS logic — ask before refactoring.
   * `src/autotile/matcher.rs` vs `src/autotile/compiler.rs` — both independently encode the
     "cases grouped by `group`, first full match wins" invariant with no type-level guarantee
-    they stay in sync; also near-duplicate `rel_slot_to_unoriented`/`slot_to_unoriented`.
-  * `src/sparse3d.rs` — `Chunk::iter`/`iter_mut` and `Index`/`IndexMut` all re-derive the same
-    flat-index formula (4 copies); `collect_at_point` repeats the same lookup-and-push pattern
-    4x for Room/XWall/Floor/ZWall.
+    they stay in sync; also near-duplicate `rel_slot_to_unoriented`/`slot_to_unoriented`. Core
+    autotile dispatch logic — ask before refactoring.
   * `src/construction.rs` — `propose`/`restore_desired` share a "compute cell, write/take,
-    record delta" pattern; `room_drag`/`floor_drag` compute identical footprint bounds.
-  * `src/build_ui.rs` — the "load map contents" sequence (`clear_proposal_entities` →
-    `clear_proposed_cut_entities` → `load_from_offline` → `apply_changes`) is repeated 3x.
-  * `src/input.rs:232-238` vs `:281-337` — the `if sandbox.enabled { construct+apply_changes }
-    else { apply_proposal_changes }` dispatch is repeated verbatim.
-  * `src/ui.rs` — the "find the storage/market-stand station by name" lookup is duplicated 3x
-    inside `shared_ui_system`.
-  * `src/camera.rs` / `src/walk_input.rs` / `src/ortho_camera.rs` — cursor-delta tracking
-    boilerplate duplicated with inconsistent `windows.single()` error handling.
-  * `src/build_helpers.rs` — `Cell { .. }` literal boilerplate repeated across `wall()`,
-    `wall_off_drops`, `set_vantage`.
+    record delta" pattern; `room_drag`/`floor_drag` compute identical footprint bounds. Core
+    building logic — ask before refactoring.
 
 ## Complexity / structure worth simplifying
-  * `src/input.rs:153-369` — `building_input_system` is ~215 lines covering many unrelated
-    concerns (layers, rotation, cutaway cycling, undo/redo, drag-building, picking).
-  * `src/ui.rs:21-380` — `shared_ui_system` is ~360 lines mixing UI rendering with end-of-month
-    simulation logic; the "advance month" block (300-370) is a good extraction candidate.
-  * `src/cutaway.rs:388-512` — `compute_floor_edge` (~125 lines) mixes seeding, BFS, and two
-    post-processing passes that could be named helpers.
-  * `src/city.rs:562-603` — `x_mesh_and_rotations`, `ring_rotation`, `protrude_axis` all match
-    over `Slot` in parallel, separately-maintained ways — three places to update if `Slot`
-    grows a variant.
-  * `src/autotile/parser.rs:395-443` — the pattern-row-collection loop in `parse_cases` mixes
-    several concerns and could be factored out.
-  * `src/serialization.rs:149-154` — deserialization `panic!`s on malformed input rather than
-    returning `Result`, inconsistent with the rest of the function's error handling.
-
-## Stale / misleading comments worth a pass
-  * `src/autotile/parser.rs:692` — a self-doubt TODO questioning consistency between `offset`
-    and `is_dead_slot` that's likely resolved (both have test coverage) and could be deleted
-    or turned into a real check.
+  * `src/input.rs` — `building_input_system` is now ~254 lines (153-369 is stale) covering many
+    unrelated concerns (layers, rotation, cutaway cycling, undo/redo, drag-building, picking).
+    Substantial refactor of actively-used input code — ask before splitting up.
+  * `src/cutaway.rs` — `compute_floor_edge` already delegates seeding/BFS to named helpers
+    (`descend_to_floor`, `ground_floor_fill`, `find_wall_seeds`, `climb_wall_column`,
+    `upper_floor_fill`); only two small post-processing passes remain inline (hidden-floor-above-
+    rooms, floor-cut replacement) as low-risk extraction candidates.
+  * `src/city.rs` — `x_mesh_and_rotations`, `ring_rotation`, `protrude_axis` (now ~782-823) all
+    match over `Slot` in parallel, separately-maintained ways — three places to update if `Slot`
+    grows a variant. Rendering-only but easy to get subtly wrong — ask before refactoring.
+  * `src/autotile/parser.rs` — the pattern-row-collection loop in `parse_cases` (now ~741-796)
+    mixes header/row/blank-line/pipe handling and could be factored into named helpers.
+  * `src/serialization.rs` — deserialization `panic!`s on malformed room/wall lines (now around
+    line 164/167) rather than returning `Result`, inconsistent with the rest of
+    `deserialize_sparse3d`. Changing this changes error-propagation behavior for callers — ask
+    before changing.

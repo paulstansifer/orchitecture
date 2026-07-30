@@ -3,6 +3,7 @@ use std::f32::consts::FRAC_PI_2;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use crate::camera::track_cursor_delta;
 use crate::ortho_camera::{
     cam_fwd_xz_base, snap_to_pixel, trimetric_camera_basis, WalkCameraState,
 };
@@ -18,12 +19,7 @@ pub fn walk_input_system(
     let dt = time.delta_secs();
 
     // Track cursor position for drag delta.
-    let cursor = windows.single().ok().and_then(|w| w.cursor_position());
-    let cursor_delta = cursor
-        .zip(*last_cursor)
-        .map(|(now, prev)| now - prev)
-        .unwrap_or(Vec2::ZERO);
-    *last_cursor = cursor;
+    let cursor_delta = track_cursor_delta(&windows, &mut last_cursor);
 
     // WASD movement, screen-relative (W = up-on-screen = into the trimetric view).
     let (cam_r_base, _, _) = trimetric_camera_basis();
