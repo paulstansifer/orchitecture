@@ -19,7 +19,7 @@ use orchitecture_lib::{
     },
     city::{
         spawn_grid, spawn_material_assets, spawn_proposal_overlay_assets, ConstructedCity,
-        PlaceHighlight,
+        PlaceAccessibleRange, PlaceHighlight,
     },
     cutaway::{
         propagate_render_layers_system, sync_cutaway_shadow_material, update_cutaway_system,
@@ -31,6 +31,8 @@ use orchitecture_lib::{
     gi_material::GiPlugin,
     global_illumination::update_global_illumination,
     grid_preview::GridPreviewPlugin,
+    idea::{sync_idea_progress, IdeaState},
+    idea_ui::{announce_new_knowledge, idea_ui_system, IdeaWindowState},
     input::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
         update_room_cursor_mesh, BuildState, CursorEntities,
@@ -53,8 +55,9 @@ use orchitecture_lib::{
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
     selection::{
-        animate_selection_rings, spawn_ring_mesh_assets, update_hover_highlight,
-        update_selection_ring, HoveredFurniture, RingMaterial,
+        animate_selection_rings, spawn_accessible_range_assets, spawn_ring_mesh_assets,
+        update_accessible_range, update_hover_highlight, update_selection_ring, HoveredFurniture,
+        RingMaterial,
     },
     surroundings::{
         enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
@@ -120,9 +123,12 @@ fn main() {
         .insert_resource(SandboxMode::default())
         .insert_resource(FurnitureRightClick::default())
         .insert_resource(PlaceHighlight::default())
+        .insert_resource(PlaceAccessibleRange::default())
         .insert_resource(HoveredFurniture::default())
         .insert_resource(GameClock::default())
         .init_resource::<MonthEffectsCache>()
+        .init_resource::<IdeaState>()
+        .init_resource::<IdeaWindowState>()
         .insert_resource(MaterialList::load())
         .insert_resource(DebugNav::default())
         .add_message::<AdvanceMonthRequested>()
@@ -157,6 +163,7 @@ fn main() {
                 spawn_proposal_overlay_assets,
                 spawn_material_assets,
                 spawn_ring_mesh_assets,
+                spawn_accessible_range_assets,
                 discover_user_files,
                 spawn_resource_icons,
             ),
@@ -185,6 +192,10 @@ fn main() {
                 sync_cutaway_shadow_material.after(update_cutaway_system),
                 update_global_illumination.run_if(resource_changed::<ConstructedCity>),
                 (
+                    // Refreshes the understood-segment cache on `ConstructedCity`
+                    // before place formation reads it, so learning a segment
+                    // unlocks a gated place on the same frame.
+                    sync_idea_progress.run_if(resource_changed::<IdeaState>),
                     sync_places_system.run_if(resource_changed::<ConstructedCity>),
                     rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
                     sync_assignments.run_if(
@@ -198,12 +209,25 @@ fn main() {
                 (
                     update_selection_ring,
                     animate_selection_rings,
+                    update_accessible_range,
                     update_hover_highlight.run_if(in_state(GameMode::Build)),
                 ),
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))
         .add_systems(Update, advance_month_system)
+        // Pops the Ideas window open when the city learns something. Must run
+        // *after* the month that did the learning: otherwise it first sees the
+        // gain a frame late, and egui gets one frame in between showing the new
+        // state un-faded, which reads as a flash of the answer followed by the
+        // reveal. Recomputes understanding itself, so it needs no ordering
+        // relative to `sync_idea_progress`.
+        .add_systems(
+            Update,
+            announce_new_knowledge
+                .after(advance_month_system)
+                .run_if(resource_changed::<IdeaState>),
+        )
         .add_systems(
             EguiPrimaryContextPass,
             (
@@ -217,6 +241,8 @@ fn main() {
                 build_ui_system.run_if(in_state(GameMode::Build)),
                 walk_ui_system.run_if(in_state(GameMode::Walk)),
                 surroundings_ui_system.run_if(in_state(GameMode::Surroundings)),
+                // Floating window, reachable from every mode.
+                idea_ui_system.after(shared_ui_system),
             ),
         )
         .run();

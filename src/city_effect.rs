@@ -268,6 +268,9 @@ pub struct EffectContext<'a> {
     pub pending: &'a mut ProposedCity,
     pub population: &'a mut Population,
     pub farms: &'a mut FarmsResource,
+    /// Only written by `CityEffect::TravelerVisit`'s `apply()`, when the
+    /// traveler brought a book.
+    pub idea_state: &'a mut crate::idea::IdeaState,
     /// Only consumed by `CityEffect::Market`'s `apply()` in the `Reroll` case.
     pub rng: &'a mut dyn rand::RngCore,
 }
@@ -418,7 +421,7 @@ impl CityEffect {
                 ctx.farms[i].inedible_stockpile = 0;
             }
             CityEffect::Eat(e) => e.apply(ctx),
-            CityEffect::TravelerVisit(t) => t.apply(ctx.constructed, ctx.farms),
+            CityEffect::TravelerVisit(t) => t.apply(ctx.constructed, ctx.farms, ctx.idea_state),
             CityEffect::Construction(c) => c.apply(ctx.pending, ctx.constructed),
             CityEffect::Workshop(w) => w.apply(ctx.constructed),
         }
@@ -580,8 +583,14 @@ fn compute_workshop_effect(
                 let Some(kind) = crate::work::installed_tool_in(constructed, id) else {
                     continue;
                 };
+                // An idea-gated workshop can exist while still understood too
+                // poorly to be worth anything; `None` shouldn't be reachable
+                // (a locked place can't form), but treat it as idle if it is.
+                let Some(efficiency) = place::gate_efficiency(constructed, pp.place) else {
+                    continue;
+                };
                 let spec = kind.specialization();
-                let desired = (kind.rate() * staffing).round() as u32;
+                let desired = (kind.rate() * staffing * efficiency).round() as u32;
                 let room = output_room.entry(spec.output).or_insert_with(|| {
                     place::storage_free_capacity(constructed, spec.output).floor() as u32
                 });
@@ -685,16 +694,19 @@ pub fn compute_month_effects(
     // when the visit is both affordable and invited.
     if let Some(offer) = &traveler_state.current_offer {
         // A `Resource` reward is never lost for lack of storage room (see
-        // below), but a `Tool` reward is deposited directly into rack
-        // storage by `TravelerVisit::apply`, which silently no-ops if there's
-        // no room. Fold that into `affordable` so the "Invite" checkbox
-        // (which `affordable` drives) isn't enabled for a reward the city
-        // has nowhere to put.
+        // below), but `Tool` and `Book` rewards are deposited directly into
+        // rack and bookcase storage by `TravelerVisit::apply`, which silently
+        // no-ops if there's no room. Fold that into `affordable` so the
+        // "Invite" checkbox (which `affordable` drives) isn't enabled for a
+        // reward the city has nowhere to put.
         let reward_deliverable = match &offer.reward {
             ResolvedReward::Tool(_) => {
                 place::rack_free_capacity(constructed, crate::resource::RackContents::Tools) >= 1.0
             }
             ResolvedReward::Resource(..) => true,
+            ResolvedReward::Book { .. } => {
+                place::book_free_capacity(constructed) >= place::book_volume()
+            }
         };
         let affordable = reward_deliverable
             && offer
@@ -884,6 +896,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }];
         cw.placed_places.insert(ParticularPlace {
             place: 0,
@@ -1074,6 +1087,7 @@ mod tests {
                 quality_factors: vec![],
                 assignable_for: None,
                 work: None,
+                gate: None,
             },
             Place {
                 name: "carpenter's workshop".to_string(),
@@ -1083,6 +1097,7 @@ mod tests {
                 quality_factors: vec![],
                 assignable_for: None,
                 work: Some(WorkEffect::ToolEffect),
+                gate: None,
             },
         ];
 
@@ -1177,6 +1192,64 @@ mod tests {
         assert_eq!(effects.ledger.net_for(LedgerSource::Workshop, Plank), 0);
         assert_eq!(effects.storage_delta(Timber), 0);
         assert_eq!(effects.storage_delta(Plank), 0);
+    }
+
+    /// Sets `cw`'s understood segments for `idea` to `count`, i.e. drives the
+    /// gating idea's progress to an exact fraction.
+    fn understand(cw: &mut ConstructedCity, idea: &str, count: u32) {
+        let idx = crate::idea::idea_by_name(&cw.ideas, idea).expect("known idea");
+        cw.understood[idx] = if count == 0 { 0 } else { (1u64 << count) - 1 };
+    }
+
+    /// Gates the workshop the way `places.ron` does, then checks that output
+    /// tracks the ramp. `rate() * staffing` is 4, so the ramp is directly
+    /// legible in the ledger: 0 at the threshold, 4 at full understanding.
+    #[test]
+    fn a_gated_workshop_scales_its_output_with_understanding() {
+        use crate::place::IdeaGate;
+
+        // (understood segments of Specialization, expected Plank output)
+        for (understood_segments, expected) in [(25, 0), (38, 2), (44, 3), (50, 4)] {
+            let (mut cw, pop, _) = city_with_workshop(100.0, 10);
+            cw.places[1].gate = Some(IdeaGate {
+                idea: "Specialization".to_string(),
+                unlock_at: 0.5,
+                full_at: 1.0,
+            });
+            understand(&mut cw, "Specialization", understood_segments);
+
+            let effects = workshop_effects(&cw, &pop);
+            assert_eq!(
+                effects.ledger.net_for(LedgerSource::Workshop, Plank),
+                expected,
+                "{understood_segments}/50 understood should yield {expected} Plank"
+            );
+            assert_eq!(
+                effects.ledger.net_for(LedgerSource::Workshop, Timber),
+                -expected,
+                "a workshop should only consume what it actually converts"
+            );
+        }
+    }
+
+    /// Belt-and-braces: `sync_places` won't let a locked workshop exist in the
+    /// first place, but if one somehow does, it must sit idle rather than
+    /// producing at full rate.
+    #[test]
+    fn a_locked_workshop_produces_nothing() {
+        use crate::place::IdeaGate;
+
+        let (mut cw, pop, _) = city_with_workshop(100.0, 10);
+        cw.places[1].gate = Some(IdeaGate {
+            idea: "Specialization".to_string(),
+            unlock_at: 0.5,
+            full_at: 1.0,
+        });
+        understand(&mut cw, "Specialization", 10); // 20%, well below the gate
+
+        let effects = workshop_effects(&cw, &pop);
+        assert_eq!(effects.ledger.net_for(LedgerSource::Workshop, Plank), 0);
+        assert_eq!(effects.storage_delta(Timber), 0);
     }
 
     #[test]
@@ -1527,6 +1600,7 @@ mod tests {
                 pending: &mut ProposedCity::new(),
                 population: &mut population,
                 farms: &mut farms,
+                idea_state: &mut crate::idea::IdeaState::default(),
                 rng: &mut rng,
             });
         }
@@ -1591,6 +1665,7 @@ mod tests {
             pending: &mut pending,
             population: &mut population,
             farms: &mut farms,
+            idea_state: &mut crate::idea::IdeaState::default(),
             rng: &mut rng,
         };
         eat.apply(&mut ctx);

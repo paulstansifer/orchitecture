@@ -56,6 +56,7 @@ pub fn advance_month(
     pending: &mut ProposedCity,
     population: &mut Population,
     traveler_state: &mut TravelerState,
+    idea_state: &mut crate::idea::IdeaState,
     material_list: &MaterialList,
     sandbox_enabled: bool,
     rng: &mut impl rand::Rng,
@@ -82,6 +83,7 @@ pub fn advance_month(
             pending,
             population,
             farms,
+            idea_state,
             rng,
         };
         for effect in &effects.effects {
@@ -116,7 +118,13 @@ pub fn advance_month(
         .map(|t| t.affordable);
     traveler_state.invited = false;
     if let Some(roads) = farms.roads.as_ref() {
-        roll_traveler_offer(traveler_state, CIRCLE_REVEAL_RADIUS, roads, rng);
+        roll_traveler_offer(
+            traveler_state,
+            CIRCLE_REVEAL_RADIUS,
+            roads,
+            &constructed.ideas,
+            rng,
+        );
     }
 
     // Whatever wasn't claimed by any effect above is stored (if capacity
@@ -182,6 +190,7 @@ pub fn advance_month_system(
     structure_list: Res<crate::eorf::EorfList>,
     mut population: ResMut<Population>,
     mut traveler_state: ResMut<TravelerState>,
+    mut idea_state: ResMut<crate::idea::IdeaState>,
     material_list: Res<MaterialList>,
     sandbox: Res<crate::game_mode::SandboxMode>,
 ) {
@@ -202,6 +211,7 @@ pub fn advance_month_system(
         &mut pending,
         &mut population,
         &mut traveler_state,
+        &mut idea_state,
         &material_list,
         sandbox.enabled,
         &mut rng,

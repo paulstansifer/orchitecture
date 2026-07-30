@@ -42,6 +42,23 @@ impl FontColors {
     pub fn default() -> Color32 {
         Color32::WHITE
     }
+
+    /// Green for an idea segment that's understood — learned, with every
+    /// prerequisite's matching segment understood too.
+    pub fn understood() -> Color32 {
+        Color32::from_rgb(120, 200, 130)
+    }
+
+    /// Amber for an idea segment that's been read about but can't be used yet,
+    /// because some prerequisite is missing that same segment.
+    pub fn learned_only() -> Color32 {
+        Color32::from_rgb(210, 170, 70)
+    }
+
+    /// Dark gray for an idea segment nobody has read about.
+    pub fn unknown() -> Color32 {
+        Color32::from_gray(55)
+    }
 }
 
 /// A lot like egui's `RichText`.

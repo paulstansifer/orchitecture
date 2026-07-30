@@ -142,9 +142,10 @@ fn place_hierarchy_ui(
     loc: SlotCoord,
     next_places_view: &mut Option<PlacesView>,
     open_install_menu: &mut Option<(SlotCoord, usize)>,
-) -> Vec<SlotCoord> {
+) -> (Vec<SlotCoord>, Vec<bevy::math::IVec3>) {
     let cube = loc.cube;
     let mut highlight = Vec::new();
+    let mut accessible_range = Vec::new();
 
     ui.heading("Place");
     ui.separator();
@@ -301,6 +302,7 @@ fn place_hierarchy_ui(
                 crate::place::FulfilledPorf::Place(_) => None,
             })
             .collect();
+        accessible_range = crate::place::place_accessible_range(constructed, chain[0]);
     }
 
     // The clicked furniture itself, at the bottom (below every containing
@@ -379,7 +381,7 @@ fn place_hierarchy_ui(
         }
     }
 
-    highlight
+    (highlight, accessible_range)
 }
 
 /// The install pop-up: lists every `UniqueResource` of the target slot's kind
@@ -490,6 +492,7 @@ pub fn build_ui_system(
     mut sandbox: ResMut<SandboxMode>,
     mut furniture_right_click: ResMut<FurnitureRightClick>,
     mut place_highlight: ResMut<crate::city::PlaceHighlight>,
+    mut place_accessible_range: ResMut<crate::city::PlaceAccessibleRange>,
     resource_icons: Res<ResourceIcons>,
     material_list: Res<MaterialList>,
     population: Res<Population>,
@@ -537,6 +540,7 @@ pub fn build_ui_system(
     let mut next_places_view: Option<PlacesView> = None;
     let mut open_install_menu: Option<(SlotCoord, usize)> = None;
     let mut highlight: Vec<SlotCoord> = Vec::new();
+    let mut accessible_range: Vec<bevy::math::IVec3> = Vec::new();
     let tab = ui_state.left_tab;
     let places_view = ui_state.places_view;
 
@@ -654,7 +658,7 @@ pub fn build_ui_system(
                         }
                     }
                     PlacesView::Hierarchy { loc } => {
-                        highlight = place_hierarchy_ui(
+                        (highlight, accessible_range) = place_hierarchy_ui(
                             ui,
                             &mut world.constructed,
                             &population,
@@ -688,6 +692,7 @@ pub fn build_ui_system(
     // Write only on change (set_if_neq), so the highlight system doesn't respawn
     // the overlay meshes every frame.
     place_highlight.set_if_neq(crate::city::PlaceHighlight(highlight));
+    place_accessible_range.set_if_neq(crate::city::PlaceAccessibleRange(accessible_range));
 }
 
 /// Selectable list of structures, filtered to Elements (`want_furniture ==

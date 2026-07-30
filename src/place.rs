@@ -231,6 +231,40 @@ pub struct Place {
     /// how staffed they are, every month (see `work::apply_work_effects`).
     #[serde(default)]
     pub work: Option<WorkEffect>,
+    /// If set, this place kind doesn't exist until an idea is understood well
+    /// enough, and works at reduced efficiency until it's understood fully.
+    #[serde(default)]
+    pub gate: Option<IdeaGate>,
+}
+
+/// Gates a place kind on progress through an idea (see [`crate::idea`]).
+///
+/// Below `unlock_at` the place simply can't form -- it's not offered, and
+/// arranging the furniture for it does nothing. From `unlock_at` to `full_at`
+/// its efficiency ramps linearly from 0 to 1, so a freshly-unlocked workplace
+/// is real but produces nothing until understanding pushes past the threshold.
+///
+/// Since learning is permanent, progress is monotonic and a gate never
+/// re-locks.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct IdeaGate {
+    /// Name of the gating idea; must exist in `ideas.ron`.
+    pub idea: String,
+    /// Progress at which the place becomes formable, in `0.0..=1.0`.
+    pub unlock_at: f32,
+    /// Progress at which it reaches full efficiency, in `0.0..=1.0`.
+    pub full_at: f32,
+}
+
+impl IdeaGate {
+    /// The ramp itself, given how far along the gating idea is: `None` below
+    /// `unlock_at`, otherwise `0.0..=1.0`. Pure, so the UI can describe a gate
+    /// without a `ConstructedCity` in hand.
+    pub fn efficiency(&self, progress: f32) -> Option<f32> {
+        (progress >= self.unlock_at).then(|| {
+            ((progress - self.unlock_at) / (self.full_at - self.unlock_at)).clamp(0.0, 1.0)
+        })
+    }
 }
 
 /// What actually fulfills one slot of a placed `Place`'s requirements. A
@@ -346,21 +380,25 @@ impl std::ops::IndexMut<PlacedPlaceId> for PlacedPlaces {
 }
 
 /// Loads the place definitions bundled at compile time, panicking on any
-/// reference to a furniture or place name that doesn't exist.
-pub fn load_place_info(eorfs: &[crate::eorf::EorfInfo]) -> Vec<Place> {
+/// reference to a furniture, place, or idea name that doesn't exist.
+pub fn load_place_info(eorfs: &[crate::eorf::EorfInfo], ideas: &[crate::idea::Idea]) -> Vec<Place> {
     let ron_content = include_str!("../buildables/places.ron");
     let mut infos: Vec<Place> = ron::from_str(ron_content).unwrap();
     for info in &mut infos {
         fill_default_quality_factors(info);
     }
-    validate_place_info(&infos, eorfs);
+    validate_place_info(&infos, eorfs, ideas);
     infos
 }
 
-/// Panics if any place definition cross-references an unknown furniture or
-/// place name -- a typo in places.ron would otherwise just silently never
-/// match anything.
-fn validate_place_info(places: &[Place], eorfs: &[crate::eorf::EorfInfo]) {
+/// Panics if any place definition cross-references an unknown furniture,
+/// place, or idea name -- a typo in places.ron would otherwise just silently
+/// never match anything (or, for a gate, silently lock the place forever).
+fn validate_place_info(
+    places: &[Place],
+    eorfs: &[crate::eorf::EorfInfo],
+    ideas: &[crate::idea::Idea],
+) {
     let furniture_exists = |name: &str| eorfs.iter().any(|e| e.is_furniture() && e.name == name);
     let place_exists = |name: &str| places.iter().any(|p| p.name == name);
 
@@ -385,7 +423,40 @@ fn validate_place_info(places: &[Place], eorfs: &[crate::eorf::EorfInfo]) {
                 }
             }
         }
+        if let Some(gate) = &place.gate {
+            if crate::idea::idea_by_name(ideas, &gate.idea).is_none() {
+                bad("idea", &gate.idea);
+            }
+            assert!(
+                gate.unlock_at < gate.full_at,
+                "place {:?} has a gate whose unlock_at ({}) isn't below its full_at ({})",
+                place.name,
+                gate.unlock_at,
+                gate.full_at
+            );
+        }
     }
+}
+
+/// How well a place kind works, given how far along its gating idea is:
+/// `None` when the gate isn't met at all (the place can't form), otherwise a
+/// factor in `0.0..=1.0` scaling whatever the place produces. Ungated places
+/// are always `Some(1.0)`.
+pub fn gate_efficiency(cw: &ConstructedCity, place_idx: usize) -> Option<f32> {
+    gate_efficiency_of(cw, &cw.places[place_idx])
+}
+
+/// [`gate_efficiency`] by definition rather than index, for the paths that
+/// already hold a `&Place`.
+pub fn gate_efficiency_of(cw: &ConstructedCity, place: &Place) -> Option<f32> {
+    let Some(gate) = &place.gate else {
+        return Some(1.0);
+    };
+    // An unknown idea is rejected by `validate_place_info`, but a hand-built
+    // test city may carry places the idea list doesn't know about; treat that
+    // as locked rather than panicking mid-frame.
+    let idx = crate::idea::idea_by_name(&cw.ideas, &gate.idea)?;
+    gate.efficiency(crate::idea::progress(&cw.understood, idx))
 }
 
 /// Maximum 2D Manhattan distance (within a single y-layer) for a requirement
@@ -394,6 +465,14 @@ pub const PLACE_DIST: i32 = 6;
 
 fn manhattan2d(a: IVec3, b: IVec3) -> i32 {
     (a.x - b.x).abs() + (a.z - b.z).abs()
+}
+
+/// True if `loc` is within `PLACE_DIST` (2D Manhattan, same y-layer) of any of
+/// `anchors`.
+fn near_any_anchor(anchors: &[IVec3], loc: IVec3) -> bool {
+    anchors
+        .iter()
+        .any(|&a| a.y == loc.y && manhattan2d(a, loc) <= PLACE_DIST)
 }
 
 /// The world location of a placed place: its core fulfillment's location,
@@ -425,20 +504,22 @@ fn fulfillment_location(cw: &ConstructedCity, f: &FulfilledPorf) -> IVec3 {
 const FURNITURE_SLOTS: [Slot; 3] = [Slot::Room, Slot::XLoWall, Slot::ZLoWall];
 
 /// All furniture named `name` within `PLACE_DIST` (2D Manhattan, same y-layer)
-/// of `origin`, at whatever slot they occupy (room or wall). Includes furniture
-/// at `origin` itself when it qualifies.
-fn furniture_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<SlotCoord> {
+/// of any of `anchors`, at whatever slot they occupy (room or wall). Includes
+/// furniture at an anchor itself when it qualifies.
+fn furniture_of_name_near(cw: &ConstructedCity, anchors: &[IVec3], name: &str) -> Vec<SlotCoord> {
     let mut found = Vec::new();
-    for dx in -PLACE_DIST..=PLACE_DIST {
-        let zspan = PLACE_DIST - dx.abs();
-        for dz in -zspan..=zspan {
-            let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
-            for slot in FURNITURE_SLOTS {
-                let loc = SlotCoord { cube, slot };
-                if let Some(cell) = cw.contents.get(loc) {
-                    let info = &cw.eorfs[cell.id.as_usize()];
-                    if info.is_furniture() && info.name == name {
-                        found.push(loc);
+    for &origin in anchors {
+        for dx in -PLACE_DIST..=PLACE_DIST {
+            let zspan = PLACE_DIST - dx.abs();
+            for dz in -zspan..=zspan {
+                let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
+                for slot in FURNITURE_SLOTS {
+                    let loc = SlotCoord { cube, slot };
+                    if let Some(cell) = cw.contents.get(loc) {
+                        let info = &cw.eorfs[cell.id.as_usize()];
+                        if info.is_furniture() && info.name == name && !found.contains(&loc) {
+                            found.push(loc);
+                        }
                     }
                 }
             }
@@ -472,29 +553,23 @@ fn has_installed_tool(
         })
 }
 
-/// All furniture within `PLACE_DIST` (2D Manhattan, same y-layer) of `origin`
-/// named `furniture_name` that has a `Tool(kind)` installed. Returns the
-/// furniture's Room `SlotCoord`.
+/// All furniture named `furniture_name` within `PLACE_DIST` (2D Manhattan, same y-layer) of any of
+/// `anchors` that has a `Tool(kind)` installed. Returns the furniture's Room
+/// `SlotCoord`.
 fn furniture_with_installed_tool_near(
     cw: &ConstructedCity,
-    origin: IVec3,
+    anchors: &[IVec3],
     kind: ToolKind,
     furniture_name: &str,
 ) -> Vec<SlotCoord> {
-    let mut found = Vec::new();
-    for dx in -PLACE_DIST..=PLACE_DIST {
-        let zspan = PLACE_DIST - dx.abs();
-        for dz in -zspan..=zspan {
-            let cube = IVec3::new(origin.x + dx, origin.y, origin.z + dz);
-            if has_installed_tool(cw, cube, kind, furniture_name) {
-                found.push(SlotCoord {
-                    cube,
-                    slot: Slot::Room,
-                });
-            }
-        }
-    }
-    found
+    all_furniture_with_installed_tool(cw, kind, furniture_name)
+        .into_iter()
+        .filter(|&cube| near_any_anchor(anchors, cube))
+        .map(|cube| SlotCoord {
+            cube,
+            slot: Slot::Room,
+        })
+        .collect()
 }
 
 /// All furniture (anywhere) named `furniture_name` with a `Tool(kind)`
@@ -523,14 +598,13 @@ fn all_furniture_with_installed_tool(
         .collect()
 }
 
-/// All placed places named `name` within `PLACE_DIST` of `origin`
+/// All placed places named `name` within `PLACE_DIST` of any of `anchors`
 /// (measured from each candidate's own resolved location).
-fn places_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<PlacedPlaceId> {
+fn places_of_name_near(cw: &ConstructedCity, anchors: &[IVec3], name: &str) -> Vec<PlacedPlaceId> {
     cw.placed_places
         .iter()
         .filter(|(id, pp)| {
-            cw.places[pp.place].name == name
-                && manhattan2d(place_location(cw, *id), origin) <= PLACE_DIST
+            cw.places[pp.place].name == name && near_any_anchor(anchors, place_location(cw, *id))
         })
         .map(|(id, _)| id)
         .collect()
@@ -539,19 +613,22 @@ fn places_of_name_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> Vec<P
 /// Count of `Porf`s (furniture or places) named `name` near `origin` -- for
 /// the `QualityAspect::NumberOf` factor.
 pub fn count_named_near(cw: &ConstructedCity, origin: IVec3, name: &str) -> usize {
-    furniture_of_name_near(cw, origin, name).len() + places_of_name_near(cw, origin, name).len()
+    let anchors = [origin];
+    furniture_of_name_near(cw, &anchors, name).len()
+        + places_of_name_near(cw, &anchors, name).len()
 }
 
-/// Every cube/place fulfilling `req` within range of `origin`, eligible to be
-/// claimed by a `Place` named `parent_name` (see `ParentRestriction`).
+/// Every cube/place fulfilling `req` within range of any of `anchors`,
+/// eligible to be claimed by a `Place` named `parent_name` (see
+/// `ParentRestriction`).
 fn candidates_near(
     cw: &ConstructedCity,
-    origin: IVec3,
+    anchors: &[IVec3],
     req: &Porf,
     parent_name: &str,
 ) -> Vec<FulfilledPorf> {
     match req {
-        Porf::Furniture(name) => furniture_of_name_near(cw, origin, name)
+        Porf::Furniture(name) => furniture_of_name_near(cw, anchors, name)
             .into_iter()
             .filter(|loc| {
                 cw.furniture_restrictions
@@ -560,13 +637,13 @@ fn candidates_near(
             })
             .map(FulfilledPorf::Furniture)
             .collect(),
-        Porf::Place(name) => places_of_name_near(cw, origin, name)
+        Porf::Place(name) => places_of_name_near(cw, anchors, name)
             .into_iter()
             .filter(|&id| cw.placed_places[id].restriction.allows(parent_name))
             .map(FulfilledPorf::Place)
             .collect(),
         Porf::InstalledTool(kind, furniture_name) => {
-            furniture_with_installed_tool_near(cw, origin, *kind, furniture_name)
+            furniture_with_installed_tool_near(cw, anchors, *kind, furniture_name)
                 .into_iter()
                 .filter(|loc| {
                     cw.furniture_restrictions
@@ -577,6 +654,77 @@ fn candidates_near(
                 .collect()
         }
     }
+}
+
+/// Grows a seed core location into the full connected set of core-type
+/// (`requirements[0]`) anchors reachable through a chain of same-type cores
+/// each within `PLACE_DIST` of the next -- so a long row of e.g. bins forms
+/// one large place regardless of which bin the chain started from. Also
+/// restricted, at each step, to fulfillments a `place` named `parent_name`
+/// would actually be allowed to claim (see `ParentRestriction`).
+fn grow_core_anchors(cw: &ConstructedCity, place: &Place, seed: IVec3) -> Vec<IVec3> {
+    let Some(core_req) = place.requirements.first() else {
+        return vec![seed];
+    };
+    let mut anchors = vec![seed];
+    loop {
+        let reached: Vec<IVec3> = candidates_near(cw, &anchors, &core_req.requirement, &place.name)
+            .into_iter()
+            .map(|f| fulfillment_location(cw, &f))
+            .collect();
+        let mut grew = false;
+        for loc in reached {
+            if !anchors.contains(&loc) {
+                anchors.push(loc);
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    anchors
+}
+
+/// The full connected set of core-type anchors for an already-placed
+/// instance, re-derived (rather than trusted from its stored fulfillments,
+/// which may be capped by the core requirement's `max`) from any one of its
+/// current core-type fulfillments. Used to compute a placed place's
+/// accessible range for display. Falls back to the place's resolved location
+/// if, somehow, none of its fulfillments still match the core requirement.
+pub fn placed_core_anchors(cw: &ConstructedCity, id: PlacedPlaceId) -> Vec<IVec3> {
+    let pp = &cw.placed_places[id];
+    let place = &cw.places[pp.place];
+    let core_req = place.requirements.first().map(|r| &r.requirement);
+    let seed = core_req
+        .and_then(|req| {
+            pp.fulfillments
+                .iter()
+                .find(|f| fulfillment_matches(cw, f, req))
+        })
+        .map(|f| fulfillment_location(cw, f))
+        .unwrap_or_else(|| place_location(cw, id));
+    grow_core_anchors(cw, place, seed)
+}
+
+/// The full accessible range of a placed instance: every cube within
+/// `PLACE_DIST` of any of its core-type anchors (see `placed_core_anchors`),
+/// deduplicated. Used to paint the "accessible range" overlay for the
+/// currently-selected place.
+pub fn place_accessible_range(cw: &ConstructedCity, id: PlacedPlaceId) -> Vec<IVec3> {
+    let mut cubes = Vec::new();
+    for anchor in placed_core_anchors(cw, id) {
+        for dx in -PLACE_DIST..=PLACE_DIST {
+            let zspan = PLACE_DIST - dx.abs();
+            for dz in -zspan..=zspan {
+                let cube = IVec3::new(anchor.x + dx, anchor.y, anchor.z + dz);
+                if !cubes.contains(&cube) {
+                    cubes.push(cube);
+                }
+            }
+        }
+    }
+    cubes
 }
 
 /// True if a fulfillment still satisfies the named requirement it was chosen
@@ -599,26 +747,43 @@ fn fulfillment_matches(cw: &ConstructedCity, f: &FulfilledPorf, req: &Porf) -> b
     }
 }
 
-/// True if `core` has at least `min` of every requirement within range.
-fn requirements_met(cw: &ConstructedCity, core: IVec3, place: &Place) -> bool {
+/// True if `place`'s idea gate is met and `anchors` (the connected set of
+/// core-type fulfillments) has at least `min` of every requirement within
+/// range.
+///
+/// The gate check lives here, rather than at each call site, because this is
+/// the single choke point every path runs through: formation (via
+/// `plan_assignment` -> `choose_core`), the dissolve pass in `sync_places`, and
+/// `valid_places_for`. A gated place therefore can't form, isn't offered, and
+/// -- were progress ever to regress, which permanent learning rules out -- would
+/// dissolve.
+fn requirements_met(cw: &ConstructedCity, anchors: &[IVec3], place: &Place) -> bool {
+    if gate_efficiency_of(cw, place).is_none() {
+        return false;
+    }
     place.requirements.iter().all(|req| {
-        candidates_near(cw, core, &req.requirement, &place.name).len() >= req.min as usize
+        candidates_near(cw, anchors, &req.requirement, &place.name).len() >= req.min as usize
     })
 }
 
-/// Choose the core fulfillment for `place_idx` nearest to `cube` (the cube
-/// itself preferred) whose surroundings satisfy every requirement.
-fn choose_core(cw: &ConstructedCity, cube: IVec3, place_idx: usize) -> Option<FulfilledPorf> {
+/// Choose the core anchor set for `place_idx` grown from whichever qualifying
+/// core is nearest to `cube` (the cube itself preferred), whose combined
+/// surroundings satisfy every requirement. Every core-type fulfillment
+/// transitively chained (each within `PLACE_DIST` of the next) into the
+/// resulting set can equally well serve as the anchor -- it doesn't matter
+/// which one gets picked first.
+fn choose_core(cw: &ConstructedCity, cube: IVec3, place_idx: usize) -> Option<Vec<IVec3>> {
     let place = &cw.places[place_idx];
     let core_req = &place.requirements[0].requirement;
-    let mut cores = candidates_near(cw, cube, core_req, &place.name);
+    let mut cores = candidates_near(cw, &[cube], core_req, &place.name);
     cores.sort_by_key(|c| {
         let loc = fulfillment_location(cw, c);
         (loc != cube, manhattan2d(loc, cube))
     });
-    cores
-        .into_iter()
-        .find(|core| requirements_met(cw, fulfillment_location(cw, core), place))
+    cores.into_iter().find_map(|core| {
+        let anchors = grow_core_anchors(cw, place, fulfillment_location(cw, &core));
+        requirements_met(cw, &anchors, place).then_some(anchors)
+    })
 }
 
 /// Places (indices into `cw.places`) that could be formed around `cube`.
@@ -689,8 +854,7 @@ pub fn plan_assignment(
     cube: IVec3,
     place_idx: usize,
 ) -> Option<AssignmentPlan> {
-    let core = choose_core(cw, cube, place_idx)?;
-    let core_loc = fulfillment_location(cw, &core);
+    let anchors = choose_core(cw, cube, place_idx)?;
     let place = &cw.places[place_idx];
 
     let mut chosen: Vec<FulfilledPorf> = Vec::new();
@@ -706,7 +870,7 @@ pub fn plan_assignment(
         // already owned by another place, keeping each owner's id.
         let mut free: Vec<FulfilledPorf> = Vec::new();
         let mut assigned: Vec<(FulfilledPorf, PlacedPlaceId)> = Vec::new();
-        for c in candidates_near(cw, core_loc, &req.requirement, &place.name) {
+        for c in candidates_near(cw, &anchors, &req.requirement, &place.name) {
             if chosen.contains(&c) {
                 continue;
             }
@@ -877,7 +1041,8 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
     loop {
         let stale = cw.placed_places.iter().find_map(|(id, pp)| {
             let def = &cw.places[pp.place];
-            let ok = try_place_location(cw, id).is_some_and(|loc| requirements_met(cw, loc, def));
+            let ok = try_place_location(cw, id).is_some()
+                && requirements_met(cw, &placed_core_anchors(cw, id), def);
             (!ok).then_some(id)
         });
         match stale {
@@ -1106,24 +1271,50 @@ fn deposit_into_rack(
 fn deposit_into_bookcase(cw: &mut ConstructedCity, item: UniqueResource) -> bool {
     let volume = item.volume();
     for id in storage_ids(cw) {
-        let pp = &cw.placed_places[id];
-        let ceiling: f32 = pp
-            .fulfillments
-            .iter()
-            .filter_map(|f| match f {
-                FulfilledPorf::Furniture(loc) => {
-                    Some(slot_storage_capacity(cw, *loc, StorageKind::Book))
-                }
-                FulfilledPorf::Place(_) => None,
-            })
-            .sum();
-        let current = pp.contents.book_count() as f32 * volume;
-        if (ceiling - current).min(pp.contents.remaining_capacity(StorageKind::Book)) >= volume {
+        if book_free_capacity_for(cw, &cw.placed_places[id]) >= volume {
             cw.placed_places[id].contents.add_unique(item);
             return true;
         }
     }
     false
+}
+
+/// Shelf volume still free in one storage place: whichever is smaller of the
+/// room left on its own bookcases and the room left in its inventory's `Book`
+/// pool.
+fn book_free_capacity_for(cw: &ConstructedCity, pp: &ParticularPlace) -> f32 {
+    let ceiling: f32 = pp
+        .fulfillments
+        .iter()
+        .filter_map(|f| match f {
+            FulfilledPorf::Furniture(loc) => {
+                Some(slot_storage_capacity(cw, *loc, StorageKind::Book))
+            }
+            FulfilledPorf::Place(_) => None,
+        })
+        .sum();
+    let current = pp.contents.book_count() as f32 * book_volume();
+    (ceiling - current)
+        .min(pp.contents.remaining_capacity(StorageKind::Book))
+        .max(0.0)
+}
+
+/// The shelf volume one book occupies.
+pub fn book_volume() -> f32 {
+    UniqueResource::Book {
+        title: String::new(),
+    }
+    .volume()
+}
+
+/// Shelf volume still free across all storage places -- the book counterpart of
+/// `rack_free_capacity`, used to decide whether a book a traveler is offering
+/// has anywhere to go.
+pub fn book_free_capacity(cw: &ConstructedCity) -> f32 {
+    storage_ids(cw)
+        .into_iter()
+        .map(|id| book_free_capacity_for(cw, &cw.placed_places[id]))
+        .sum()
 }
 
 fn is_public_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
@@ -1662,6 +1853,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 
@@ -1744,6 +1936,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }];
 
         put(
@@ -1806,6 +1999,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }];
 
         let core = SlotCoord {
@@ -1826,7 +2020,10 @@ mod tests {
     #[test]
     fn bundled_place_definitions_cross_reference_cleanly() {
         // Panics if places.ron names a furniture/place that doesn't exist.
-        let infos = load_place_info(&crate::eorf::load_structure_info());
+        let infos = load_place_info(
+            &crate::eorf::load_structure_info(),
+            &crate::idea::load_idea_info(),
+        );
         assert!(!infos.is_empty());
     }
 
@@ -1834,7 +2031,32 @@ mod tests {
     #[should_panic(expected = "unknown furniture")]
     fn validation_rejects_unknown_furniture_reference() {
         let places = vec![place_def(1, None)]; // requires furniture "bin"
-        validate_place_info(&places, &[]); // ...but no eorfs exist
+        validate_place_info(&places, &[], &[]); // ...but no eorfs exist
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown idea")]
+    fn validation_rejects_a_gate_on_an_unknown_idea() {
+        let mut place = place_def(1, None);
+        place.gate = Some(IdeaGate {
+            idea: "Astrology".to_string(),
+            unlock_at: 0.5,
+            full_at: 1.0,
+        });
+        validate_place_info(&[place], &test_structures(), &crate::idea::load_idea_info());
+    }
+
+    /// A gate that never ramps would divide by zero when computing efficiency.
+    #[test]
+    #[should_panic(expected = "isn't below its full_at")]
+    fn validation_rejects_a_gate_with_an_empty_ramp() {
+        let mut place = place_def(1, None);
+        place.gate = Some(IdeaGate {
+            idea: "Specialization".to_string(),
+            unlock_at: 1.0,
+            full_at: 1.0,
+        });
+        validate_place_info(&[place], &test_structures(), &crate::idea::load_idea_info());
     }
 
     #[test]
@@ -1854,6 +2076,23 @@ mod tests {
         assert!(plan.chosen.contains(&f(b(0, 0))));
         assert!(plan.chosen.contains(&f(b(0, 1))));
         assert!(!plan.chosen.contains(&f(b(10, 0))));
+    }
+
+    #[test]
+    fn a_chain_of_cores_forms_one_large_place_regardless_of_which_end_is_clicked() {
+        // Each neighbor is 5 apart (within PLACE_DIST), but the chain spans 10,
+        // which is itself beyond PLACE_DIST -- only reachable by chaining
+        // through the middle bin.
+        let grid = grid_with_bins(place_def(1, None), &[b(0, 0), b(5, 0), b(10, 0)]);
+
+        for &click in &[b(0, 0), b(5, 0), b(10, 0)] {
+            let plan = plan_assignment(&grid, click, 0).unwrap();
+            assert_eq!(
+                plan.chosen.len(),
+                3,
+                "clicking {click:?} should chain through the whole row"
+            );
+        }
     }
 
     #[test]
@@ -1994,9 +2233,15 @@ mod tests {
     /// tool slot must actually have carpenter's tools installed (not just a
     /// bare table) before a "carpenter's workshop" forms alongside a bin and a
     /// chair, and removing the tool dissolves it again.
+    ///
+    /// The workshop is also idea-gated, so this starts by learning enough
+    /// Specialization to clear the gate -- see
+    /// `an_idea_gate_hides_the_carpenters_workshop_until_it_is_met` for the
+    /// gate's own coverage.
     #[test]
     fn installing_carpenters_tools_on_a_table_forms_a_workshop() {
         let mut session = HeadlessSession::new(1);
+        dispatch_ok(&mut session, "learn Specialization 50");
 
         // Somewhere far from the initial furniture so nothing else is swept in.
         dispatch_ok(&mut session, "place 100 0 100 room table");
@@ -2036,6 +2281,69 @@ mod tests {
         );
     }
 
+    /// The gate, end-to-end through the real systems: with the furniture and
+    /// the installed tool all in place, a carpenter's workshop still doesn't
+    /// exist until Specialization is half understood -- and it isn't even
+    /// *offered* (`valid_places`) below the threshold. Crossing it mid-session
+    /// forms the workshop with no further edit, which is the cascade
+    /// `sync_idea_progress` -> `sync_places_system` doing its job.
+    #[test]
+    fn an_idea_gate_hides_the_carpenters_workshop_until_it_is_met() {
+        let mut session = HeadlessSession::new(1);
+
+        dispatch_ok(&mut session, "place 100 0 100 room table");
+        dispatch_ok(&mut session, "place 100 0 101 room bin");
+        dispatch_ok(&mut session, "place 100 0 102 xwall chair");
+        dispatch_ok(&mut session, "deposit_tool");
+        dispatch_ok(&mut session, "install 100 0 100 0");
+        dispatch_ok(&mut session, "tick");
+
+        let workshop_formed = |session: &mut HeadlessSession| {
+            dispatch_ok(session, "query place 100 0 100")
+                .iter()
+                .any(|l| l.contains("carpenter's_workshop"))
+        };
+        let workshop_offered = |session: &mut HeadlessSession| {
+            dispatch_ok(session, "query valid_places 100 0 100")
+                .iter()
+                .any(|l| l.contains("carpenter's_workshop"))
+        };
+
+        assert!(
+            !workshop_formed(&mut session),
+            "no Specialization at all: the workshop must not form"
+        );
+        assert!(
+            !workshop_offered(&mut session),
+            "a locked place kind shouldn't be offered either"
+        );
+
+        // 24/50 is 48% -- still short of the 50% threshold.
+        dispatch_ok(&mut session, "learn Specialization 24");
+        dispatch_ok(&mut session, "tick");
+        assert!(
+            !workshop_formed(&mut session),
+            "48% understood is below the 50% gate"
+        );
+
+        // 25/50 is exactly 50%: unlocked, though at zero efficiency.
+        dispatch_ok(&mut session, "learn Specialization 25");
+        dispatch_ok(&mut session, "tick");
+        assert!(
+            workshop_formed(&mut session),
+            "crossing the threshold should form the workshop with no further edit"
+        );
+        assert!(workshop_offered(&mut session));
+
+        let ideas = dispatch_ok(&mut session, "query ideas");
+        assert!(
+            ideas
+                .iter()
+                .any(|l| l.contains("carpenter's_workshop") && l.contains("efficiency=0.00")),
+            "at exactly the unlock threshold the workshop should be useless: {ideas:?}"
+        );
+    }
+
     // ── storage capacity helpers ────────────────────────────────────────────
 
     fn storage_place_def() -> Place {
@@ -2056,6 +2364,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 
@@ -2221,6 +2530,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 
@@ -2239,6 +2549,7 @@ mod tests {
             quality_factors: vec![],
             assignable_for: None,
             work: None,
+            gate: None,
         }
     }
 

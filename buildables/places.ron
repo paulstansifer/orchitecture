@@ -170,6 +170,13 @@
             ),
         ],
         work: Some(ToolEffect),
+        // Doesn't exist at all until Specialization is half understood, then
+        // ramps from useless to full output over the remaining half.
+        gate: Some((
+            idea: "Specialization",
+            unlock_at: 0.5,
+            full_at: 1.0,
+        )),
     ),
     (
         name: "inn",
