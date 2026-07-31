@@ -524,11 +524,9 @@ pub fn compute_floor_edge(
     (hidden, cut)
 }
 
-/// Returns true if `loc` falls inside the SimpleOctant hidden region.
-fn octant_hidden(loc: SlotCoord, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool) -> bool {
-    if loc.cube.y < cur_y || (loc.cube.y == cur_y && loc.slot == Slot::Floor) {
-        return false;
-    }
+/// Whether `loc`'s (x, z) falls within the SimpleOctant's horizontal half-space.
+/// `x_neg`/`z_neg`: true means the camera-side is the *negative* half-space.
+fn in_octant_xz(loc: SlotCoord, sx: i32, sz: i32, x_neg: bool, z_neg: bool) -> bool {
     let x_ok = if x_neg {
         loc.cube.x < sx
     } else {
@@ -539,10 +537,15 @@ fn octant_hidden(loc: SlotCoord, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_ne
     } else {
         loc.cube.z >= sz
     };
-    if x_ok && z_ok {
-        return true;
+    x_ok && z_ok
+}
+
+/// Returns true if `loc` falls inside the SimpleOctant hidden region.
+fn octant_hidden(loc: SlotCoord, sx: i32, sz: i32, cur_y: i32, x_neg: bool, z_neg: bool) -> bool {
+    if loc.cube.y < cur_y || (loc.cube.y == cur_y && loc.slot == Slot::Floor) {
+        return false;
     }
-    false
+    in_octant_xz(loc, sx, sz, x_neg, z_neg)
 }
 
 /// Collects cut-face entries for the SimpleOctant algorithm.
@@ -556,17 +559,7 @@ fn simple_octant_cuts(
     z_neg: bool,
 ) -> Vec<(SlotCoord, EorfId, bool)> {
     let is_cut_face = |loc: SlotCoord| {
-        let x_ok = if x_neg {
-            loc.cube.x < sx
-        } else {
-            loc.cube.x >= sx
-        };
-        let z_ok = if z_neg {
-            loc.cube.z < sz
-        } else {
-            loc.cube.z >= sz
-        };
-        x_ok && z_ok && loc.cube.y == cut_y && loc.slot != Slot::Floor
+        in_octant_xz(loc, sx, sz, x_neg, z_neg) && loc.cube.y == cut_y && loc.slot != Slot::Floor
     };
     let mut cuts = vec![];
     for (loc, cell) in cw.contents.iter() {
@@ -773,25 +766,23 @@ pub fn update_cutaway_system(
     }
 
     for (entity, marker, current_layers) in ghost_q.iter() {
-        let desired = if hidden.contains(marker.loc) {
-            RenderLayers::layer(SHADOW_ONLY_LAYER)
-        } else {
-            RenderLayers::default()
-        };
-        if current_layers.map_or(desired != RenderLayers::default(), |l| l != &desired) {
-            apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
-        }
+        sync_proposal_render_layers(
+            entity,
+            current_layers,
+            hidden.contains(marker.loc),
+            &children_q,
+            &mut commands,
+        );
     }
 
     for (entity, marker, current_layers) in overlay_q.iter() {
-        let desired = if hidden.contains(marker.loc) {
-            RenderLayers::layer(SHADOW_ONLY_LAYER)
-        } else {
-            RenderLayers::default()
-        };
-        if current_layers.map_or(desired != RenderLayers::default(), |l| l != &desired) {
-            apply_render_layers_to_tree(entity, &desired, &children_q, &mut commands);
-        }
+        sync_proposal_render_layers(
+            entity,
+            current_layers,
+            hidden.contains(marker.loc),
+            &children_q,
+            &mut commands,
+        );
     }
 
     // Separate proposed-only cuts from regular cuts.
@@ -805,72 +796,88 @@ pub fn update_cutaway_system(
         }
     }
 
-    // Diff regular cut entities so unchanged cuts persist across frames.
-    viewable.cut_entities.retain(|loc, (id, entities)| {
-        if desired_regular.get(loc) == Some(id) {
+    sync_cut_entities(
+        &mut viewable.cut_entities,
+        desired_regular,
+        false,
+        &assembled,
+        &structure_list,
+        &autotile_handles,
+        &mut commands,
+    );
+    sync_cut_entities(
+        &mut viewable.proposed_cut_entities,
+        desired_proposed,
+        true,
+        &assembled,
+        &structure_list,
+        &autotile_handles,
+        &mut commands,
+    );
+}
+
+/// Updates a proposal-overlay entity's (and its subtree's) render layers to reflect
+/// whether its cell is currently cutaway-hidden.
+fn sync_proposal_render_layers(
+    entity: Entity,
+    current_layers: Option<&RenderLayers>,
+    want_hidden: bool,
+    children_q: &Query<&Children>,
+    commands: &mut Commands,
+) {
+    let desired = if want_hidden {
+        RenderLayers::layer(SHADOW_ONLY_LAYER)
+    } else {
+        RenderLayers::default()
+    };
+    if current_layers.map_or(desired != RenderLayers::default(), |l| l != &desired) {
+        apply_render_layers_to_tree(entity, &desired, children_q, commands);
+    }
+}
+
+/// Diffs `entities` against `desired` (loc -> structure id): despawns entities for
+/// locations that dropped out or changed structure, then spawns entities for locations
+/// newly entering the cut zone. Locations whose desired id is unchanged are left alone
+/// so unchanged cuts persist across frames. `is_proposed` controls whether spawned
+/// entities also get a `ProposedCutMarker`.
+fn sync_cut_entities(
+    entities: &mut HashMap<SlotCoord, (EorfId, Vec<Entity>)>,
+    desired: HashMap<SlotCoord, EorfId>,
+    is_proposed: bool,
+    assembled: &AssembledCity,
+    structure_list: &EorfList,
+    autotile_handles: &AutotileHandles,
+    commands: &mut Commands,
+) {
+    entities.retain(|loc, (id, ents)| {
+        if desired.get(loc) == Some(id) {
             true
         } else {
-            for e in entities.iter() {
+            for e in ents.iter() {
                 commands.entity(*e).despawn();
             }
             false
         }
     });
 
-    // Spawn regular cut entities for locations newly entering the cut zone.
-    for (loc, id) in desired_regular {
-        if viewable.cut_entities.get(&loc).map(|(i, _)| *i) == Some(id) {
+    for (loc, id) in desired {
+        if entities.get(&loc).map(|(i, _)| *i) == Some(id) {
             continue;
         }
-        let cuts = get_cuts(loc, id, &assembled, &structure_list, &autotile_handles);
+        let cuts = get_cuts(loc, id, assembled, structure_list, autotile_handles);
         if !cuts.is_empty() {
-            let entities: Vec<Entity> = cuts
+            let new_entities: Vec<Entity> = cuts
                 .into_iter()
                 .map(|(cut_handle, transform)| {
-                    commands
-                        .spawn((SceneRoot(cut_handle), transform, CutCellMarker { loc }))
-                        .id()
+                    let mut ec =
+                        commands.spawn((SceneRoot(cut_handle), transform, CutCellMarker { loc }));
+                    if is_proposed {
+                        ec.insert(ProposedCutMarker);
+                    }
+                    ec.id()
                 })
                 .collect();
-            viewable.cut_entities.insert(loc, (id, entities));
-        }
-    }
-
-    // Despawn proposed cut entities whose location or structure ID changed.
-    viewable
-        .proposed_cut_entities
-        .retain(|loc, (id, entities)| {
-            if desired_proposed.get(loc) == Some(id) {
-                true
-            } else {
-                for e in entities.iter() {
-                    commands.entity(*e).despawn();
-                }
-                false
-            }
-        });
-
-    // Spawn proposed cut entities for locations newly entering the cut zone.
-    for (loc, id) in desired_proposed {
-        if viewable.proposed_cut_entities.get(&loc).map(|(i, _)| *i) == Some(id) {
-            continue;
-        }
-        let cuts = get_cuts(loc, id, &assembled, &structure_list, &autotile_handles);
-        if !cuts.is_empty() {
-            let entities: Vec<Entity> = cuts
-                .into_iter()
-                .map(|(cut_handle, transform)| {
-                    commands
-                        .spawn((
-                            SceneRoot(cut_handle),
-                            transform,
-                            CutCellMarker { loc },
-                            ProposedCutMarker,
-                        ))
-                        .id()
-                })
-                .collect();
-            viewable.proposed_cut_entities.insert(loc, (id, entities));
+            entities.insert(loc, (id, new_entities));
         }
     }
 }

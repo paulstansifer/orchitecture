@@ -250,6 +250,314 @@ fn apply_edit(
     }
 }
 
+/// "Layer up/down" arrow keys and shift+scroll-wheel, both driving `build_state.cur_y`.
+fn handle_layer_controls(
+    keyboard: &ButtonInput<KeyCode>,
+    mouse_scroll: &AccumulatedMouseScroll,
+    egui_wants_input: &bevy_egui::input::EguiWantsInput,
+    typing: bool,
+    build_state: &mut BuildState,
+) {
+    if !typing && keyboard.just_pressed(KeyCode::ArrowUp) {
+        build_state.cur_y = (build_state.cur_y + 1).min(10);
+    }
+    if !typing && keyboard.just_pressed(KeyCode::ArrowDown) {
+        build_state.cur_y = (build_state.cur_y - 1).max(0);
+    }
+
+    let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+    if shift && !egui_wants_input.wants_any_pointer_input() {
+        if mouse_scroll.delta.y > 0.5 {
+            build_state.cur_y = (build_state.cur_y + 1).min(10);
+        } else if mouse_scroll.delta.y < -0.5 {
+            build_state.cur_y = (build_state.cur_y - 1).max(0);
+        }
+    }
+}
+
+/// `R` key: cycles the selected structure's rotation, or for a `WallPlop`, flips its
+/// orientation on whichever wall axis the cursor is currently nearest to.
+fn handle_rotation(
+    keyboard: &ButtonInput<KeyCode>,
+    typing: bool,
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    camera_q: &Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+    constructed: &ConstructedCity,
+    build_state: &mut BuildState,
+) {
+    if typing || !keyboard.just_pressed(KeyCode::KeyR) {
+        return;
+    }
+    let id = EorfId(build_state.selected_structure as u32);
+    if constructed.structure_is_wall_plop(id) {
+        // WallPlop only rotates 180°, and the X-wall/Z-wall rotation
+        // states are independent (see `BuildState::wall_plop_flip_x`).
+        // Which one flips depends on whichever wall the cursor is
+        // currently nearest to.
+        if let Some(pos) = cursor_world_pos(windows, camera_q, build_state.cur_y as f32) {
+            match crate::city::nearest_wall_slot(pos).slot {
+                Slot::XLoWall => build_state.wall_plop_flip_x = !build_state.wall_plop_flip_x,
+                Slot::ZLoWall => build_state.wall_plop_flip_z = !build_state.wall_plop_flip_z,
+                Slot::Room | Slot::Floor => {}
+            }
+        }
+    } else {
+        build_state.cur_dir = (build_state.cur_dir + 3) % 4;
+    }
+}
+
+/// `C` key: cycles through the cutaway-view algorithms.
+fn handle_cutaway_cycle(
+    keyboard: &ButtonInput<KeyCode>,
+    typing: bool,
+    cutaway_mode: &mut CutawayMode,
+) {
+    if !typing && keyboard.just_pressed(KeyCode::KeyC) {
+        *cutaway_mode = match *cutaway_mode {
+            CutawayMode::FloorEdge => CutawayMode::SimpleOctant,
+            CutawayMode::SimpleOctant => CutawayMode::FloorEdgePlusOctant,
+            CutawayMode::FloorEdgePlusOctant => CutawayMode::FloorEdge,
+        };
+    }
+}
+
+/// F1/F2/F3: switches the left-panel tab.
+fn handle_left_tab_keys(
+    keyboard: &ButtonInput<KeyCode>,
+    typing: bool,
+    ui_state: &mut crate::build_ui::UiState,
+) {
+    if !typing && keyboard.just_pressed(KeyCode::F1) {
+        ui_state.left_tab = crate::build_ui::LeftTab::Elements;
+    }
+    if !typing && keyboard.just_pressed(KeyCode::F2) {
+        ui_state.left_tab = crate::build_ui::LeftTab::Furniture;
+    }
+    if !typing && keyboard.just_pressed(KeyCode::F3) {
+        ui_state.left_tab = crate::build_ui::LeftTab::Places;
+    }
+}
+
+/// Eorf selection by digit key (in sorted display order, filtered to the active tab -- so
+/// digits 1-9 reach the same 9 structures the Elements/Furniture tab currently numbers 1-9).
+fn handle_digit_selection(
+    keyboard: &ButtonInput<KeyCode>,
+    typing: bool,
+    ui_state: &crate::build_ui::UiState,
+    constructed: &ConstructedCity,
+    build_state: &mut BuildState,
+) {
+    if typing {
+        return;
+    }
+    const DIGIT_KEYS: [KeyCode; 9] = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+    let want_furniture = match ui_state.left_tab {
+        crate::build_ui::LeftTab::Elements => Some(false),
+        crate::build_ui::LeftTab::Furniture => Some(true),
+        crate::build_ui::LeftTab::Places => None,
+    };
+    let Some(want_furniture) = want_furniture else {
+        return;
+    };
+    let filtered: Vec<usize> = crate::eorf::sorted_structure_indices(&constructed.eorfs)
+        .into_iter()
+        .filter(|&i| {
+            constructed.eorfs[i].is_furniture() == want_furniture && constructed.eorfs[i].placeable
+        })
+        .collect();
+    for (display_idx, key) in DIGIT_KEYS.iter().enumerate() {
+        if keyboard.just_pressed(*key) {
+            if let Some(&struct_idx) = filtered.get(display_idx) {
+                build_state.selected_structure = struct_idx;
+            }
+        }
+    }
+}
+
+/// Z/Y: undo/redo the last proposal edit.
+#[allow(clippy::too_many_arguments)]
+fn handle_undo_redo(
+    commands: &mut Commands,
+    keyboard: &ButtonInput<KeyCode>,
+    typing: bool,
+    constructed: &mut ConstructedCity,
+    pending: &mut crate::city::ProposedCity,
+    assembled: &mut crate::city::AssembledCity,
+    structure_list: &EorfList,
+    overlay_assets: &ProposalOverlayAssets,
+    material_list: &crate::materials::MaterialList,
+    sandbox_enabled: bool,
+) {
+    let undo_redo_changes = if typing {
+        None
+    } else if keyboard.just_pressed(KeyCode::KeyZ) {
+        Some(pending.undo(constructed))
+    } else if keyboard.just_pressed(KeyCode::KeyY) {
+        Some(pending.redo(constructed))
+    } else {
+        None
+    };
+    if let Some(changes) = undo_redo_changes {
+        apply_edit(
+            commands,
+            constructed,
+            pending,
+            assembled,
+            structure_list,
+            overlay_assets,
+            material_list,
+            sandbox_enabled,
+            changes,
+        );
+    }
+}
+
+/// `V` key: evaluates the QNN model at the cursor and records the result for the UI.
+fn handle_evaluate(
+    keyboard: &ButtonInput<KeyCode>,
+    typing: bool,
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    camera_q: &Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+    constructed: &ConstructedCity,
+    model_state: &crate::qnn::ModelState,
+    build_state: &mut BuildState,
+) {
+    if typing || !keyboard.just_pressed(KeyCode::KeyV) {
+        return;
+    }
+    let Some(world_pos) = cursor_world_pos(windows, camera_q, build_state.cur_y as f32) else {
+        return;
+    };
+    let Some(holder) = &model_state.holder else {
+        return;
+    };
+    let holder = holder.lock().unwrap();
+    let metrics =
+        crate::qnn::compute_metrics(&holder, &constructed.contents, &constructed.eorfs, world_pos);
+    if metrics.len() >= 2 {
+        build_state.evaluation = Some((metrics[0], metrics[1]));
+    }
+}
+
+/// Left-click/drag: places or removes structures along the drag, then commits the edit.
+#[allow(clippy::too_many_arguments)]
+fn handle_drag_building(
+    commands: &mut Commands,
+    keyboard: &ButtonInput<KeyCode>,
+    mouse_button: &ButtonInput<MouseButton>,
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    camera_q: &Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+    constructed: &mut ConstructedCity,
+    pending: &mut crate::city::ProposedCity,
+    assembled: &mut crate::city::AssembledCity,
+    structure_list: &EorfList,
+    overlay_assets: &ProposalOverlayAssets,
+    material_list: &crate::materials::MaterialList,
+    sandbox_enabled: bool,
+    build_state: &mut BuildState,
+) {
+    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+    let remove = ctrl;
+
+    if mouse_button.just_pressed(MouseButton::Left) {
+        if let Some(pos) = cursor_world_pos(windows, camera_q, build_state.cur_y as f32) {
+            build_state.drag_start = Some(pos);
+        }
+    }
+
+    if mouse_button.just_released(MouseButton::Left) {
+        if let (Some(start), Some(end)) = (
+            build_state.drag_start.take(),
+            cursor_world_pos(windows, camera_q, build_state.cur_y as f32),
+        ) {
+            let id = EorfId(build_state.selected_structure as u32);
+            let dir = if constructed.structure_is_wall_plop(id) {
+                build_state.wall_plop_dir(crate::city::nearest_wall_slot(start).slot)
+            } else {
+                build_state.cur_dir as i32
+            };
+            let build_material = {
+                let info = &constructed.eorfs[id.as_usize()];
+                if info.is_furniture() {
+                    // Meaningless for furniture (which always displays as
+                    // planks), but `propose` wants one.
+                    BuildMaterialId::default()
+                } else {
+                    let stype = info.element_type().unwrap_or_default();
+                    build_state.material_for_type(stype, material_list)
+                }
+            };
+
+            let dist_sq = (end - start).length_squared();
+
+            let changes = if dist_sq < 0.25 {
+                pending.click(constructed, start, id, dir, remove, build_material)
+            } else {
+                pending.drag(constructed, (start, end), dir, id, remove, build_material)
+            };
+
+            apply_edit(
+                commands,
+                constructed,
+                pending,
+                assembled,
+                structure_list,
+                overlay_assets,
+                material_list,
+                sandbox_enabled,
+                changes,
+            );
+        }
+    }
+}
+
+/// Right-click (as opposed to right-drag, which rotates the camera): picks a real furniture
+/// cell under the cursor for the furniture-editing popup.
+fn handle_furniture_pick(
+    mouse_button: &ButtonInput<MouseButton>,
+    window: &Window,
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    camera_q: &Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+    egui_wants_input: &bevy_egui::input::EguiWantsInput,
+    grid_raycast: &mut crate::selection::GridRaycast,
+    constructed: &ConstructedCity,
+    right_press_pos: &mut Option<Vec2>,
+    furniture_right_click: &mut crate::build_ui::FurnitureRightClick,
+) {
+    if mouse_button.just_pressed(MouseButton::Right) {
+        *right_press_pos = window.cursor_position();
+    }
+    if mouse_button.just_released(MouseButton::Right) {
+        let pressed = right_press_pos.take();
+        let moved = pressed
+            .zip(window.cursor_position())
+            .map(|(a, b)| a.distance(b))
+            .unwrap_or(f32::INFINITY);
+        // A click barely moves the cursor; a rotate-drag moves it a lot.
+        if moved < 4.0 && !egui_wants_input.wants_any_pointer_input() {
+            if let Some(ray) = crate::selection::cursor_ray(windows, camera_q) {
+                if let Some(loc) = grid_raycast.cast(ray) {
+                    if let Some(cell) = constructed.contents.get(loc) {
+                        if constructed.eorfs[cell.id.as_usize()].is_furniture() {
+                            furniture_right_click.0 = Some(loc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn building_input_system(
     mut commands: Commands,
     keyboard: Res<ButtonInput<KeyCode>>,
@@ -274,7 +582,7 @@ pub fn building_input_system(
         model_state,
         material_list,
     } = assets;
-    let (mut constructed, mut pending, mut assembled) = (
+    let (constructed, pending, assembled) = (
         &mut world.constructed,
         &mut world.pending,
         &mut world.assembled,
@@ -283,224 +591,78 @@ pub fn building_input_system(
     // build-tool keyboard shortcuts so they don't fire behind the widget.
     let typing = egui_wants_input.wants_keyboard_input();
 
-    // --- Layer up/down ---
-    if !typing && keyboard.just_pressed(KeyCode::ArrowUp) {
-        build_state.cur_y = (build_state.cur_y + 1).min(10);
-    }
-    if !typing && keyboard.just_pressed(KeyCode::ArrowDown) {
-        build_state.cur_y = (build_state.cur_y - 1).max(0);
-    }
+    handle_layer_controls(
+        &keyboard,
+        &mouse_scroll,
+        &egui_wants_input,
+        typing,
+        &mut build_state,
+    );
+    handle_rotation(
+        &keyboard,
+        typing,
+        &windows,
+        &camera_q,
+        constructed,
+        &mut build_state,
+    );
+    handle_cutaway_cycle(&keyboard, typing, &mut cutaway_mode);
+    handle_left_tab_keys(&keyboard, typing, &mut ui_state);
+    handle_digit_selection(&keyboard, typing, &ui_state, constructed, &mut build_state);
+    handle_undo_redo(
+        &mut commands,
+        &keyboard,
+        typing,
+        constructed,
+        pending,
+        assembled,
+        &structure_list,
+        &overlay_assets,
+        &material_list,
+        sandbox.enabled,
+    );
+    handle_evaluate(
+        &keyboard,
+        typing,
+        &windows,
+        &camera_q,
+        constructed,
+        &model_state,
+        &mut build_state,
+    );
 
-    let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-    if shift && !egui_wants_input.wants_any_pointer_input() {
-        if mouse_scroll.delta.y > 0.5 {
-            build_state.cur_y = (build_state.cur_y + 1).min(10);
-        } else if mouse_scroll.delta.y < -0.5 {
-            build_state.cur_y = (build_state.cur_y - 1).max(0);
-        }
-    }
-
-    // --- Rotation ---
-    if !typing && keyboard.just_pressed(KeyCode::KeyR) {
-        let id = EorfId(build_state.selected_structure as u32);
-        if constructed.structure_is_wall_plop(id) {
-            // WallPlop only rotates 180°, and the X-wall/Z-wall rotation
-            // states are independent (see `BuildState::wall_plop_flip_x`).
-            // Which one flips depends on whichever wall the cursor is
-            // currently nearest to.
-            if let Some(pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
-                match crate::city::nearest_wall_slot(pos).slot {
-                    Slot::XLoWall => build_state.wall_plop_flip_x = !build_state.wall_plop_flip_x,
-                    Slot::ZLoWall => build_state.wall_plop_flip_z = !build_state.wall_plop_flip_z,
-                    Slot::Room | Slot::Floor => {}
-                }
-            }
-        } else {
-            build_state.cur_dir = (build_state.cur_dir + 3) % 4;
-        }
-    }
-
-    // --- Cutaway mode cycle ---
-    if !typing && keyboard.just_pressed(KeyCode::KeyC) {
-        *cutaway_mode = match *cutaway_mode {
-            CutawayMode::FloorEdge => CutawayMode::SimpleOctant,
-            CutawayMode::SimpleOctant => CutawayMode::FloorEdgePlusOctant,
-            CutawayMode::FloorEdgePlusOctant => CutawayMode::FloorEdge,
-        };
-    }
-
-    // --- Left-panel tab switching ---
-    if !typing && keyboard.just_pressed(KeyCode::F1) {
-        ui_state.left_tab = crate::build_ui::LeftTab::Elements;
-    }
-    if !typing && keyboard.just_pressed(KeyCode::F2) {
-        ui_state.left_tab = crate::build_ui::LeftTab::Furniture;
-    }
-    if !typing && keyboard.just_pressed(KeyCode::F3) {
-        ui_state.left_tab = crate::build_ui::LeftTab::Places;
-    }
-
-    // --- Eorf selection by digit key (in sorted display order, filtered to
-    // the active tab -- so digits 1-9 reach the same 9 structures the
-    // Elements/Furniture tab currently numbers 1-9). ---
-    if !typing {
-        const DIGIT_KEYS: [KeyCode; 9] = [
-            KeyCode::Digit1,
-            KeyCode::Digit2,
-            KeyCode::Digit3,
-            KeyCode::Digit4,
-            KeyCode::Digit5,
-            KeyCode::Digit6,
-            KeyCode::Digit7,
-            KeyCode::Digit8,
-            KeyCode::Digit9,
-        ];
-        let want_furniture = match ui_state.left_tab {
-            crate::build_ui::LeftTab::Elements => Some(false),
-            crate::build_ui::LeftTab::Furniture => Some(true),
-            crate::build_ui::LeftTab::Places => None,
-        };
-        if let Some(want_furniture) = want_furniture {
-            let filtered: Vec<usize> = crate::eorf::sorted_structure_indices(&constructed.eorfs)
-                .into_iter()
-                .filter(|&i| {
-                    constructed.eorfs[i].is_furniture() == want_furniture
-                        && constructed.eorfs[i].placeable
-                })
-                .collect();
-            for (display_idx, key) in DIGIT_KEYS.iter().enumerate() {
-                if keyboard.just_pressed(*key) {
-                    if let Some(&struct_idx) = filtered.get(display_idx) {
-                        build_state.selected_structure = struct_idx;
-                    }
-                }
-            }
-        }
-    }
-
-    // --- Undo / Redo ---
-    let undo_redo_changes = if typing {
-        None
-    } else if keyboard.just_pressed(KeyCode::KeyZ) {
-        Some(pending.undo(&constructed))
-    } else if keyboard.just_pressed(KeyCode::KeyY) {
-        Some(pending.redo(&constructed))
-    } else {
-        None
-    };
-    if let Some(changes) = undo_redo_changes {
-        apply_edit(
-            &mut commands,
-            &mut constructed,
-            &mut pending,
-            &mut assembled,
-            &structure_list,
-            &overlay_assets,
-            &material_list,
-            sandbox.enabled,
-            changes,
-        );
-    }
-
-    // --- Evaluate (V key) ---
-    if !typing && keyboard.just_pressed(KeyCode::KeyV) {
-        if let Some(world_pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
-            if let Some(holder) = &model_state.holder {
-                let holder = holder.lock().unwrap();
-                let metrics = crate::qnn::compute_metrics(
-                    &holder,
-                    &constructed.contents,
-                    &constructed.eorfs,
-                    world_pos,
-                );
-                if metrics.len() >= 2 {
-                    build_state.evaluation = Some((metrics[0], metrics[1]));
-                }
-            }
-        }
-    }
-
-    // --- Mouse drag building ---
-    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
-    let remove = ctrl;
+    // Left-drag building and right-click picking share this gate (and `window`): if there's
+    // no primary window this frame, neither can do anything.
     let Ok(window) = windows.single() else {
         return;
     };
 
-    if mouse_button.just_pressed(MouseButton::Left) {
-        if let Some(pos) = cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32) {
-            build_state.drag_start = Some(pos);
-        }
-    }
-
-    if mouse_button.just_released(MouseButton::Left) {
-        if let (Some(start), Some(end)) = (
-            build_state.drag_start.take(),
-            cursor_world_pos(&windows, &camera_q, build_state.cur_y as f32),
-        ) {
-            let id = EorfId(build_state.selected_structure as u32);
-            let dir = if constructed.structure_is_wall_plop(id) {
-                build_state.wall_plop_dir(crate::city::nearest_wall_slot(start).slot)
-            } else {
-                build_state.cur_dir as i32
-            };
-            let build_material = {
-                let info = &constructed.eorfs[id.as_usize()];
-                if info.is_furniture() {
-                    // Meaningless for furniture (which always displays as
-                    // planks), but `propose` wants one.
-                    BuildMaterialId::default()
-                } else {
-                    let stype = info.element_type().unwrap_or_default();
-                    build_state.material_for_type(stype, &material_list)
-                }
-            };
-
-            let dist_sq = (end - start).length_squared();
-
-            let changes = if dist_sq < 0.25 {
-                pending.click(&constructed, start, id, dir, remove, build_material)
-            } else {
-                pending.drag(&constructed, (start, end), dir, id, remove, build_material)
-            };
-
-            apply_edit(
-                &mut commands,
-                &mut constructed,
-                &mut pending,
-                &mut assembled,
-                &structure_list,
-                &overlay_assets,
-                &material_list,
-                sandbox.enabled,
-                changes,
-            );
-        }
-    }
-
-    // --- Right-click: pick a real furniture cell (vs. right-drag = camera rotate) ---
-    if mouse_button.just_pressed(MouseButton::Right) {
-        *right_press_pos = window.cursor_position();
-    }
-    if mouse_button.just_released(MouseButton::Right) {
-        let pressed = right_press_pos.take();
-        let moved = pressed
-            .zip(window.cursor_position())
-            .map(|(a, b)| a.distance(b))
-            .unwrap_or(f32::INFINITY);
-        // A click barely moves the cursor; a rotate-drag moves it a lot.
-        if moved < 4.0 && !egui_wants_input.wants_any_pointer_input() {
-            if let Some(ray) = crate::selection::cursor_ray(&windows, &camera_q) {
-                if let Some(loc) = grid_raycast.cast(ray) {
-                    if let Some(cell) = constructed.contents.get(loc) {
-                        if constructed.eorfs[cell.id.as_usize()].is_furniture() {
-                            furniture_right_click.0 = Some(loc);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    handle_drag_building(
+        &mut commands,
+        &keyboard,
+        &mouse_button,
+        &windows,
+        &camera_q,
+        constructed,
+        pending,
+        assembled,
+        &structure_list,
+        &overlay_assets,
+        &material_list,
+        sandbox.enabled,
+        &mut build_state,
+    );
+    handle_furniture_pick(
+        &mouse_button,
+        window,
+        &windows,
+        &camera_q,
+        &egui_wants_input,
+        &mut grid_raycast,
+        constructed,
+        &mut right_press_pos,
+        &mut furniture_right_click,
+    );
 }
 
 /// Keeps the room cursor's SceneRoot in sync with the selected structure.

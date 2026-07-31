@@ -779,46 +779,47 @@ pub fn slot_center(loc: SlotCoord) -> Vec3 {
 ///   Floor/Ceiling/Room: X in XZ plane  — arm along X, rotate ±45° around Y
 ///   XLoWall/XHiWall:    X in YZ plane  — arm along Y, rotate ±45° around X
 ///   ZLoWall/ZHiWall:    X in XY plane  — arm along X, rotate ±45° around Z
+/// The slot's outward surface-normal axis (Room has no real surface, but is treated the same
+/// as Floor here since overlays sit flat on it the same way). Single source of truth for
+/// `x_mesh_and_rotations`/`ring_rotation`/`protrude_axis` below, so a new `Slot` variant only
+/// needs its axis decided once -- the exhaustive `match` here (and in `protrude_axis`, the one
+/// place that still treats Room specially) also means the compiler catches a missed variant.
+fn slot_surface_axis(slot: Slot) -> Vec3 {
+    match slot {
+        Slot::Floor | Slot::Room => Vec3::Y,
+        Slot::XLoWall => Vec3::X,
+        Slot::ZLoWall => Vec3::Z,
+    }
+}
+
 fn x_mesh_and_rotations(slot: Slot, assets: &ProposalOverlayAssets) -> (Handle<Mesh>, Quat, Quat) {
     const ANGLE: f32 = TAU / 8.0;
-    match slot {
-        Slot::Floor | Slot::Room => (
-            assets.arm_along_x.clone(),
-            Quat::from_rotation_y(ANGLE),
-            Quat::from_rotation_y(-ANGLE),
-        ),
-        Slot::XLoWall => (
-            assets.arm_along_y.clone(),
-            Quat::from_rotation_x(ANGLE),
-            Quat::from_rotation_x(-ANGLE),
-        ),
-        Slot::ZLoWall => (
-            assets.arm_along_x.clone(),
-            Quat::from_rotation_z(ANGLE),
-            Quat::from_rotation_z(-ANGLE),
-        ),
-    }
+    let axis = slot_surface_axis(slot);
+    // The arm mesh must lie perpendicular to the rotation axis; `arm_along_x` works for every
+    // axis except X itself, which needs `arm_along_y` instead.
+    let arm_mesh = if axis == Vec3::X {
+        assets.arm_along_y.clone()
+    } else {
+        assets.arm_along_x.clone()
+    };
+    (
+        arm_mesh,
+        Quat::from_axis_angle(axis, ANGLE),
+        Quat::from_axis_angle(axis, -ANGLE),
+    )
 }
 
 /// Rotation to orient a Torus (default normal = +Y) to face the slot's surface normal.
 fn ring_rotation(slot: Slot) -> Quat {
-    match slot {
-        Slot::Floor | Slot::Room => Quat::IDENTITY,
-        // Rotate normal from +Y to +X: rotate -90° around Z
-        Slot::XLoWall => Quat::from_rotation_z(-TAU / 4.0),
-        // Rotate normal from +Y to +Z: rotate +90° around X
-        Slot::ZLoWall => Quat::from_rotation_x(TAU / 4.0),
-    }
+    Quat::from_rotation_arc(Vec3::Y, slot_surface_axis(slot))
 }
 
 /// Returns the axis along which overlays should be duplicated so they protrude
 /// from the slot surface and remain visible rather than buried in the mesh.
 fn protrude_axis(slot: Slot) -> Option<Vec3> {
     match slot {
-        Slot::XLoWall => Some(Vec3::X),
-        Slot::ZLoWall => Some(Vec3::Z),
-        Slot::Floor => Some(Vec3::Y),
         Slot::Room => None,
+        Slot::XLoWall | Slot::Floor | Slot::ZLoWall => Some(slot_surface_axis(slot)),
     }
 }
 
