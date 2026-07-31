@@ -25,13 +25,11 @@ pub fn has_sky_above(contents: &Sparse3D<Cell>, cube: IVec3, top_y: i32) -> bool
 }
 
 /// Heap entry ordered by level (higher = higher priority), with cube
-/// and source coordinates as tiebreakers so that `Ord` and `PartialEq` are
-/// consistent.
+/// coordinates as a tiebreaker so that `Ord` and `PartialEq` are consistent.
 #[derive(PartialEq, Eq)]
 struct HeapEntry {
     level_bits: u32,
     cube: IVec3,
-    source: IVec3,
 }
 
 impl Ord for HeapEntry {
@@ -41,9 +39,6 @@ impl Ord for HeapEntry {
             .then_with(|| self.cube.x.cmp(&other.cube.x))
             .then_with(|| self.cube.y.cmp(&other.cube.y))
             .then_with(|| self.cube.z.cmp(&other.cube.z))
-            .then_with(|| self.source.x.cmp(&other.source.x))
-            .then_with(|| self.source.y.cmp(&other.source.y))
-            .then_with(|| self.source.z.cmp(&other.source.z))
     }
 }
 
@@ -75,64 +70,57 @@ const DIRS: [IVec3; 6] = [
     IVec3::NEG_Z,
 ];
 
-/// Multi-source flood fill over a cubic grid, with per-cell top-`max_sources`
-/// contribution tracking and a screen-blend combine (`1 − ∏(1 − cᵢ)`).
+/// Multi-source flood fill over a cubic grid: each cell's value is the
+/// strongest (max) level reaching it from any seed.
 ///
-/// Each of `seeds` is planted at full strength `1.0` and tracked as its own
-/// independent source. Propagation uses a max-priority queue so the
-/// strongest frontier is always settled first. Each hop from `from` to `to`
-/// multiplies the current level by `multiplier(from, to)`; a multiplier of
-/// `0.0` blocks that boundary entirely (e.g. a solid wall), while values in
-/// between fold in both a material's transmission and any distance falloff.
+/// Each of `seeds` is planted at full strength `1.0`. Propagation uses a
+/// max-priority queue so the strongest frontier is always settled first.
+/// Each hop from `from` to `to` multiplies the current level by
+/// `multiplier(from, to)`; a multiplier of `0.0` blocks that boundary
+/// entirely (e.g. a solid wall), while values in between fold in both a
+/// material's transmission and any distance falloff.
 ///
-/// Per cell, only the strongest `max_sources` contributions (by level) are
-/// retained; the max-heap order guarantees that the first `max_sources`
-/// contributions settled for any cell are the strongest ones. The final
-/// value per cube is the screen blend of its retained contributions.
+/// Since every multiplier is in `[0.0, 1.0]`, level is non-increasing along
+/// any path, so the max-heap order guarantees the first time a cell is
+/// popped, it's been reached by the strongest possible path — no per-source
+/// bookkeeping is needed, unlike a screen-blend combine of multiple
+/// independent sources (which would double-count a single physical source
+/// that happens to reach a cell via more than one seed, e.g. several
+/// sky-visible cubes stacked in an unobstructed column).
 ///
 /// Only cubes within `[search_min, search_max]` (inclusive) are visited.
-/// Returns a map from cube coordinate to its combined value in [0.0, 1.0].
+/// Returns a map from cube coordinate to its level in [0.0, 1.0].
 pub fn flood_fill<M>(
     seeds: impl IntoIterator<Item = IVec3>,
     search_min: IVec3,
     search_max: IVec3,
-    max_sources: usize,
     mut multiplier: M,
 ) -> HashMap<IVec3, f32>
 where
     M: FnMut(IVec3, IVec3) -> f32,
 {
-    // Per cell: the settled contributions from the strongest `max_sources` sources.
-    // Key: cube coordinate → (source position → contribution level).
-    let mut contributions: HashMap<IVec3, HashMap<IVec3, f32>> = HashMap::new();
+    let mut settled: HashMap<IVec3, f32> = HashMap::new();
     // BinaryHeap is a max-heap. f32::to_bits() preserves order for non-negative floats.
     let mut heap: BinaryHeap<HeapEntry> = BinaryHeap::new();
 
     for cube in seeds {
-        contributions.entry(cube).or_default().insert(cube, 1.0);
-        heap.push(HeapEntry {
-            level_bits: 1.0f32.to_bits(),
-            cube,
-            source: cube,
-        });
+        if settled.insert(cube, 1.0).is_none() {
+            heap.push(HeapEntry {
+                level_bits: 1.0f32.to_bits(),
+                cube,
+            });
+        }
     }
 
     while let Some(HeapEntry {
-        level_bits,
-        cube,
-        source,
+        level_bits, cube, ..
     }) = heap.pop()
     {
         let level = f32::from_bits(level_bits);
 
-        // Discard stale entries: a better path for this (source, cube) pair was
-        // already settled if the stored level is strictly higher than what we popped.
-        let settled = contributions
-            .get(&cube)
-            .and_then(|m| m.get(&source))
-            .copied()
-            .unwrap_or(0.0);
-        if settled > level {
+        // Discard stale entries: a better (higher) level for this cell was
+        // already settled if it doesn't match what we popped.
+        if settled.get(&cube) != Some(&level) {
             continue;
         }
 
@@ -154,41 +142,20 @@ where
             }
             let new_level = level * m;
 
-            // Decide whether to update (source, neighbor): either improve an existing
-            // contribution or add a new one if the cell still has room.
-            let current_for_source = contributions
-                .get(&neighbor)
-                .and_then(|m| m.get(&source))
-                .copied();
-
-            let should_update = match current_for_source {
-                Some(c) => new_level > c,
-                None => {
-                    let count = contributions.get(&neighbor).map_or(0, |m| m.len());
-                    count < max_sources
-                }
+            let should_update = match settled.get(&neighbor) {
+                Some(&c) => new_level > c,
+                None => true,
             };
 
             if should_update {
-                contributions
-                    .entry(neighbor)
-                    .or_default()
-                    .insert(source, new_level);
+                settled.insert(neighbor, new_level);
                 heap.push(HeapEntry {
                     level_bits: new_level.to_bits(),
                     cube: neighbor,
-                    source,
                 });
             }
         }
     }
 
-    // Combine per-cell contributions with the screen blend: 1 − ∏(1 − cᵢ).
-    contributions
-        .into_iter()
-        .map(|(cube, source_map)| {
-            let screen = 1.0 - source_map.values().fold(1.0_f32, |acc, &v| acc * (1.0 - v));
-            (cube, screen)
-        })
-        .collect()
+    settled
 }

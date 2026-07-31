@@ -18,11 +18,6 @@ const FALLOFF_DOWNWARD: f32 = 0.30;
 /// Half-width of the per-hop falloff noise: effective falloff ∈ [FALLOFF − R, FALLOFF + R].
 const FALLOFF_NOISE_RADIUS: f32 = 0.10;
 
-/// Number of independent sky-source contributions tracked per cell.
-/// Since the heap is max-ordered, the first MAX_SOURCES to settle at any cell
-/// are definitionally the strongest ones, which is what we want.
-const MAX_SOURCES: usize = 4;
-
 /// Returns how much light passes through the boundary between adjacent cubes `from` and `to`.
 /// 0.0 = fully blocked, 0.5 = window/doorway, 1.0 = open air or transparent structure.
 fn boundary_transmission(
@@ -55,9 +50,9 @@ fn boundary_transmission(
 /// - window/doorway: × ≈0.30  (range 0.25–0.35)
 /// - wall/floor: blocked (× 0.0)
 ///
-/// Per cell, the top `MAX_SOURCES` contributions (by level) are retained; the
-/// max-heap order guarantees these are the strongest. The final illuminance is
-/// the screen blend of all retained contributions: `1 − ∏(1 − cᵢ)`.
+/// Per cell, the illuminance is the strongest (max) level reaching it from
+/// any seed — see `flood_fill` for why a max combine is used instead of
+/// blending multiple sources together.
 ///
 /// Returns a map from cube coordinate → light level in [0.0, 1.0].
 pub fn compute_sky_illuminance(
@@ -87,7 +82,7 @@ pub fn compute_sky_illuminance(
         }
     }
 
-    flood_fill(seeds, search_min, search_max, MAX_SOURCES, |from, to| {
+    flood_fill(seeds, search_min, search_max, |from, to| {
         let transmission = boundary_transmission(contents, structures, from, to);
         if transmission == 0.0 {
             return 0.0;

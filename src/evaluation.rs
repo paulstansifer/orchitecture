@@ -169,13 +169,9 @@ pub fn compute_outdoorsness(
         }
     }
 
-    flood_fill(
-        seeds,
-        search_min,
-        search_max,
-        /*max_sources=*/ 3,
-        |from, to| boundary_multiplier(contents, structures, from, to),
-    )
+    flood_fill(seeds, search_min, search_max, |from, to| {
+        boundary_multiplier(contents, structures, from, to)
+    })
 }
 
 /// Structure names that fully block a sightline for `compute_spaciousness`.
@@ -607,6 +603,40 @@ mod tests {
         let level = outdoorsness.get(&at_doorway).copied().unwrap_or(0.0);
         check!(level > 0.0);
         check!(level < 1.0);
+    }
+
+    /// A cell just inside a doorway, with the sky directly overhead on the
+    /// other side, should read exactly `1 - FALLOFF_DOORWAY`: one hop through
+    /// the doorway from a fully-outdoors neighbor, no more.
+    ///
+    /// This pins down a real bug: `flood_fill` used to treat every
+    /// sky-visible seed cube as an independent source and screen-blend
+    /// (`1 − ∏(1 − cᵢ)`) each cell's retained contributions. Since downward
+    /// hops have zero falloff, an open column stacks up several seeds that
+    /// all represent the *same* patch of sky reaching a cell at ~full
+    /// strength; screen-blending then let a single doorway leak in far more
+    /// outdoorsness than `1 - FALLOFF_DOORWAY` alone would suggest (a bare
+    /// 1x1 room like this one used to measure ~0.61 instead of ~0.3).
+    /// `flood_fill` now takes the max reaching each cell instead.
+    #[test]
+    fn test_doorway_admits_exactly_falloff_doorway_from_open_sky() {
+        let structure_infos = load_structure_info();
+        let mut builder = Builder::new(&structure_infos);
+        // A sealed 1x1 room: floor, ceiling, and walls on all 4 sides.
+        builder.build_box(IVec3::new(0, 0, 0), IVec3::new(0, 0, 0));
+        // Replace the Z-low wall with a doorway to the open (roofless) cell at z=-1.
+        builder.build_plane(
+            IVec3::new(0, 0, 0),
+            IVec3::new(0, 0, 0),
+            RelSlot::ZLoWall,
+            Some("doorway"),
+        );
+        let contents = builder.get();
+
+        let outdoorsness = compute_outdoorsness(&contents, &structure_infos);
+        let interior = IVec3::new(0, 0, 0);
+        let level = outdoorsness.get(&interior).copied().unwrap_or(0.0);
+        check!((level - (1.0 - super::FALLOFF_DOORWAY)).abs() < 1e-5);
     }
 
     /// A cube directly beneath a sky-visible cube suffers no falloff, even
