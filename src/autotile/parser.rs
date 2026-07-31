@@ -1068,8 +1068,6 @@ fn offset(
     Ok(((anchor_col + p_col) % 2, (anchor_row + p_row) % 2))
 }
 
-// TODO: I think `offset` and `is_dead_slot` may be inconsistent with each other!
-
 /// In H patterns the slot layout (per repeating tile) is:
 ///   (even, even) = W   (even, odd) = R   (odd, odd) = W   (odd, even) = dead
 /// In V: same dead/live pattern as H.

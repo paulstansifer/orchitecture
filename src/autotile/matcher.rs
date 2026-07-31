@@ -143,17 +143,14 @@ fn match_pattern_cases<'a, R: AutotileResultKind>(
         })
     };
 
-    let mut i = 0;
-    while i < cases.len() {
-        let group = cases[i].group;
-        let multi = cases[i].multi;
-        let mut matched: Vec<&'a OrientedCase<R>> = Vec::new();
-        while i < cases.len() && cases[i].group == group {
-            if case_matches(&cases[i]) {
-                matched.push(&cases[i]);
-            }
-            i += 1;
-        }
+    // Groups are contiguous runs of same-`group` orientations (see `OrientedCase::group`'s doc
+    // comment, and `compiler::debug_assert_contiguous_groups` which checks it at construction
+    // time); `chunk_by` is exactly that grouping, read directly off the data rather than
+    // re-derived by hand here.
+    for case_group in cases.chunk_by(|a, b| a.group == b.group) {
+        let multi = case_group[0].multi;
+        let mut matched: Vec<&'a OrientedCase<R>> =
+            case_group.iter().filter(|c| case_matches(c)).collect();
         if !matched.is_empty() {
             if R::implicitly_multi() {
                 // Every matching orientation is legitimate (e.g. an interior column with floor on
@@ -169,6 +166,7 @@ fn match_pattern_cases<'a, R: AutotileResultKind>(
                 }
                 matched = deduped;
             } else if !multi {
+                let group = case_group[0].group;
                 assert!(
                     matched.len() == 1,
                     "non-(multi) rule {:?} (slot {:?}, case group {group}) matched {} \
@@ -195,12 +193,15 @@ pub fn rel_slot_to_unoriented(slot: RelSlot) -> UnorientedSlot {
 }
 
 /// Map a canonical `Slot` to the `UnorientedSlot` category used in autotile rule headers.
+/// Delegates to `rel_slot_to_unoriented` so the Room/Floor/Wall categorization rule lives in one
+/// place; only the `Slot` → `RelSlot` variant renaming is specific to this function.
 pub fn slot_to_unoriented(slot: Slot) -> UnorientedSlot {
-    match slot {
-        Slot::Room => UnorientedSlot::Room,
-        Slot::Floor => UnorientedSlot::Floor,
-        Slot::XLoWall | Slot::ZLoWall => UnorientedSlot::Wall,
-    }
+    rel_slot_to_unoriented(match slot {
+        Slot::Room => RelSlot::Room,
+        Slot::XLoWall => RelSlot::XLoWall,
+        Slot::Floor => RelSlot::Floor,
+        Slot::ZLoWall => RelSlot::ZLoWall,
+    })
 }
 
 /// Apply every autotile rule that matches `cell_name` and the slot implied by `loc`,

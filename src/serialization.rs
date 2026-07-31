@@ -161,10 +161,16 @@ where
         let mut top_line = line.chars().collect::<Vec<_>>();
         let mut bottom_line = lines_it.next().unwrap_or("").chars().collect::<Vec<_>>();
         if top_line.contains(&'#') || top_line.contains(&'|') {
-            panic!("Invalid room/zwall line: '{:?}'", top_line);
+            return Err(E::from(anyhow::anyhow!(
+                "Invalid room/zwall line: '{:?}'",
+                top_line
+            )));
         }
         if bottom_line.contains(&'V') || bottom_line.contains(&'-') {
-            panic!("Invalid room/xwall line: '{:?}'", bottom_line);
+            return Err(E::from(anyhow::anyhow!(
+                "Invalid room/xwall line: '{:?}'",
+                bottom_line
+            )));
         }
 
         while top_line.len() < bottom_line.len() {

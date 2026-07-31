@@ -36,21 +36,19 @@ impl Builder {
         self.map
     }
 
-    fn wall(&self) -> Cell {
+    fn cell_for(&self, name: &str) -> Cell {
         Cell {
-            id: EorfId(*self.structures.get("wall").unwrap() as u32),
+            id: EorfId(*self.structures.get(name).unwrap() as u32),
             facing: Facing::arbitrary(),
             evaluation: None,
             build_material: BuildMaterialId::default(),
         }
     }
+    fn wall(&self) -> Cell {
+        self.cell_for("wall")
+    }
     fn flat(&self) -> Cell {
-        Cell {
-            id: EorfId(*self.structures.get("floor").unwrap() as u32),
-            facing: Facing::arbitrary(),
-            evaluation: None,
-            build_material: BuildMaterialId::default(),
-        }
+        self.cell_for("floor")
     }
 
     pub fn build_box(&mut self, corner_a: IVec3, corner_b: IVec3) {
@@ -181,12 +179,7 @@ impl Builder {
         let max = IVec3::max(corner_a, corner_b);
         let y = min.y;
 
-        let obj = Cell {
-            id: EorfId(*self.structures.get(obj_name).unwrap() as u32),
-            facing: Facing::arbitrary(),
-            evaluation: None,
-            build_material: BuildMaterialId::default(),
-        };
+        let obj = self.cell_for(obj_name);
 
         for x in min.x..=max.x {
             for z in min.z..=max.z {
@@ -218,12 +211,7 @@ impl Builder {
     pub fn room_plop(&mut self, loc: IVec3, name: &str) {
         self.map.set(
             RelSlotCoord::new(loc.x, loc.y, loc.z, RelSlot::Room),
-            Cell {
-                id: EorfId(*self.structures.get(name).unwrap() as u32),
-                facing: Facing::arbitrary(),
-                evaluation: None,
-                build_material: BuildMaterialId::default(),
-            },
+            self.cell_for(name),
         );
     }
 
@@ -236,13 +224,11 @@ impl Builder {
         self.map.set(
             RelSlotCoord::new(loc.x, loc.y, loc.z, RelSlot::Room),
             Cell {
-                id: EorfId(*self.structures.get("table").unwrap() as u32),
-                facing: Facing::arbitrary(), // doesn't matter, but maybe someday it would
                 evaluation: Some(VantageEvaluation {
                     interest: Some(interest.into()),
                     order: Some(order.into()),
                 }),
-                build_material: BuildMaterialId::default(),
+                ..self.cell_for("table")
             },
         );
     }
