@@ -249,9 +249,7 @@ fn extract_structure_atomic_meshes(
         let Some(structure_name) = rule.subject.structure_name() else {
             continue;
         };
-        let meshes = mapping
-            .entry(structure_name.to_owned())
-            .or_insert_with(Vec::new);
+        let meshes = mapping.entry(structure_name.to_owned()).or_default();
 
         for case in &rule.cases {
             if let autotile::AutotiledMeshes::Mesh { spec } = &case.result {

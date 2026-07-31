@@ -234,7 +234,7 @@ impl Builder {
     }
 }
 
-pub fn make_boring_room(structures: &Vec<EorfInfo>, rng: &mut StdRng) -> (Sparse3D<Cell>, String) {
+pub fn make_boring_room(structures: &[EorfInfo], rng: &mut StdRng) -> (Sparse3D<Cell>, String) {
     let mut builder = Builder::new(structures);
     let x_size = rng.random_range(1..7);
     let y_height = rng.random_range(1..4);

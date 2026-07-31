@@ -39,7 +39,7 @@ impl FontColors {
     }
 
     /// White for default text
-    pub fn default() -> Color32 {
+    pub fn white() -> Color32 {
         Color32::WHITE
     }
 
@@ -68,9 +68,10 @@ pub struct FormattedText {
 }
 
 pub fn default_text_format() -> bevy_egui::egui::TextFormat {
-    let mut fmt = bevy_egui::egui::TextFormat::default();
-    fmt.color = FontColors::default();
-    fmt
+    bevy_egui::egui::TextFormat {
+        color: FontColors::white(),
+        ..Default::default()
+    }
 }
 
 impl From<&str> for FormattedText {

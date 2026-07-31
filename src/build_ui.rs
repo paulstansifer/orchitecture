@@ -868,7 +868,7 @@ fn place_requirements_ui(
     visited.push(place_idx);
     for req in &places[place_idx].requirements {
         let count = match req.max {
-            Some(max) if max as u8 == req.min => format!("{}", req.min),
+            Some(max) if max == req.min => format!("{}", req.min),
             Some(max) => format!("{}-{}", req.min, max),
             None => format!("{}+", req.min),
         };

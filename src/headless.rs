@@ -424,13 +424,13 @@ impl HeadlessSession {
 
             "set_inventory" => {
                 let resource = args
-                    .get(0)
+                    .first()
                     .copied()
                     .ok_or_else(|| "usage: set_production <idx> <resource>".to_string())
                     .and_then(parse_uniform_resource)?;
                 let qty = parse_usize(args.get(1).copied().unwrap_or(""))? as u32;
                 let mut cw = self.world().resource_mut::<ConstructedCity>();
-                let cur_amt = crate::place::total_uniform(&*cw, resource);
+                let cur_amt = crate::place::total_uniform(&cw, resource);
                 let mut descr = vec![];
                 if qty > cur_amt {
                     let depositied = crate::place::deposit_uniform_with_capacity(
