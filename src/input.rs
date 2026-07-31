@@ -442,8 +442,12 @@ fn handle_evaluate(
         return;
     };
     let holder = holder.lock().unwrap();
-    let metrics =
-        crate::qnn::compute_metrics(&holder, &constructed.contents, &constructed.eorfs, world_pos);
+    let metrics = crate::qnn::compute_metrics(
+        &holder,
+        &constructed.contents,
+        &constructed.eorfs,
+        world_pos,
+    );
     if metrics.len() >= 2 {
         build_state.evaluation = Some((metrics[0], metrics[1]));
     }

@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 
 use bevy::ecs::system::SystemParam;
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
@@ -393,6 +394,7 @@ pub fn update_accessible_range(
             MeshMaterial3d(assets.material.clone()),
             Transform::from_translation(center),
             AccessibleRangeMarker,
+            NotShadowCaster,
         ));
     }
 }
