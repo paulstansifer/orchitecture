@@ -373,6 +373,26 @@ fn combine_coords(bc: BigCoordinates, sc: SmallCoordinates) -> IVec3 {
     )
 }
 
+fn flat_index(sc: SmallCoordinates) -> usize {
+    sc.slot as usize + sc.x as usize * 4 + sc.y as usize * 16 + sc.z as usize * 64
+}
+
+fn small_coords_from_flat_index(i: usize) -> SmallCoordinates {
+    let slot = match i % 4 {
+        0 => Slot::Room,
+        1 => Slot::XLoWall,
+        2 => Slot::Floor,
+        3 => Slot::ZLoWall,
+        _ => unreachable!(),
+    };
+    SmallCoordinates {
+        x: ((i / 4) % 4) as u8,
+        y: ((i / 16) % 4) as u8,
+        z: (i / 64) as u8,
+        slot,
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Chunk<T> {
     data: [Option<T>; 256],
@@ -385,39 +405,17 @@ impl<T> Chunk<T> {
         }
     }
     fn iter(&self) -> impl Iterator<Item = (SmallCoordinates, &T)> {
-        self.data.iter().enumerate().filter_map(|(i, item)| {
-            item.as_ref().map(|value| {
-                let slot = match i % 4 {
-                    0 => Slot::Room,
-                    1 => Slot::XLoWall,
-                    2 => Slot::Floor,
-                    3 => Slot::ZLoWall,
-                    _ => unreachable!(),
-                };
-                let x = ((i / 4) % 4) as u8;
-                let y = ((i / 16) % 4) as u8;
-                let z = (i / 64) as u8;
-                (SmallCoordinates { x, y, z, slot }, value)
-            })
-        })
+        self.data
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| item.as_ref().map(|value| (small_coords_from_flat_index(i), value)))
     }
 
     fn iter_mut(&mut self) -> impl Iterator<Item = (SmallCoordinates, &mut T)> {
-        self.data.iter_mut().enumerate().filter_map(|(i, item)| {
-            item.as_mut().map(|value| {
-                let slot = match i % 4 {
-                    0 => Slot::Room,
-                    1 => Slot::XLoWall,
-                    2 => Slot::Floor,
-                    3 => Slot::ZLoWall,
-                    _ => unreachable!(),
-                };
-                let x = ((i / 4) % 4) as u8;
-                let y = ((i / 16) % 4) as u8;
-                let z = (i / 64) as u8;
-                (SmallCoordinates { x, y, z, slot }, value)
-            })
-        })
+        self.data
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, item)| item.as_mut().map(|value| (small_coords_from_flat_index(i), value)))
     }
 
     fn size(&self) -> usize {
@@ -429,14 +427,12 @@ impl<T> Index<SmallCoordinates> for Chunk<T> {
     type Output = Option<T>;
 
     fn index(&self, sc: SmallCoordinates) -> &Self::Output {
-        let index = sc.slot as usize + sc.x as usize * 4 + sc.y as usize * 16 + sc.z as usize * 64;
-        &self.data[index]
+        &self.data[flat_index(sc)]
     }
 }
 impl<T> IndexMut<SmallCoordinates> for Chunk<T> {
     fn index_mut(&mut self, sc: SmallCoordinates) -> &mut Self::Output {
-        let index = sc.slot as usize + sc.x as usize * 4 + sc.y as usize * 16 + sc.z as usize * 64;
-        &mut self.data[index]
+        &mut self.data[flat_index(sc)]
     }
 }
 
@@ -678,53 +674,32 @@ impl<T> Sparse3D<T> {
         let ys = get_candidates(p.1);
         let zs = get_candidates(p.2);
 
-        // Check Rooms
-        for &x in &xs {
-            for &y in &ys {
-                for &z in &zs {
-                    if let Some(val) = self.get(RelSlotCoord::new(x, y, z, RelSlot::Room)) {
-                        items.push(val);
+        // Collects every occupied `slot` at the cross product of `xs`/`ys`/`zs`.
+        let mut push_matches = |slot: RelSlot, xs: &[i32], ys: &[i32], zs: &[i32]| {
+            for &x in xs {
+                for &y in ys {
+                    for &z in zs {
+                        if let Some(val) = self.get(RelSlotCoord::new(x, y, z, slot)) {
+                            items.push(val);
+                        }
                     }
                 }
             }
-        }
+        };
 
-        // Check XWalls
-        // For XWall, x must be closely integer. The wall is exactly at that integer.
-        // So we don't look at `xs` (which has 2 neighbors), we look at exactly `round(p.0)`.
+        push_matches(RelSlot::Room, &xs, &ys, &zs);
+
+        // For a wall/floor slot, the coordinate along its own axis must land exactly on
+        // an integer (not one of the 2 rounding-tolerant `xs`/`ys`/`zs` neighbors), so we
+        // only check it when `p` is that close, and use the single snapped index instead.
         if (p.0.round() - p.0).abs() < epsilon {
-            let x_idx = p.0.round() as i32;
-            for &y in &ys {
-                for &z in &zs {
-                    if let Some(val) = self.get(RelSlotCoord::new(x_idx, y, z, RelSlot::XLoWall)) {
-                        items.push(val);
-                    }
-                }
-            }
+            push_matches(RelSlot::XLoWall, &[p.0.round() as i32], &ys, &zs);
         }
-
-        // Check YFloors
         if (p.1.round() - p.1).abs() < epsilon {
-            let y_idx = p.1.round() as i32;
-            for &x in &xs {
-                for &z in &zs {
-                    if let Some(val) = self.get(RelSlotCoord::new(x, y_idx, z, RelSlot::Floor)) {
-                        items.push(val);
-                    }
-                }
-            }
+            push_matches(RelSlot::Floor, &xs, &[p.1.round() as i32], &zs);
         }
-
-        // Check ZWalls
         if (p.2.round() - p.2).abs() < epsilon {
-            let z_idx = p.2.round() as i32;
-            for &x in &xs {
-                for &y in &ys {
-                    if let Some(val) = self.get(RelSlotCoord::new(x, y, z_idx, RelSlot::ZLoWall)) {
-                        items.push(val);
-                    }
-                }
-            }
+            push_matches(RelSlot::ZLoWall, &xs, &ys, &[p.2.round() as i32]);
         }
 
         // No dedup needed: each check above queries a distinct `RelSlot`, so the same

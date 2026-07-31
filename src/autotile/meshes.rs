@@ -59,13 +59,15 @@ pub fn spawn_empty_anchor_index(
     commands.insert_resource(EmptyAnchorRules(index));
 }
 
-pub fn load_autotile_handles(asset_server: Res<AssetServer>, mut commands: Commands) {
-    let src = include_str!("../../buildables/structures.autotile");
-    let file = parse(src).expect("structures.autotile parse failed");
-    let oriented = compile(&file);
-
+/// Must run after `spawn_autotile_rules` (shares its parsed `AutotileRules` rather than
+/// re-parsing `structures.autotile`).
+pub fn load_autotile_handles(
+    asset_server: Res<AssetServer>,
+    rules: Res<AutotileRules>,
+    mut commands: Commands,
+) {
     let mut handles: HashMap<String, (Handle<Scene>, Option<Handle<Scene>>)> = HashMap::new();
-    for rule in &oriented {
+    for rule in &rules.0 {
         for case in &rule.cases {
             if let AutotiledMeshes::Mesh { spec, .. } = &case.result {
                 let stem = spec_stem(spec, rule.slot);

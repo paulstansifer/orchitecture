@@ -386,11 +386,35 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
         }
     }
 
+    debug_assert_contiguous_groups(&cases);
+    debug_assert_contiguous_groups(&cases_plus_90);
+
     AutotileOriented {
         subject: rule.subject.clone(),
         slot: rule.slot,
         cases,
         cases_plus_90,
+    }
+}
+
+/// `matcher::match_pattern_cases` assumes a group's orientations are never split up (see
+/// `OrientedCase::group`'s doc comment) so it can scan for a group's boundary just by watching
+/// `group` change. Nothing in the types enforces that here, so check it explicitly right where
+/// the invariant is established, instead of leaving it as an unenforced doc comment.
+fn debug_assert_contiguous_groups<R>(cases: &[OrientedCase<R>]) {
+    if cfg!(debug_assertions) {
+        let mut seen_groups = std::collections::HashSet::new();
+        let mut prev_group = None;
+        for case in cases {
+            if prev_group != Some(case.group) {
+                assert!(
+                    seen_groups.insert(case.group),
+                    "case group {} is split across non-contiguous runs",
+                    case.group
+                );
+                prev_group = Some(case.group);
+            }
+        }
     }
 }
 

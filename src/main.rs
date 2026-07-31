@@ -152,7 +152,7 @@ fn main() {
                 (spawn_autotile_rules, spawn_empty_anchor_index)
                     .chain()
                     .after(spawn_structures),
-                load_autotile_handles,
+                load_autotile_handles.after(spawn_autotile_rules),
                 generate_farms,
                 spawn_population,
                 setup_travelers,

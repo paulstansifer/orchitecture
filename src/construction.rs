@@ -27,7 +27,36 @@ fn proposal_view(proposal: &Option<Proposal>, has_real_cell: bool) -> ProposalVi
     }
 }
 
+/// Cell-footprint bounds for a Floor/Room drag: rounds both endpoints to grid cells and pulls
+/// the far corner in by one so `propose`'s inclusive range covers exactly the dragged cells,
+/// not one extra row/column beyond the far endpoint. Shared by `floor_drag`/`room_drag`, which
+/// differ only in the slot and rotation they propose with.
+fn drag_footprint(from: Vec3, to: Vec3) -> (IVec3, IVec3) {
+    let from_i = from.round().as_ivec3();
+    let to_i = to.round().as_ivec3();
+    let start = from_i.min(to_i);
+    let end = from_i.max(to_i) - IVec3::new(1, 0, 1);
+    (start, end)
+}
+
 impl ProposedCity {
+    /// Writes `new_proposal` (or clears any existing proposal) into `proposed_changes` at
+    /// `loc`, returning the view delta this produces. Shared by `propose`/`restore_desired`,
+    /// which differ only in how they decide what the new proposal should be.
+    fn write_proposal(
+        &mut self,
+        loc: SlotCoord,
+        real_cell: &Option<Cell>,
+        new_proposal: Option<Proposal>,
+    ) -> ProposalView {
+        if let Some(ref proposal) = new_proposal {
+            self.proposed_changes.set(loc, proposal.clone());
+        } else {
+            self.proposed_changes.take(loc);
+        }
+        proposal_view(&new_proposal, real_cell.is_some())
+    }
+
     /// Propose placing or clearing cells in a rectangular range.
     ///
     /// Writes to `proposed_changes` (not `contents`). Returns `(loc, view)` deltas
@@ -91,16 +120,9 @@ impl ProposedCity {
                         continue; // Nothing changed
                     }
 
-                    // Apply the new proposal state
-                    if let Some(ref proposal) = new_proposal {
-                        self.proposed_changes.set(loc, proposal.clone());
-                    } else {
-                        self.proposed_changes.take(loc);
-                    }
-
+                    let view = self.write_proposal(loc, &real_cell, new_proposal);
                     undo_changed.push((loc, prior_desired));
-
-                    changes.push((loc, proposal_view(&new_proposal, real_cell.is_some())));
+                    changes.push((loc, view));
                 }
             }
         }
@@ -157,10 +179,7 @@ impl ProposedCity {
         selected_mesh_id: Option<EorfId>,
         build_material: BuildMaterialId,
     ) -> Vec<(SlotCoord, ProposalView)> {
-        let from_i = from.round().as_ivec3();
-        let to_i = to.round().as_ivec3();
-        let start = from_i.min(to_i);
-        let end = from_i.max(to_i) - IVec3::new(1, 0, 1);
+        let (start, end) = drag_footprint(from, to);
         self.propose(
             cw,
             0,
@@ -180,10 +199,7 @@ impl ProposedCity {
         selected_mesh_id: Option<EorfId>,
         build_material: BuildMaterialId,
     ) -> Vec<(SlotCoord, ProposalView)> {
-        let from_i = from.round().as_ivec3();
-        let to_i = to.round().as_ivec3();
-        let start = from_i.min(to_i);
-        let end = from_i.max(to_i) - IVec3::new(1, 0, 1);
+        let (start, end) = drag_footprint(from, to);
         self.propose(
             cw,
             dir,
@@ -346,12 +362,8 @@ impl ProposedCity {
                 }
             };
 
-            if let Some(ref proposal) = new_proposal {
-                self.proposed_changes.set(loc, proposal.clone());
-            } else {
-                self.proposed_changes.take(loc);
-            }
-            changes.push((loc, proposal_view(&new_proposal, real_cell.is_some())));
+            let view = self.write_proposal(loc, &real_cell, new_proposal);
+            changes.push((loc, view));
             inverse.push((loc, prev_desired));
         }
         (changes, inverse)
