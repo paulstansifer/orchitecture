@@ -242,390 +242,406 @@ impl HeadlessSession {
 
         match cmd {
             "help" => Ok(HELP_TEXT.lines().map(str::to_string).collect()),
-
-            "tick" => {
-                self.app.update();
-                let report = *self.world().resource::<ChangeReport>();
-                Ok(vec![format_change_report(&report)])
-            }
-
-            "sandbox" => {
-                let want = match args.first().copied() {
-                    Some("on") => true,
-                    Some("off") => false,
-                    _ => return Err("usage: sandbox on|off".to_string()),
-                };
-                let was = self.world().resource::<SandboxFlag>().0;
-                self.world().resource_mut::<SandboxFlag>().0 = want;
-                if want && !was {
-                    self.maybe_construct();
-                }
-                Ok(vec![format!("sandbox={want}")])
-            }
-
-            "place" => {
-                if args.len() < 5 {
-                    return Err("usage: place <x> <y> <z> <slot> <structure> [facing]".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let slot = parse_slot(args[3])?;
-                let id = self
-                    .find_structure(args[4])
-                    .ok_or_else(|| format!("unknown structure: {}", args[4]))?;
-                let dir = args
-                    .get(5)
-                    .map(|f| parse_facing(f))
-                    .transpose()?
-                    .unwrap_or(0);
-                let outcome = self
-                    .world()
-                    .run_system_once_with(place_system, (SlotCoord { cube, slot }, Some(id), dir))
-                    .map_err(|e| e.to_string())?;
-                self.maybe_construct();
-                Ok(place_outcome_lines(outcome))
-            }
-
-            "remove" => {
-                if args.len() < 4 {
-                    return Err("usage: remove <x> <y> <z> <slot>".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let slot = parse_slot(args[3])?;
-                let outcome = self
-                    .world()
-                    .run_system_once_with(place_system, (SlotCoord { cube, slot }, None, 0))
-                    .map_err(|e| e.to_string())?;
-                self.maybe_construct();
-                Ok(place_outcome_lines(outcome))
-            }
-
-            "build_box" => {
-                if args.len() < 6 {
-                    return Err("usage: build_box <x1> <y1> <z1> <x2> <y2> <z2>".to_string());
-                }
-                let a = parse_ivec3(&args[0..3])?;
-                let b = parse_ivec3(&args[3..6])?;
-                let n = self
-                    .world()
-                    .run_system_once_with(build_box_system, (a, b))
-                    .map_err(|e| e.to_string())?;
-                self.maybe_construct();
-                Ok(vec![format!("changed={n}")])
-            }
-
-            "construct" => {
-                let n = self
-                    .world()
-                    .run_system_once(construct_system)
-                    .map_err(|e| e.to_string())?;
-                Ok(vec![format!("committed={n}")])
-            }
-
-            "undo" => {
-                let n = self
-                    .world()
-                    .run_system_once(undo_system)
-                    .map_err(|e| e.to_string())?;
-                self.maybe_construct();
-                Ok(vec![format!("changed={n}")])
-            }
-
-            "redo" => {
-                let n = self
-                    .world()
-                    .run_system_once(redo_system)
-                    .map_err(|e| e.to_string())?;
-                self.maybe_construct();
-                Ok(vec![format!("changed={n}")])
-            }
-
-            "advance" => {
-                let n: u32 = args
-                    .first()
-                    .map(|s| s.parse().map_err(|_| format!("not an integer: {s}")))
-                    .transpose()?
-                    .unwrap_or(1);
-                let mut lines = Vec::new();
-                for _ in 0..n {
-                    lines.extend(
-                        self.world()
-                            .run_system_once(advance_month_system)
-                            .map_err(|e| e.to_string())?,
-                    );
-                }
-                Ok(lines)
-            }
-
-            "invite" | "uninvite" => {
-                let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-                let invited = cmd == "invite";
-                let farms = &mut self.world().resource_mut::<FarmsResource>();
-                let farm = farms
-                    .farms
-                    .get_mut(idx)
-                    .ok_or_else(|| format!("no such farm: {idx}"))?;
-                farm.invited = invited;
-                Ok(vec![format!("farm {idx} invited={invited}")])
-            }
-
+            "tick" => self.cmd_tick(),
+            "sandbox" => self.cmd_sandbox(args),
+            "place" => self.cmd_place(args),
+            "remove" => self.cmd_remove(args),
+            "build_box" => self.cmd_build_box(args),
+            "construct" => self.cmd_construct(),
+            "undo" => self.cmd_undo(),
+            "redo" => self.cmd_redo(),
+            "advance" => self.cmd_advance(args),
+            "invite" | "uninvite" => self.cmd_invite(cmd, args),
             // The graphical UI sets this from the traveler panel's checkbox;
             // `advance` reads it when resolving the visit.
-            "invite_traveler" | "uninvite_traveler" => {
-                let invited = cmd == "invite_traveler";
-                let mut traveler_state = self.world().resource_mut::<TravelerState>();
-                if traveler_state.current_offer.is_none() {
-                    return Err("no traveler offer this month".to_string());
-                }
-                traveler_state.invited = invited;
-                Ok(vec![format!("traveler invited={invited}")])
-            }
-
-            "farm_event" => {
-                let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-                let event = match args.get(1).copied() {
-                    Some("market") => FarmEvent::Market,
-                    Some("reroll") => FarmEvent::Reconfigure(NewProduction::RandomRegular),
-                    Some("specialize") => {
-                        FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools))
-                    }
-                    Some("adopt") => FarmEvent::Adopt,
-                    _ => {
-                        return Err(
-                            "usage: farm_event <idx> market|reroll|specialize|adopt".to_string()
-                        )
-                    }
-                };
-                let mut farms = self.world().resource_mut::<FarmsResource>();
-                if idx >= farms.farms.len() {
-                    return Err(format!("no such farm: {idx}"));
-                }
-                farms.ensure_adjacency();
-                farms.set_farm_event(FarmId::new(idx), event);
-                Ok(vec!["ok".to_string()])
-            }
-
+            "invite_traveler" | "uninvite_traveler" => self.cmd_invite_traveler(cmd),
+            "farm_event" => self.cmd_farm_event(args),
             // Test-only cheat: force a farm's production, bypassing the normal
             // Reconfigure-and-pay-cost flow (see `farm_event ... reroll`).
-            "set_production" => {
-                let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-                let resource = args
-                    .get(1)
-                    .copied()
-                    .ok_or_else(|| "usage: set_production <idx> <resource>".to_string())
-                    .and_then(parse_uniform_resource)?;
-                let mut farms = self.world().resource_mut::<FarmsResource>();
-                let farm = farms
-                    .farms
-                    .get_mut(idx)
-                    .ok_or_else(|| format!("no such farm: {idx}"))?;
-                farm.production = FarmProduction::Regular(resource);
-                Ok(vec![format!("farm {idx} produces={}", resource.label())])
-            }
-
-            "set_inventory" => {
-                let resource = args
-                    .first()
-                    .copied()
-                    .ok_or_else(|| "usage: set_production <idx> <resource>".to_string())
-                    .and_then(parse_uniform_resource)?;
-                let qty = parse_usize(args.get(1).copied().unwrap_or(""))? as u32;
-                let mut cw = self.world().resource_mut::<ConstructedCity>();
-                let cur_amt = crate::place::total_uniform(&cw, resource);
-                let mut descr = vec![];
-                if qty > cur_amt {
-                    let depositied = crate::place::deposit_uniform_with_capacity(
-                        &mut cw,
-                        resource,
-                        qty - cur_amt,
-                    );
-                    descr.push(format!("{depositied} deposited"));
-                } else {
-                    let withdrawn = crate::place::consume_uniform(&mut cw, resource, cur_amt - qty);
-                    descr.push(format!("{withdrawn} withdrawn"));
-                }
-                Ok(descr)
-            }
-
-            "set_priority" => {
-                if args.len() < 4 {
-                    return Err(
-                        "usage: set_priority <x> <y> <z> <very_low|low|medium|high|very_high>"
-                            .to_string(),
-                    );
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let prio = match args[3] {
-                    "very_low" => crate::work::WorkPriority::VeryLow,
-                    "low" => crate::work::WorkPriority::Low,
-                    "medium" => crate::work::WorkPriority::Medium,
-                    "high" => crate::work::WorkPriority::High,
-                    "very_high" => crate::work::WorkPriority::VeryHigh,
-                    other => return Err(format!("unknown priority level {other:?}")),
-                };
-                let mut cw = self.world().resource_mut::<ConstructedCity>();
-                let core = match place::place_id_at(&cw, cube) {
-                    Some(id) => place::place_location(&cw, id),
-                    None => return Err("no place there".to_string()),
-                };
-                cw.work_priorities.insert(core, prio);
-                Ok(vec![format!("priority at {core} = {}", prio.label())])
-            }
-
-            "deposit_tool" => {
-                let mut cw = self.world().resource_mut::<ConstructedCity>();
-                if place::deposit_tool(&mut cw, ToolKind::CarpentersTools) {
-                    Ok(vec!["deposited carpenter's tools".to_string()])
-                } else {
-                    Err("no rack storage with room for a tool".to_string())
-                }
-            }
-
+            "set_production" => self.cmd_set_production(args),
+            "set_inventory" => self.cmd_set_inventory(args),
+            "set_priority" => self.cmd_set_priority(args),
+            "deposit_tool" => self.cmd_deposit_tool(),
             // A book's worth of segments, but deterministic: tests need to
             // land on an exact progress fraction (e.g. 25/50 == the
             // carpenter's workshop's unlock threshold), which a random roll
             // can't promise.
-            "learn" => {
-                if args.len() < 2 {
-                    return Err("usage: learn <idea> <count>".to_string());
-                }
-                let name = args[0].replace('_', " ");
-                let count = parse_usize(args[1])?;
-                let idea = {
-                    let cw = self.world().resource::<ConstructedCity>();
-                    crate::idea::idea_by_name(&cw.ideas, &name)
-                        .ok_or_else(|| format!("no such idea: {name}"))?
-                };
-                let count = count.min(crate::idea::SEGMENTS as usize);
-                let mask = if count == 64 {
-                    u64::MAX
-                } else {
-                    (1u64 << count) - 1
-                };
-                let mut idea_state = self.world().resource_mut::<crate::idea::IdeaState>();
-                idea_state.learn(idea, mask);
-                let learned = idea_state.learned[idea].count_ones();
-                Ok(vec![format!(
-                    "{name}: {learned}/{} segments learned",
-                    crate::idea::SEGMENTS
-                )])
-            }
-
-            "install" => {
-                if args.len() < 4 {
-                    return Err("usage: install <x> <y> <z> <slot_idx>".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let slot_idx = parse_usize(args[3])?;
-                let loc = SlotCoord {
-                    cube,
-                    slot: Slot::Room,
-                };
-                let mut cw = self.world().resource_mut::<ConstructedCity>();
-                let eorf_idx = cw
-                    .contents
-                    .get(loc)
-                    .ok_or_else(|| "no furniture there".to_string())?
-                    .id
-                    .as_usize();
-                let slots = cw.eorfs[eorf_idx].slots.clone();
-                let slot = slots
-                    .get(slot_idx)
-                    .ok_or_else(|| format!("no slot {slot_idx} on this furniture"))?;
-                if cw.slot_contents(cube, slot_idx).is_some() {
-                    return Err("slot already filled".to_string());
-                }
-                let kind = slot.kind;
-                let item = place::available_uniques_of_kind(&cw, kind)
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| format!("no {} available in storage", kind.label()))?;
-                place::withdraw_unique(&mut cw, &item);
-                let label = item.label();
-                cw.set_slot(cube, slot_idx, slots.len(), Some(item));
-                Ok(vec![format!("installed {label}")])
-            }
-
-            "uninstall" => {
-                if args.len() < 4 {
-                    return Err("usage: uninstall <x> <y> <z> <slot_idx>".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let slot_idx = parse_usize(args[3])?;
-                let loc = SlotCoord {
-                    cube,
-                    slot: Slot::Room,
-                };
-                let mut cw = self.world().resource_mut::<ConstructedCity>();
-                let eorf_idx = cw
-                    .contents
-                    .get(loc)
-                    .ok_or_else(|| "no furniture there".to_string())?
-                    .id
-                    .as_usize();
-                let slot_count = cw.eorfs[eorf_idx].slots.len();
-                let item = cw
-                    .slot_contents(cube, slot_idx)
-                    .cloned()
-                    .ok_or_else(|| "slot is empty".to_string())?;
-                cw.set_slot(cube, slot_idx, slot_count, None);
-                let deposited = place::deposit_unique(&mut cw, item.clone());
-                Ok(vec![format!(
-                    "removed {}{}",
-                    item.label(),
-                    if deposited {
-                        ""
-                    } else {
-                        " (no storage room -- dropped)"
-                    }
-                )])
-            }
-
+            "learn" => self.cmd_learn(args),
+            "install" => self.cmd_install(args),
+            "uninstall" => self.cmd_uninstall(args),
             "query" => self.query(args),
-
-            "dump" => {
-                let cw = self.world().resource::<ConstructedCity>();
-                let bytes =
-                    serialization::serialize(&cw.contents, &cw.eorfs).map_err(|e| e.to_string())?;
-                let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
-                Ok(text.lines().map(str::to_string).collect())
-            }
-
-            "save" => {
-                let path = args.first().ok_or("usage: save <path>")?;
-                let cw = self.world().resource::<ConstructedCity>();
-                serialization::save(&cw.contents, &cw.eorfs, &std::path::PathBuf::from(path))
-                    .map_err(|e| e.to_string())?;
-                Ok(vec![format!("saved to {path}")])
-            }
-
-            "load" => {
-                let path = args.first().ok_or("usage: load <path>")?;
-                if !std::path::Path::new(path).exists() {
-                    return Err(format!("no such file: {path}"));
-                }
-                let new_contents = {
-                    let cw = self.world().resource::<ConstructedCity>();
-                    serialization::load(&std::path::PathBuf::from(path), &cw.eorfs)
-                        .map_err(|e| e.to_string())?
-                };
-                self.world()
-                    .run_system_once_with(load_system, new_contents)
-                    .map_err(|e| e.to_string())?;
-                Ok(vec![format!("loaded {path}")])
-            }
-
-            "reset" => {
-                let seed = args
-                    .first()
-                    .map(|s| s.parse().map_err(|_| format!("not an integer: {s}")))
-                    .transpose()?
-                    .unwrap_or_else(rand::random);
-                *self = HeadlessSession::new(seed);
-                Ok(vec![format!("seed={seed}")])
-            }
-
+            "dump" => self.cmd_dump(),
+            "save" => self.cmd_save(args),
+            "load" => self.cmd_load(args),
+            "reset" => self.cmd_reset(args),
             other => Err(format!("unknown command: {other} (try 'help')")),
         }
+    }
+
+    fn cmd_tick(&mut self) -> Result<Vec<String>, String> {
+        self.app.update();
+        let report = *self.world().resource::<ChangeReport>();
+        Ok(vec![format_change_report(&report)])
+    }
+
+    fn cmd_sandbox(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let want = match args.first().copied() {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return Err("usage: sandbox on|off".to_string()),
+        };
+        let was = self.world().resource::<SandboxFlag>().0;
+        self.world().resource_mut::<SandboxFlag>().0 = want;
+        if want && !was {
+            self.maybe_construct();
+        }
+        Ok(vec![format!("sandbox={want}")])
+    }
+
+    fn cmd_place(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 5 {
+            return Err("usage: place <x> <y> <z> <slot> <structure> [facing]".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let slot = parse_slot(args[3])?;
+        let id = self
+            .find_structure(args[4])
+            .ok_or_else(|| format!("unknown structure: {}", args[4]))?;
+        let dir = args
+            .get(5)
+            .map(|f| parse_facing(f))
+            .transpose()?
+            .unwrap_or(0);
+        let outcome = self
+            .world()
+            .run_system_once_with(place_system, (SlotCoord { cube, slot }, Some(id), dir))
+            .map_err(|e| e.to_string())?;
+        self.maybe_construct();
+        Ok(place_outcome_lines(outcome))
+    }
+
+    fn cmd_remove(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 4 {
+            return Err("usage: remove <x> <y> <z> <slot>".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let slot = parse_slot(args[3])?;
+        let outcome = self
+            .world()
+            .run_system_once_with(place_system, (SlotCoord { cube, slot }, None, 0))
+            .map_err(|e| e.to_string())?;
+        self.maybe_construct();
+        Ok(place_outcome_lines(outcome))
+    }
+
+    fn cmd_build_box(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 6 {
+            return Err("usage: build_box <x1> <y1> <z1> <x2> <y2> <z2>".to_string());
+        }
+        let a = parse_ivec3(&args[0..3])?;
+        let b = parse_ivec3(&args[3..6])?;
+        let n = self
+            .world()
+            .run_system_once_with(build_box_system, (a, b))
+            .map_err(|e| e.to_string())?;
+        self.maybe_construct();
+        Ok(vec![format!("changed={n}")])
+    }
+
+    fn cmd_construct(&mut self) -> Result<Vec<String>, String> {
+        let n = self
+            .world()
+            .run_system_once(construct_system)
+            .map_err(|e| e.to_string())?;
+        Ok(vec![format!("committed={n}")])
+    }
+
+    fn cmd_undo(&mut self) -> Result<Vec<String>, String> {
+        let n = self
+            .world()
+            .run_system_once(undo_system)
+            .map_err(|e| e.to_string())?;
+        self.maybe_construct();
+        Ok(vec![format!("changed={n}")])
+    }
+
+    fn cmd_redo(&mut self) -> Result<Vec<String>, String> {
+        let n = self
+            .world()
+            .run_system_once(redo_system)
+            .map_err(|e| e.to_string())?;
+        self.maybe_construct();
+        Ok(vec![format!("changed={n}")])
+    }
+
+    fn cmd_advance(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let n: u32 = args
+            .first()
+            .map(|s| s.parse().map_err(|_| format!("not an integer: {s}")))
+            .transpose()?
+            .unwrap_or(1);
+        let mut lines = Vec::new();
+        for _ in 0..n {
+            lines.extend(
+                self.world()
+                    .run_system_once(advance_month_system)
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        Ok(lines)
+    }
+
+    fn cmd_invite(&mut self, cmd: &str, args: &[&str]) -> Result<Vec<String>, String> {
+        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
+        let invited = cmd == "invite";
+        let farms = &mut self.world().resource_mut::<FarmsResource>();
+        let farm = farms
+            .farms
+            .get_mut(idx)
+            .ok_or_else(|| format!("no such farm: {idx}"))?;
+        farm.invited = invited;
+        Ok(vec![format!("farm {idx} invited={invited}")])
+    }
+
+    fn cmd_invite_traveler(&mut self, cmd: &str) -> Result<Vec<String>, String> {
+        let invited = cmd == "invite_traveler";
+        let mut traveler_state = self.world().resource_mut::<TravelerState>();
+        if traveler_state.current_offer.is_none() {
+            return Err("no traveler offer this month".to_string());
+        }
+        traveler_state.invited = invited;
+        Ok(vec![format!("traveler invited={invited}")])
+    }
+
+    fn cmd_farm_event(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
+        let event = match args.get(1).copied() {
+            Some("market") => FarmEvent::Market,
+            Some("reroll") => FarmEvent::Reconfigure(NewProduction::RandomRegular),
+            Some("specialize") => {
+                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools))
+            }
+            Some("adopt") => FarmEvent::Adopt,
+            _ => {
+                return Err("usage: farm_event <idx> market|reroll|specialize|adopt".to_string())
+            }
+        };
+        let mut farms = self.world().resource_mut::<FarmsResource>();
+        if idx >= farms.farms.len() {
+            return Err(format!("no such farm: {idx}"));
+        }
+        farms.ensure_adjacency();
+        farms.set_farm_event(FarmId::new(idx), event);
+        Ok(vec!["ok".to_string()])
+    }
+
+    fn cmd_set_production(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
+        let resource = args
+            .get(1)
+            .copied()
+            .ok_or_else(|| "usage: set_production <idx> <resource>".to_string())
+            .and_then(parse_uniform_resource)?;
+        let mut farms = self.world().resource_mut::<FarmsResource>();
+        let farm = farms
+            .farms
+            .get_mut(idx)
+            .ok_or_else(|| format!("no such farm: {idx}"))?;
+        farm.production = FarmProduction::Regular(resource);
+        Ok(vec![format!("farm {idx} produces={}", resource.label())])
+    }
+
+    fn cmd_set_inventory(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let resource = args
+            .first()
+            .copied()
+            .ok_or_else(|| "usage: set_production <idx> <resource>".to_string())
+            .and_then(parse_uniform_resource)?;
+        let qty = parse_usize(args.get(1).copied().unwrap_or(""))? as u32;
+        let mut cw = self.world().resource_mut::<ConstructedCity>();
+        let cur_amt = crate::place::total_uniform(&cw, resource);
+        let mut descr = vec![];
+        if qty > cur_amt {
+            let depositied =
+                crate::place::deposit_uniform_with_capacity(&mut cw, resource, qty - cur_amt);
+            descr.push(format!("{depositied} deposited"));
+        } else {
+            let withdrawn = crate::place::consume_uniform(&mut cw, resource, cur_amt - qty);
+            descr.push(format!("{withdrawn} withdrawn"));
+        }
+        Ok(descr)
+    }
+
+    fn cmd_set_priority(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 4 {
+            return Err(
+                "usage: set_priority <x> <y> <z> <very_low|low|medium|high|very_high>"
+                    .to_string(),
+            );
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let prio = match args[3] {
+            "very_low" => crate::work::WorkPriority::VeryLow,
+            "low" => crate::work::WorkPriority::Low,
+            "medium" => crate::work::WorkPriority::Medium,
+            "high" => crate::work::WorkPriority::High,
+            "very_high" => crate::work::WorkPriority::VeryHigh,
+            other => return Err(format!("unknown priority level {other:?}")),
+        };
+        let mut cw = self.world().resource_mut::<ConstructedCity>();
+        let core = match place::place_id_at(&cw, cube) {
+            Some(id) => place::place_location(&cw, id),
+            None => return Err("no place there".to_string()),
+        };
+        cw.work_priorities.insert(core, prio);
+        Ok(vec![format!("priority at {core} = {}", prio.label())])
+    }
+
+    fn cmd_deposit_tool(&mut self) -> Result<Vec<String>, String> {
+        let mut cw = self.world().resource_mut::<ConstructedCity>();
+        if place::deposit_tool(&mut cw, ToolKind::CarpentersTools) {
+            Ok(vec!["deposited carpenter's tools".to_string()])
+        } else {
+            Err("no rack storage with room for a tool".to_string())
+        }
+    }
+
+    fn cmd_learn(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 2 {
+            return Err("usage: learn <idea> <count>".to_string());
+        }
+        let name = args[0].replace('_', " ");
+        let count = parse_usize(args[1])?;
+        let idea = {
+            let cw = self.world().resource::<ConstructedCity>();
+            crate::idea::idea_by_name(&cw.ideas, &name)
+                .ok_or_else(|| format!("no such idea: {name}"))?
+        };
+        let count = count.min(crate::idea::SEGMENTS as usize);
+        let mask = if count == 64 {
+            u64::MAX
+        } else {
+            (1u64 << count) - 1
+        };
+        let mut idea_state = self.world().resource_mut::<crate::idea::IdeaState>();
+        idea_state.learn(idea, mask);
+        let learned = idea_state.learned[idea].count_ones();
+        Ok(vec![format!(
+            "{name}: {learned}/{} segments learned",
+            crate::idea::SEGMENTS
+        )])
+    }
+
+    fn cmd_install(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 4 {
+            return Err("usage: install <x> <y> <z> <slot_idx>".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let slot_idx = parse_usize(args[3])?;
+        let loc = SlotCoord {
+            cube,
+            slot: Slot::Room,
+        };
+        let mut cw = self.world().resource_mut::<ConstructedCity>();
+        let eorf_idx = cw
+            .contents
+            .get(loc)
+            .ok_or_else(|| "no furniture there".to_string())?
+            .id
+            .as_usize();
+        let slots = cw.eorfs[eorf_idx].slots.clone();
+        let slot = slots
+            .get(slot_idx)
+            .ok_or_else(|| format!("no slot {slot_idx} on this furniture"))?;
+        if cw.slot_contents(cube, slot_idx).is_some() {
+            return Err("slot already filled".to_string());
+        }
+        let kind = slot.kind;
+        let item = place::available_uniques_of_kind(&cw, kind)
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("no {} available in storage", kind.label()))?;
+        place::withdraw_unique(&mut cw, &item);
+        let label = item.label();
+        cw.set_slot(cube, slot_idx, slots.len(), Some(item));
+        Ok(vec![format!("installed {label}")])
+    }
+
+    fn cmd_uninstall(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 4 {
+            return Err("usage: uninstall <x> <y> <z> <slot_idx>".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let slot_idx = parse_usize(args[3])?;
+        let loc = SlotCoord {
+            cube,
+            slot: Slot::Room,
+        };
+        let mut cw = self.world().resource_mut::<ConstructedCity>();
+        let eorf_idx = cw
+            .contents
+            .get(loc)
+            .ok_or_else(|| "no furniture there".to_string())?
+            .id
+            .as_usize();
+        let slot_count = cw.eorfs[eorf_idx].slots.len();
+        let item = cw
+            .slot_contents(cube, slot_idx)
+            .cloned()
+            .ok_or_else(|| "slot is empty".to_string())?;
+        cw.set_slot(cube, slot_idx, slot_count, None);
+        let deposited = place::deposit_unique(&mut cw, item.clone());
+        Ok(vec![format!(
+            "removed {}{}",
+            item.label(),
+            if deposited {
+                ""
+            } else {
+                " (no storage room -- dropped)"
+            }
+        )])
+    }
+
+    fn cmd_dump(&mut self) -> Result<Vec<String>, String> {
+        let cw = self.world().resource::<ConstructedCity>();
+        let bytes =
+            serialization::serialize(&cw.contents, &cw.eorfs).map_err(|e| e.to_string())?;
+        let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+        Ok(text.lines().map(str::to_string).collect())
+    }
+
+    fn cmd_save(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let path = args.first().ok_or("usage: save <path>")?;
+        let cw = self.world().resource::<ConstructedCity>();
+        serialization::save(&cw.contents, &cw.eorfs, &std::path::PathBuf::from(path))
+            .map_err(|e| e.to_string())?;
+        Ok(vec![format!("saved to {path}")])
+    }
+
+    fn cmd_load(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let path = args.first().ok_or("usage: load <path>")?;
+        if !std::path::Path::new(path).exists() {
+            return Err(format!("no such file: {path}"));
+        }
+        let new_contents = {
+            let cw = self.world().resource::<ConstructedCity>();
+            serialization::load(&std::path::PathBuf::from(path), &cw.eorfs)
+                .map_err(|e| e.to_string())?
+        };
+        self.world()
+            .run_system_once_with(load_system, new_contents)
+            .map_err(|e| e.to_string())?;
+        Ok(vec![format!("loaded {path}")])
+    }
+
+    fn cmd_reset(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let seed = args
+            .first()
+            .map(|s| s.parse().map_err(|_| format!("not an integer: {s}")))
+            .transpose()?
+            .unwrap_or_else(rand::random);
+        *self = HeadlessSession::new(seed);
+        Ok(vec![format!("seed={seed}")])
     }
 
     fn query(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
@@ -638,428 +654,446 @@ impl HeadlessSession {
             );
         };
         match sub {
-            "cell" => {
-                if args.len() < 4 {
-                    return Err("usage: query cell <x> <y> <z> <slot>".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let slot = parse_slot(args[3])?;
-                let loc = SlotCoord { cube, slot };
-                let world = self.world();
-                let cw = world.resource::<ConstructedCity>();
-                let ml = world.resource::<MaterialList>();
-                let pending = world.resource::<ProposedCity>();
-                let (real, _) = get_real_and_proposed(cw, pending, loc);
-                let real_desc = real
-                    .map(|c| Self::describe_cell(cw, ml, c))
-                    .unwrap_or_else(|| "empty".to_string());
-                let proposal_desc = match pending.proposed_changes.get(loc) {
-                    Some(Proposal::Remove) => "remove".to_string(),
-                    Some(Proposal::Place(cell)) if real.is_some() => {
-                        format!("replace with {}", Self::describe_cell(cw, ml, cell))
-                    }
-                    Some(Proposal::Place(cell)) => {
-                        format!("add {}", Self::describe_cell(cw, ml, cell))
-                    }
-                    None => "none".to_string(),
-                };
-                Ok(vec![
-                    format!("real: {real_desc}"),
-                    format!("proposed: {proposal_desc}"),
-                ])
-            }
-
-            "slots" => {
-                if args.len() < 3 {
-                    return Err("usage: query slots <x> <y> <z>".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let loc = SlotCoord {
-                    cube,
-                    slot: Slot::Room,
-                };
-                let cw = self.world().resource::<ConstructedCity>();
-                let eorf_idx = cw
-                    .contents
-                    .get(loc)
-                    .ok_or_else(|| "no furniture there".to_string())?
-                    .id
-                    .as_usize();
-                let slots = &cw.eorfs[eorf_idx].slots;
-                if slots.is_empty() {
-                    return Ok(vec!["no slots".to_string()]);
-                }
-                Ok(slots
-                    .iter()
-                    .enumerate()
-                    .map(|(i, slot)| {
-                        let contents = cw
-                            .slot_contents(cube, i)
-                            .map(|item| item.label())
-                            .unwrap_or_else(|| "empty".to_string());
-                        format!("{i} {}: {contents}", slot.kind.label())
-                    })
-                    .collect())
-            }
-
-            "structures" => {
-                let cw = self.world().resource::<ConstructedCity>();
-                Ok(cw
-                    .eorfs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| {
-                        format!(
-                            "{i} {} style={:?} type={:?} furniture={}",
-                            s.name.replace(' ', "_"),
-                            s.placement_style,
-                            s.element_type(),
-                            s.is_furniture()
-                        )
-                    })
-                    .collect())
-            }
-
-            "places" => {
-                let cw = self.world().resource::<ConstructedCity>();
-                Ok(cw
-                    .places
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| {
-                        let reqs = s
-                            .requirements
-                            .iter()
-                            .map(|r| {
-                                format!(
-                                    "{}x{}..{:?}",
-                                    r.min,
-                                    r.requirement.name().replace(' ', "_"),
-                                    r.max
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join(",");
-                        format!(
-                            "{i} {} requires=[{reqs}] storage={}",
-                            s.name.replace(' ', "_"),
-                            s.public_storage
-                        )
-                    })
-                    .collect())
-            }
-
-            "place" => {
-                if args.len() < 3 {
-                    return Err("usage: query place <x> <y> <z>".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let cw = self.world().resource::<ConstructedCity>();
-                match place::place_id_at(cw, cube) {
-                    None => Ok(vec!["none".to_string()]),
-                    Some(id) => {
-                        let ps = &cw.placed_places[id];
-                        let info = &cw.places[ps.place];
-                        let mut lines = vec![format!(
-                            "id={id} type={} structures={}",
-                            info.name.replace(' ', "_"),
-                            ps.fulfillments.len()
-                        )];
-                        for (res, qty) in ps.contents.uniform_totals() {
-                            lines.push(format!("  {}: {qty}", res.label()));
-                        }
-                        let tools = ps.contents.tool_count();
-                        if tools > 0 {
-                            lines.push(format!("  tools: {tools}"));
-                        }
-                        Ok(lines)
-                    }
-                }
-            }
-
-            "valid_places" => {
-                if args.len() < 3 {
-                    return Err("usage: query valid_places <x> <y> <z>".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let cw = self.world().resource::<ConstructedCity>();
-                let ids = place::valid_places_for(cw, cube);
-                if ids.is_empty() {
-                    Ok(vec!["(none)".to_string()])
-                } else {
-                    Ok(ids
-                        .into_iter()
-                        .map(|i| format!("{i} {}", cw.places[i].name.replace(' ', "_")))
-                        .collect())
-                }
-            }
-
-            "ideas" => {
-                let idea_state = self.world().resource::<crate::idea::IdeaState>().clone();
-                let cw = self.world().resource::<ConstructedCity>();
-                let segments = crate::idea::SEGMENTS;
-                let mut lines: Vec<String> = cw
-                    .ideas
-                    .iter()
-                    .enumerate()
-                    .map(|(i, idea)| {
-                        let understood = cw.understood[i].count_ones();
-                        let pending = (idea_state.learned[i] & !cw.understood[i]).count_ones();
-                        format!(
-                            "{i} {} understood={understood}/{segments} pending={pending}",
-                            idea.name.replace(' ', "_")
-                        )
-                    })
-                    .collect();
-                // Gated place kinds and where they currently stand, since that's
-                // the point of tracking ideas at all.
-                for (i, def) in cw.places.iter().enumerate() {
-                    let Some(gate) = &def.gate else { continue };
-                    let status = match place::gate_efficiency(cw, i) {
-                        None => "locked".to_string(),
-                        Some(eff) => format!("efficiency={eff:.2}"),
-                    };
-                    lines.push(format!(
-                        "gated {} on {} ({}-{}): {status}",
-                        def.name.replace(' ', "_"),
-                        gate.idea.replace(' ', "_"),
-                        gate.unlock_at,
-                        gate.full_at
-                    ));
-                }
-                Ok(lines)
-            }
-
-            "population" => {
-                let population = self.world().resource::<Population>();
-                if population.individuals.is_empty() {
-                    Ok(vec!["(none)".to_string()])
-                } else {
-                    Ok(population
-                        .individuals
-                        .iter()
-                        .enumerate()
-                        .map(|(i, ind)| {
-                            let work = if ind.work_jobs.is_empty() {
-                                "none".to_string()
-                            } else {
-                                ind.work_jobs
-                                    .iter()
-                                    .map(|(id, eff)| format!("{id}@{eff:.1}"))
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            };
-                            format!(
-                                "{i} home={} work={work} fed={} morale={:.3}",
-                                ind.home()
-                                    .map(|h| h.to_string())
-                                    .unwrap_or_else(|| "none".to_string()),
-                                ind.fed_fraction,
-                                ind.morale()
-                            )
-                        })
-                        .collect())
-                }
-            }
-
-            "farms" => {
-                let farms = self.world().resource::<FarmsResource>();
-                Ok(farms
-                    .farms
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| {
-                        format!(
-                            "{i} pos=({:.1},{:.1}) area={:.1} produces={} potatoes={} \
-                             inedible={} boost={} invited={}",
-                            f.seed.x,
-                            f.seed.y,
-                            f.area,
-                            f.produced_resource().label(),
-                            f.potato_stockpile,
-                            f.inedible_stockpile,
-                            f.boost,
-                            f.invited
-                        )
-                    })
-                    .collect())
-            }
-
-            "farm" => {
-                let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-                self.world()
-                    .run_system_once_with(query_farm_system, idx)
-                    .map_err(|e| e.to_string())?
-            }
-
-            "roads" => {
-                let mut farms = self.world().resource_mut::<FarmsResource>();
-                farms.ensure_roads();
-                let Some(roads) = farms.roads.as_ref() else {
-                    return Ok(vec!["(no roads)".to_string()]);
-                };
-                // Summary plus a per-farm cheapest-delivery cost, so trip- and
-                // paving-driven road development is observable across `advance`s.
-                let developed = roads.edges.iter().filter(|e| e.trips >= 10).count();
-                let paved = roads.edges.iter().filter(|e| e.paved >= 1.0).count();
-                let paved_sum: f32 = roads.edges.iter().map(|e| e.paved).sum();
-                let mut lines = vec![format!(
-                    "nodes={} edges={} city_node={} developed_edges={} paved_edges={} paved_sum={paved_sum:.3}",
-                    roads.nodes.len(),
-                    roads.edges.len(),
-                    roads.city_node,
-                    developed,
-                    paved,
-                )];
-                for (i, f) in farms.farms.iter().enumerate() {
-                    if let Some((weight, corner)) = roads.farm_delivery(&f.polygon) {
-                        let potatoes = (weight * 8.0 / 50.0f32.max(1.0)).round() as u32;
-                        lines.push(format!(
-                            "{i} delivery_weight={weight:.1} potatoes={potatoes} corner_node={corner} \
-                             route_edges={}",
-                            roads.path_edges(corner).len(),
-                        ));
-                    }
-                }
-                Ok(lines)
-            }
-
-            "outdoorness" => {
-                if args.len() < 3 {
-                    return Err("usage: query outdoorness <x> <y> <z>".to_string());
-                }
-                let cube = parse_ivec3(&args[0..3])?;
-                let cw = self.world().resource::<ConstructedCity>();
-                let map = compute_outdoorsness(&cw.contents, &cw.eorfs);
-                let level = map.get(&cube).copied().unwrap_or(0.0);
-                Ok(vec![format!("outdoorness={level:.3}")])
-            }
-
-            "month" => Ok(vec![format!(
-                "month={}",
-                self.world().resource::<GameClock>().month()
-            )]),
-
-            "traveler" => {
-                // Idea names come from `ConstructedCity`, so read the offer out
-                // before borrowing the world a second time.
-                let state = self.world().resource::<TravelerState>();
-                let Some(offer) = state.current_offer.as_ref() else {
-                    return Ok(vec!["(none)".to_string()]);
-                };
-                let origin = offer.path.first().copied().unwrap_or(Vec2::ZERO);
-                let invited = state.invited;
-                let path_len = offer.path.len();
-                let reward = offer.reward.clone();
-                let reward = match &reward {
-                    crate::traveler::ResolvedReward::Tool(kind) => kind.label().to_string(),
-                    crate::traveler::ResolvedReward::Resource(res, qty) => {
-                        format!("{qty}_{}", res.label())
-                    }
-                    crate::traveler::ResolvedReward::Book { idea, segments, .. } => {
-                        let cw = self.world().resource::<ConstructedCity>();
-                        format!(
-                            "book_{}_{}",
-                            cw.ideas[*idea].name.replace(' ', "_"),
-                            segments.count_ones()
-                        )
-                    }
-                };
-                Ok(vec![format!(
-                    "origin=({:.1},{:.1}) origin_dist={:.1} invited={invited} \
-                     path_len={path_len} reward={reward}",
-                    origin.x,
-                    origin.y,
-                    origin.length(),
-                )])
-            }
-
-            "inventory" => {
-                let cw = self.world().resource::<ConstructedCity>();
-                let mut lines = Vec::new();
-                for &res in UniformResource::ALL {
-                    let total = place::total_uniform(cw, res);
-                    if total > 0 {
-                        lines.push(format!("{}: {total}", res.label()));
-                    }
-                }
-                // Unique resources are stored separately (racks and bookcases,
-                // not bins), but they're inventory just the same.
-                let tools = place::total_tools_of(cw, ToolKind::CarpentersTools);
-                if tools > 0 {
-                    lines.push(format!("Carpenter's tools: {tools}"));
-                }
-                let books = place::total_book_count(cw);
-                if books > 0 {
-                    lines.push(format!("Books: {books}"));
-                }
-                if lines.is_empty() {
-                    lines.push("(empty)".to_string());
-                }
-                Ok(lines)
-            }
-
-            "proposals" => {
-                let world = self.world();
-                let cw = world.resource::<ConstructedCity>();
-                let material_list = world.resource::<MaterialList>();
-                let pending = world.resource::<ProposedCity>();
-                let need = crate::construction::remaining_construction_need(
-                    pending,
-                    &cw.eorfs,
-                    material_list,
-                );
-                Ok(vec![format!(
-                    "pending_changes={} remaining_need={:?}",
-                    pending.num_changes(),
-                    need
-                )])
-            }
-
-            "changed" => {
-                let report = *self.world().resource::<ChangeReport>();
-                Ok(vec![format_change_report(&report)])
-            }
-
-            "path" => {
-                if args.len() < 6 {
-                    return Err("usage: query path <x1> <y1> <z1> <x2> <y2> <z2>".to_string());
-                }
-                let from = parse_ivec3(&args[0..3])?;
-                let to = parse_ivec3(&args[3..6])?;
-                let Some(nav) = self.world().get_resource::<NavigationGrid>() else {
-                    return Ok(vec![
-                        "no navigation grid yet (call 'tick' first)".to_string()
-                    ]);
-                };
-                match nav.find_path(from, to) {
-                    None => Ok(vec!["unreachable".to_string()]),
-                    Some(path) => Ok(vec![format!(
-                        "path: {}",
-                        path.iter()
-                            .map(|c| format!("({},{},{})", c.x, c.y, c.z))
-                            .collect::<Vec<_>>()
-                            .join(" -> ")
-                    )]),
-                }
-            }
-
-            "connected" => {
-                if args.len() < 6 {
-                    return Err("usage: query connected <x1> <y1> <z1> <x2> <y2> <z2>".to_string());
-                }
-                let from = parse_ivec3(&args[0..3])?;
-                let to = parse_ivec3(&args[3..6])?;
-                let Some(nav) = self.world().get_resource::<NavigationGrid>() else {
-                    return Ok(vec![
-                        "no navigation grid yet (call 'tick' first)".to_string()
-                    ]);
-                };
-                Ok(vec![format!("connected={}", nav.is_connected(from, to))])
-            }
-
+            "cell" => self.query_cell(args),
+            "slots" => self.query_slots(args),
+            "structures" => self.query_structures(),
+            "places" => self.query_places(),
+            "place" => self.query_place(args),
+            "valid_places" => self.query_valid_places(args),
+            "ideas" => self.query_ideas(),
+            "population" => self.query_population(),
+            "farms" => self.query_farms(),
+            "farm" => self.query_farm(args),
+            "roads" => self.query_roads(),
+            "outdoorness" => self.query_outdoorness(args),
+            "month" => self.query_month(),
+            "traveler" => self.query_traveler(),
+            "inventory" => self.query_inventory(),
+            "proposals" => self.query_proposals(),
+            "changed" => self.query_changed(),
+            "path" => self.query_path(args),
+            "connected" => self.query_connected(args),
             other => Err(format!("unknown query: {other}")),
         }
+    }
+
+    fn query_cell(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 4 {
+            return Err("usage: query cell <x> <y> <z> <slot>".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let slot = parse_slot(args[3])?;
+        let loc = SlotCoord { cube, slot };
+        let world = self.world();
+        let cw = world.resource::<ConstructedCity>();
+        let ml = world.resource::<MaterialList>();
+        let pending = world.resource::<ProposedCity>();
+        let (real, _) = get_real_and_proposed(cw, pending, loc);
+        let real_desc = real
+            .map(|c| Self::describe_cell(cw, ml, c))
+            .unwrap_or_else(|| "empty".to_string());
+        let proposal_desc = match pending.proposed_changes.get(loc) {
+            Some(Proposal::Remove) => "remove".to_string(),
+            Some(Proposal::Place(cell)) if real.is_some() => {
+                format!("replace with {}", Self::describe_cell(cw, ml, cell))
+            }
+            Some(Proposal::Place(cell)) => {
+                format!("add {}", Self::describe_cell(cw, ml, cell))
+            }
+            None => "none".to_string(),
+        };
+        Ok(vec![
+            format!("real: {real_desc}"),
+            format!("proposed: {proposal_desc}"),
+        ])
+    }
+
+    fn query_slots(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 3 {
+            return Err("usage: query slots <x> <y> <z>".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let loc = SlotCoord {
+            cube,
+            slot: Slot::Room,
+        };
+        let cw = self.world().resource::<ConstructedCity>();
+        let eorf_idx = cw
+            .contents
+            .get(loc)
+            .ok_or_else(|| "no furniture there".to_string())?
+            .id
+            .as_usize();
+        let slots = &cw.eorfs[eorf_idx].slots;
+        if slots.is_empty() {
+            return Ok(vec!["no slots".to_string()]);
+        }
+        Ok(slots
+            .iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                let contents = cw
+                    .slot_contents(cube, i)
+                    .map(|item| item.label())
+                    .unwrap_or_else(|| "empty".to_string());
+                format!("{i} {}: {contents}", slot.kind.label())
+            })
+            .collect())
+    }
+
+    fn query_structures(&mut self) -> Result<Vec<String>, String> {
+        let cw = self.world().resource::<ConstructedCity>();
+        Ok(cw
+            .eorfs
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                format!(
+                    "{i} {} style={:?} type={:?} furniture={}",
+                    s.name.replace(' ', "_"),
+                    s.placement_style,
+                    s.element_type(),
+                    s.is_furniture()
+                )
+            })
+            .collect())
+    }
+
+    fn query_places(&mut self) -> Result<Vec<String>, String> {
+        let cw = self.world().resource::<ConstructedCity>();
+        Ok(cw
+            .places
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let reqs = s
+                    .requirements
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            "{}x{}..{:?}",
+                            r.min,
+                            r.requirement.name().replace(' ', "_"),
+                            r.max
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!(
+                    "{i} {} requires=[{reqs}] storage={}",
+                    s.name.replace(' ', "_"),
+                    s.public_storage
+                )
+            })
+            .collect())
+    }
+
+    fn query_place(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 3 {
+            return Err("usage: query place <x> <y> <z>".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let cw = self.world().resource::<ConstructedCity>();
+        match place::place_id_at(cw, cube) {
+            None => Ok(vec!["none".to_string()]),
+            Some(id) => {
+                let ps = &cw.placed_places[id];
+                let info = &cw.places[ps.place];
+                let mut lines = vec![format!(
+                    "id={id} type={} structures={}",
+                    info.name.replace(' ', "_"),
+                    ps.fulfillments.len()
+                )];
+                for (res, qty) in ps.contents.uniform_totals() {
+                    lines.push(format!("  {}: {qty}", res.label()));
+                }
+                let tools = ps.contents.tool_count();
+                if tools > 0 {
+                    lines.push(format!("  tools: {tools}"));
+                }
+                Ok(lines)
+            }
+        }
+    }
+
+    fn query_valid_places(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 3 {
+            return Err("usage: query valid_places <x> <y> <z>".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let cw = self.world().resource::<ConstructedCity>();
+        let ids = place::valid_places_for(cw, cube);
+        if ids.is_empty() {
+            Ok(vec!["(none)".to_string()])
+        } else {
+            Ok(ids
+                .into_iter()
+                .map(|i| format!("{i} {}", cw.places[i].name.replace(' ', "_")))
+                .collect())
+        }
+    }
+
+    fn query_ideas(&mut self) -> Result<Vec<String>, String> {
+        let idea_state = self.world().resource::<crate::idea::IdeaState>().clone();
+        let cw = self.world().resource::<ConstructedCity>();
+        let segments = crate::idea::SEGMENTS;
+        let mut lines: Vec<String> = cw
+            .ideas
+            .iter()
+            .enumerate()
+            .map(|(i, idea)| {
+                let understood = cw.understood[i].count_ones();
+                let pending = (idea_state.learned[i] & !cw.understood[i]).count_ones();
+                format!(
+                    "{i} {} understood={understood}/{segments} pending={pending}",
+                    idea.name.replace(' ', "_")
+                )
+            })
+            .collect();
+        // Gated place kinds and where they currently stand, since that's
+        // the point of tracking ideas at all.
+        for (i, def) in cw.places.iter().enumerate() {
+            let Some(gate) = &def.gate else { continue };
+            let status = match place::gate_efficiency(cw, i) {
+                None => "locked".to_string(),
+                Some(eff) => format!("efficiency={eff:.2}"),
+            };
+            lines.push(format!(
+                "gated {} on {} ({}-{}): {status}",
+                def.name.replace(' ', "_"),
+                gate.idea.replace(' ', "_"),
+                gate.unlock_at,
+                gate.full_at
+            ));
+        }
+        Ok(lines)
+    }
+
+    fn query_population(&mut self) -> Result<Vec<String>, String> {
+        let population = self.world().resource::<Population>();
+        if population.individuals.is_empty() {
+            Ok(vec!["(none)".to_string()])
+        } else {
+            Ok(population
+                .individuals
+                .iter()
+                .enumerate()
+                .map(|(i, ind)| {
+                    let work = if ind.work_jobs.is_empty() {
+                        "none".to_string()
+                    } else {
+                        ind.work_jobs
+                            .iter()
+                            .map(|(id, eff)| format!("{id}@{eff:.1}"))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    };
+                    format!(
+                        "{i} home={} work={work} fed={} morale={:.3}",
+                        ind.home()
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "none".to_string()),
+                        ind.fed_fraction,
+                        ind.morale()
+                    )
+                })
+                .collect())
+        }
+    }
+
+    fn query_farms(&mut self) -> Result<Vec<String>, String> {
+        let farms = self.world().resource::<FarmsResource>();
+        Ok(farms
+            .farms
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                format!(
+                    "{i} pos=({:.1},{:.1}) area={:.1} produces={} potatoes={} \
+                     inedible={} boost={} invited={}",
+                    f.seed.x,
+                    f.seed.y,
+                    f.area,
+                    f.produced_resource().label(),
+                    f.potato_stockpile,
+                    f.inedible_stockpile,
+                    f.boost,
+                    f.invited
+                )
+            })
+            .collect())
+    }
+
+    fn query_farm(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
+        self.world()
+            .run_system_once_with(query_farm_system, idx)
+            .map_err(|e| e.to_string())?
+    }
+
+    fn query_roads(&mut self) -> Result<Vec<String>, String> {
+        let mut farms = self.world().resource_mut::<FarmsResource>();
+        farms.ensure_roads();
+        let Some(roads) = farms.roads.as_ref() else {
+            return Ok(vec!["(no roads)".to_string()]);
+        };
+        // Summary plus a per-farm cheapest-delivery cost, so trip- and
+        // paving-driven road development is observable across `advance`s.
+        let developed = roads.edges.iter().filter(|e| e.trips >= 10).count();
+        let paved = roads.edges.iter().filter(|e| e.paved >= 1.0).count();
+        let paved_sum: f32 = roads.edges.iter().map(|e| e.paved).sum();
+        let mut lines = vec![format!(
+            "nodes={} edges={} city_node={} developed_edges={} paved_edges={} paved_sum={paved_sum:.3}",
+            roads.nodes.len(),
+            roads.edges.len(),
+            roads.city_node,
+            developed,
+            paved,
+        )];
+        for (i, f) in farms.farms.iter().enumerate() {
+            if let Some((weight, corner)) = roads.farm_delivery(&f.polygon) {
+                let potatoes = (weight * 8.0 / 50.0f32.max(1.0)).round() as u32;
+                lines.push(format!(
+                    "{i} delivery_weight={weight:.1} potatoes={potatoes} corner_node={corner} \
+                     route_edges={}",
+                    roads.path_edges(corner).len(),
+                ));
+            }
+        }
+        Ok(lines)
+    }
+
+    fn query_outdoorness(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 3 {
+            return Err("usage: query outdoorness <x> <y> <z>".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let cw = self.world().resource::<ConstructedCity>();
+        let map = compute_outdoorsness(&cw.contents, &cw.eorfs);
+        let level = map.get(&cube).copied().unwrap_or(0.0);
+        Ok(vec![format!("outdoorness={level:.3}")])
+    }
+
+    fn query_month(&mut self) -> Result<Vec<String>, String> {
+        Ok(vec![format!(
+            "month={}",
+            self.world().resource::<GameClock>().month()
+        )])
+    }
+
+    fn query_traveler(&mut self) -> Result<Vec<String>, String> {
+        // Idea names come from `ConstructedCity`, so read the offer out
+        // before borrowing the world a second time.
+        let state = self.world().resource::<TravelerState>();
+        let Some(offer) = state.current_offer.as_ref() else {
+            return Ok(vec!["(none)".to_string()]);
+        };
+        let origin = offer.path.first().copied().unwrap_or(Vec2::ZERO);
+        let invited = state.invited;
+        let path_len = offer.path.len();
+        let reward = offer.reward.clone();
+        let reward = match &reward {
+            crate::traveler::ResolvedReward::Tool(kind) => kind.label().to_string(),
+            crate::traveler::ResolvedReward::Resource(res, qty) => {
+                format!("{qty}_{}", res.label())
+            }
+            crate::traveler::ResolvedReward::Book { idea, segments, .. } => {
+                let cw = self.world().resource::<ConstructedCity>();
+                format!(
+                    "book_{}_{}",
+                    cw.ideas[*idea].name.replace(' ', "_"),
+                    segments.count_ones()
+                )
+            }
+        };
+        Ok(vec![format!(
+            "origin=({:.1},{:.1}) origin_dist={:.1} invited={invited} \
+             path_len={path_len} reward={reward}",
+            origin.x,
+            origin.y,
+            origin.length(),
+        )])
+    }
+
+    fn query_inventory(&mut self) -> Result<Vec<String>, String> {
+        let cw = self.world().resource::<ConstructedCity>();
+        let mut lines = Vec::new();
+        for &res in UniformResource::ALL {
+            let total = place::total_uniform(cw, res);
+            if total > 0 {
+                lines.push(format!("{}: {total}", res.label()));
+            }
+        }
+        // Unique resources are stored separately (racks and bookcases,
+        // not bins), but they're inventory just the same.
+        let tools = place::total_tools_of(cw, ToolKind::CarpentersTools);
+        if tools > 0 {
+            lines.push(format!("Carpenter's tools: {tools}"));
+        }
+        let books = place::total_book_count(cw);
+        if books > 0 {
+            lines.push(format!("Books: {books}"));
+        }
+        if lines.is_empty() {
+            lines.push("(empty)".to_string());
+        }
+        Ok(lines)
+    }
+
+    fn query_proposals(&mut self) -> Result<Vec<String>, String> {
+        let world = self.world();
+        let cw = world.resource::<ConstructedCity>();
+        let material_list = world.resource::<MaterialList>();
+        let pending = world.resource::<ProposedCity>();
+        let need =
+            crate::construction::remaining_construction_need(pending, &cw.eorfs, material_list);
+        Ok(vec![format!(
+            "pending_changes={} remaining_need={:?}",
+            pending.num_changes(),
+            need
+        )])
+    }
+
+    fn query_changed(&mut self) -> Result<Vec<String>, String> {
+        let report = *self.world().resource::<ChangeReport>();
+        Ok(vec![format_change_report(&report)])
+    }
+
+    fn query_path(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 6 {
+            return Err("usage: query path <x1> <y1> <z1> <x2> <y2> <z2>".to_string());
+        }
+        let from = parse_ivec3(&args[0..3])?;
+        let to = parse_ivec3(&args[3..6])?;
+        let Some(nav) = self.world().get_resource::<NavigationGrid>() else {
+            return Ok(vec![
+                "no navigation grid yet (call 'tick' first)".to_string()
+            ]);
+        };
+        match nav.find_path(from, to) {
+            None => Ok(vec!["unreachable".to_string()]),
+            Some(path) => Ok(vec![format!(
+                "path: {}",
+                path.iter()
+                    .map(|c| format!("({},{},{})", c.x, c.y, c.z))
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
+            )]),
+        }
+    }
+
+    fn query_connected(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 6 {
+            return Err("usage: query connected <x1> <y1> <z1> <x2> <y2> <z2>".to_string());
+        }
+        let from = parse_ivec3(&args[0..3])?;
+        let to = parse_ivec3(&args[3..6])?;
+        let Some(nav) = self.world().get_resource::<NavigationGrid>() else {
+            return Ok(vec![
+                "no navigation grid yet (call 'tick' first)".to_string()
+            ]);
+        };
+        Ok(vec![format!("connected={}", nav.is_connected(from, to))])
     }
 }
 

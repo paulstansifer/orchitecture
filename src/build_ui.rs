@@ -154,6 +154,62 @@ fn bottom_controls_ui(
     load_request
 }
 
+/// The `PlacesView::List` panel: one collapsing section per place type, showing a
+/// jump-to-hierarchy button for each existing instance plus that type's formation
+/// requirements (which can request a tab switch, e.g. once a required structure is
+/// placeable in Furniture but the user is on Elements).
+fn places_list_ui(
+    ui: &mut egui::Ui,
+    constructed: &ConstructedCity,
+    build_state: &mut BuildState,
+    next_tab: &mut Option<LeftTab>,
+    next_places_view: &mut Option<PlacesView>,
+) {
+    ui.heading("Places");
+    ui.separator();
+    let mut switch_to_furniture = false;
+    // Where each extant place of each kind lives, so the
+    // per-instance buttons below can jump to its hierarchy.
+    let mut instances: Vec<Vec<SlotCoord>> = vec![Vec::new(); constructed.places.len()];
+    for (id, pp) in constructed.placed_places.iter() {
+        instances[pp.place].push(SlotCoord {
+            cube: crate::place::place_location(constructed, id),
+            slot: Slot::Room,
+        });
+    }
+    for place_idx in 0..constructed.places.len() {
+        let name = constructed.places[place_idx].name.clone();
+        let locs = &instances[place_idx];
+        ui.collapsing(format!("{} ({})", name, locs.len()), |ui| {
+            if !locs.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    for &loc in locs {
+                        if ui
+                            .add(egui::Button::new("").min_size(egui::vec2(14.0, 14.0)))
+                            .clicked()
+                        {
+                            *next_places_view = Some(PlacesView::Hierarchy { loc });
+                        }
+                    }
+                });
+                ui.separator();
+            }
+            place_requirements_ui(
+                ui,
+                &constructed.places,
+                &constructed.eorfs,
+                place_idx,
+                &mut Vec::new(),
+                build_state,
+                &mut switch_to_furniture,
+            );
+        });
+    }
+    if switch_to_furniture {
+        *next_tab = Some(LeftTab::Furniture);
+    }
+}
+
 /// The `PlacesView::Hierarchy` panel: the ancestor chain of places containing
 /// the right-clicked furniture (outermost first), each with its quality
 /// breakdown, nesting restriction, contents, and (if assignable) occupant,
@@ -168,243 +224,266 @@ fn place_hierarchy_ui(
     next_places_view: &mut Option<PlacesView>,
     open_install_menu: &mut Option<(SlotCoord, usize)>,
 ) -> (Vec<SlotCoord>, Vec<bevy::math::IVec3>) {
-    let cube = loc.cube;
-    let mut highlight = Vec::new();
-    let mut accessible_range = Vec::new();
-
     ui.heading("Place");
     ui.separator();
     if ui.button("← Back").clicked() {
         *next_places_view = Some(PlacesView::List);
     }
     ui.separator();
-    // Places are formed automatically; show the ancestor chain of places
-    // containing the clicked furniture. `containing_chain` returns innermost
-    // first; we display outermost (highest in the hierarchy) first.
+
+    let (mut highlight, accessible_range) =
+        place_chain_ui(ui, constructed, population, icon_textures, loc.cube);
+    clicked_furniture_ui(ui, constructed, loc, &mut highlight, open_install_menu);
+
+    (highlight, accessible_range)
+}
+
+/// Renders the ancestor chain of places containing `cube` (`containing_chain` returns
+/// innermost first; displayed outermost first), each with its quality breakdown,
+/// nesting-restriction dropdown, structure counts, contents, and (for workplaces) a
+/// priority control plus current staffing. Returns the innermost place's furniture
+/// locations to highlight in 3D, and its accessible range -- both empty if `cube`
+/// isn't part of any place.
+fn place_chain_ui(
+    ui: &mut egui::Ui,
+    constructed: &mut ConstructedCity,
+    population: &Population,
+    icon_textures: &std::collections::HashMap<crate::resource::UniformResource, egui::TextureId>,
+    cube: bevy::math::IVec3,
+) -> (Vec<SlotCoord>, Vec<bevy::math::IVec3>) {
     let chain = crate::place::containing_chain(constructed, cube);
     if chain.is_empty() {
         ui.label("Not part of any place.");
-    } else {
-        let outdoorsness =
-            crate::evaluation::compute_outdoorsness(&constructed.contents, &constructed.eorfs);
-        let illuminance = crate::global_illumination::compute_sky_illuminance(
-            &constructed.contents,
-            &constructed.eorfs,
-        );
-        for &idx in chain.iter().rev() {
-            let (place_def_idx, place_name, fulfillments, totals) = {
-                let ps = &constructed.placed_places[idx];
-                let def = &constructed.places[ps.place];
-                (
-                    ps.place,
-                    def.name.clone(),
-                    ps.fulfillments.clone(),
-                    ps.contents.uniform_totals(),
-                )
-            };
-            let (quality, breakdown) = crate::evaluation::evaluate_place_breakdown(
-                constructed,
-                idx,
-                &outdoorsness,
-                &illuminance,
-            );
-            ui.label(egui::RichText::new(&place_name).heading());
-            ui.label(format!("Quality: {:.3}", quality));
-            for factor in &breakdown {
-                if let Some(raw) = factor.raw {
-                    ui.label(format!(
-                        "  - {}: {:.2} ({:.1}-{:.1})",
-                        factor.aspect.label(),
-                        raw,
-                        factor.range.start,
-                        factor.range.end
-                    ));
-                }
-            }
-
-            let eligible = crate::place::eligible_parent_kinds(
-                &constructed.places,
-                &crate::place::Porf::Place(place_name.clone()),
-            );
-            if !eligible.is_empty() {
-                ui.label("Nestable within:");
-                restriction_dropdown(
-                    ui,
-                    ("place-restriction", idx),
-                    &mut constructed.placed_places[idx].restriction,
-                    &eligible,
-                );
-            }
-
-            let mut counts: std::collections::BTreeMap<String, usize> =
-                std::collections::BTreeMap::new();
-            for f in &fulfillments {
-                if let crate::place::FulfilledPorf::Furniture(loc) = f {
-                    if let Some(cell) = constructed.contents.get(*loc) {
-                        *counts
-                            .entry(constructed.eorfs[cell.id.as_usize()].name.clone())
-                            .or_default() += 1;
-                    }
-                }
-            }
-            ui.label("Structures:");
-            for (name, c) in &counts {
-                ui.label(format!("  {}: {}", name, c));
-            }
-
-            ui.label("Contents:");
-            if totals.is_empty() {
-                ui.label("  (empty)");
-            }
-            for (res, qty) in totals {
-                ui.horizontal(|ui| {
-                    if let Some(&tex) = icon_textures.get(&res) {
-                        ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                            tex, LARGE_SIZE,
-                        )));
-                    }
-                    ui.label(format!("{}", qty));
-                });
-            }
-
-            if let Some(flavor) = constructed.places[place_def_idx].assignable_for {
-                let occupant = population
-                    .individuals
-                    .iter()
-                    .position(|ind| ind.assigned(flavor) == Some(idx));
-                ui.label(format!(
-                    "{}: {}",
-                    flavor.label(),
-                    occupant
-                        .map(|i| format!("Individual {}", i + 1))
-                        .unwrap_or_else(|| "(unassigned)".to_string())
-                ));
-            }
-
-            // Workplaces: a priority control plus the current workers/staffing.
-            if constructed.places[place_def_idx].work.is_some() {
-                let core = crate::place::place_location(constructed, idx);
-                ui.label("Work priority:");
-                priority_dropdown(
-                    ui,
-                    ("work-priority", idx),
-                    core,
-                    &mut constructed.work_priorities,
-                );
-                let workers: Vec<String> = population
-                    .individuals
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, ind)| {
-                        ind.work_jobs
-                            .iter()
-                            .find(|(id, _)| *id == idx)
-                            .map(|(_, eff)| format!("Individual {} ({:.0}%)", i + 1, eff * 100.0))
-                    })
-                    .collect();
-                let staffing = crate::work::workplace_staffing(&population.individuals, idx);
-                if workers.is_empty() {
-                    ui.label("Workers: (none)");
-                } else {
-                    ui.label(format!("Workers ({:.0}%):", staffing * 100.0));
-                    for w in &workers {
-                        ui.label(format!("  {w}"));
-                    }
-                }
-            }
-            ui.separator();
-        }
-        // Highlight the innermost place's furniture in 3D, each at its own
-        // slot (room-plopped or wall-mounted, e.g. a dining chair).
-        let innermost = &constructed.placed_places[chain[0]];
-        highlight = innermost
-            .fulfillments
-            .iter()
-            .filter_map(|f| match f {
-                crate::place::FulfilledPorf::Furniture(loc) => Some(*loc),
-                crate::place::FulfilledPorf::Place(_) => None,
-            })
-            .collect();
-        accessible_range = crate::place::place_accessible_range(constructed, chain[0]);
+        return (Vec::new(), Vec::new());
     }
 
-    // The clicked furniture itself, at the bottom (below every containing
-    // place, from outermost down to innermost).
-    if let Some(cell) = constructed.contents.get(loc) {
-        // Always highlight the exact clicked cell at its own slot,
-        // independent of place membership -- e.g. `WallPlop` furniture never
-        // fulfills a place (fulfillments are Room-slot only), so it wouldn't
-        // otherwise get a ring.
-        if !highlight.contains(&loc) {
-            highlight.push(loc);
+    let outdoorsness =
+        crate::evaluation::compute_outdoorsness(&constructed.contents, &constructed.eorfs);
+    let illuminance = crate::global_illumination::compute_sky_illuminance(
+        &constructed.contents,
+        &constructed.eorfs,
+    );
+    for &idx in chain.iter().rev() {
+        let (place_def_idx, place_name, fulfillments, totals) = {
+            let ps = &constructed.placed_places[idx];
+            let def = &constructed.places[ps.place];
+            (
+                ps.place,
+                def.name.clone(),
+                ps.fulfillments.clone(),
+                ps.contents.uniform_totals(),
+            )
+        };
+        let (quality, breakdown) = crate::evaluation::evaluate_place_breakdown(
+            constructed,
+            idx,
+            &outdoorsness,
+            &illuminance,
+        );
+        ui.label(egui::RichText::new(&place_name).heading());
+        ui.label(format!("Quality: {:.3}", quality));
+        for factor in &breakdown {
+            if let Some(raw) = factor.raw {
+                ui.label(format!(
+                    "  - {}: {:.2} ({:.1}-{:.1})",
+                    factor.aspect.label(),
+                    raw,
+                    factor.range.start,
+                    factor.range.end
+                ));
+            }
         }
-        let eorf_idx = cell.id.as_usize();
-        let furniture_name = constructed.eorfs[eorf_idx].name.clone();
-        ui.label(egui::RichText::new(&furniture_name).heading());
 
         let eligible = crate::place::eligible_parent_kinds(
             &constructed.places,
-            &crate::place::Porf::Furniture(furniture_name),
+            &crate::place::Porf::Place(place_name.clone()),
         );
         if !eligible.is_empty() {
             ui.label("Nestable within:");
-            let restriction = constructed.furniture_restrictions.entry(cube).or_default();
             restriction_dropdown(
                 ui,
-                ("furniture-restriction", eorf_idx),
-                restriction,
+                ("place-restriction", idx),
+                &mut constructed.placed_places[idx].restriction,
                 &eligible,
             );
         }
 
-        if crate::place::cube_is_storage_bin(constructed, cube) {
-            ui.label("Restricted to:");
-            bin_restriction_dropdown(
-                ui,
-                ("bin-restriction", eorf_idx),
-                cube,
-                &mut constructed.bin_resource_restrictions,
-            );
-        }
-
-        if crate::place::cube_is_rack(constructed, cube) {
-            ui.label("Holds:");
-            rack_restriction_dropdown(
-                ui,
-                ("rack-restriction", eorf_idx),
-                cube,
-                &mut constructed.rack_restrictions,
-            );
-        }
-
-        // Installable slots: show each slot's contents with Install/Remove.
-        let slots = constructed.eorfs[eorf_idx].slots.clone();
-        if !slots.is_empty() {
-            ui.separator();
-            ui.label("Slots:");
-            let slot_count = slots.len();
-            for (slot_idx, slot) in slots.iter().enumerate() {
-                let installed = constructed.slot_contents(cube, slot_idx).cloned();
-                ui.horizontal(|ui| match installed {
-                    Some(item) => {
-                        ui.label(format!("{}: {}", slot.kind.label(), item.label()));
-                        if ui.button("Remove").clicked() {
-                            constructed.set_slot(cube, slot_idx, slot_count, None);
-                            crate::place::deposit_unique(constructed, item);
-                        }
-                    }
-                    None => {
-                        ui.label(format!("{}: (empty)", slot.kind.label()));
-                        if ui.button("Install").clicked() {
-                            *open_install_menu = Some((loc, slot_idx));
-                        }
-                    }
-                });
+        let mut counts: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        for f in &fulfillments {
+            if let crate::place::FulfilledPorf::Furniture(loc) = f {
+                if let Some(cell) = constructed.contents.get(*loc) {
+                    *counts
+                        .entry(constructed.eorfs[cell.id.as_usize()].name.clone())
+                        .or_default() += 1;
+                }
             }
         }
+        ui.label("Structures:");
+        for (name, c) in &counts {
+            ui.label(format!("  {}: {}", name, c));
+        }
+
+        ui.label("Contents:");
+        if totals.is_empty() {
+            ui.label("  (empty)");
+        }
+        for (res, qty) in totals {
+            ui.horizontal(|ui| {
+                if let Some(&tex) = icon_textures.get(&res) {
+                    ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                        tex, LARGE_SIZE,
+                    )));
+                }
+                ui.label(format!("{}", qty));
+            });
+        }
+
+        if let Some(flavor) = constructed.places[place_def_idx].assignable_for {
+            let occupant = population
+                .individuals
+                .iter()
+                .position(|ind| ind.assigned(flavor) == Some(idx));
+            ui.label(format!(
+                "{}: {}",
+                flavor.label(),
+                occupant
+                    .map(|i| format!("Individual {}", i + 1))
+                    .unwrap_or_else(|| "(unassigned)".to_string())
+            ));
+        }
+
+        // Workplaces: a priority control plus the current workers/staffing.
+        if constructed.places[place_def_idx].work.is_some() {
+            let core = crate::place::place_location(constructed, idx);
+            ui.label("Work priority:");
+            priority_dropdown(
+                ui,
+                ("work-priority", idx),
+                core,
+                &mut constructed.work_priorities,
+            );
+            let workers: Vec<String> = population
+                .individuals
+                .iter()
+                .enumerate()
+                .filter_map(|(i, ind)| {
+                    ind.work_jobs
+                        .iter()
+                        .find(|(id, _)| *id == idx)
+                        .map(|(_, eff)| format!("Individual {} ({:.0}%)", i + 1, eff * 100.0))
+                })
+                .collect();
+            let staffing = crate::work::workplace_staffing(&population.individuals, idx);
+            if workers.is_empty() {
+                ui.label("Workers: (none)");
+            } else {
+                ui.label(format!("Workers ({:.0}%):", staffing * 100.0));
+                for w in &workers {
+                    ui.label(format!("  {w}"));
+                }
+            }
+        }
+        ui.separator();
+    }
+    // Highlight the innermost place's furniture in 3D, each at its own
+    // slot (room-plopped or wall-mounted, e.g. a dining chair).
+    let innermost = &constructed.placed_places[chain[0]];
+    let highlight = innermost
+        .fulfillments
+        .iter()
+        .filter_map(|f| match f {
+            crate::place::FulfilledPorf::Furniture(loc) => Some(*loc),
+            crate::place::FulfilledPorf::Place(_) => None,
+        })
+        .collect();
+    let accessible_range = crate::place::place_accessible_range(constructed, chain[0]);
+    (highlight, accessible_range)
+}
+
+/// Renders the clicked furniture's own details (below the containing-place chain):
+/// nesting/storage-bin/rack restriction dropdowns, and any installable slots with
+/// Install/Remove buttons. Pushes `loc` onto `highlight` if the chain above didn't
+/// already cover it -- e.g. `WallPlop` furniture never fulfills a place (fulfillments
+/// are Room-slot only), so it wouldn't otherwise get a highlight ring.
+fn clicked_furniture_ui(
+    ui: &mut egui::Ui,
+    constructed: &mut ConstructedCity,
+    loc: SlotCoord,
+    highlight: &mut Vec<SlotCoord>,
+    open_install_menu: &mut Option<(SlotCoord, usize)>,
+) {
+    let cube = loc.cube;
+    let Some(cell) = constructed.contents.get(loc) else {
+        return;
+    };
+    if !highlight.contains(&loc) {
+        highlight.push(loc);
+    }
+    let eorf_idx = cell.id.as_usize();
+    let furniture_name = constructed.eorfs[eorf_idx].name.clone();
+    ui.label(egui::RichText::new(&furniture_name).heading());
+
+    let eligible = crate::place::eligible_parent_kinds(
+        &constructed.places,
+        &crate::place::Porf::Furniture(furniture_name),
+    );
+    if !eligible.is_empty() {
+        ui.label("Nestable within:");
+        let restriction = constructed.furniture_restrictions.entry(cube).or_default();
+        restriction_dropdown(
+            ui,
+            ("furniture-restriction", eorf_idx),
+            restriction,
+            &eligible,
+        );
     }
 
-    (highlight, accessible_range)
+    if crate::place::cube_is_storage_bin(constructed, cube) {
+        ui.label("Restricted to:");
+        bin_restriction_dropdown(
+            ui,
+            ("bin-restriction", eorf_idx),
+            cube,
+            &mut constructed.bin_resource_restrictions,
+        );
+    }
+
+    if crate::place::cube_is_rack(constructed, cube) {
+        ui.label("Holds:");
+        rack_restriction_dropdown(
+            ui,
+            ("rack-restriction", eorf_idx),
+            cube,
+            &mut constructed.rack_restrictions,
+        );
+    }
+
+    // Installable slots: show each slot's contents with Install/Remove.
+    let slots = constructed.eorfs[eorf_idx].slots.clone();
+    if !slots.is_empty() {
+        ui.separator();
+        ui.label("Slots:");
+        let slot_count = slots.len();
+        for (slot_idx, slot) in slots.iter().enumerate() {
+            let installed = constructed.slot_contents(cube, slot_idx).cloned();
+            ui.horizontal(|ui| match installed {
+                Some(item) => {
+                    ui.label(format!("{}: {}", slot.kind.label(), item.label()));
+                    if ui.button("Remove").clicked() {
+                        constructed.set_slot(cube, slot_idx, slot_count, None);
+                        crate::place::deposit_unique(constructed, item);
+                    }
+                }
+                None => {
+                    ui.label(format!("{}: (empty)", slot.kind.label()));
+                    if ui.button("Install").clicked() {
+                        *open_install_menu = Some((loc, slot_idx));
+                    }
+                }
+            });
+        }
+    }
 }
 
 /// The install pop-up: lists every `UniqueResource` of the target slot's kind
@@ -631,54 +710,13 @@ pub fn build_ui_system(
                 }
                 LeftTab::Places => match places_view {
                     PlacesView::List => {
-                        ui.heading("Places");
-                        ui.separator();
-                        let mut switch_to_furniture = false;
-                        // Where each extant place of each kind lives, so the
-                        // per-instance buttons below can jump to its hierarchy.
-                        let mut instances: Vec<Vec<SlotCoord>> =
-                            vec![Vec::new(); world.constructed.places.len()];
-                        for (id, pp) in world.constructed.placed_places.iter() {
-                            instances[pp.place].push(SlotCoord {
-                                cube: crate::place::place_location(&world.constructed, id),
-                                slot: Slot::Room,
-                            });
-                        }
-                        for place_idx in 0..world.constructed.places.len() {
-                            let name = world.constructed.places[place_idx].name.clone();
-                            let locs = &instances[place_idx];
-                            ui.collapsing(format!("{} ({})", name, locs.len()), |ui| {
-                                if !locs.is_empty() {
-                                    ui.horizontal_wrapped(|ui| {
-                                        for &loc in locs {
-                                            if ui
-                                                .add(
-                                                    egui::Button::new("")
-                                                        .min_size(egui::vec2(14.0, 14.0)),
-                                                )
-                                                .clicked()
-                                            {
-                                                next_places_view =
-                                                    Some(PlacesView::Hierarchy { loc });
-                                            }
-                                        }
-                                    });
-                                    ui.separator();
-                                }
-                                place_requirements_ui(
-                                    ui,
-                                    &world.constructed.places,
-                                    &world.constructed.eorfs,
-                                    place_idx,
-                                    &mut Vec::new(),
-                                    &mut build_state,
-                                    &mut switch_to_furniture,
-                                );
-                            });
-                        }
-                        if switch_to_furniture {
-                            next_tab = Some(LeftTab::Furniture);
-                        }
+                        places_list_ui(
+                            ui,
+                            &world.constructed,
+                            &mut build_state,
+                            &mut next_tab,
+                            &mut next_places_view,
+                        );
                     }
                     PlacesView::Hierarchy { loc } => {
                         (highlight, accessible_range) = place_hierarchy_ui(
