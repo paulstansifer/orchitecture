@@ -1,6 +1,9 @@
 #![recursion_limit = "256"]
 
 use bevy::camera::RenderTarget;
+use bevy::diagnostic::{
+    EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin,
+};
 use bevy::prelude::*;
 use bevy_egui::egui::{FontDefinitions, FontFamily};
 use bevy_egui::{
@@ -102,6 +105,13 @@ fn main() {
             meta_check: bevy::asset::AssetMetaCheck::Never,
             ..default()
         }))
+        .add_plugins((
+            FrameTimeDiagnosticsPlugin::default(),
+            EntityCountDiagnosticsPlugin::default(),
+            // Logs FPS/frame-time/entity-count to the console every second; see
+            // DEVELOPING.md for the Tracy-based per-system profiling workflow.
+            LogDiagnosticsPlugin::default(),
+        ))
         .add_plugins(EguiPlugin::default())
         .add_plugins(
             FileDialogPlugin::new()
