@@ -633,7 +633,6 @@ pub fn build_ui_system(
                     PlacesView::List => {
                         ui.heading("Places");
                         ui.separator();
-                        let mut switch_to_furniture = false;
                         // Where each extant place of each kind lives, so the
                         // per-instance buttons below can jump to its hierarchy.
                         let mut instances: Vec<Vec<SlotCoord>> =
@@ -672,12 +671,8 @@ pub fn build_ui_system(
                                     place_idx,
                                     &mut Vec::new(),
                                     &mut build_state,
-                                    &mut switch_to_furniture,
                                 );
                             });
-                        }
-                        if switch_to_furniture {
-                            next_tab = Some(LeftTab::Furniture);
                         }
                     }
                     PlacesView::Hierarchy { loc } => {
@@ -850,8 +845,9 @@ fn build_footer(
 /// nest as a collapsible section for that kind's own requirements). `visited`
 /// guards against a requirement cycle looping forever. `Furniture`
 /// requirements render as a selectable button, like the Furniture tab's list
-/// -- clicking one selects it in `build_state` and asks the caller (via
-/// `switch_to_furniture`) to switch to the Furniture tab.
+/// -- clicking one selects it in `build_state`. The Places tab is just as
+/// valid a place to do this from as the Furniture tab, so selecting doesn't
+/// switch tabs.
 fn place_requirements_ui(
     ui: &mut egui::Ui,
     places: &[crate::place::Place],
@@ -859,7 +855,6 @@ fn place_requirements_ui(
     place_idx: usize,
     visited: &mut Vec<usize>,
     build_state: &mut BuildState,
-    switch_to_furniture: &mut bool,
 ) {
     if visited.contains(&place_idx) {
         ui.label("(see above)");
@@ -880,7 +875,6 @@ fn place_requirements_ui(
                         let selected = build_state.selected_structure == struct_idx;
                         if ui.selectable_label(selected, name).clicked() {
                             build_state.selected_structure = struct_idx;
-                            *switch_to_furniture = true;
                         }
                     } else {
                         ui.label(name);
@@ -890,15 +884,7 @@ fn place_requirements_ui(
             crate::place::Porf::Place(name) => {
                 if let Some(nested_idx) = places.iter().position(|p| &p.name == name) {
                     ui.collapsing(format!("{count}× {name}"), |ui| {
-                        place_requirements_ui(
-                            ui,
-                            places,
-                            eorfs,
-                            nested_idx,
-                            visited,
-                            build_state,
-                            switch_to_furniture,
-                        );
+                        place_requirements_ui(ui, places, eorfs, nested_idx, visited, build_state);
                     });
                 } else {
                     ui.label(format!("{count}× {name}"));
