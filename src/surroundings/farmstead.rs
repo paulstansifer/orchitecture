@@ -5,9 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::city_effect::{CityEffect, LedgerSource, MonthInputs, Pool};
 use crate::resource::{ToolKind, UniformResource};
+use crate::surroundings::attendance::{MarketWants, WANTED_BOOST};
 use crate::surroundings::road_network::{RoadNetwork, INITIAL_TRIPS};
 
-const STOCKPILE_MAX: u32 = 40;
+/// Stockpile ceiling: production beyond this is simply wasted, which is what
+/// gives a full farm a reason to make the trip (see
+/// [`crate::surroundings::attendance`]).
+pub const STOCKPILE_MAX: u32 = 40;
 
 /// Market boundary in map units. A farm at this distance pays 8 potatoes travel cost.
 pub const MARKET_RADIUS: f32 = 50.0;
@@ -85,9 +89,10 @@ pub enum FarmEvent {
 }
 
 impl FarmEvent {
-    pub fn checkbox_label(self) -> &'static str {
+    /// Short name for what the farm will do at the market it's attending.
+    pub fn label(self) -> &'static str {
         match self {
-            FarmEvent::Market => "Invite",
+            FarmEvent::Market => "Trade",
             FarmEvent::Reconfigure(NewProduction::RandomRegular) => "Change",
             FarmEvent::Reconfigure(NewProduction::Tool(_)) => "Specialize",
             FarmEvent::Adopt => "Adopt",
@@ -132,8 +137,14 @@ pub struct FarmData {
     pub potato_stockpile: u32,
     pub inedible_stockpile: u32,
     pub boost: i32,
+    /// Whether this farm is at the coming month's market. Derived state, not
+    /// a player choice: `attendance::apply_attendance` recomputes it from the
+    /// farm's own circumstances (what it has to sell, how far it is, what the
+    /// market is advertising for) against the city's market stand count.
+    /// Everything downstream — `seed_market`, `record_road_trips`,
+    /// `pave_fieldstone_routes` — only reads it.
     pub invited: bool,
-    /// This month's market instruction, if invited. Resets to `Market` every
+    /// This month's market instruction, if attending. Resets to `Market` every
     /// advance (see `reset_farm_events`), so it isn't worth persisting.
     #[serde(skip)]
     pub event: FarmEvent,
@@ -176,6 +187,11 @@ pub struct FarmsResource {
     /// Paths revealed by traveler arrivals.
     #[serde(default)]
     pub traveler_reveals: Vec<Vec<Vec2>>,
+    /// What the market is advertising that it will buy — the player's standing
+    /// influence over which farms find the trip worth making. See
+    /// [`crate::surroundings::attendance`].
+    #[serde(default)]
+    pub market_wants: MarketWants,
     /// Voronoi adjacency: `neighbors[i]` lists the farms sharing an edge with farm `i`.
     /// Rebuilt from polygons when empty (covers fresh generation and loaded saves).
     #[serde(skip)]
@@ -330,8 +346,8 @@ impl FarmsResource {
         self[id].event
     }
 
-    /// How many farms are currently invited to the next market.
-    pub fn invited_count(&self) -> usize {
+    /// How many farms are coming to the next market.
+    pub fn attending_count(&self) -> usize {
         self.farms.iter().filter(|f| f.invited).count()
     }
 
@@ -366,8 +382,10 @@ impl GameClock {
 
 #[derive(Clone, Copy)]
 pub enum MarketModeEffect {
-    /// `Market` event: attending the market raised the farm's boost by `MARKET_BOOST`.
-    Boost,
+    /// `Market` event: attending the market raised the farm's boost by
+    /// `amount` — `MARKET_BOOST`, plus `attendance::WANTED_BOOST` if the farm
+    /// sold into the market's advertised demand.
+    Boost { amount: i32 },
     /// `Reconfigure` event: paid this many potatoes to switch production to
     /// `new_production`. `paid_from_storage` is how much of `paid` came out of
     /// the player's pre-existing stored potatoes (as opposed to this month's
@@ -391,26 +409,32 @@ pub struct MarketOutcome {
     pub player_gains: Vec<(UniformResource, u32)>,
 }
 
-/// Each invited farm's `(id, travel_cost)`. The resource teleports free to the
-/// farm's cheapest non-city corner, then follows the lowest-cost road route in;
-/// the route's `length * factor` weight converts to potatoes with the same
-/// scale as the old straight-line formula (a factor-1.0 road reproduces it).
-/// Falls back to the straight-line estimate if the road graph isn't ready.
+/// What getting to market costs farm `id`, in potatoes eaten on the way. The
+/// resource teleports free to the farm's cheapest non-city corner, then follows
+/// the lowest-cost road route in; the route's `length * factor` weight converts
+/// to potatoes with the same scale as the old straight-line formula (a
+/// factor-1.0 road reproduces it). Falls back to the straight-line estimate if
+/// the road graph isn't ready.
+///
+/// Shared with `attendance`, which weighs this against what a farm has to sell
+/// when deciding whether the trip is worth making at all.
+pub fn travel_cost(fr: &FarmsResource, id: FarmId) -> u32 {
+    let farm = &fr[id];
+    let weight = fr
+        .roads
+        .as_ref()
+        .and_then(|roads| roads.farm_delivery(&farm.polygon))
+        .map(|(w, _)| w)
+        .unwrap_or_else(|| farm.seed.distance(fr.circle_pos));
+    (weight * 8.0 / MARKET_RADIUS.max(1.0)).round() as u32
+}
+
+/// Each attending farm's `(id, travel_cost)`.
 fn invited_with_costs(fr: &FarmsResource) -> Vec<(FarmId, u32)> {
-    fr.farms
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| f.invited)
-        .map(|(i, f)| {
-            let weight = fr
-                .roads
-                .as_ref()
-                .and_then(|roads| roads.farm_delivery(&f.polygon))
-                .map(|(w, _)| w)
-                .unwrap_or_else(|| f.seed.distance(fr.circle_pos));
-            let cost = (weight * 8.0 / MARKET_RADIUS.max(1.0)).round() as u32;
-            (FarmId::new(i), cost)
-        })
+    (0..fr.farms.len())
+        .map(FarmId::new)
+        .filter(|&id| fr[id].invited)
+        .map(|id| (id, travel_cost(fr, id)))
         .collect()
 }
 
@@ -449,6 +473,18 @@ pub fn seed_market(fr: &FarmsResource, pool: &mut Pool) -> Vec<(FarmId, u32)> {
     invited
 }
 
+/// The production boost farm `id` takes home from a market it actually traded
+/// at: `MARKET_BOOST`, plus a premium if it sold into the demand the market
+/// advertised (see `attendance::WANTED_BOOST`) — the advertisement isn't just
+/// a lure, it's a better price.
+fn market_boost(fr: &FarmsResource, id: FarmId) -> i32 {
+    if fr.market_wants.is_wanted(fr[id].produced_resource()) {
+        MARKET_BOOST + WANTED_BOOST
+    } else {
+        MARKET_BOOST
+    }
+}
+
 /// Resolves each invited farm's event (Boost/Reroll/Specialize/Adopt) against
 /// `pool`'s inflow, claiming from it as it goes and recording the claims in the
 /// pool's ledger. `invited` comes from `seed_market`, which must already have
@@ -463,7 +499,9 @@ pub fn resolve_market(
     for &(id, cost) in invited {
         let farm = &fr[id];
         let effect = match fr.farm_event(id) {
-            FarmEvent::Market => MarketModeEffect::Boost,
+            FarmEvent::Market => MarketModeEffect::Boost {
+                amount: market_boost(fr, id),
+            },
             // Pay a fixed reconfigure cost from the pool if it's there;
             // otherwise fall back to a normal boost.
             FarmEvent::Reconfigure(new_production) => {
@@ -481,7 +519,9 @@ pub fn resolve_market(
                         new_production,
                     }
                 } else {
-                    MarketModeEffect::Boost
+                    MarketModeEffect::Boost {
+                        amount: market_boost(fr, id),
+                    }
                 }
             }
             FarmEvent::Adopt => MarketModeEffect::Adopt,
@@ -682,8 +722,8 @@ fn describe_farm_effect(fr: &FarmsResource, idx: FarmId, inputs: MonthInputs) ->
             res.label()
         ));
         match *effect {
-            MarketModeEffect::Boost => {
-                lines.push(format!("Trades at the market: +{MARKET_BOOST} production"));
+            MarketModeEffect::Boost { amount } => {
+                lines.push(format!("Trades at the market: +{amount} production"));
             }
             MarketModeEffect::Reconfigure {
                 paid,
@@ -764,6 +804,7 @@ mod tests {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
+            market_wants: Default::default(),
             neighbors: neighbors
                 .into_iter()
                 .map(|v| v.into_iter().map(FarmId::new).collect())
@@ -922,7 +963,7 @@ mod tests {
         assert!(matches!(
             outcome.farm_effects[&FarmId::new(0)],
             crate::city_effect::CityEffect::Market {
-                effect: MarketModeEffect::Boost,
+                effect: MarketModeEffect::Boost { .. },
                 ..
             }
         ));

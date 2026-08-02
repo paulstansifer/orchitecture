@@ -40,6 +40,9 @@ use crate::population::{assign_places, sync_assignments, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
+use crate::surroundings::attendance::{
+    choose_attendees, AttendanceReason, MarketWants, WANTED_LIMIT,
+};
 use crate::surroundings::farmstead::{
     farm_breakdown, FarmEvent, FarmId, FarmProduction, FarmsResource, GameClock, NewProduction,
 };
@@ -55,7 +58,7 @@ Commands (space-separated tokens, one per line):
   sandbox on|off                                   toggle direct-build vs propose-then-construct
   advance [n]                                      advance the game clock by n months (default 1)
   tick                                             run one Bevy Update pass (change detection!)
-  invite <farm_idx> / uninvite <farm_idx>          toggle a farm's market invitation
+  market_wants [<resource>...]                     advertise what the market buys (no args clears)
   invite_traveler / uninvite_traveler              accept or decline this month's traveler offer
   farm_event <farm_idx> market|reroll|specialize|adopt   set a farm's next market action
   set_production <farm_idx> <resource>             cheat: force a farm's produced resource
@@ -356,16 +359,35 @@ impl HeadlessSession {
                 Ok(lines)
             }
 
-            "invite" | "uninvite" => {
-                let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-                let invited = cmd == "invite";
-                let farms = &mut self.world().resource_mut::<FarmsResource>();
-                let farm = farms
-                    .farms
-                    .get_mut(idx)
-                    .ok_or_else(|| format!("no such farm: {idx}"))?;
-                farm.invited = invited;
-                Ok(vec![format!("farm {idx} invited={invited}")])
+            // Farms decide their own attendance, so there's nothing to invite.
+            // What the player *can* do is advertise what the market is buying,
+            // which draws those producers from further out. No arguments clears
+            // the advertisement.
+            "market_wants" => {
+                let resources = args
+                    .iter()
+                    .map(|a| parse_uniform_resource(a))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if resources.len() > WANTED_LIMIT {
+                    return Err(format!(
+                        "the market can advertise for at most {WANTED_LIMIT} resources"
+                    ));
+                }
+                let mut farms = self.world().resource_mut::<FarmsResource>();
+                farms.market_wants = MarketWants::default();
+                for res in resources {
+                    farms.market_wants.toggle(res);
+                }
+                Ok(vec![format!(
+                    "market_wants=[{}]",
+                    farms
+                        .market_wants
+                        .wanted()
+                        .iter()
+                        .map(|r| r.label())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )])
             }
 
             // The graphical UI sets this from the traveler panel's checkbox;
@@ -863,7 +885,16 @@ impl HeadlessSession {
             }
 
             "farms" => {
-                let farms = self.world().resource::<FarmsResource>();
+                // Report the *live* decision rather than the `invited` flags,
+                // which only get refreshed when a month advances (the graphical
+                // UI recomputes them every frame; there's no such system here).
+                let stands = {
+                    let constructed = self.world().resource::<ConstructedCity>();
+                    place::market_stand_count(constructed)
+                };
+                let mut farms = self.world().resource_mut::<FarmsResource>();
+                farms.ensure_roads();
+                let attendance = choose_attendees(&farms, stands);
                 Ok(farms
                     .farms
                     .iter()
@@ -871,7 +902,7 @@ impl HeadlessSession {
                     .map(|(i, f)| {
                         format!(
                             "{i} pos=({:.1},{:.1}) area={:.1} produces={} potatoes={} \
-                             inedible={} boost={} invited={}",
+                             inedible={} boost={} attending={} eagerness={} why={}",
                             f.seed.x,
                             f.seed.y,
                             f.area,
@@ -879,7 +910,14 @@ impl HeadlessSession {
                             f.potato_stockpile,
                             f.inedible_stockpile,
                             f.boost,
-                            f.invited
+                            attendance[i].attending(),
+                            attendance[i].eagerness,
+                            match attendance[i].reason {
+                                AttendanceReason::Attending => "attending",
+                                AttendanceReason::NoStall => "no_stall",
+                                AttendanceReason::NotWorthTheTrip => "not_worth_the_trip",
+                                AttendanceReason::Unknown => "undiscovered",
+                            }
                         )
                     })
                     .collect())
@@ -1404,10 +1442,30 @@ mod tests {
             .collect()
     }
 
-    fn invite_all(session: &mut HeadlessSession, indices: &[usize]) {
-        for &idx in indices {
-            dispatch_ok(session, &format!("invite {idx}"));
+    /// Builds `n` market stands. Unlike the real game, a headless session
+    /// starts on bare ground with no market at all — and a farm has nowhere to
+    /// stand until there is one, so any test that wants a market has to build
+    /// it. Must run in sandbox mode (the default), since a stand that's only
+    /// proposed doesn't count.
+    fn build_market_stands(session: &mut HeadlessSession, n: usize) {
+        for i in 0..n {
+            dispatch_ok(
+                session,
+                &format!("place 110 0 {} room market_stand", 100 + i),
+            );
         }
+        // `sync_places_system` is what actually forms the market places the
+        // stand count is drawn from, and it only runs on an `Update` pass.
+        dispatch_ok(session, "tick");
+    }
+
+    /// Which farms are coming to the next market, per `query farms`.
+    fn attending_farms(session: &mut HeadlessSession) -> Vec<usize> {
+        dispatch_ok(session, "query farms")
+            .iter()
+            .filter(|l| l.contains("attending=true"))
+            .filter_map(|l| l.split_whitespace().next()?.parse().ok())
+            .collect()
     }
 
     /// `pallet` (a furniture piece with a fixed, material-independent cost of
@@ -1496,6 +1554,8 @@ mod tests {
     #[test]
     fn advance_withholds_construction_until_resources_are_delivered() {
         let mut session = HeadlessSession::new(5);
+        // The market has to exist before farms have anywhere to bring anything.
+        build_market_stands(&mut session, 3);
         dispatch_ok(&mut session, "sandbox off");
         dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
         dispatch_ok(&mut session, "set_inventory canvas 0");
@@ -1506,28 +1566,30 @@ mod tests {
             "pending_changes=1 remaining_need=[(Straw, 2), (Canvas, 2)]"
         );
 
-        // No farms invited: nothing arrives at the market, so nothing gets
-        // applied toward the cost.
-        dispatch_ok(&mut session, "advance");
-        let after = dispatch_ok(&mut session, "query proposals");
-        assert_eq!(
-            after, before,
-            "remaining need shouldn't move without any market gains"
+        // Nothing has been delivered yet, so the proposal is still just a
+        // proposal — the cost has to actually arrive before it's built.
+        let cell = dispatch_ok(&mut session, &format!("query cell {PALLET_CELL}"));
+        assert!(
+            !cell[0].starts_with("real: pallet"),
+            "construction shouldn't happen before anything is delivered: {cell:?}"
         );
 
-        // Invite every farm producing either needed resource and retry,
-        // re-inviting each month since invitations reset once the market runs.
-        let straw = farms_producing(&mut session, "Straw");
-        let canvas = farms_producing(&mut session, "Canvas");
+        // Advertise for what the build needs. Farms come to market on their own
+        // judgement now, and this is what tilts that judgement: straw and canvas
+        // growers will make the trip they'd otherwise skip.
+        dispatch_ok(&mut session, "market_wants straw canvas");
         assert!(
-            !straw.is_empty() && !canvas.is_empty(),
+            !farms_producing(&mut session, "Straw").is_empty()
+                && !farms_producing(&mut session, "Canvas").is_empty(),
             "expected at least one farm producing each of straw and canvas"
+        );
+        assert!(
+            !attending_farms(&mut session).is_empty(),
+            "farms with stocked barns should decide the market is worth it"
         );
 
         let mut completed = false;
         for _ in 0..8 {
-            invite_all(&mut session, &straw);
-            invite_all(&mut session, &canvas);
             let lines = dispatch_ok(&mut session, "advance");
             if lines.iter().any(|l| l == "construction: completed") {
                 completed = true;
@@ -1548,12 +1610,104 @@ mod tests {
 
         // The starting camp's wagon provides some storage, so leftover
         // resources beyond what construction consumed were stockpiled there
-        // rather than lost. Exact amounts depend on which farms happened to
-        // be invited across the retry loop above, so just check something
-        // landed in storage instead of everything being lost.
+        // rather than lost. Exact amounts depend on which farms decided to
+        // come across the months above, so just check something landed in
+        // storage instead of everything being lost.
         assert_ne!(
             dispatch_ok(&mut session, "query inventory"),
             vec!["(empty)".to_string()]
         );
+    }
+
+    /// The rotation the whole mechanic rests on: a farm that sold up has
+    /// nothing left and a fresh boost, so it stands aside and its neighbours
+    /// get the stalls. Attendance should never exceed the stall count either.
+    #[test]
+    fn farms_take_turns_at_the_market_without_being_invited() {
+        const STANDS: usize = 2;
+        let mut session = HeadlessSession::new(7);
+        build_market_stands(&mut session, STANDS);
+
+        let first = attending_farms(&mut session);
+        assert!(
+            !first.is_empty(),
+            "farms start with stockpiles, so some should want the market at once"
+        );
+        assert!(first.len() <= STANDS, "more farms than stalls: {first:?}");
+
+        // A farm that sold up has nothing left and a fresh boost, so it stands
+        // aside — somebody who missed the first market should get a turn
+        // without anyone inviting them.
+        let mut seen: std::collections::HashSet<usize> = first.iter().copied().collect();
+        let mut months = 0;
+        while seen.len() == first.len() {
+            months += 1;
+            assert!(
+                months < 12,
+                "the same farms have held the stalls for a year"
+            );
+            dispatch_ok(&mut session, "advance");
+            let coming = attending_farms(&mut session);
+            assert!(
+                coming.len() <= STANDS,
+                "attendance must never exceed the stalls available: {coming:?}"
+            );
+            seen.extend(coming);
+        }
+    }
+
+    /// Advertising is the player's remaining lever over who turns up: it makes
+    /// the trip more appealing to the growers of what the city is buying, and
+    /// leaves everyone else's reasoning alone. (Whether that's enough to win a
+    /// stall depends on the competition — the arithmetic itself is pinned down
+    /// in `attendance`'s own tests.)
+    #[test]
+    fn advertising_makes_the_right_farms_keener() {
+        use crate::surroundings::attendance::WANTED_DRAW;
+
+        /// `(farm index, eagerness)` for every farm the city has discovered.
+        fn eagerness_by_farm(
+            session: &mut HeadlessSession,
+        ) -> std::collections::HashMap<usize, i32> {
+            dispatch_ok(session, "query farms")
+                .iter()
+                .filter(|l| !l.contains("why=undiscovered"))
+                .filter_map(|l| {
+                    let idx = l.split_whitespace().next()?.parse().ok()?;
+                    let eagerness = l
+                        .split_whitespace()
+                        .find_map(|tok| tok.strip_prefix("eagerness="))?
+                        .parse()
+                        .ok()?;
+                    Some((idx, eagerness))
+                })
+                .collect()
+        }
+
+        let mut session = HeadlessSession::new(7);
+        build_market_stands(&mut session, 1);
+
+        let before = eagerness_by_farm(&mut session);
+        let wanted = "Straw";
+        let growers = farms_producing(&mut session, wanted);
+        assert!(!growers.is_empty(), "seed 7 should have a straw farm");
+
+        dispatch_ok(&mut session, &format!("market_wants {wanted}"));
+        let after = eagerness_by_farm(&mut session);
+
+        for (idx, before) in &before {
+            let expected = before
+                + if growers.contains(idx) {
+                    WANTED_DRAW
+                } else {
+                    0
+                };
+            assert_eq!(
+                after[idx],
+                expected,
+                "farm {idx} should be {} keener once the market advertises for {wanted}",
+                expected - before
+            );
+        }
     }
 }

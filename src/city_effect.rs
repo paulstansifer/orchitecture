@@ -38,7 +38,7 @@ use crate::population::{Individual, Population};
 use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResource};
 use crate::surroundings::farmstead::{
     known_farm_plentifulness, FarmId, FarmProduction, FarmsResource, MarketModeEffect,
-    NewProduction, ADOPT_PENALTY, MARKET_BOOST,
+    NewProduction, ADOPT_PENALTY,
 };
 use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 
@@ -372,7 +372,7 @@ impl CityEffect {
             } => {
                 let i = *farm_idx;
                 match effect {
-                    MarketModeEffect::Boost => ctx.farms[i].boost += MARKET_BOOST,
+                    MarketModeEffect::Boost { amount } => ctx.farms[i].boost += amount,
                     MarketModeEffect::Adopt => {
                         ctx.farms[i].boost -= ADOPT_PENALTY;
                         ctx.population.individuals.push(Individual::default());
@@ -430,8 +430,8 @@ impl CityEffect {
     pub fn describe(&self) -> String {
         match self {
             CityEffect::Market { effect, .. } => match effect {
-                MarketModeEffect::Boost => {
-                    format!("A farm trades at the market: +{MARKET_BOOST} production.")
+                MarketModeEffect::Boost { amount } => {
+                    format!("A farm trades at the market: +{amount} production.")
                 }
                 MarketModeEffect::Reconfigure {
                     new_production: NewProduction::RandomRegular,
@@ -862,6 +862,7 @@ mod tests {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
+            market_wants: Default::default(),
             neighbors: vec![Vec::new(); n],
             road_trips: Vec::new(),
             road_paved: Vec::new(),
@@ -1640,7 +1641,7 @@ mod tests {
             CityEffect::Market { effect, .. } => Some(*effect),
             _ => None,
         });
-        assert!(matches!(market, Some(MarketModeEffect::Boost)));
+        assert!(matches!(market, Some(MarketModeEffect::Boost { .. })));
     }
 
     /// A potato shortfall is prorated evenly across the population, rather

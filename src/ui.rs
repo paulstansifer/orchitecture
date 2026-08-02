@@ -70,6 +70,12 @@ pub fn update_economy_cache(
     if farms.roads.is_none() {
         farms.ensure_roads();
     }
+    // Settle who's coming to the next market before anything previews it, so
+    // the map, the farm panels and the resource panel all agree — and so the
+    // set responds live as the player builds another market stand or changes
+    // what the market advertises for. `advance_month` recomputes this itself,
+    // authoritatively; this is the same pure decision, run early.
+    crate::surroundings::apply_attendance(farms, &constructed);
     let inputs = MonthInputs {
         constructed: &constructed,
         pending: &pending,
@@ -229,8 +235,8 @@ fn advance_controls(
                         label!(
                             ui,
                             format!(
-                                "{}/{} farms invited",
-                                view.invited_count, view.market_stand_count
+                                "{}/{} farms coming",
+                                view.attending_count, view.market_stand_count
                             )
                         );
                     }
@@ -243,7 +249,7 @@ fn advance_controls(
                 ctx.data_mut(|d| d.insert_temp(wait_id, true));
             }
             if confirmed {
-                label!(ui, col_format!(problem, "There's no ongoing construction, and no farms are invited to the next market. Wait anyways?"));
+                label!(ui, col_format!(problem, "There's no ongoing construction, and no farms are coming to the next market. Wait anyways?"));
                 if ui.button("Advance Month").clicked() {
                     go_advance_month = true;
                 }
@@ -505,6 +511,7 @@ mod tests {
             farms: Vec::new(),
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
+            market_wants: Default::default(),
             neighbors: Vec::new(),
             road_trips: Vec::new(),
             road_paved: Vec::new(),

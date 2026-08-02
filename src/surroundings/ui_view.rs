@@ -7,6 +7,7 @@
 use crate::city_effect::MonthInputs;
 use crate::resource::{ToolKind, UniformResource};
 
+use super::attendance::{advertisable_resources, AttendanceReason, WANTED_LIMIT};
 use super::farmstead::{
     farm_breakdown, market_effect, FarmData, FarmEvent, FarmId, FarmProduction, FarmsResource,
     MarketModeEffect, NewProduction,
@@ -118,31 +119,51 @@ pub fn farm_menu_view(
     FarmMenuView { options }
 }
 
-/// Everything a revealed farm's info panel needs to render, besides the live
-/// `invited` checkbox binding (the panel binds that directly to
-/// `FarmData::invited` so ticking it mutates the farm in place).
+/// Everything a revealed farm's info panel needs to render. The farm decides
+/// its own attendance, so — unlike the old invite checkbox, which bound
+/// straight to `FarmData::invited` — nothing here is editable: the panel
+/// reports what the farm has chosen and why.
 pub struct FarmPanelView {
     pub area: f32,
     pub boost: i32,
     /// This month's predicted market boost, shown only while the farm is
-    /// invited to a `Market`-boosting event.
+    /// attending a `Market`-boosting event.
     pub predicted_boost: i32,
     pub potato_stockpile: u32,
     pub inedible_stockpile: u32,
     pub produced_resource: UniformResource,
-    pub can_invite: bool,
-    pub checkbox_label: &'static str,
+    /// Whether this farm is at the coming month's market. Gates the "…"
+    /// options button, which only means anything for a farm that's coming.
+    pub attending: bool,
+    /// Whether the market is advertising for what this farm produces — why it
+    /// may be making a trip it otherwise wouldn't.
+    pub produce_wanted: bool,
+    /// One line on whether the farm is coming, and what's keeping it away if
+    /// it isn't.
+    pub status: String,
 }
 
 /// Builds a farm's info-panel view-model. `predicted_boost` is this month's
-/// market-boost preview (0 if not applicable); `invite_limit_reached` is
-/// whether every market stand slot is already taken by some other farm.
+/// market-boost preview (0 if not applicable); `reason` is the farm's own
+/// decision, from [`crate::surroundings::attendance::choose_attendees`].
 pub fn farm_panel_view(
     farm: &FarmData,
     current_event: FarmEvent,
     predicted_boost: i32,
-    invite_limit_reached: bool,
+    reason: AttendanceReason,
+    produce_wanted: bool,
 ) -> FarmPanelView {
+    let status = match reason {
+        // A farm doing anything other than plain trading is worth naming.
+        AttendanceReason::Attending if current_event == FarmEvent::Market => {
+            "Coming to market".to_string()
+        }
+        AttendanceReason::Attending => format!("Coming: {}", current_event.label()),
+        // The one the player can do something about — build another stand.
+        AttendanceReason::NoStall => "Would come; no stall free".to_string(),
+        AttendanceReason::NotWorthTheTrip => "Nothing worth the trip".to_string(),
+        AttendanceReason::Unknown => "Not yet discovered".to_string(),
+    };
     FarmPanelView {
         area: farm.area,
         boost: farm.boost,
@@ -150,8 +171,44 @@ pub fn farm_panel_view(
         potato_stockpile: farm.potato_stockpile,
         inedible_stockpile: farm.inedible_stockpile,
         produced_resource: farm.produced_resource(),
-        can_invite: farm.invited || !invite_limit_reached,
-        checkbox_label: current_event.checkbox_label(),
+        attending: reason == AttendanceReason::Attending,
+        produce_wanted,
+        status,
+    }
+}
+
+/// One resource the market could advertise for.
+pub struct MarketWantOption {
+    pub resource: UniformResource,
+    pub wanted: bool,
+    /// False when [`WANTED_LIMIT`] is already used up on other resources —
+    /// the player has to drop one before adding another.
+    pub enabled: bool,
+}
+
+/// The "market is buying" control: what the city can advertise for, and what
+/// it currently is. This is the player's standing influence over who turns up,
+/// in place of the old per-month invitations.
+pub struct MarketWantsView {
+    pub options: Vec<MarketWantOption>,
+    pub limit: usize,
+}
+
+pub fn market_wants_view(farms: &FarmsResource) -> MarketWantsView {
+    let options = advertisable_resources(farms)
+        .into_iter()
+        .map(|resource| {
+            let wanted = farms.market_wants.is_wanted(resource);
+            MarketWantOption {
+                resource,
+                wanted,
+                enabled: wanted || !farms.market_wants.is_full(),
+            }
+        })
+        .collect();
+    MarketWantsView {
+        options,
+        limit: WANTED_LIMIT,
     }
 }
 
@@ -187,6 +244,7 @@ mod tests {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
+            market_wants: Default::default(),
             neighbors: vec![Vec::new(); n],
             road_trips: Vec::new(),
             road_paved: Vec::new(),
@@ -290,20 +348,84 @@ mod tests {
         );
     }
 
-    /// The farm panel view surfaces the checkbox label for the current event
-    /// and gates `can_invite` on the market-stand limit.
+    /// The farm panel reports the farm's own decision. "No stall free" is the
+    /// one the player can act on, so it has to be distinguishable from a farm
+    /// that simply didn't want to come.
     #[test]
-    fn farm_panel_view_reflects_invite_limit() {
-        let farm = mk_farm(false, FarmProduction::Regular(Straw));
-        let view = farm_panel_view(&farm, FarmEvent::Market, 4, true);
-        assert!(!view.can_invite, "limit reached and not already invited");
-        assert_eq!(view.checkbox_label, "Invite");
+    fn farm_panel_view_explains_attendance() {
+        let staying = mk_farm(false, FarmProduction::Regular(Straw));
 
-        let invited_farm = mk_farm(true, FarmProduction::Regular(Straw));
-        let view = farm_panel_view(&invited_farm, FarmEvent::Market, 4, true);
+        let view = farm_panel_view(
+            &staying,
+            FarmEvent::Market,
+            0,
+            AttendanceReason::NotWorthTheTrip,
+            false,
+        );
+        assert!(!view.attending);
+        assert_eq!(view.status, "Nothing worth the trip");
+
+        let view = farm_panel_view(
+            &staying,
+            FarmEvent::Market,
+            0,
+            AttendanceReason::NoStall,
+            false,
+        );
+        assert!(!view.attending);
+        assert_eq!(view.status, "Would come; no stall free");
+
+        let coming = mk_farm(true, FarmProduction::Regular(Straw));
+        let view = farm_panel_view(
+            &coming,
+            FarmEvent::Market,
+            4,
+            AttendanceReason::Attending,
+            false,
+        );
+        assert!(view.attending);
+        assert_eq!(view.status, "Coming to market");
+
+        // A farm doing something other than plain trading says so.
+        let view = farm_panel_view(
+            &coming,
+            FarmEvent::Adopt,
+            0,
+            AttendanceReason::Attending,
+            false,
+        );
+        assert_eq!(view.status, "Coming: Adopt");
+    }
+
+    /// Advertising is capped, so once the limit is used up the remaining
+    /// resources can't be added without dropping one.
+    #[test]
+    fn market_wants_view_disables_options_at_the_limit() {
+        use crate::resource::UniformResource::{Potato, Timber};
+
+        let mut farms = farms_with(vec![
+            mk_farm(false, FarmProduction::Regular(Straw)),
+            mk_farm(false, FarmProduction::Regular(Timber)),
+        ]);
+
+        let view = market_wants_view(&farms);
         assert!(
-            view.can_invite,
-            "an already-invited farm keeps its checkbox enabled even at the limit"
+            view.options.iter().all(|o| o.enabled && !o.wanted),
+            "nothing advertised yet, so everything is available"
+        );
+        // Potatoes are always advertisable — every farm grows them.
+        assert!(view.options.iter().any(|o| o.resource == Potato));
+
+        for _ in 0..WANTED_LIMIT {
+            let next = farms.market_wants.wanted().len();
+            let resource = market_wants_view(&farms).options[next].resource;
+            farms.market_wants.toggle(resource);
+        }
+
+        let view = market_wants_view(&farms);
+        assert!(
+            view.options.iter().all(|o| o.enabled == o.wanted),
+            "at the limit, only the already-advertised resources stay clickable"
         );
     }
 }

@@ -16,7 +16,8 @@ use crate::traveler::{ResolvedReward, TravelerState};
 /// Whether "Advance Month" is offered, and if so, whether it's currently
 /// blocked by unpaid construction cost.
 pub enum AdvanceState {
-    /// There's a project, invited farms, or an invited traveler this month.
+    /// There's a project, farms coming to market, or an invited traveler this
+    /// month.
     Active { blocked: bool },
     /// Nothing is pending; the UI should ask "Wait anyways?" before offering
     /// to advance.
@@ -125,7 +126,10 @@ pub struct MonthPanelView {
     pub has_project: bool,
     pub construction_progress: Option<f32>,
     pub market_stand_count: usize,
-    pub invited_count: usize,
+    /// How many farms decided the coming month's market was worth the trip
+    /// (never more than `market_stand_count` — see
+    /// [`crate::surroundings::attendance`]).
+    pub attending_count: usize,
     pub has_storage: bool,
     pub rows: Vec<ResourceRow>,
     pub uncommitted_storage: UncommittedStorageRow,
@@ -337,8 +341,8 @@ pub fn month_panel_view(
     .collect();
 
     let has_project = pending.num_changes() > 0;
-    let has_farms_invited = farms.invited_count() > 0;
-    let advance = if has_project || has_farms_invited || traveler_state.invited {
+    let has_farms_coming = farms.attending_count() > 0;
+    let advance = if has_project || has_farms_coming || traveler_state.invited {
         AdvanceState::Active {
             blocked: has_project && blocked_construction,
         }
@@ -365,7 +369,7 @@ pub fn month_panel_view(
             material_list,
         ),
         market_stand_count: crate::place::market_stand_count(constructed),
-        invited_count: farms.invited_count(),
+        attending_count: farms.attending_count(),
         has_storage,
         rows,
         uncommitted_storage,
@@ -441,6 +445,7 @@ mod tests {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
+            market_wants: Default::default(),
             neighbors: vec![Vec::new(); n],
             road_trips: Vec::new(),
             road_paved: Vec::new(),
@@ -731,7 +736,7 @@ mod tests {
             view.advance,
             AdvanceState::Active { blocked: false }
         ));
-        assert_eq!(view.invited_count, 1);
+        assert_eq!(view.attending_count, 1);
         // No storage places exist, so nothing is retained; the row for the
         // farm's wanted/produced resources should still show up.
         assert!(view.rows.iter().any(|r| r.resource == Straw));

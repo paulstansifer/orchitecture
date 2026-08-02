@@ -8,11 +8,13 @@ use crate::resource_icons::SMALL_SIZE;
 use crate::ui_util::{icon, FontSizes};
 use crate::{col_format, label, note_label};
 
-use super::farmstead::{
-    FarmEvent, FarmId, FarmsResource, MarketModeEffect, SurroundingsState, MARKET_BOOST,
-};
+use super::attendance::{choose_attendees, AttendanceReason};
+use super::farmstead::{FarmEvent, FarmId, FarmsResource, MarketModeEffect, SurroundingsState};
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
-use super::ui_view::{farm_menu_view, farm_panel_view, FarmMenuView, FarmPanelView};
+use super::ui_view::{
+    farm_menu_view, farm_panel_view, market_wants_view, FarmMenuView, FarmPanelView,
+    MarketWantsView,
+};
 use crate::city_effect::{CityEffect, MonthInputs};
 
 const PIXELS_PER_UNIT: f32 = 8.0;
@@ -21,6 +23,9 @@ const CIRCLE_RADIUS: f32 = 18.0;
 const ROAD_MAX_ALPHA: u8 = 200;
 const FOG_GRID_STEP_PX: f32 = 20.0;
 const PANEL_W: f32 = 110.0;
+/// Width of the "market is buying" panel — wide enough for a few resource
+/// buttons per row.
+const WANTS_PANEL_W: f32 = 260.0;
 /// Generous upper bound on a farm info panel's rendered height, used only to
 /// decide whether an off-center panel still has a visible sliver on screen.
 const PANEL_H_MAX: f32 = 140.0;
@@ -274,9 +279,9 @@ pub fn surroundings_ui_system(
     let predicted_boost = |id: FarmId| -> i32 {
         match preview_market.get(&id).copied() {
             Some(CityEffect::Market {
-                effect: MarketModeEffect::Boost,
+                effect: MarketModeEffect::Boost { amount },
                 ..
-            }) => MARKET_BOOST,
+            }) => *amount,
             _ => 0,
         }
     };
@@ -328,29 +333,46 @@ pub fn surroundings_ui_system(
             }
         });
 
+    // ── The market's standing advertisement ───────────────────────────────────
+
+    let mut toggle_want: Option<UniformResource> = None;
+    let wants_view = market_wants_view(&farms);
+    market_wants_panel(
+        ctx,
+        panel_rect,
+        &wants_view,
+        &icon_textures_sm,
+        &mut toggle_want,
+    );
+
     // ── Farm info panels ──────────────────────────────────────────────────────
 
-    // Maximum invitees = number of market stand furniture placed across all
-    // market places.
-    let invite_limit_reached =
-        farms.invited_count() >= crate::place::market_stand_count(&constructed);
+    // Each farm decides for itself whether the trip is worth making; the market
+    // stands cap how many of the willing fit. Recomputed here (rather than read
+    // back off the `invited` flags `update_economy_cache` already set) because
+    // the panels want the *reason* a farm is staying away, not just the fact.
+    let stands = crate::place::market_stand_count(&constructed);
+    let attendance = choose_attendees(&farms, stands);
 
     for (id, centroid) in revealed {
         let current_event = farms.farm_event(id);
+        let reason = attendance
+            .get(id.index())
+            .map_or(AttendanceReason::Unknown, |a| a.reason);
+        let produce_wanted = farms.market_wants.is_wanted(farms[id].produced_resource());
         let panel_view = farm_panel_view(
             &farms[id],
             current_event,
             predicted_boost(id),
-            invite_limit_reached,
+            reason,
+            produce_wanted,
         );
-        let farm = &mut farms[id];
         if let Some(opened) = farm_info_panel(
             ctx,
             panel_rect,
             id,
             centroid,
             &panel_view,
-            &mut farm.invited,
             &icon_textures_sm,
         ) {
             state.open_farm_menu = Some(opened);
@@ -367,6 +389,9 @@ pub fn surroundings_ui_system(
     }
 
     // ── Apply deferred actions ────────────────────────────────────────────────
+    if let Some(resource) = toggle_want {
+        farms.market_wants.toggle(resource);
+    }
     if let Some(delta) = pan_delta {
         state.viewport_offset.x -= delta.x / PIXELS_PER_UNIT;
         state.viewport_offset.y += delta.y / PIXELS_PER_UNIT;
@@ -376,17 +401,16 @@ pub fn surroundings_ui_system(
     }
 }
 
-/// Renders one revealed farm's info panel at `centroid`. `invited` binds the
-/// checkbox directly to the farm's live state, since the view-model is
-/// read-only. Returns `Some(id)` if the "…" button was clicked (requesting
-/// the farm menu popup open for it).
+/// Renders one revealed farm's info panel at `centroid`. Purely a report:
+/// whether the farm is coming to the next market and why, plus the "…" button
+/// for configuring what it'll do once there. Returns `Some(id)` if that button
+/// was clicked (requesting the farm menu popup open for it).
 fn farm_info_panel(
     ctx: &egui::Context,
     panel_rect: egui::Rect,
     id: FarmId,
     centroid: egui::Pos2,
     view: &FarmPanelView,
-    invited: &mut bool,
     icon_textures_sm: &HashMap<UniformResource, egui::TextureId>,
 ) -> Option<FarmId> {
     let mut open_menu = None;
@@ -409,7 +433,7 @@ fn farm_info_panel(
                             ui,
                             format!("{:.0} ac", view.area),
                             (view.boost != 0).then_some(format!("{:+}", view.boost)),
-                            (*invited && view.predicted_boost > 0).then_some(col_format!(
+                            (view.attending && view.predicted_boost > 0).then_some(col_format!(
                                 preview,
                                 "+ {}",
                                 view.predicted_boost
@@ -430,15 +454,27 @@ fn farm_info_panel(
                         if let Some(&tex) = icon_textures_sm.get(&view.produced_resource) {
                             icon(ui, tex, SMALL_SIZE);
                         }
-                        label!(ui, format!("{}", view.inedible_stockpile));
+                        label!(
+                            ui,
+                            format!("{}", view.inedible_stockpile),
+                            // The market is advertising for this; worth knowing
+                            // when wondering why this farm made the trip.
+                            view.produce_wanted
+                                .then_some(col_format!(preview, "wanted"))
+                        );
                     });
 
                     ui.horizontal(|ui| {
-                        ui.add_enabled(
-                            view.can_invite,
-                            egui::Checkbox::new(invited, view.checkbox_label),
-                        );
-                        if ui.add_enabled(*invited, egui::Button::new("…")).clicked() {
+                        if view.attending {
+                            label!(ui, view.status.clone());
+                        } else {
+                            note_label!(ui, view.status.clone());
+                        }
+                        // Only a farm that's coming has anything to configure.
+                        if ui
+                            .add_enabled(view.attending, egui::Button::new("…"))
+                            .clicked()
+                        {
                             open_menu = Some(id);
                         }
                     });
@@ -447,7 +483,55 @@ fn farm_info_panel(
     open_menu
 }
 
-/// The "Farm options" popup for `menu_i` (already known to be invited),
+/// The market's standing advertisement, pinned to the top-left of the map.
+/// Farms aren't invited any more, so this is the player's influence over who
+/// makes the trip: a producer of something the market is buying expects a
+/// better price, and will travel further for it. Sets `toggle` to whichever
+/// resource was clicked, for the caller to apply once `farms` is free.
+fn market_wants_panel(
+    ctx: &egui::Context,
+    panel_rect: egui::Rect,
+    view: &MarketWantsView,
+    icon_textures_sm: &HashMap<UniformResource, egui::TextureId>,
+    toggle: &mut Option<UniformResource>,
+) {
+    egui::Area::new(egui::Id::new("market_wants"))
+        .fixed_pos(panel_rect.left_top() + egui::vec2(8.0, 8.0))
+        .constrain(false)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(15, 15, 15, 210))
+                .inner_margin(egui::Margin::same(6))
+                .corner_radius(4.0)
+                .show(ui, |ui| {
+                    // An `Area` is unbounded, so the wrap below needs a width
+                    // to wrap against.
+                    ui.set_max_width(WANTS_PANEL_W);
+                    label!(ui, "The market is buying".to_string());
+                    note_label!(
+                        ui,
+                        format!("up to {} — farms travel further for these", view.limit)
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        for option in &view.options {
+                            let image = icon_textures_sm.get(&option.resource).map(|&tex| {
+                                egui::Image::new(egui::load::SizedTexture::new(tex, SMALL_SIZE))
+                            });
+                            let button = egui::Button::opt_image_and_text(
+                                image,
+                                Some(option.resource.label().into()),
+                            )
+                            .selected(option.wanted);
+                            if ui.add_enabled(option.enabled, button).clicked() {
+                                *toggle = Some(option.resource);
+                            }
+                        }
+                    });
+                });
+        });
+}
+
+/// The "Farm options" popup for `menu_i` (already known to be attending),
 /// rendering the choices computed by [`farm_menu_view`].
 fn farm_menu_ui(
     ctx: &egui::Context,

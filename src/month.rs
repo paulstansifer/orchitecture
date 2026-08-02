@@ -20,6 +20,7 @@ use crate::place;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::sparse3d::SlotCoord;
+use crate::surroundings::attendance::apply_attendance;
 use crate::surroundings::farmstead::{
     apply_production, compute_production, reset_farm_events, FarmsResource, GameClock,
 };
@@ -41,13 +42,15 @@ pub struct MonthOutcome {
 
 /// Advances the game by one month, mutating the game resources in place.
 ///
-/// Sequence: compute this month's effects (market participation per invited
-/// farm, population feeding, a traveler's visit, construction's material
-/// absorption — see [`crate::city_effect`]) against the current state, apply
-/// every one of them, then produce next month's stockpiles, clear farm
-/// invites, roll a fresh traveler offer, deposit whatever's left of this
-/// month's inflow into storage, and tick construction (which completes once
-/// fully paid, unconditionally in sandbox mode).
+/// Sequence: settle which farms turned up at the market (see
+/// [`crate::surroundings::attendance`]), compute this month's effects (market
+/// participation per attending farm, population feeding, a traveler's visit,
+/// construction's material absorption — see [`crate::city_effect`]) against the
+/// current state, apply every one of them, then produce next month's
+/// stockpiles, clear this month's attendance, roll a fresh traveler offer,
+/// deposit whatever's left of this month's inflow into storage, and tick
+/// construction (which completes once fully paid, unconditionally in sandbox
+/// mode).
 #[allow(clippy::too_many_arguments)]
 pub fn advance_month(
     clock: &mut GameClock,
@@ -64,6 +67,17 @@ pub fn advance_month(
     clock.advance_month();
     farms.ensure_adjacency();
     farms.ensure_roads();
+
+    // Settle who's actually at this month's market before anything reads the
+    // `invited` flags. The UI recomputes this every frame too (so previews and
+    // the map stay live), but doing it here as well keeps the simulation
+    // self-contained: headless runs and tests get the same market without a UI
+    // system having run. It's idempotent, so the double call is harmless.
+    //
+    // Deliberately *not* inside `compute_month_effects`: the farm-options popup
+    // runs hypotheticals through that path with a farm temporarily mutated, and
+    // attendance shifting under a hypothetical would make its previews jump.
+    apply_attendance(farms, constructed);
 
     let effects = compute_month_effects(
         farms,
@@ -108,6 +122,9 @@ pub fn advance_month(
 
     let plan = compute_production(farms, rng);
     apply_production(farms, &plan);
+    // This month's market is over. Next month's attendance is decided fresh by
+    // `apply_attendance` — from the stockpiles and boosts this month just
+    // rewrote, so a farm that sold up will now sit out for a while.
     for farm in &mut farms.farms {
         farm.invited = false;
     }
