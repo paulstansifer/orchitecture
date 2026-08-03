@@ -8,13 +8,10 @@ use crate::resource_icons::SMALL_SIZE;
 use crate::ui_util::{icon, FontSizes};
 use crate::{col_format, label, note_label};
 
-use super::attendance::{choose_attendees, AttendanceReason};
+use super::attendance::{choose_attendees, construction_demand, AttendanceReason};
 use super::farmstead::{FarmEvent, FarmId, FarmsResource, MarketModeEffect, SurroundingsState};
 use super::map::{fog_alpha_at, REVEAL_THRESHOLD};
-use super::ui_view::{
-    farm_menu_view, farm_panel_view, market_wants_view, FarmMenuView, FarmPanelView,
-    MarketWantsView,
-};
+use super::ui_view::{farm_menu_view, farm_panel_view, FarmMenuView, FarmPanelView};
 use crate::city_effect::{CityEffect, MonthInputs};
 
 const PIXELS_PER_UNIT: f32 = 8.0;
@@ -23,9 +20,9 @@ const CIRCLE_RADIUS: f32 = 18.0;
 const ROAD_MAX_ALPHA: u8 = 200;
 const FOG_GRID_STEP_PX: f32 = 20.0;
 const PANEL_W: f32 = 110.0;
-/// Width of the "market is buying" panel — wide enough for a few resource
-/// buttons per row.
-const WANTS_PANEL_W: f32 = 260.0;
+/// Width of the "market is buying" panel — wide enough for a few resources
+/// per row.
+const DEMAND_PANEL_W: f32 = 240.0;
 /// Generous upper bound on a farm info panel's rendered height, used only to
 /// decide whether an off-center panel still has a visible sliver on screen.
 const PANEL_H_MAX: f32 = 140.0;
@@ -333,17 +330,12 @@ pub fn surroundings_ui_system(
             }
         });
 
-    // ── The market's standing advertisement ───────────────────────────────────
+    // ── What the market is paying a premium for ───────────────────────────────
 
-    let mut toggle_want: Option<UniformResource> = None;
-    let wants_view = market_wants_view(&farms);
-    market_wants_panel(
-        ctx,
-        panel_rect,
-        &wants_view,
-        &icon_textures_sm,
-        &mut toggle_want,
-    );
+    // Not a control: the construction plan already says what the city needs.
+    // This just makes visible why the countryside is behaving as it is.
+    let demand = construction_demand(inputs);
+    market_demand_panel(ctx, panel_rect, &demand, &icon_textures_sm);
 
     // ── Farm info panels ──────────────────────────────────────────────────────
 
@@ -352,14 +344,14 @@ pub fn surroundings_ui_system(
     // back off the `invited` flags `update_economy_cache` already set) because
     // the panels want the *reason* a farm is staying away, not just the fact.
     let stands = crate::place::market_stand_count(&constructed);
-    let attendance = choose_attendees(&farms, stands);
+    let attendance = choose_attendees(&farms, stands, &demand);
 
     for (id, centroid) in revealed {
         let current_event = farms.farm_event(id);
         let reason = attendance
             .get(id.index())
             .map_or(AttendanceReason::Unknown, |a| a.reason);
-        let produce_wanted = farms.market_wants.is_wanted(farms[id].produced_resource());
+        let produce_wanted = demand.contains(&farms[id].produced_resource());
         let panel_view = farm_panel_view(
             &farms[id],
             current_event,
@@ -389,9 +381,6 @@ pub fn surroundings_ui_system(
     }
 
     // ── Apply deferred actions ────────────────────────────────────────────────
-    if let Some(resource) = toggle_want {
-        farms.market_wants.toggle(resource);
-    }
     if let Some(delta) = pan_delta {
         state.viewport_offset.x -= delta.x / PIXELS_PER_UNIT;
         state.viewport_offset.y += delta.y / PIXELS_PER_UNIT;
@@ -483,19 +472,21 @@ fn farm_info_panel(
     open_menu
 }
 
-/// The market's standing advertisement, pinned to the top-left of the map.
-/// Farms aren't invited any more, so this is the player's influence over who
-/// makes the trip: a producer of something the market is buying expects a
-/// better price, and will travel further for it. Sets `toggle` to whichever
-/// resource was clicked, for the caller to apply once `farms` is free.
-fn market_wants_panel(
+/// What the market is paying a premium for this month, pinned to the top-left
+/// of the map. Read-only: it's whatever the city's construction plan is still
+/// short of, so the way to change it is to plan something different. Without
+/// this the premium (and the farms it drags in from the far side of the map)
+/// would be invisible. Draws nothing when nothing is being built.
+fn market_demand_panel(
     ctx: &egui::Context,
     panel_rect: egui::Rect,
-    view: &MarketWantsView,
+    demand: &[UniformResource],
     icon_textures_sm: &HashMap<UniformResource, egui::TextureId>,
-    toggle: &mut Option<UniformResource>,
 ) {
-    egui::Area::new(egui::Id::new("market_wants"))
+    if demand.is_empty() {
+        return;
+    }
+    egui::Area::new(egui::Id::new("market_demand"))
         .fixed_pos(panel_rect.left_top() + egui::vec2(8.0, 8.0))
         .constrain(false)
         .show(ctx, |ui| {
@@ -506,27 +497,20 @@ fn market_wants_panel(
                 .show(ui, |ui| {
                     // An `Area` is unbounded, so the wrap below needs a width
                     // to wrap against.
-                    ui.set_max_width(WANTS_PANEL_W);
+                    ui.set_max_width(DEMAND_PANEL_W);
                     label!(ui, "The market is buying".to_string());
-                    note_label!(
-                        ui,
-                        format!("up to {} — farms travel further for these", view.limit)
-                    );
                     ui.horizontal_wrapped(|ui| {
-                        for option in &view.options {
-                            let image = icon_textures_sm.get(&option.resource).map(|&tex| {
-                                egui::Image::new(egui::load::SizedTexture::new(tex, SMALL_SIZE))
-                            });
-                            let button = egui::Button::opt_image_and_text(
-                                image,
-                                Some(option.resource.label().into()),
-                            )
-                            .selected(option.wanted);
-                            if ui.add_enabled(option.enabled, button).clicked() {
-                                *toggle = Some(option.resource);
+                        for &resource in demand {
+                            if let Some(&tex) = icon_textures_sm.get(&resource) {
+                                icon(ui, tex, SMALL_SIZE);
                             }
+                            label!(ui, resource.label().to_string());
                         }
                     });
+                    note_label!(
+                        ui,
+                        "for what you're building — growers travel further for it"
+                    );
                 });
         });
 }

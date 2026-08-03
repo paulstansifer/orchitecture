@@ -278,7 +278,6 @@ pub fn build_farms_resource(rng: &mut impl rand::Rng) -> FarmsResource {
         farms,
         circle_pos,
         traveler_reveals: Vec::new(),
-        market_wants: Default::default(),
         neighbors,
         road_trips: Vec::new(),
         road_paved: Vec::new(),

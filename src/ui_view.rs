@@ -445,7 +445,6 @@ mod tests {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
-            market_wants: Default::default(),
             neighbors: vec![Vec::new(); n],
             road_trips: Vec::new(),
             road_paved: Vec::new(),

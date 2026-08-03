@@ -27,9 +27,9 @@ use crate::{col_format, heading_label, label, note_label};
 ///
 /// NOTE: this dedups the computation but still runs it every frame. We *could*
 /// skip recomputes when no input changed, but naively gating on
-/// `resource_changed` fails today: egui widgets bind straight to resource fields
-/// (e.g. `&mut farm.invited`), so `DerefMut` marks the resource changed every
-/// frame it's rendered, even when the value is identical.
+/// `resource_changed` fails today: egui widgets bind straight to resource
+/// fields, so `DerefMut` marks the resource changed every frame it's rendered,
+/// even when the value is identical.
 ///
 /// The envisioned fix is a wrapper over the input resources (a `SystemParam`
 /// bundle) exposing either plain `&` read access, or — for the few widgets that
@@ -70,12 +70,6 @@ pub fn update_economy_cache(
     if farms.roads.is_none() {
         farms.ensure_roads();
     }
-    // Settle who's coming to the next market before anything previews it, so
-    // the map, the farm panels and the resource panel all agree — and so the
-    // set responds live as the player builds another market stand or changes
-    // what the market advertises for. `advance_month` recomputes this itself,
-    // authoritatively; this is the same pure decision, run early.
-    crate::surroundings::apply_attendance(farms, &constructed);
     let inputs = MonthInputs {
         constructed: &constructed,
         pending: &pending,
@@ -84,6 +78,12 @@ pub fn update_economy_cache(
         material_list: &material_list,
         sandbox_enabled: sandbox.enabled,
     };
+    // Settle who's coming to the next market before anything previews it, so
+    // the map, the farm panels and the resource panel all agree — and so the
+    // set responds live as the player builds another market stand or changes
+    // what they're building. `advance_month` recomputes this itself,
+    // authoritatively; this is the same pure decision, run early.
+    crate::surroundings::apply_attendance(farms, inputs);
     cache.0 = Some(inputs.compute(farms));
 }
 
@@ -511,7 +511,6 @@ mod tests {
             farms: Vec::new(),
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
-            market_wants: Default::default(),
             neighbors: Vec::new(),
             road_trips: Vec::new(),
             road_paved: Vec::new(),

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::city_effect::{CityEffect, LedgerSource, MonthInputs, Pool};
 use crate::resource::{ToolKind, UniformResource};
-use crate::surroundings::attendance::{MarketWants, WANTED_BOOST};
+use crate::surroundings::attendance::DEMAND_BOOST;
 use crate::surroundings::road_network::{RoadNetwork, INITIAL_TRIPS};
 
 /// Stockpile ceiling: production beyond this is simply wasted, which is what
@@ -139,8 +139,9 @@ pub struct FarmData {
     pub boost: i32,
     /// Whether this farm is at the coming month's market. Derived state, not
     /// a player choice: `attendance::apply_attendance` recomputes it from the
-    /// farm's own circumstances (what it has to sell, how far it is, what the
-    /// market is advertising for) against the city's market stand count.
+    /// farm's own circumstances (what it has to sell, how far it is, whether
+    /// the city's construction plan wants what it grows) against the city's
+    /// market stand count.
     /// Everything downstream — `seed_market`, `record_road_trips`,
     /// `pave_fieldstone_routes` — only reads it.
     pub invited: bool,
@@ -187,11 +188,6 @@ pub struct FarmsResource {
     /// Paths revealed by traveler arrivals.
     #[serde(default)]
     pub traveler_reveals: Vec<Vec<Vec2>>,
-    /// What the market is advertising that it will buy — the player's standing
-    /// influence over which farms find the trip worth making. See
-    /// [`crate::surroundings::attendance`].
-    #[serde(default)]
-    pub market_wants: MarketWants,
     /// Voronoi adjacency: `neighbors[i]` lists the farms sharing an edge with farm `i`.
     /// Rebuilt from polygons when empty (covers fresh generation and loaded saves).
     #[serde(skip)]
@@ -383,8 +379,8 @@ impl GameClock {
 #[derive(Clone, Copy)]
 pub enum MarketModeEffect {
     /// `Market` event: attending the market raised the farm's boost by
-    /// `amount` — `MARKET_BOOST`, plus `attendance::WANTED_BOOST` if the farm
-    /// sold into the market's advertised demand.
+    /// `amount` — `MARKET_BOOST`, plus `attendance::DEMAND_BOOST` if the farm
+    /// sold into what the city's construction plan is short of.
     Boost { amount: i32 },
     /// `Reconfigure` event: paid this many potatoes to switch production to
     /// `new_production`. `paid_from_storage` is how much of `paid` came out of
@@ -474,12 +470,12 @@ pub fn seed_market(fr: &FarmsResource, pool: &mut Pool) -> Vec<(FarmId, u32)> {
 }
 
 /// The production boost farm `id` takes home from a market it actually traded
-/// at: `MARKET_BOOST`, plus a premium if it sold into the demand the market
-/// advertised (see `attendance::WANTED_BOOST`) — the advertisement isn't just
-/// a lure, it's a better price.
-fn market_boost(fr: &FarmsResource, id: FarmId) -> i32 {
-    if fr.market_wants.is_wanted(fr[id].produced_resource()) {
-        MARKET_BOOST + WANTED_BOOST
+/// at: `MARKET_BOOST`, plus a premium if it sold into what the city's
+/// construction plan is short of (see `attendance::DEMAND_BOOST`) — the city
+/// pays up for what it actually needs.
+fn market_boost(fr: &FarmsResource, id: FarmId, demand: &[UniformResource]) -> i32 {
+    if demand.contains(&fr[id].produced_resource()) {
+        MARKET_BOOST + DEMAND_BOOST
     } else {
         MARKET_BOOST
     }
@@ -494,13 +490,14 @@ pub fn resolve_market(
     fr: &FarmsResource,
     invited: &[(FarmId, u32)],
     pool: &mut Pool,
+    demand: &[UniformResource],
 ) -> BTreeMap<FarmId, CityEffect> {
     let mut farm_effects = BTreeMap::new();
     for &(id, cost) in invited {
         let farm = &fr[id];
         let effect = match fr.farm_event(id) {
             FarmEvent::Market => MarketModeEffect::Boost {
-                amount: market_boost(fr, id),
+                amount: market_boost(fr, id, demand),
             },
             // Pay a fixed reconfigure cost from the pool if it's there;
             // otherwise fall back to a normal boost.
@@ -520,7 +517,7 @@ pub fn resolve_market(
                     }
                 } else {
                     MarketModeEffect::Boost {
-                        amount: market_boost(fr, id),
+                        amount: market_boost(fr, id, demand),
                     }
                 }
             }
@@ -551,10 +548,11 @@ pub fn resolve_market(
 pub fn compute_market(
     fr: &FarmsResource,
     storage: &HashMap<UniformResource, u32>,
+    demand: &[UniformResource],
 ) -> MarketOutcome {
     let mut pool = Pool::new(storage.clone());
     let invited = seed_market(fr, &mut pool);
-    let farm_effects = resolve_market(fr, &invited, &mut pool);
+    let farm_effects = resolve_market(fr, &invited, &mut pool, demand);
     MarketOutcome {
         farm_effects,
         player_gains: pool.gains(),
@@ -804,7 +802,6 @@ mod tests {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
-            market_wants: Default::default(),
             neighbors: neighbors
                 .into_iter()
                 .map(|v| v.into_iter().map(FarmId::new).collect())
@@ -940,7 +937,7 @@ mod tests {
         };
 
         // Pool has >= RECONFIGURE_COST potatoes: A pays and re-rolls.
-        let outcome = compute_market(&make(RECONFIGURE_COST + 5), &HashMap::new());
+        let outcome = compute_market(&make(RECONFIGURE_COST + 5), &HashMap::new(), &[]);
         assert!(matches!(
             outcome.farm_effects[&FarmId::new(0)],
             crate::city_effect::CityEffect::Market {
@@ -959,7 +956,7 @@ mod tests {
 
         // Pool has too little potato: A falls back to a normal boost, and its own
         // potatoes are still withheld (the event, not the outcome, decides that).
-        let outcome = compute_market(&make(RECONFIGURE_COST - 1), &HashMap::new());
+        let outcome = compute_market(&make(RECONFIGURE_COST - 1), &HashMap::new(), &[]);
         assert!(matches!(
             outcome.farm_effects[&FarmId::new(0)],
             crate::city_effect::CityEffect::Market {
@@ -994,7 +991,7 @@ mod tests {
         let mut fr = farms_with(vec![a], vec![vec![]]);
         fr.farms[0].event = FarmEvent::Adopt;
 
-        let effect = compute_market(&fr, &HashMap::new())
+        let effect = compute_market(&fr, &HashMap::new(), &[])
             .farm_effects
             .remove(&FarmId::new(0))
             .unwrap();

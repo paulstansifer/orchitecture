@@ -13,7 +13,7 @@
 use bevy::prelude::{Commands, Message, MessageReader, Res, ResMut};
 
 use crate::city::{Cell, CityMut, ConstructedCity, ProposedCity, ViewableWorld};
-use crate::city_effect::{compute_month_effects, EffectContext};
+use crate::city_effect::{compute_month_effects, EffectContext, MonthInputs};
 use crate::construction::{remaining_construction_need, tick_construction};
 use crate::materials::MaterialList;
 use crate::place;
@@ -77,7 +77,17 @@ pub fn advance_month(
     // Deliberately *not* inside `compute_month_effects`: the farm-options popup
     // runs hypotheticals through that path with a farm temporarily mutated, and
     // attendance shifting under a hypothetical would make its previews jump.
-    apply_attendance(farms, constructed);
+    apply_attendance(
+        farms,
+        MonthInputs {
+            constructed,
+            pending,
+            population,
+            traveler_state,
+            material_list,
+            sandbox_enabled,
+        },
+    );
 
     let effects = compute_month_effects(
         farms,

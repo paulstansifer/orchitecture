@@ -5,7 +5,7 @@ pub mod road_network;
 pub mod ui;
 pub mod ui_view;
 
-pub use attendance::{apply_attendance, MarketWants};
+pub use attendance::apply_attendance;
 pub use farmstead::{FarmData, FarmsResource, GameClock, SurroundingsState};
 pub use map::generate_farms;
 pub use road_network::RoadNetwork;

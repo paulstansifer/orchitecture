@@ -673,9 +673,21 @@ pub fn compute_month_effects(
     // by the leftover-distribution pass below rather than re-scanned.
     let storage_snapshot = place::storage_totals(constructed);
     let mut pool = Pool::new(storage_snapshot.clone());
-    // Invited farms deliver their stockpiles into the pool up front, so the
+    // Attending farms deliver their stockpiles into the pool up front, so the
     // claimants below can take from that inflow in priority order.
     let invited = seed_market(farms, &mut pool);
+
+    // What the construction plan is still short of — the resources the market
+    // pays a premium for, which is also what drew some of these farms in (see
+    // `surroundings::attendance`).
+    let demand = crate::surroundings::attendance::construction_demand(MonthInputs {
+        constructed,
+        pending,
+        population,
+        traveler_state,
+        material_list,
+        sandbox_enabled,
+    });
 
     let mut effects: Vec<CityEffect> = Vec::new();
 
@@ -751,7 +763,7 @@ pub fn compute_month_effects(
     // against whatever's left of the pool's inflow after Eat and the traveler.
     // `resolve_market` returns a `BTreeMap`, so this is already in canonical
     // (by farm id) order rather than shuffling from frame to frame.
-    effects.extend(resolve_market(farms, &invited, &mut pool).into_values());
+    effects.extend(resolve_market(farms, &invited, &mut pool, &demand).into_values());
 
     // Half of whatever Fieldstone survived market transactions is diverted to
     // paving its own delivery routes, before the player ever sees it as a gain
@@ -862,7 +874,6 @@ mod tests {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
-            market_wants: Default::default(),
             neighbors: vec![Vec::new(); n],
             road_trips: Vec::new(),
             road_paved: Vec::new(),

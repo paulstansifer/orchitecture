@@ -7,7 +7,9 @@ Orchitecture uses the Bevy game engine, and uses Burn to the convolutional neura
 
 The player starts with three market stalls at an empty crossroads.
 
-The player makes construction plans; farms from the surrounding countryside decide for themselves whether this month's market is worth the trip, weighing what they have to sell against how far they'd have to haul it (see `surroundings/attendance.rs`), and the market stands the player has built cap how many can be accommodated. The farms trade for resources they want (temporarily increasing their future surplus); the leftovers go to the player, who can use them to construct buildings. The player influences who turns up by advertising what the market is buying — growers of an advertised resource expect a better price and will travel further for it — and, more slowly, by building more stands and letting traffic pave the roads. Sometimes "traveler"s come, trading more exotic resources, like tools and planks, for market resources. The population of the city starts at 1; each occupant needs food and shelter.
+The player makes construction plans; farms from the surrounding countryside decide for themselves whether this month's market is worth the trip, weighing what they have to sell against how far they'd have to haul it (see `surroundings/attendance.rs`), and the market stands the player has built cap how many can be accommodated. The farms trade for resources they want (temporarily increasing their future surplus); the leftovers go to the player, who can use them to construct buildings.
+
+The player never picks who comes, but still steers it, mostly by deciding what to build: whatever the current construction plan is still short of is what the market pays a premium for, so those growers travel further for it. Planning a stone tower rather than a timber hall changes who turns up. More slowly, building more market stands raises the ceiling, and traffic paves the roads that make distant farms reachable at all. Sometimes "traveler"s come, trading more exotic resources, like tools and planks, for market resources. The population of the city starts at 1; each occupant needs food and shelter.
 
 The player builds things that can, for example:
   * store excess resources
@@ -138,8 +140,8 @@ real change-detection-gated systems (`rebuild_navigation_grid`, `sync_homes`) �
 for scripted (e.g. LLM-driven) verification of non-graphical changes, including
 change-detection behavior itself. Send `help` as the first command for the full list:
 placing/removing structures and boxes, propose-then-construct with sandbox on/off,
-undo/redo, advancing time, advertising what the market buys, configuring what an
-attending farm does, querying cells, structures,
+undo/redo, advancing time, configuring what an attending farm does, querying
+cells, structures,
 places, farms, outdoorsness, inventory, pathfinding, and the raw serialized city
 (`dump`).
 

@@ -7,7 +7,7 @@
 use crate::city_effect::MonthInputs;
 use crate::resource::{ToolKind, UniformResource};
 
-use super::attendance::{advertisable_resources, AttendanceReason, WANTED_LIMIT};
+use super::attendance::AttendanceReason;
 use super::farmstead::{
     farm_breakdown, market_effect, FarmData, FarmEvent, FarmId, FarmProduction, FarmsResource,
     MarketModeEffect, NewProduction,
@@ -135,8 +135,8 @@ pub struct FarmPanelView {
     /// Whether this farm is at the coming month's market. Gates the "…"
     /// options button, which only means anything for a farm that's coming.
     pub attending: bool,
-    /// Whether the market is advertising for what this farm produces — why it
-    /// may be making a trip it otherwise wouldn't.
+    /// Whether the city's construction plan is short of what this farm
+    /// produces — why it may be making a trip it otherwise wouldn't.
     pub produce_wanted: bool,
     /// One line on whether the farm is coming, and what's keeping it away if
     /// it isn't.
@@ -177,41 +177,6 @@ pub fn farm_panel_view(
     }
 }
 
-/// One resource the market could advertise for.
-pub struct MarketWantOption {
-    pub resource: UniformResource,
-    pub wanted: bool,
-    /// False when [`WANTED_LIMIT`] is already used up on other resources —
-    /// the player has to drop one before adding another.
-    pub enabled: bool,
-}
-
-/// The "market is buying" control: what the city can advertise for, and what
-/// it currently is. This is the player's standing influence over who turns up,
-/// in place of the old per-month invitations.
-pub struct MarketWantsView {
-    pub options: Vec<MarketWantOption>,
-    pub limit: usize,
-}
-
-pub fn market_wants_view(farms: &FarmsResource) -> MarketWantsView {
-    let options = advertisable_resources(farms)
-        .into_iter()
-        .map(|resource| {
-            let wanted = farms.market_wants.is_wanted(resource);
-            MarketWantOption {
-                resource,
-                wanted,
-                enabled: wanted || !farms.market_wants.is_full(),
-            }
-        })
-        .collect();
-    MarketWantsView {
-        options,
-        limit: WANTED_LIMIT,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,7 +209,6 @@ mod tests {
             farms,
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
-            market_wants: Default::default(),
             neighbors: vec![Vec::new(); n],
             road_trips: Vec::new(),
             road_paved: Vec::new(),
@@ -395,37 +359,5 @@ mod tests {
             false,
         );
         assert_eq!(view.status, "Coming: Adopt");
-    }
-
-    /// Advertising is capped, so once the limit is used up the remaining
-    /// resources can't be added without dropping one.
-    #[test]
-    fn market_wants_view_disables_options_at_the_limit() {
-        use crate::resource::UniformResource::{Potato, Timber};
-
-        let mut farms = farms_with(vec![
-            mk_farm(false, FarmProduction::Regular(Straw)),
-            mk_farm(false, FarmProduction::Regular(Timber)),
-        ]);
-
-        let view = market_wants_view(&farms);
-        assert!(
-            view.options.iter().all(|o| o.enabled && !o.wanted),
-            "nothing advertised yet, so everything is available"
-        );
-        // Potatoes are always advertisable — every farm grows them.
-        assert!(view.options.iter().any(|o| o.resource == Potato));
-
-        for _ in 0..WANTED_LIMIT {
-            let next = farms.market_wants.wanted().len();
-            let resource = market_wants_view(&farms).options[next].resource;
-            farms.market_wants.toggle(resource);
-        }
-
-        let view = market_wants_view(&farms);
-        assert!(
-            view.options.iter().all(|o| o.enabled == o.wanted),
-            "at the limit, only the already-advertised resources stay clickable"
-        );
     }
 }

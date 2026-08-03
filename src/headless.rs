@@ -40,9 +40,7 @@ use crate::population::{assign_places, sync_assignments, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::surroundings::attendance::{
-    choose_attendees, AttendanceReason, MarketWants, WANTED_LIMIT,
-};
+use crate::surroundings::attendance::{choose_attendees, construction_demand, AttendanceReason};
 use crate::surroundings::farmstead::{
     farm_breakdown, FarmEvent, FarmId, FarmProduction, FarmsResource, GameClock, NewProduction,
 };
@@ -58,7 +56,6 @@ Commands (space-separated tokens, one per line):
   sandbox on|off                                   toggle direct-build vs propose-then-construct
   advance [n]                                      advance the game clock by n months (default 1)
   tick                                             run one Bevy Update pass (change detection!)
-  market_wants [<resource>...]                     advertise what the market buys (no args clears)
   invite_traveler / uninvite_traveler              accept or decline this month's traveler offer
   farm_event <farm_idx> market|reroll|specialize|adopt   set a farm's next market action
   set_production <farm_idx> <resource>             cheat: force a farm's produced resource
@@ -357,37 +354,6 @@ impl HeadlessSession {
                     );
                 }
                 Ok(lines)
-            }
-
-            // Farms decide their own attendance, so there's nothing to invite.
-            // What the player *can* do is advertise what the market is buying,
-            // which draws those producers from further out. No arguments clears
-            // the advertisement.
-            "market_wants" => {
-                let resources = args
-                    .iter()
-                    .map(|a| parse_uniform_resource(a))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if resources.len() > WANTED_LIMIT {
-                    return Err(format!(
-                        "the market can advertise for at most {WANTED_LIMIT} resources"
-                    ));
-                }
-                let mut farms = self.world().resource_mut::<FarmsResource>();
-                farms.market_wants = MarketWants::default();
-                for res in resources {
-                    farms.market_wants.toggle(res);
-                }
-                Ok(vec![format!(
-                    "market_wants=[{}]",
-                    farms
-                        .market_wants
-                        .wanted()
-                        .iter()
-                        .map(|r| r.label())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )])
             }
 
             // The graphical UI sets this from the traveler panel's checkbox;
@@ -884,44 +850,10 @@ impl HeadlessSession {
                 }
             }
 
-            "farms" => {
-                // Report the *live* decision rather than the `invited` flags,
-                // which only get refreshed when a month advances (the graphical
-                // UI recomputes them every frame; there's no such system here).
-                let stands = {
-                    let constructed = self.world().resource::<ConstructedCity>();
-                    place::market_stand_count(constructed)
-                };
-                let mut farms = self.world().resource_mut::<FarmsResource>();
-                farms.ensure_roads();
-                let attendance = choose_attendees(&farms, stands);
-                Ok(farms
-                    .farms
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| {
-                        format!(
-                            "{i} pos=({:.1},{:.1}) area={:.1} produces={} potatoes={} \
-                             inedible={} boost={} attending={} eagerness={} why={}",
-                            f.seed.x,
-                            f.seed.y,
-                            f.area,
-                            f.produced_resource().label(),
-                            f.potato_stockpile,
-                            f.inedible_stockpile,
-                            f.boost,
-                            attendance[i].attending(),
-                            attendance[i].eagerness,
-                            match attendance[i].reason {
-                                AttendanceReason::Attending => "attending",
-                                AttendanceReason::NoStall => "no_stall",
-                                AttendanceReason::NotWorthTheTrip => "not_worth_the_trip",
-                                AttendanceReason::Unknown => "undiscovered",
-                            }
-                        )
-                    })
-                    .collect())
-            }
+            "farms" => self
+                .world()
+                .run_system_once(query_farms_system)
+                .map_err(|e| e.to_string()),
 
             "farm" => {
                 let idx = parse_usize(args.first().copied().unwrap_or(""))?;
@@ -1200,6 +1132,59 @@ fn load_system(
     mut pending: ResMut<ProposedCity>,
 ) {
     construction::load_from_offline(&mut cw, &mut pending, new_contents);
+}
+
+/// `query farms`: every farm, with the decision it has made about the coming
+/// market. Reports the *live* decision rather than the `invited` flags, which
+/// only get refreshed when a month advances (the graphical UI recomputes them
+/// every frame; there's no such system here).
+#[allow(clippy::too_many_arguments)]
+fn query_farms_system(
+    mut farms: ResMut<FarmsResource>,
+    cw: Res<ConstructedCity>,
+    pending: Res<ProposedCity>,
+    population: Res<Population>,
+    traveler_state: Res<TravelerState>,
+    material_list: Res<MaterialList>,
+    sandbox: Res<SandboxFlag>,
+) -> Vec<String> {
+    let inputs = crate::city_effect::MonthInputs {
+        constructed: &cw,
+        pending: &pending,
+        population: &population,
+        traveler_state: &traveler_state,
+        material_list: &material_list,
+        sandbox_enabled: sandbox.0,
+    };
+    farms.ensure_roads();
+    let demand = construction_demand(inputs);
+    let attendance = choose_attendees(&farms, place::market_stand_count(&cw), &demand);
+    farms
+        .farms
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            format!(
+                "{i} pos=({:.1},{:.1}) area={:.1} produces={} potatoes={} \
+                 inedible={} boost={} attending={} eagerness={} why={}",
+                f.seed.x,
+                f.seed.y,
+                f.area,
+                f.produced_resource().label(),
+                f.potato_stockpile,
+                f.inedible_stockpile,
+                f.boost,
+                attendance[i].attending(),
+                attendance[i].eagerness,
+                match attendance[i].reason {
+                    AttendanceReason::Attending => "attending",
+                    AttendanceReason::NoStall => "no_stall",
+                    AttendanceReason::NotWorthTheTrip => "not_worth_the_trip",
+                    AttendanceReason::Unknown => "undiscovered",
+                }
+            )
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1574,10 +1559,10 @@ mod tests {
             "construction shouldn't happen before anything is delivered: {cell:?}"
         );
 
-        // Advertise for what the build needs. Farms come to market on their own
-        // judgement now, and this is what tilts that judgement: straw and canvas
-        // growers will make the trip they'd otherwise skip.
-        dispatch_ok(&mut session, "market_wants straw canvas");
+        // Farms come to market on their own judgement now, and the pallet's own
+        // cost is what tilts that judgement: proposing it is already a
+        // statement that the city wants straw and canvas, so those growers make
+        // a trip they'd otherwise skip.
         assert!(
             !farms_producing(&mut session, "Straw").is_empty()
                 && !farms_producing(&mut session, "Canvas").is_empty(),
@@ -1656,14 +1641,14 @@ mod tests {
         }
     }
 
-    /// Advertising is the player's remaining lever over who turns up: it makes
-    /// the trip more appealing to the growers of what the city is buying, and
-    /// leaves everyone else's reasoning alone. (Whether that's enough to win a
-    /// stall depends on the competition — the arithmetic itself is pinned down
-    /// in `attendance`'s own tests.)
+    /// The construction plan is the player's remaining lever over who turns
+    /// up: proposing something makes the trip more appealing to the growers of
+    /// what it needs, and leaves everyone else's reasoning alone. (Whether
+    /// that's enough to win a stall depends on the competition — the
+    /// arithmetic itself is pinned down in `attendance`'s own tests.)
     #[test]
-    fn advertising_makes_the_right_farms_keener() {
-        use crate::surroundings::attendance::WANTED_DRAW;
+    fn planning_a_build_makes_its_suppliers_keener() {
+        use crate::surroundings::attendance::DEMAND_DRAW;
 
         /// `(farm index, eagerness)` for every farm the city has discovered.
         fn eagerness_by_farm(
@@ -1686,28 +1671,43 @@ mod tests {
 
         let mut session = HeadlessSession::new(7);
         build_market_stands(&mut session, 1);
+        dispatch_ok(&mut session, "sandbox off");
 
         let before = eagerness_by_farm(&mut session);
-        let wanted = "Straw";
-        let growers = farms_producing(&mut session, wanted);
-        assert!(!growers.is_empty(), "seed 7 should have a straw farm");
+        // A pallet costs straw and canvas, and nothing else.
+        let growers: Vec<usize> = ["Straw", "Canvas"]
+            .into_iter()
+            .flat_map(|r| farms_producing(&mut session, r))
+            .collect();
+        assert!(
+            !growers.is_empty(),
+            "seed 7 should have a straw or canvas farm"
+        );
 
-        dispatch_ok(&mut session, &format!("market_wants {wanted}"));
+        dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
         let after = eagerness_by_farm(&mut session);
 
         for (idx, before) in &before {
             let expected = before
                 + if growers.contains(idx) {
-                    WANTED_DRAW
+                    DEMAND_DRAW
                 } else {
                     0
                 };
             assert_eq!(
                 after[idx],
                 expected,
-                "farm {idx} should be {} keener once the market advertises for {wanted}",
+                "farm {idx} should be {} keener once a pallet is planned",
                 expected - before
             );
         }
+
+        // Cancelling the plan takes the premium away again.
+        dispatch_ok(&mut session, "undo");
+        assert_eq!(
+            eagerness_by_farm(&mut session),
+            before,
+            "with nothing planned, the countryside goes back to pure self-interest"
+        );
     }
 }
