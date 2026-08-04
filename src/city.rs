@@ -3,6 +3,7 @@ use std::f32::consts::TAU;
 
 #[cfg(autotile_matching)]
 use crate::autotile::AutotiledMeshes;
+use crate::change_guard::Guarded;
 use bevy::ecs::system::SystemParam;
 use bevy::math::{IVec3, Quat, Vec3};
 use bevy::prelude::{
@@ -568,7 +569,7 @@ impl ViewableWorld {
 /// systems with many other parameters don't exceed Bevy's 16-parameter limit.
 #[derive(SystemParam)]
 pub struct CityMut<'w> {
-    pub constructed: ResMut<'w, ConstructedCity>,
+    pub constructed: Guarded<'w, ConstructedCity>,
     pub pending: ResMut<'w, ProposedCity>,
     pub assembled: ResMut<'w, AssembledCity>,
 }

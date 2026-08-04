@@ -207,7 +207,7 @@ pub fn advance_month_system(
     let outcome = advance_month(
         &mut clock,
         &mut farms,
-        &mut constructed,
+        constructed.mutate(),
         &mut pending,
         &mut population,
         &mut traveler_state,

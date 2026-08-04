@@ -4,6 +4,7 @@ use bevy::window::PrimaryWindow;
 
 use crate::autotile::{spec_stem, AutotileHandles, AutotileRules, AutotiledMeshes};
 use crate::camera::GameCamera;
+use crate::change_guard::Guarded;
 use crate::city::{
     apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
     ConstructedCity, GridCellMarker, MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets,
@@ -230,7 +231,7 @@ impl BuildState {
 #[allow(clippy::too_many_arguments)]
 fn apply_edit(
     commands: &mut Commands,
-    constructed: &mut ConstructedCity,
+    constructed: &mut Guarded<'_, ConstructedCity>,
     pending: &mut crate::city::ProposedCity,
     assembled: &mut crate::city::AssembledCity,
     structure_list: &EorfList,
@@ -243,7 +244,7 @@ fn apply_edit(
         return;
     }
     if sandbox_enabled {
-        let real_changes = construct(constructed, pending, material_list);
+        let real_changes = construct(constructed.mutate(), pending, material_list);
         apply_changes(commands, assembled, structure_list, real_changes);
     } else {
         apply_proposal_changes(commands, assembled, structure_list, overlay_assets, changes);
@@ -390,7 +391,7 @@ fn handle_undo_redo(
     commands: &mut Commands,
     keyboard: &ButtonInput<KeyCode>,
     typing: bool,
-    constructed: &mut ConstructedCity,
+    constructed: &mut Guarded<'_, ConstructedCity>,
     pending: &mut crate::city::ProposedCity,
     assembled: &mut crate::city::AssembledCity,
     structure_list: &EorfList,
@@ -461,7 +462,7 @@ fn handle_drag_building(
     mouse_button: &ButtonInput<MouseButton>,
     windows: &Query<&Window, With<PrimaryWindow>>,
     camera_q: &Query<(&Camera, &GlobalTransform), With<GameCamera>>,
-    constructed: &mut ConstructedCity,
+    constructed: &mut Guarded<'_, ConstructedCity>,
     pending: &mut crate::city::ProposedCity,
     assembled: &mut crate::city::AssembledCity,
     structure_list: &EorfList,

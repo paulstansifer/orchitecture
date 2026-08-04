@@ -1,3 +1,4 @@
+use crate::change_guard::Guarded;
 use crate::city::ConstructedCity;
 use crate::place::{AssignmentFlavor, PlacedPlaceId};
 use bevy::prelude::*;
@@ -134,20 +135,19 @@ const ALL_ASSIGNMENT_FLAVORS: [AssignmentFlavor; 1] = [AssignmentFlavor::Sleep];
 /// Re-runs `assign_places` for every `AssignmentFlavor` whenever the world
 /// (place count) or the population (individual count) changes.
 ///
-/// Mutates through `bypass_change_detection` and only calls `set_changed`
-/// when an assignment actually changed: `ResMut::deref_mut` marks a resource
-/// changed unconditionally, and this system's own run condition includes
-/// `resource_changed::<Population>`, so an unconditional mark would make it
-/// re-trigger itself on every frame forever after the first real change.
-pub fn sync_assignments(mut population: ResMut<Population>, cw: Res<ConstructedCity>) {
-    let individuals = &mut population.bypass_change_detection().individuals;
-    let mut changed = false;
-    for flavor in ALL_ASSIGNMENT_FLAVORS {
-        changed |= assign_places(flavor, individuals, &cw);
-    }
-    if changed {
-        population.set_changed();
-    }
+/// Mutates through `Guarded::mutate_if`, only marking the resource changed
+/// when an assignment actually changed: this system's own run condition
+/// includes `resource_changed::<Population>`, so an unconditional mark would
+/// make it re-trigger itself on every frame forever after the first real
+/// change.
+pub fn sync_assignments(mut population: Guarded<Population>, cw: Res<ConstructedCity>) {
+    population.mutate_if(|population| {
+        let mut changed = false;
+        for flavor in ALL_ASSIGNMENT_FLAVORS {
+            changed |= assign_places(flavor, &mut population.individuals, &cw);
+        }
+        changed
+    });
 }
 
 #[cfg(test)]

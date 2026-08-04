@@ -155,11 +155,17 @@ Headless commands can also be used for testing; see `src/place.rs` for an exampl
 Two levels, depending on whether you just need a number or need to know which
 system is slow:
 
-* **Quick FPS/frame-time/entity-count check**: always on, no setup. `main.rs` adds
-  `FrameTimeDiagnosticsPlugin`, `EntityCountDiagnosticsPlugin`, and
+* **Quick FPS/frame-time/entity-count check**: opt-in via `--perf-log`, since
+  the console spam isn't wanted on every run:
+
+  ```
+  cargo run --release --bin game -- --perf-log
+  ```
+
+  This turns on `FrameTimeDiagnosticsPlugin`, `EntityCountDiagnosticsPlugin`, and
   `LogDiagnosticsPlugin`, which log a line to the console roughly once a second
-  with FPS, frame time, and entity count. Run a release build
-  (`cargo run --release --bin game`) for numbers that reflect real performance.
+  with FPS, frame time, and entity count. Run a release build for numbers that
+  reflect real performance.
 
 * **Per-system/render-stage breakdown via Tracy**: build with the `trace_tracy`
   feature —
@@ -182,3 +188,16 @@ system is slow:
   `trace_tracy` adds noticeable overhead of its own, so use it to find the
   offending system, then go back to the plain `LogDiagnosticsPlugin` numbers (or
   Tracy's own before/after comparison) to confirm a fix actually helped.
+
+* **Change-frequency tripwire**: always on in debug builds (no flag), unlike
+  the above. `change_diagnostics.rs` tracks how often each "big bag of data"
+  resource (`ConstructedCity`, `Population`, `IdeaState`, `EorfList`,
+  `FarmsResource`) is marked changed, and logs a `warn!` if any of them changes
+  on more than 10% of frames — which normally means some system gated on
+  `resource_changed` for that resource (a flood fill, nav-grid rebuild, place
+  sync, ...) is silently running every frame instead of only on real edits.
+  This should not fire in ordinary play; if it does, see `change_guard.rs`
+  (`Guarded<T>`, `edit_if_changed`) for the fix pattern — taking `&mut T` out
+  of a `ResMut<T>` marks it changed regardless of whether anything was
+  actually written, which egui code especially trips over by binding widgets
+  straight to resource fields.

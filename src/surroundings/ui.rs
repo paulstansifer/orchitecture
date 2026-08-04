@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
+use crate::change_guard::{edit_if_changed, Guarded};
 use crate::resource::UniformResource;
 use crate::resource_icons::SMALL_SIZE;
 use crate::ui_util::{icon, FontSizes};
@@ -229,7 +230,7 @@ pub fn exit_surroundings_mode(mut commands: Commands) {
 #[allow(clippy::too_many_arguments)]
 pub fn surroundings_ui_system(
     mut contexts: EguiContexts,
-    mut farms: ResMut<FarmsResource>,
+    mut farms: Guarded<FarmsResource>,
     mut state: ResMut<SurroundingsState>,
     constructed: Res<crate::city::ConstructedCity>,
     pending: Res<crate::city::ProposedCity>,
@@ -343,16 +344,26 @@ pub fn surroundings_ui_system(
             predicted_boost(id),
             invite_limit_reached,
         );
-        let farm = &mut farms[id];
-        if let Some(opened) = farm_info_panel(
-            ctx,
-            panel_rect,
-            id,
-            centroid,
-            &panel_view,
-            &mut farm.invited,
-            &icon_textures_sm,
-        ) {
+        // The checkbox binds `&mut bool` every frame this panel is shown,
+        // regardless of whether the player clicks it -- render against a
+        // scratch copy and only touch the real resource if it actually
+        // changed (see `edit_if_changed`).
+        let current_invited = farms[id].invited;
+        let mut opened = None;
+        if let Some(new_invited) = edit_if_changed(&current_invited, |invited| {
+            opened = farm_info_panel(
+                ctx,
+                panel_rect,
+                id,
+                centroid,
+                &panel_view,
+                invited,
+                &icon_textures_sm,
+            );
+        }) {
+            farms.mutate()[id].invited = new_invited;
+        }
+        if let Some(opened) = opened {
             state.open_farm_menu = Some(opened);
         }
     }
@@ -451,12 +462,15 @@ fn farm_info_panel(
 /// rendering the choices computed by [`farm_menu_view`].
 fn farm_menu_ui(
     ctx: &egui::Context,
-    farms: &mut FarmsResource,
+    farms: &mut Guarded<'_, FarmsResource>,
     inputs: MonthInputs,
     menu_i: FarmId,
     state: &mut SurroundingsState,
 ) {
-    let FarmMenuView { options } = farm_menu_view(farms, inputs, menu_i);
+    // `farm_menu_view` mutates `farms` transiently (hypothetical previews,
+    // restored before it returns) -- never a real net change, so this must
+    // never mark the resource changed even though it needs `&mut` access.
+    let FarmMenuView { options } = farm_menu_view(farms.bypass(), inputs, menu_i);
 
     let mut keep_open = true;
     let mut chosen_event: Option<FarmEvent> = None;
@@ -492,6 +506,6 @@ fn farm_menu_ui(
         state.open_farm_menu = None;
     }
     if let Some(new_event) = chosen_event {
-        farms.set_farm_event(menu_i, new_event);
+        farms.mutate().set_farm_event(menu_i, new_event);
     }
 }

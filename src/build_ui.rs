@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts, EguiGlobalSettings};
 
+use crate::change_guard::Guarded;
 use crate::city::{
     apply_proposal_changes, clear_proposed_cut_entities, CityMut, ConstructedCity,
     ProposalOverlayAssets, ViewableWorld,
@@ -91,7 +92,7 @@ fn bottom_controls_ui(
                 // Switching into sandbox commits any pending proposals immediately.
                 commit_pending_construction(
                     commands,
-                    &mut world.constructed,
+                    world.constructed.mutate(),
                     &mut world.pending,
                     &mut world.assembled,
                     viewable,
@@ -106,20 +107,20 @@ fn bottom_controls_ui(
                     crate::starter_town::build_starter_town(&world.constructed.eorfs);
                 crate::map_files::load_map(
                     commands,
-                    &mut world.constructed,
+                    world.constructed.mutate(),
                     &mut world.pending,
                     &mut world.assembled,
                     viewable,
                     structure_list,
                     new_contents,
                 );
-                crate::place::sync_places(&mut world.constructed);
+                world.constructed.mutate_if(crate::place::sync_places);
                 for &res in crate::resource::UniformResource::ALL {
-                    crate::place::deposit_uniform_with_capacity(&mut world.constructed, res, 20);
+                    crate::place::deposit_uniform_with_capacity(world.constructed.mutate(), res, 20);
                 }
                 for _ in 0..20 {
                     crate::place::deposit_tool(
-                        &mut world.constructed,
+                        world.constructed.mutate(),
                         crate::resource::ToolKind::CarpentersTools,
                     );
                 }
@@ -161,7 +162,7 @@ fn bottom_controls_ui(
 /// highlight in 3D (innermost place's furniture, plus the clicked cell).
 fn place_hierarchy_ui(
     ui: &mut egui::Ui,
-    constructed: &mut ConstructedCity,
+    constructed: &mut Guarded<'_, ConstructedCity>,
     population: &Population,
     icon_textures: &std::collections::HashMap<crate::resource::UniformResource, egui::TextureId>,
     loc: SlotCoord,
@@ -228,12 +229,12 @@ fn place_hierarchy_ui(
             );
             if !eligible.is_empty() {
                 ui.label("Nestable within:");
-                restriction_dropdown(
-                    ui,
-                    ("place-restriction", idx),
-                    &mut constructed.placed_places[idx].restriction,
-                    &eligible,
-                );
+                let current = constructed.placed_places[idx].restriction.clone();
+                if let Some(new) =
+                    restriction_dropdown(ui, ("place-restriction", idx), &current, &eligible)
+                {
+                    constructed.mutate().placed_places[idx].restriction = new;
+                }
             }
 
             let mut counts: std::collections::BTreeMap<String, usize> =
@@ -285,12 +286,14 @@ fn place_hierarchy_ui(
             if constructed.places[place_def_idx].work.is_some() {
                 let core = crate::place::place_location(constructed, idx);
                 ui.label("Work priority:");
-                priority_dropdown(
-                    ui,
-                    ("work-priority", idx),
-                    core,
-                    &mut constructed.work_priorities,
-                );
+                let current = constructed
+                    .work_priorities
+                    .get(&core)
+                    .copied()
+                    .unwrap_or_default();
+                if let Some(new) = priority_dropdown(ui, ("work-priority", idx), current) {
+                    constructed.mutate().work_priorities.insert(core, new);
+                }
                 let workers: Vec<String> = population
                     .individuals
                     .iter()
@@ -348,33 +351,50 @@ fn place_hierarchy_ui(
         );
         if !eligible.is_empty() {
             ui.label("Nestable within:");
-            let restriction = constructed.furniture_restrictions.entry(cube).or_default();
-            restriction_dropdown(
-                ui,
-                ("furniture-restriction", eorf_idx),
-                restriction,
-                &eligible,
-            );
+            let current = constructed
+                .furniture_restrictions
+                .get(&cube)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(new) =
+                restriction_dropdown(ui, ("furniture-restriction", eorf_idx), &current, &eligible)
+            {
+                constructed
+                    .mutate()
+                    .furniture_restrictions
+                    .insert(cube, new);
+            }
         }
 
         if crate::place::cube_is_storage_bin(constructed, cube) {
             ui.label("Restricted to:");
-            bin_restriction_dropdown(
-                ui,
-                ("bin-restriction", eorf_idx),
-                cube,
-                &mut constructed.bin_resource_restrictions,
-            );
+            let current = constructed.bin_resource_restrictions.get(&cube).copied();
+            if let Some(new) = bin_restriction_dropdown(ui, ("bin-restriction", eorf_idx), current)
+            {
+                let restrictions = &mut constructed.mutate().bin_resource_restrictions;
+                match new {
+                    Some(res) => {
+                        restrictions.insert(cube, res);
+                    }
+                    None => {
+                        restrictions.remove(&cube);
+                    }
+                }
+            }
         }
 
         if crate::place::cube_is_rack(constructed, cube) {
             ui.label("Holds:");
-            rack_restriction_dropdown(
-                ui,
-                ("rack-restriction", eorf_idx),
-                cube,
-                &mut constructed.rack_restrictions,
-            );
+            let current = constructed
+                .rack_restrictions
+                .get(&cube)
+                .copied()
+                .unwrap_or_default();
+            if let Some(new) =
+                rack_restriction_dropdown(ui, ("rack-restriction", eorf_idx), current)
+            {
+                constructed.mutate().rack_restrictions.insert(cube, new);
+            }
         }
 
         // Installable slots: show each slot's contents with Install/Remove.
@@ -389,8 +409,10 @@ fn place_hierarchy_ui(
                     Some(item) => {
                         ui.label(format!("{}: {}", slot.kind.label(), item.label()));
                         if ui.button("Remove").clicked() {
-                            constructed.set_slot(cube, slot_idx, slot_count, None);
-                            crate::place::deposit_unique(constructed, item);
+                            constructed
+                                .mutate()
+                                .set_slot(cube, slot_idx, slot_count, None);
+                            crate::place::deposit_unique(constructed.mutate(), item);
                         }
                     }
                     None => {
@@ -412,7 +434,7 @@ fn place_hierarchy_ui(
 /// and installs it into the slot. Driven by `UiState::install_menu`.
 fn install_menu_window(
     ctx: &egui::Context,
-    constructed: &mut ConstructedCity,
+    constructed: &mut Guarded<'_, ConstructedCity>,
     ui_state: &mut UiState,
 ) {
     let Some((loc, slot_idx)) = ui_state.install_menu else {
@@ -462,8 +484,10 @@ fn install_menu_window(
         });
 
     if let Some(item) = chosen {
-        if crate::place::withdraw_unique(constructed, &item) {
-            constructed.set_slot(cube, slot_idx, slot_count, Some(item));
+        if crate::place::withdraw_unique(constructed.mutate(), &item) {
+            constructed
+                .mutate()
+                .set_slot(cube, slot_idx, slot_count, Some(item));
         }
         ui_state.install_menu = None;
     } else if !keep_open {
@@ -548,7 +572,7 @@ pub fn build_ui_system(
     if let Some(new_contents) = load_request.and_then(|req| req.resolve(&world.constructed.eorfs)) {
         load_map(
             &mut commands,
-            &mut world.constructed,
+            world.constructed.mutate(),
             &mut world.pending,
             &mut world.assembled,
             &mut viewable,
@@ -904,110 +928,107 @@ fn place_requirements_ui(
 /// Dropdown for a Furniture/Place kind's `ParentRestriction`: "Unrestricted",
 /// "Do not include", or one of the `eligible` `Place` kinds. Not shown by the
 /// caller when `eligible` is empty (nothing could ever include this kind).
+///
+/// Renders every frame regardless of user interaction (egui needs a live
+/// `&mut` to bind the dropdown to), so it takes `current` by value and only
+/// returns the new value when the user actually picked something different --
+/// the caller only needs to touch the backing resource on a real edit.
 fn restriction_dropdown(
     ui: &mut egui::Ui,
     id_source: impl std::hash::Hash,
-    restriction: &mut crate::place::ParentRestriction,
+    current: &crate::place::ParentRestriction,
     eligible: &[String],
-) {
+) -> Option<crate::place::ParentRestriction> {
     use crate::place::ParentRestriction;
 
-    let current_label = match restriction {
+    let current_label = match current {
         ParentRestriction::Unrestricted => "Unrestricted".to_string(),
         ParentRestriction::Excluded => "Do not include".to_string(),
         ParentRestriction::RestrictedTo(name) => name.clone(),
     };
+    let mut chosen = current.clone();
     egui::ComboBox::from_id_salt(id_source)
         .selected_text(current_label)
         .show_ui(ui, |ui| {
-            ui.selectable_value(restriction, ParentRestriction::Unrestricted, "Unrestricted");
-            ui.selectable_value(restriction, ParentRestriction::Excluded, "Do not include");
+            ui.selectable_value(&mut chosen, ParentRestriction::Unrestricted, "Unrestricted");
+            ui.selectable_value(&mut chosen, ParentRestriction::Excluded, "Do not include");
             for name in eligible {
                 ui.selectable_value(
-                    restriction,
+                    &mut chosen,
                     ParentRestriction::RestrictedTo(name.clone()),
                     name,
                 );
             }
         });
+    (chosen != *current).then_some(chosen)
 }
 
 /// Dropdown for a bin's `UniformResource` restriction: "Any resource", or one
-/// specific resource. Absence from `restrictions` means unrestricted.
+/// specific resource. Absence means unrestricted. See `restriction_dropdown`
+/// for why this takes/returns by value instead of binding `&mut` in place.
 fn bin_restriction_dropdown(
     ui: &mut egui::Ui,
     id_source: impl std::hash::Hash,
-    cube: bevy::math::IVec3,
-    restrictions: &mut std::collections::HashMap<
-        bevy::math::IVec3,
-        crate::resource::UniformResource,
-    >,
-) {
+    current: Option<crate::resource::UniformResource>,
+) -> Option<Option<crate::resource::UniformResource>> {
     use crate::resource::UniformResource;
 
-    let mut current = restrictions.get(&cube).copied();
+    let mut chosen = current;
     let current_label = current.map(|r| r.label()).unwrap_or("Any resource");
     egui::ComboBox::from_id_salt(id_source)
         .selected_text(current_label)
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut current, None, "Any resource");
+            ui.selectable_value(&mut chosen, None, "Any resource");
             for &res in UniformResource::ALL {
-                ui.selectable_value(&mut current, Some(res), res.label());
+                ui.selectable_value(&mut chosen, Some(res), res.label());
             }
         });
-    match current {
-        Some(res) => {
-            restrictions.insert(cube, res);
-        }
-        None => {
-            restrictions.remove(&cube);
-        }
-    }
+    (chosen != current).then_some(chosen)
 }
 
 /// Dropdown for a rack's `RackContents` dedication: "Tools" or "Rugs" --
 /// unlike a bin, there's no "unrestricted" option, so absence from
-/// `restrictions` is just treated as the default (`Tools`).
+/// `restrictions` is just treated as the default (`Tools`). See
+/// `restriction_dropdown` for why this takes/returns by value.
 fn rack_restriction_dropdown(
     ui: &mut egui::Ui,
     id_source: impl std::hash::Hash,
-    cube: bevy::math::IVec3,
-    restrictions: &mut std::collections::HashMap<bevy::math::IVec3, crate::resource::RackContents>,
-) {
+    current: crate::resource::RackContents,
+) -> Option<crate::resource::RackContents> {
     use crate::resource::RackContents;
 
-    let mut current = restrictions.get(&cube).copied().unwrap_or_default();
+    let mut chosen = current;
     egui::ComboBox::from_id_salt(id_source)
-        .selected_text(current.label())
+        .selected_text(chosen.label())
         .show_ui(ui, |ui| {
             ui.selectable_value(
-                &mut current,
+                &mut chosen,
                 RackContents::Tools,
                 RackContents::Tools.label(),
             );
-            ui.selectable_value(&mut current, RackContents::Rugs, RackContents::Rugs.label());
+            ui.selectable_value(&mut chosen, RackContents::Rugs, RackContents::Rugs.label());
         });
-    restrictions.insert(cube, current);
+    (chosen != current).then_some(chosen)
 }
 
 /// Dropdown selecting a workplace's `WorkPriority`, keyed by its core cube.
-/// Absent means the default (`Medium`).
+/// Absent means the default (`Medium`). See `restriction_dropdown` for why
+/// this takes/returns by value.
 fn priority_dropdown(
     ui: &mut egui::Ui,
     id_source: impl std::hash::Hash,
-    cube: bevy::math::IVec3,
-    priorities: &mut std::collections::HashMap<bevy::math::IVec3, crate::work::WorkPriority>,
-) {
-    let mut current = priorities.get(&cube).copied().unwrap_or_default();
+    current: crate::work::WorkPriority,
+) -> Option<crate::work::WorkPriority> {
+    let mut chosen = current;
     egui::ComboBox::from_id_salt(id_source)
-        .selected_text(current.label())
+        .selected_text(chosen.label())
         .show_ui(ui, |ui| {
             // Highest first reads most naturally in the list.
             for prio in crate::work::WorkPriority::ALL.iter().rev() {
-                ui.selectable_value(&mut current, *prio, prio.label());
+                ui.selectable_value(&mut chosen, *prio, prio.label());
             }
         });
-    priorities.insert(cube, current);
+    (chosen != current).then_some(chosen)
 }
 
 fn need_bar(ui: &mut egui::Ui, label: &str, value: f32) {

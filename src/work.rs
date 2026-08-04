@@ -8,11 +8,12 @@
 //! workplace's monthly effect, resolved through the shared month ledger in
 //! `city_effect::compute_workshop_effect` (after construction).
 
+use crate::change_guard::Guarded;
 use crate::city::ConstructedCity;
 use crate::place::{place_location, FulfilledPorf, PlacedPlaceId};
 use crate::population::{Individual, Population};
 use crate::resource::{ToolKind, UniqueResource};
-use bevy::prelude::{DetectChangesMut, Res, ResMut};
+use bevy::prelude::Res;
 use serde::{Deserialize, Serialize};
 
 /// How eagerly a workplace claims workers, relative to other workplaces.
@@ -157,13 +158,10 @@ pub fn workplace_staffing(individuals: &[Individual], id: PlacedPlaceId) -> f32 
 
 /// Re-runs [`assign_work`] whenever the world (workplaces) or population
 /// changes. Mirrors `population::sync_assignments`: mutates through
-/// `bypass_change_detection` and only `set_changed()` on a real change, since
-/// this system's own run condition includes `resource_changed::<Population>`.
-pub fn sync_work(mut population: ResMut<Population>, cw: Res<ConstructedCity>) {
-    let changed = assign_work(&mut population.bypass_change_detection().individuals, &cw);
-    if changed {
-        population.set_changed();
-    }
+/// `Guarded::mutate_if`, only marking changed on a real change, since this
+/// system's own run condition includes `resource_changed::<Population>`.
+pub fn sync_work(mut population: Guarded<Population>, cw: Res<ConstructedCity>) {
+    population.mutate_if(|population| assign_work(&mut population.individuals, &cw));
 }
 
 /// The tool installed in a placed workplace, if any (scans its fulfillments'
