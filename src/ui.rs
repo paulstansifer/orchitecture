@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 
+use crate::change_guard::Guarded;
 use crate::city::{City, ConstructedCity, ProposedCity};
 use crate::city_effect::{MonthEffects, MonthInputs};
 use crate::game_mode::{GameMode, SandboxMode};
@@ -27,22 +28,20 @@ use crate::{col_format, heading_label, label, note_label};
 ///
 /// NOTE: this dedups the computation but still runs it every frame. We *could*
 /// skip recomputes when no input changed, but naively gating on
-/// `resource_changed` fails today: egui widgets bind straight to resource fields
-/// (e.g. `&mut farm.invited`), so `DerefMut` marks the resource changed every
-/// frame it's rendered, even when the value is identical.
+/// `resource_changed` used to fail: egui widgets bind straight to resource
+/// fields (e.g. the farm-invite checkbox in `surroundings::ui`), and plain
+/// `DerefMut` marks a resource changed every frame it's rendered, even when
+/// the value is identical.
 ///
-/// The envisioned fix is a wrapper over the input resources (a `SystemParam`
-/// bundle) exposing either plain `&` read access, or — for the few widgets that
-/// edit an input — a scoped per-field proxy: it hands egui a working copy and,
-/// on `Drop`, writes back and calls `set_changed()` *only if the value actually
-/// differs* (a scoped `set_if_neq`, holding the resource via
-/// `bypass_change_detection` until then). That makes Bevy's own change signal
-/// accurate, so the cache can just gate on `resource_changed` — no separate
-/// dirty bit to keep in sync. Crucially it degrades safely: an edit that skips
-/// the proxy still marks the resource dirty, so the worst case is an unnecessary
-/// recompute (today's behavior), never a stale preview. The only real cost is a
-/// small generic "field of a resource" proxy helper. Deferred until profiling
-/// shows the per-frame compute matters.
+/// `crate::change_guard` now exists for exactly this: `Guarded<T>` exposes
+/// plain `&` read access with no `DerefMut`, plus explicit `mutate`/
+/// `mutate_if`/`bypass` for real writes, and `edit_if_changed` lets a
+/// continuously-rendered widget (checkbox, dropdown) bind `&mut` locally
+/// while only reaching into the resource when the value actually differs.
+/// `FarmsResource`, `ConstructedCity`, and the widgets that edit them
+/// (`surroundings::ui`, `build_ui`) already use it. Gating this cache on
+/// `resource_changed` for all its inputs is still deferred until profiling
+/// shows the per-frame compute matters -- but the accuracy blocker is gone.
 #[derive(Resource, Default)]
 pub struct MonthEffectsCache(pub Option<MonthEffects>);
 
@@ -53,7 +52,7 @@ pub struct MonthEffectsCache(pub Option<MonthEffects>);
 #[allow(clippy::too_many_arguments)]
 pub fn update_economy_cache(
     mut cache: ResMut<MonthEffectsCache>,
-    mut farms: ResMut<FarmsResource>,
+    mut farms: Guarded<FarmsResource>,
     constructed: Res<ConstructedCity>,
     pending: Res<ProposedCity>,
     population: Res<Population>,
@@ -62,10 +61,10 @@ pub fn update_economy_cache(
     sandbox: Res<SandboxMode>,
 ) {
     // Populate the farms' lazy adjacency/road caches (read by the economy
-    // computation) through `bypass_change_detection`, so building them doesn't
-    // mark `FarmsResource` changed — the road graph only needs (re)building when
+    // computation) through `bypass`, so building them doesn't mark
+    // `FarmsResource` changed — the road graph only needs (re)building when
     // absent; `advance_month` keeps its distances current after that.
-    let farms = farms.bypass_change_detection();
+    let farms = farms.bypass();
     farms.ensure_adjacency();
     if farms.roads.is_none() {
         farms.ensure_roads();

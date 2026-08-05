@@ -1,12 +1,17 @@
 #![recursion_limit = "256"]
 
 use bevy::camera::RenderTarget;
+use bevy::diagnostic::{
+    EntityCountDiagnosticsPlugin, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin,
+};
 use bevy::prelude::*;
 use bevy_egui::egui::{FontDefinitions, FontFamily};
 use bevy_egui::{
     EguiContexts, EguiMultipassSchedule, EguiPlugin, EguiPrimaryContextPass, PrimaryEguiContext,
 };
 use bevy_file_dialog::FileDialogPlugin;
+#[cfg(debug_assertions)]
+use orchitecture_lib::change_diagnostics::ChangeFrequencyDiagnosticsPlugin;
 use orchitecture_lib::{
     autotile::{
         autotile_update_system, load_autotile_handles, spawn_autotile_rules,
@@ -88,28 +93,49 @@ fn configure_fonts_once(mut contexts: EguiContexts, mut done: Local<bool>) {
 }
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins.set(AssetPlugin {
-            // Absolute path so assets load correctly regardless of working directory.
-            // On wasm, Bevy uses HTTP. ASSET_BASE_URL can be set at compile time to
-            // a subpath prefix (e.g. "/orchitecture/") for GitHub Pages deployments;
-            // defaults to "" for trunk serve / local builds.
-            #[cfg(not(target_arch = "wasm32"))]
-            file_path: orchitecture_lib::paths::MANIFEST_DIR.to_string(),
-            #[cfg(target_arch = "wasm32")]
-            file_path: option_env!("ASSET_BASE_URL").unwrap_or("").to_string(),
-            // On wasm, Bevy fetches .meta files over HTTP and gets 404s it can't handle.
-            meta_check: bevy::asset::AssetMetaCheck::Never,
-            ..default()
-        }))
-        .add_plugins(EguiPlugin::default())
+    // Opt-in: the console FPS/frame-time/entity-count spam is only useful
+    // while actively profiling, so it's off unless asked for (see
+    // DEVELOPING.md). The change-frequency tripwire's own warning is separate
+    // and stays on unconditionally in debug builds -- it should normally
+    // never fire, so there's nothing to opt into.
+    let perf_log = std::env::args().any(|a| a == "--perf-log");
+
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(AssetPlugin {
+        // Absolute path so assets load correctly regardless of working directory.
+        // On wasm, Bevy uses HTTP. ASSET_BASE_URL can be set at compile time to
+        // a subpath prefix (e.g. "/orchitecture/") for GitHub Pages deployments;
+        // defaults to "" for trunk serve / local builds.
+        #[cfg(not(target_arch = "wasm32"))]
+        file_path: orchitecture_lib::paths::MANIFEST_DIR.to_string(),
+        #[cfg(target_arch = "wasm32")]
+        file_path: option_env!("ASSET_BASE_URL").unwrap_or("").to_string(),
+        // On wasm, Bevy fetches .meta files over HTTP and gets 404s it can't handle.
+        meta_check: bevy::asset::AssetMetaCheck::Never,
+        ..default()
+    }));
+    if perf_log {
+        app.add_plugins((
+            FrameTimeDiagnosticsPlugin::default(),
+            EntityCountDiagnosticsPlugin::default(),
+            // Logs FPS/frame-time/entity-count to the console every second; see
+            // DEVELOPING.md for the Tracy-based per-system profiling workflow.
+            LogDiagnosticsPlugin::default(),
+        ));
+    }
+    app.add_plugins(EguiPlugin::default())
         .add_plugins(
             FileDialogPlugin::new()
                 .with_save_file::<SaveDialog>()
                 .with_load_file::<LoadDialog>(),
         )
-        .add_plugins(GridPreviewPlugin)
-        .add_plugins(GiPlugin)
+        .add_plugins(GridPreviewPlugin);
+    // Warns if a "big bag of data" resource (ConstructedCity, Population, ...) is
+    // being mutated far more often than expected; see change_diagnostics.rs. Debug
+    // builds only — it's a tripwire for development, not a runtime feature.
+    #[cfg(debug_assertions)]
+    app.add_plugins(ChangeFrequencyDiagnosticsPlugin);
+    app.add_plugins(GiPlugin)
         .add_plugins(ModelPlugin)
         .add_plugins(DebugVoxelsPlugin)
         .add_plugins(MaterialPlugin::<RingMaterial>::default())

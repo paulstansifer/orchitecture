@@ -15,7 +15,10 @@ use crate::sparse3d::{Facing, Slot, SlotCoord, Sparse3D};
 
 /// `restore_desired`'s return: the view deltas produced, and the inverse targets (each
 /// location's desired state before the call) so undo/redo can be reversed.
-type RestoreDesiredResult = (Vec<(SlotCoord, ProposalView)>, Vec<(SlotCoord, Option<Cell>)>);
+type RestoreDesiredResult = (
+    Vec<(SlotCoord, ProposalView)>,
+    Vec<(SlotCoord, Option<Cell>)>,
+);
 
 fn proposal_view(proposal: &Option<Proposal>, has_real_cell: bool) -> ProposalView {
     match proposal {

@@ -12,9 +12,9 @@ use crate::flood_fill::{coord_hash, flood_fill, has_sky_above};
 use crate::gi_material::{GiMaterial, GI_INTENSITY};
 use crate::sparse3d::{SlotCoord, Sparse3D};
 
-const FALLOFF: f32 = 0.30;
-// Not sure this works, but we should try setting this lower to make high windows nice.
-const FALLOFF_DOWNWARD: f32 = 0.30;
+const FALLOFF: f32 = 0.15;
+// Not sure this works; trying to make high windows effective:
+const FALLOFF_DOWNWARD: f32 = 0.00;
 /// Half-width of the per-hop falloff noise: effective falloff ∈ [FALLOFF − R, FALLOFF + R].
 const FALLOFF_NOISE_RADIUS: f32 = 0.10;
 

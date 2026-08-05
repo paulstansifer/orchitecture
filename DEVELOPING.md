@@ -149,3 +149,55 @@ a persistent system (so it reflects genuine Bevy change tracking, not a same-fra
 snapshot). See `src/headless.rs` for the implementation and protocol details.
 
 Headless commands can also be used for testing; see `src/place.rs` for an example.
+
+# Profiling
+
+Two levels, depending on whether you just need a number or need to know which
+system is slow:
+
+* **Quick FPS/frame-time/entity-count check**: opt-in via `--perf-log`, since
+  the console spam isn't wanted on every run:
+
+  ```
+  cargo run --release --bin game -- --perf-log
+  ```
+
+  This turns on `FrameTimeDiagnosticsPlugin`, `EntityCountDiagnosticsPlugin`, and
+  `LogDiagnosticsPlugin`, which log a line to the console roughly once a second
+  with FPS, frame time, and entity count. Run a release build for numbers that
+  reflect real performance.
+
+* **Per-system/render-stage breakdown via Tracy**: build with the `trace_tracy`
+  feature —
+
+  ```
+  cargo run --release --bin game --features trace_tracy
+  ```
+
+  This instruments Bevy's schedule (every system, plus render stages) with
+  `tracing` spans sent over a local socket. To view them, install the Tracy
+  profiler GUI (not packaged for apt/snap — download a release build, or build
+  from source, from https://github.com/wolfpld/tracy) and run its
+  `tracy-profiler` binary *before or while* the game is running; it connects
+  automatically and shows a live, zoomable timeline of frame time broken down by
+  system. This is the way to find out which specific system (e.g.
+  `update_global_illumination`, `sync_places_system`, `rebuild_navigation_grid`,
+  `autotile_update_system`) is responsible for a slow frame in a large scene,
+  rather than just knowing that frames are slow.
+
+  `trace_tracy` adds noticeable overhead of its own, so use it to find the
+  offending system, then go back to the plain `LogDiagnosticsPlugin` numbers (or
+  Tracy's own before/after comparison) to confirm a fix actually helped.
+
+* **Change-frequency tripwire**: always on in debug builds (no flag), unlike
+  the above. `change_diagnostics.rs` tracks how often each "big bag of data"
+  resource (`ConstructedCity`, `Population`, `IdeaState`, `EorfList`,
+  `FarmsResource`) is marked changed, and logs a `warn!` if any of them changes
+  on more than 10% of frames — which normally means some system gated on
+  `resource_changed` for that resource (a flood fill, nav-grid rebuild, place
+  sync, ...) is silently running every frame instead of only on real edits.
+  This should not fire in ordinary play; if it does, see `change_guard.rs`
+  (`Guarded<T>`, `edit_if_changed`) for the fix pattern — taking `&mut T` out
+  of a `ResMut<T>` marks it changed regardless of whether anything was
+  actually written, which egui code especially trips over by binding widgets
+  straight to resource fields.

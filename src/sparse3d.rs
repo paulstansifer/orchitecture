@@ -405,17 +405,17 @@ impl<T> Chunk<T> {
         }
     }
     fn iter(&self) -> impl Iterator<Item = (SmallCoordinates, &T)> {
-        self.data
-            .iter()
-            .enumerate()
-            .filter_map(|(i, item)| item.as_ref().map(|value| (small_coords_from_flat_index(i), value)))
+        self.data.iter().enumerate().filter_map(|(i, item)| {
+            item.as_ref()
+                .map(|value| (small_coords_from_flat_index(i), value))
+        })
     }
 
     fn iter_mut(&mut self) -> impl Iterator<Item = (SmallCoordinates, &mut T)> {
-        self.data
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, item)| item.as_mut().map(|value| (small_coords_from_flat_index(i), value)))
+        self.data.iter_mut().enumerate().filter_map(|(i, item)| {
+            item.as_mut()
+                .map(|value| (small_coords_from_flat_index(i), value))
+        })
     }
 
     fn size(&self) -> usize {

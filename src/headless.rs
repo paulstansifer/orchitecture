@@ -422,9 +422,7 @@ impl HeadlessSession {
                 FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools))
             }
             Some("adopt") => FarmEvent::Adopt,
-            _ => {
-                return Err("usage: farm_event <idx> market|reroll|specialize|adopt".to_string())
-            }
+            _ => return Err("usage: farm_event <idx> market|reroll|specialize|adopt".to_string()),
         };
         let mut farms = self.world().resource_mut::<FarmsResource>();
         if idx >= farms.farms.len() {
@@ -475,8 +473,7 @@ impl HeadlessSession {
     fn cmd_set_priority(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
         if args.len() < 4 {
             return Err(
-                "usage: set_priority <x> <y> <z> <very_low|low|medium|high|very_high>"
-                    .to_string(),
+                "usage: set_priority <x> <y> <z> <very_low|low|medium|high|very_high>".to_string(),
             );
         }
         let cube = parse_ivec3(&args[0..3])?;
@@ -604,8 +601,7 @@ impl HeadlessSession {
 
     fn cmd_dump(&mut self) -> Result<Vec<String>, String> {
         let cw = self.world().resource::<ConstructedCity>();
-        let bytes =
-            serialization::serialize(&cw.contents, &cw.eorfs).map_err(|e| e.to_string())?;
+        let bytes = serialization::serialize(&cw.contents, &cw.eorfs).map_err(|e| e.to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
         Ok(text.lines().map(str::to_string).collect())
     }

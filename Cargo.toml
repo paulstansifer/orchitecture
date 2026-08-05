@@ -15,6 +15,9 @@ training = [
     "dep:stdio-override",
     "dep:textplots",
 ]
+# Per-system/render-stage profiling, viewable in the Tracy profiler GUI.
+# See DEVELOPING.md for how to capture and read a trace.
+trace_tracy = ["bevy/trace_tracy"]
 
 [dependencies]
 anyhow = "1"

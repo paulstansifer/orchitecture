@@ -365,7 +365,7 @@ fn grid_bounds(contents: &Sparse3D<Cell>) -> (IVec3, IVec3) {
     (min, max)
 }
 
-fn build_navigation_grid(city: &ConstructedCity) -> NavigationGrid {
+pub(crate) fn build_navigation_grid(city: &ConstructedCity) -> NavigationGrid {
     let contents = &city.contents;
     let structures = &city.eorfs;
     let (min, max) = grid_bounds(contents);
