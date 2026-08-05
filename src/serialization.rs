@@ -136,12 +136,7 @@ where
 
     let mut lines_it = lines.lines();
 
-    loop {
-        let line = match lines_it.next() {
-            Some(line) => line,
-            None => break,
-        };
-
+    while let Some(line) = lines_it.next() {
         if line.starts_with("~~~~~") {
             y += 1;
             z = 0;

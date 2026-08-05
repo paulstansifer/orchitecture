@@ -94,13 +94,13 @@ where
 /// (used for annotation-style labeled matchers like `1=stairs:90`).
 /// This does not match the anchor itself! It's expected that we will look at every structure, see
 /// which rules use that structure as the anchor, and then call `match_pattern` on them.
-pub fn match_pattern<'a, R: AutotileResultKind>(
-    oriented: &'a AutotileOriented<R>,
+pub fn match_pattern<R: AutotileResultKind>(
+    oriented: &AutotileOriented<R>,
     get_cell: impl Fn(RelSlotCoord) -> Option<(EorfId, Facing)>,
     anchor: RelSlotCoord,
     char_matches_id: impl Fn(char, EorfId, Facing) -> bool,
     name_matches_id: impl Fn(&str, EorfId) -> bool,
-) -> Vec<&'a R> {
+) -> Vec<&R> {
     match_pattern_cases(
         oriented,
         &get_cell,

@@ -731,7 +731,7 @@ fn h_index(mut values: Vec<usize>) -> usize {
     values
         .iter()
         .enumerate()
-        .take_while(|&(i, &v)| v >= i + 1)
+        .take_while(|&(i, &v)| v > i)
         .count()
 }
 

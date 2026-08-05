@@ -528,6 +528,7 @@ fn handle_drag_building(
 
 /// Right-click (as opposed to right-drag, which rotates the camera): picks a real furniture
 /// cell under the cursor for the furniture-editing popup.
+#[allow(clippy::too_many_arguments)]
 fn handle_furniture_pick(
     mouse_button: &ButtonInput<MouseButton>,
     window: &Window,

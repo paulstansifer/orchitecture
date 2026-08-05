@@ -879,7 +879,7 @@ fn plan_assignment_with_nav(
             if taken.len() >= min || taken.len() >= max {
                 break;
             }
-            pulled_from.entry(owner).or_default().push(c.clone());
+            pulled_from.entry(owner).or_default().push(c);
             taken.push(c);
         }
         chosen.extend(taken);

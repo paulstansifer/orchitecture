@@ -110,6 +110,13 @@ fn rotate_slot_offset(offset: AutotileRelSlotOffset, rot: u8) -> AutotileRelSlot
     }
 }
 
+/// A canonicalized `AutotileRelSlotOffset`: the slot it lands on, and the cube offset from the
+/// checked cell's origin cube to its own -- see `canonical_offset_key`.
+type CanonicalOffsetKey = (AutotileRelSlot, (i32, i32, i32));
+
+/// A dedup key for a whole (rotated) check set -- see `canonical_checks_key`.
+type CanonicalChecks = HashMap<CanonicalOffsetKey, char>;
+
 /// A location key for `AutotileRelSlotOffset` that's independent of the arbitrary Lo/Hi choice
 /// of `origin_slot`/`dest_slot` -- e.g. `XLoWall` at cube offset `(1,0,0)` and `XHiWall` at cube
 /// offset `(0,0,0)` name the same physical wall (see `AutotileRelSlot::XLoWall`'s doc comment),
@@ -117,7 +124,7 @@ fn rotate_slot_offset(offset: AutotileRelSlotOffset, rot: u8) -> AutotileRelSlot
 /// rotation. Mirrors the canonicalization `RelSlotCoord::apply_offset` performs at match time, so
 /// two checks that always resolve to the same cell dedup together even when their Lo/Hi spelling
 /// differs.
-fn canonical_offset_key(offset: AutotileRelSlotOffset) -> (AutotileRelSlot, (i32, i32, i32)) {
+fn canonical_offset_key(offset: AutotileRelSlotOffset) -> CanonicalOffsetKey {
     let (ox, oy, oz) = offset.origin_slot.absolute_offset();
     let (mut cx, mut cy, mut cz) = offset.cube_offset;
     cx -= ox;
@@ -144,9 +151,7 @@ fn canonical_offset_key(offset: AutotileRelSlotOffset) -> (AutotileRelSlot, (i32
 /// A dedup key for a whole (rotated) check set: canonicalizes each offset (see
 /// `canonical_offset_key`) so that two check sets naming the same physical cells compare equal
 /// even if they disagree on Lo/Hi spelling.
-fn canonical_checks_key(
-    checks: &HashMap<AutotileRelSlotOffset, char>,
-) -> HashMap<(AutotileRelSlot, (i32, i32, i32)), char> {
+fn canonical_checks_key(checks: &HashMap<AutotileRelSlotOffset, char>) -> CanonicalChecks {
     checks
         .iter()
         .map(|(&offset, &ch)| (canonical_offset_key(offset), ch))
@@ -226,9 +231,7 @@ pub fn structure_to_meshes(file: &AutotileFile<AutotiledMeshes>) -> HashMap<Stri
         let Some(structure_name) = rule.subject.structure_name() else {
             continue;
         };
-        let meshes = mapping
-            .entry(structure_name.to_owned())
-            .or_insert_with(Vec::new);
+        let meshes = mapping.entry(structure_name.to_owned()).or_default();
 
         for case in &rule.cases {
             if let AutotiledMeshes::Mesh { spec } = &case.result {
@@ -343,9 +346,8 @@ pub fn compile_rule<R: AutotileResultKind>(rule: &AutotileRule<R>) -> AutotileOr
                         | AutotileRelSlot::ZHiWall
                 );
 
-                let mut seen: Vec<HashMap<(AutotileRelSlot, (i32, i32, i32)), char>> = Vec::new();
-                let mut seen_plus_90: Vec<HashMap<(AutotileRelSlot, (i32, i32, i32)), char>> =
-                    Vec::new();
+                let mut seen: Vec<CanonicalChecks> = Vec::new();
+                let mut seen_plus_90: Vec<CanonicalChecks> = Vec::new();
                 for rot in 0u8..4 {
                     let rotated = rotate_checks(&base_checks, rot);
                     let canonical = canonical_checks_key(&rotated);
