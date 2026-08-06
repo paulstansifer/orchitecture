@@ -93,7 +93,10 @@ pub fn compute_sky_illuminance(
         } else {
             FALLOFF
         };
-        let falloff = falloff + FALLOFF_NOISE_RADIUS * (coord_hash(to) * 2.0 - 1.0);
+        // Clamp to non-negative: flood_fill requires every multiplier to stay
+        // in [0.0, 1.0], and a negative falloff here would let downward hops
+        // amplify light, creating gain cycles (see flood_fill's doc comment).
+        let falloff = (falloff + FALLOFF_NOISE_RADIUS * (coord_hash(to) * 2.0 - 1.0)).max(0.0);
         transmission * (1.0 - falloff)
     })
 }
