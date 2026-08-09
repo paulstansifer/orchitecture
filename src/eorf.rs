@@ -83,9 +83,10 @@ pub struct EorfInfo {
     /// score (e.g. desks evaluate the view from where someone would sit).
     pub vantage_evaluated: bool,
     /// Storage capacity this furniture contributes per `StorageKind`, when
-    /// placed within a `public_storage` place -- see `place::place_capacity_ceiling`
-    /// / `place::rack_capacity_ceiling`. Empty for furniture (and always for
-    /// elements) that provides no storage.
+    /// placed within a `public_storage` place -- see
+    /// `storage::capacity_ceiling_in`, which sums this across a place's
+    /// furniture. Empty for furniture (and always for elements) that provides
+    /// no storage.
     pub storage_capacity: Vec<(crate::resource::StorageKind, f32)>,
     /// Whether this structure may be placed by the player through the build
     /// UI (e.g. the starting "wagon" is placed once, at world generation,

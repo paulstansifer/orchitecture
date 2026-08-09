@@ -396,7 +396,7 @@ pub struct ResourceFlow {
 /// function only ever handles the "what happens to the rest" question.
 ///
 /// Bins can be individually restricted to one resource (see
-/// `place::place_capacity_ceiling`), so `storage_free_capacity` entries for
+/// `storage::Stored::admitted_at`), so `storage_free_capacity` entries for
 /// different resources may draw on disjoint dedicated bins *and* on shared
 /// unrestricted bins at the same time. When combined leftover exceeds
 /// capacity, resources are bumped out starting from the most "plentiful"

@@ -39,11 +39,6 @@
 
 Roughly in dependency order; each is independently landable.
 
-  * **Collapse the three parallel capacity families in `storage.rs`.** Bulk
-    (`place_capacity_ceiling` / `place_free_capacity_for` / `storage_free_capacity`),
-    Rack (`rack_capacity_ceiling` / `rack_free_capacity_for` / `rack_free_capacity`),
-    and Book (`book_free_capacity_for` / `book_free_capacity`, no ceiling fn) have
-    identical shapes. One set generic over `StorageKind` should replace ~8 functions.
   * **Move `ConstructedCity`'s five per-cube side tables onto `Cell`.**
     `furniture_restrictions`, `bin_resource_restrictions`, `rack_restrictions`,
     `furniture_slots`, and `work_priorities` are all keyed by the cube of a Room-slot

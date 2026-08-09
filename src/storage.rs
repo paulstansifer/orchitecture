@@ -59,30 +59,124 @@ pub fn total_book_count(cw: &ConstructedCity) -> u32 {
         .sum()
 }
 
-/// Total book (`StorageKind::Book`) capacity across all storage places -- the
-/// combined shelf space of every bookcase in a `public_storage` place. Unlike
-/// racks, bookcases have no per-cube dedication, so this just sums their
-/// capacity.
-pub fn book_capacity(cw: &ConstructedCity) -> f32 {
-    storage_ids(cw)
-        .into_iter()
-        .flat_map(|id| cw.placed_places[id].fulfillments.clone())
-        .filter_map(|f| match f {
-            FulfilledPorf::Furniture(loc) => {
-                Some(slot_storage_capacity(cw, loc, StorageKind::Book))
+/// What a storage query is *about*.
+///
+/// The three storage kinds differ in only three respects -- which `Inventory`
+/// pool they draw from, which per-cube dedications admit them, and how a
+/// place's existing holdings are measured -- so this enum answers those three
+/// questions and every capacity helper below is written once against it,
+/// rather than once per kind.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Stored {
+    /// A `UniformResource` in `Bulk` bins.
+    Uniform(UniformResource),
+    /// Tools or rugs in `Rack` furniture.
+    Rack(RackContents),
+    /// Books in bookcases.
+    Book,
+}
+
+impl Stored {
+    /// The `Inventory` pool this draws from.
+    fn kind(self) -> StorageKind {
+        match self {
+            Stored::Uniform(_) => StorageKind::Bulk,
+            Stored::Rack(_) => StorageKind::Rack,
+            Stored::Book => StorageKind::Book,
+        }
+    }
+
+    /// Whether the furniture at `cube` is allowed to hold this.
+    ///
+    /// Each kind reads an unset dedication differently: a bin with no
+    /// restriction is unrestricted and admits everything, a rack with none
+    /// falls back to `RackContents`' default (Tools), and bookcases have no
+    /// per-cube dedication at all.
+    fn admitted_at(self, cw: &ConstructedCity, cube: IVec3) -> bool {
+        match self {
+            Stored::Uniform(res) => cw
+                .bin_resource_restrictions
+                .get(&cube)
+                .is_none_or(|r| *r == res),
+            Stored::Rack(contents) => {
+                cw.rack_restrictions.get(&cube).copied().unwrap_or_default() == contents
             }
+            Stored::Book => true,
+        }
+    }
+
+    /// How much `pp` already holds of this, in whatever unit the furniture
+    /// capacities it gets compared against are denominated in. Racks count
+    /// items while bookcases measure shelf volume; that asymmetry predates
+    /// this unification and is preserved deliberately.
+    fn held_by(self, pp: &ParticularPlace) -> f32 {
+        match self {
+            Stored::Uniform(res) => pp
+                .contents
+                .uniform_totals()
+                .into_iter()
+                .find(|(r, _)| *r == res)
+                .map(|(_, q)| q as f32)
+                .unwrap_or(0.0),
+            Stored::Rack(RackContents::Tools) => pp.contents.tool_count() as f32,
+            Stored::Rack(RackContents::Rugs) => pp.contents.rug_count() as f32,
+            Stored::Book => pp.contents.book_count() as f32 * book_volume(),
+        }
+    }
+}
+
+/// Total capacity for `what` within one place: the storage capacity of every
+/// fulfillment whose dedication admits it. A ceiling, not free room -- see
+/// `free_capacity_in`.
+fn capacity_ceiling_in(cw: &ConstructedCity, pp: &ParticularPlace, what: Stored) -> f32 {
+    pp.fulfillments
+        .iter()
+        .filter_map(|f| match f {
+            FulfilledPorf::Furniture(loc) => what
+                .admitted_at(cw, loc.cube)
+                .then(|| slot_storage_capacity(cw, *loc, what.kind())),
             FulfilledPorf::Place(_) => None,
         })
         .sum()
 }
 
+/// Free volume `pp` can currently accept of `what`, bounded both by the
+/// dedications of its own furniture (`capacity_ceiling_in`) and by the place's
+/// shared pool for that `StorageKind` -- so tools can't spill into volume a rug
+/// already occupies on the same rack.
+fn free_capacity_in(cw: &ConstructedCity, pp: &ParticularPlace, what: Stored) -> f32 {
+    let ceiling_free = (capacity_ceiling_in(cw, pp, what) - what.held_by(pp)).max(0.0);
+    ceiling_free.min(pp.contents.remaining_capacity(what.kind()))
+}
+
+/// `capacity_ceiling_in`, summed across every storage place.
+fn total_capacity(cw: &ConstructedCity, what: Stored) -> f32 {
+    storage_ids(cw)
+        .into_iter()
+        .map(|id| capacity_ceiling_in(cw, &cw.placed_places[id], what))
+        .sum()
+}
+
+/// `free_capacity_in`, summed across every storage place.
+fn total_free_capacity(cw: &ConstructedCity, what: Stored) -> f32 {
+    storage_ids(cw)
+        .into_iter()
+        .map(|id| free_capacity_in(cw, &cw.placed_places[id], what))
+        .sum()
+}
+
+/// Total book (`StorageKind::Book`) capacity across all storage places -- the
+/// combined shelf space of every bookcase in a `public_storage` place. Unlike
+/// racks, bookcases have no per-cube dedication, so this just sums their
+/// capacity.
+pub fn book_capacity(cw: &ConstructedCity) -> f32 {
+    total_capacity(cw, Stored::Book)
+}
+
 /// Total capacity (not just free room) dedicated to `contents` across all
 /// rack storage places -- for display, alongside `rack_free_capacity`.
 pub fn rack_capacity(cw: &ConstructedCity, contents: RackContents) -> f32 {
-    storage_ids(cw)
-        .into_iter()
-        .map(|id| rack_capacity_ceiling(cw, &cw.placed_places[id], contents))
-        .sum()
+    total_capacity(cw, Stored::Rack(contents))
 }
 
 /// Remove one tool of `kind` from the first rack storage place that holds one.
@@ -104,7 +198,7 @@ pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
 /// such rack, or none with room).
 pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
     for id in storage_ids(cw) {
-        if rack_free_capacity_for(cw, &cw.placed_places[id], RackContents::Tools) >= 1.0 {
+        if free_capacity_in(cw, &cw.placed_places[id], Stored::Rack(RackContents::Tools)) >= 1.0 {
             cw.placed_places[id]
                 .contents
                 .add_unique(UniqueResource::Tool(kind));
@@ -166,7 +260,7 @@ fn deposit_into_rack(
     contents: RackContents,
 ) -> bool {
     for id in storage_ids(cw) {
-        if rack_free_capacity_for(cw, &cw.placed_places[id], contents) >= 1.0 {
+        if free_capacity_in(cw, &cw.placed_places[id], Stored::Rack(contents)) >= 1.0 {
             cw.placed_places[id].contents.add_unique(item);
             return true;
         }
@@ -178,32 +272,12 @@ fn deposit_into_rack(
 fn deposit_into_bookcase(cw: &mut ConstructedCity, item: UniqueResource) -> bool {
     let volume = item.volume();
     for id in storage_ids(cw) {
-        if book_free_capacity_for(cw, &cw.placed_places[id]) >= volume {
+        if free_capacity_in(cw, &cw.placed_places[id], Stored::Book) >= volume {
             cw.placed_places[id].contents.add_unique(item);
             return true;
         }
     }
     false
-}
-
-/// Shelf volume still free in one storage place: whichever is smaller of the
-/// room left on its own bookcases and the room left in its inventory's `Book`
-/// pool.
-fn book_free_capacity_for(cw: &ConstructedCity, pp: &ParticularPlace) -> f32 {
-    let ceiling: f32 = pp
-        .fulfillments
-        .iter()
-        .filter_map(|f| match f {
-            FulfilledPorf::Furniture(loc) => {
-                Some(slot_storage_capacity(cw, *loc, StorageKind::Book))
-            }
-            FulfilledPorf::Place(_) => None,
-        })
-        .sum();
-    let current = pp.contents.book_count() as f32 * book_volume();
-    (ceiling - current)
-        .min(pp.contents.remaining_capacity(StorageKind::Book))
-        .max(0.0)
 }
 
 /// The shelf volume one book occupies.
@@ -218,10 +292,7 @@ pub fn book_volume() -> f32 {
 /// `rack_free_capacity`, used to decide whether a book a traveler is offering
 /// has anywhere to go.
 pub fn book_free_capacity(cw: &ConstructedCity) -> f32 {
-    storage_ids(cw)
-        .into_iter()
-        .map(|id| book_free_capacity_for(cw, &cw.placed_places[id]))
-        .sum()
+    total_free_capacity(cw, Stored::Book)
 }
 
 fn is_public_storage(cw: &ConstructedCity, pp: &ParticularPlace) -> bool {
@@ -270,53 +341,10 @@ pub fn storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
         .collect()
 }
 
-/// Per-cube capacity ceiling for `contents` within `pp`: the `Rack` storage
-/// capacity of every fulfillment dedicated to `contents` (racks have no
-/// "unrestricted" option -- an unset cube defaults to `RackContents::Tools`).
-fn rack_capacity_ceiling(
-    cw: &ConstructedCity,
-    pp: &ParticularPlace,
-    contents: RackContents,
-) -> f32 {
-    pp.fulfillments
-        .iter()
-        .filter_map(|f| match f {
-            FulfilledPorf::Furniture(loc) => (cw
-                .rack_restrictions
-                .get(&loc.cube)
-                .copied()
-                .unwrap_or_default()
-                == contents)
-                .then(|| slot_storage_capacity(cw, *loc, StorageKind::Rack)),
-            FulfilledPorf::Place(_) => None,
-        })
-        .sum()
-}
-
-/// Free volume `pp` can currently accept for `contents` (Tools or Rugs):
-/// bounded by its racks' dedication (`rack_capacity_ceiling`) and by the
-/// place's own `Rack`-pool volume (shared with Bulk goods only through the
-/// same furniture's total capacity, never through their contents).
-fn rack_free_capacity_for(
-    cw: &ConstructedCity,
-    pp: &ParticularPlace,
-    contents: RackContents,
-) -> f32 {
-    let current = match contents {
-        RackContents::Tools => pp.contents.tool_count(),
-        RackContents::Rugs => pp.contents.rug_count(),
-    } as f32;
-    let ceiling_free = (rack_capacity_ceiling(cw, pp, contents) - current).max(0.0);
-    ceiling_free.min(pp.contents.remaining_capacity(StorageKind::Rack))
-}
-
 /// Free volume available for `contents` (Tools or Rugs) across all rack
 /// storage places.
 pub fn rack_free_capacity(cw: &ConstructedCity, contents: RackContents) -> f32 {
-    storage_ids(cw)
-        .into_iter()
-        .map(|id| rack_free_capacity_for(cw, &cw.placed_places[id], contents))
-        .sum()
+    total_free_capacity(cw, Stored::Rack(contents))
 }
 
 /// True if `cube` is a fulfillment (with `Bulk` capacity) of some
@@ -433,49 +461,10 @@ pub fn place_resource_totals(
     result
 }
 
-/// Per-bin capacity ceiling for `res` within `pp`: the `Bulk` storage
-/// capacity of every fulfillment that is unrestricted or restricted to
-/// `res`; bins restricted to a different resource contribute nothing.
-fn place_capacity_ceiling(cw: &ConstructedCity, pp: &ParticularPlace, res: UniformResource) -> f32 {
-    pp.fulfillments
-        .iter()
-        .filter_map(|f| match f {
-            FulfilledPorf::Furniture(loc) => cw
-                .bin_resource_restrictions
-                .get(&loc.cube)
-                .is_none_or(|r| *r == res)
-                .then(|| slot_storage_capacity(cw, *loc, StorageKind::Bulk)),
-            FulfilledPorf::Place(_) => None,
-        })
-        .sum()
-}
-
-/// Free volume `pp` can currently accept for `res`: bounded by its bins'
-/// individual resource restrictions (via `place_capacity_ceiling`) and by the
-/// place's own `Bulk`-pool volume.
-fn place_free_capacity_for(
-    cw: &ConstructedCity,
-    pp: &ParticularPlace,
-    res: UniformResource,
-) -> f32 {
-    let current = pp
-        .contents
-        .uniform_totals()
-        .into_iter()
-        .find(|(r, _)| *r == res)
-        .map(|(_, q)| q as f32)
-        .unwrap_or(0.0);
-    let ceiling_free = (place_capacity_ceiling(cw, pp, res) - current).max(0.0);
-    ceiling_free.min(pp.contents.remaining_capacity(StorageKind::Bulk))
-}
-
 /// Free volume available for `res` across all storage places, honoring each
-/// bin's individual resource restriction (see `place_capacity_ceiling`).
+/// bin's individual resource restriction (see `Stored::admitted_at`).
 pub fn storage_free_capacity(cw: &ConstructedCity, res: UniformResource) -> f32 {
-    storage_ids(cw)
-        .into_iter()
-        .map(|id| place_free_capacity_for(cw, &cw.placed_places[id], res))
-        .sum()
+    total_free_capacity(cw, Stored::Uniform(res))
 }
 
 /// Total remaining room volume across all storage places, resource-agnostic
@@ -568,7 +557,7 @@ pub fn deposit_uniform_with_capacity(
         if remaining == 0 {
             break;
         }
-        let free = place_free_capacity_for(cw, &cw.placed_places[id], res);
+        let free = free_capacity_in(cw, &cw.placed_places[id], Stored::Uniform(res));
         let take = (free.floor().max(0.0) as u32).min(remaining);
         if take > 0 {
             cw.placed_places[id].contents.add_uniform(res, take);
