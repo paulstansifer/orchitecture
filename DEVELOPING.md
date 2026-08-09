@@ -133,6 +133,17 @@ run normally:
 sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev librsvg2-bin
 ```
 
+Without them the build fails deep inside `alsa-sys` with a pkg-config error that
+names none of this project, which is a confusing way to lose ten minutes.
+
+Claude Code sessions do this automatically: `.claude/settings.json` registers a
+`SessionStart` hook running `.claude/install-build-deps.sh`, which installs the
+four packages above (plus `openscad`/`assimp-utils`, best-effort, for mesh
+regeneration) the first time a container needs them. It exits immediately when
+they're already present, and does nothing at all where there's no `apt-get`
+(macOS) or no passwordless sudo — so it's a convenience, not a dependency. The
+CI test workflow installs the same four packages.
+
 # Headless testing mode
 
 `cargo run --bin headless [-- --seed <n>]` starts a line-oriented stdin/stdout REPL
