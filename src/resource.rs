@@ -406,7 +406,7 @@ pub struct ResourceFlow {
 /// The overall budget is the *sum* of each contending resource's free
 /// capacity (dedicated bins are additive), capped by `overall_free_capacity`
 /// — the room-wide, resource-agnostic remaining volume (see
-/// `place::storage_overall_free_capacity`) — so resources sharing the same
+/// `crate::storage::storage_overall_free_capacity`) — so resources sharing the same
 /// unrestricted bins can't have their free capacity double-counted.
 pub fn distribute_incoming_resources(
     incoming: &[(UniformResource, u32)],

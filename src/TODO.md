@@ -39,13 +39,7 @@
 
 Roughly in dependency order; each is independently landable.
 
-  * **Split `place.rs` (2655 lines, 47 `pub fn`s) into place formation and storage.**
-    31 of those 47 public functions — everything from ~`total_tools_of` to
-    `deposit_uniform_with_capacity` — are inventory/capacity accounting over
-    `public_storage` places, not the `Place` concept itself (`Porf` resolution, core
-    anchors, requirements, `sync_places`, assignment). Move them to `storage.rs`. Purely
-    mechanical; the compiler finds every call site.
-  * **Collapse the three parallel capacity families in that storage code.** Bulk
+  * **Collapse the three parallel capacity families in `storage.rs`.** Bulk
     (`place_capacity_ceiling` / `place_free_capacity_for` / `storage_free_capacity`),
     Rack (`rack_capacity_ceiling` / `rack_free_capacity_for` / `rack_free_capacity`),
     and Book (`book_free_capacity_for` / `book_free_capacity`, no ceiling fn) have
@@ -56,8 +50,9 @@ Roughly in dependency order; each is independently landable.
     placement, all must be hand-evicted in both `set_cell` and `take_cell`, and there are
     ~64 references across 7 files. `Cell` already derives `Serialize`/`Deserialize` and
     lives in the `Sparse3D`, so folding them in makes removal automatic, makes the state
-    round-trip through save/load for free, and makes the `load_from_offline` staleness bug
-    (fixed separately, see below) unrepresentable. A cheaper interim step is a single
+    round-trip through save/load for free, and would have made the `load_from_offline`
+    staleness bug (since fixed in `replace_contents`) unrepresentable rather than merely
+    fixed. A cheaper interim step is a single
     `HashMap<IVec3, PlacementState>`, which keeps the eviction but reduces it to one line.
     Watch out for: `Cell`'s `PartialEq` (used for proposals), how often it's cloned, and
     compatibility with already-saved maps — most cells (walls, floors) carry none of this
@@ -85,7 +80,6 @@ Roughly in dependency order; each is independently landable.
   * `buildables/u_cube.scad` and `buildables/u_wall_corner.scad` are unreferenced by
     `structures.autotile`, `elements.ron`, and `furniture.ron`; build.rs already warns about
     both. Either dead assets or a wiring gap.
-  * A `SessionStart` hook could install the build prerequisites (`libasound2-dev`,
-    `libudev-dev`, `libwayland-dev`, `librsvg2-bin`, plus `openscad`/`assimp-utils` for mesh
-    regeneration) so fresh containers can build and test without a manual apt step. Same
-    package list as the CI test job.
+  * Clippy is advisory in CI (`.github/workflows/test.yml`) rather than a gate, because of
+    the ~26 warnings — 20 of them the `too_many_arguments` the argument-bundling item above
+    would clear. Flip it to `-D warnings` once that lands.

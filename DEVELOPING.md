@@ -49,7 +49,15 @@ City grid and related concepts:
     formed from nearby Furniture/nested-`Place` requirements (see `sync_places`,
     run after every edit) — e.g. a bedroom formed around a pallet. A `Place`'s
     location is its core (first) requirement's location, resolved recursively
-    through `Porf` (Place-or-Furniture) requirements.
+    through `Porf` (Place-or-Furniture) requirements. Owns how places *form*;
+    what they *hold* is storage.rs.
+  * storage.rs: inventory and capacity accounting over the places with
+    `Place::public_storage` set (see `storage_ids`) — totals, deposits and
+    withdrawals, and free capacity. Three `StorageKind`s run in parallel:
+    `Bulk` (bins, holding `UniformResource`s, optionally restricted per-cube to
+    one resource), `Rack` (tools/rugs, dedicated per-cube via `RackContents`),
+    and `Book` (bookcases, no per-cube dedication). Each has a per-place
+    capacity ceiling, a per-place free capacity, and a city-wide sum.
   * serialization.rs: text format for `Sparse3D<Cell>`
   * pathing.rs: route-finding and connectedness over the city grid, via `bevy_northstar`
   * flood_fill.rs: generic multi-source flood fill over a cubic grid, plus

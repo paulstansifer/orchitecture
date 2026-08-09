@@ -442,14 +442,14 @@ impl HeadlessSession {
             .and_then(parse_uniform_resource)?;
         let qty = parse_usize(args.get(1).copied().unwrap_or(""))? as u32;
         let mut cw = self.world().resource_mut::<ConstructedCity>();
-        let cur_amt = crate::place::total_uniform(&cw, resource);
+        let cur_amt = crate::storage::total_uniform(&cw, resource);
         let mut descr = vec![];
         if qty > cur_amt {
             let depositied =
-                crate::place::deposit_uniform_with_capacity(&mut cw, resource, qty - cur_amt);
+                crate::storage::deposit_uniform_with_capacity(&mut cw, resource, qty - cur_amt);
             descr.push(format!("{depositied} deposited"));
         } else {
-            let withdrawn = crate::place::consume_uniform(&mut cw, resource, cur_amt - qty);
+            let withdrawn = crate::storage::consume_uniform(&mut cw, resource, cur_amt - qty);
             descr.push(format!("{withdrawn} withdrawn"));
         }
         Ok(descr)
@@ -481,7 +481,7 @@ impl HeadlessSession {
 
     fn cmd_deposit_tool(&mut self) -> Result<Vec<String>, String> {
         let mut cw = self.world().resource_mut::<ConstructedCity>();
-        if place::deposit_tool(&mut cw, ToolKind::CarpentersTools) {
+        if crate::storage::deposit_tool(&mut cw, ToolKind::CarpentersTools) {
             Ok(vec!["deposited carpenter's tools".to_string()])
         } else {
             Err("no rack storage with room for a tool".to_string())
@@ -539,11 +539,11 @@ impl HeadlessSession {
             return Err("slot already filled".to_string());
         }
         let kind = slot.kind;
-        let item = place::available_uniques_of_kind(&cw, kind)
+        let item = crate::storage::available_uniques_of_kind(&cw, kind)
             .into_iter()
             .next()
             .ok_or_else(|| format!("no {} available in storage", kind.label()))?;
-        place::withdraw_unique(&mut cw, &item);
+        crate::storage::withdraw_unique(&mut cw, &item);
         let label = item.label();
         cw.set_slot(cube, slot_idx, slots.len(), Some(item));
         Ok(vec![format!("installed {label}")])
@@ -572,7 +572,7 @@ impl HeadlessSession {
             .cloned()
             .ok_or_else(|| "slot is empty".to_string())?;
         cw.set_slot(cube, slot_idx, slot_count, None);
-        let deposited = place::deposit_unique(&mut cw, item.clone());
+        let deposited = crate::storage::deposit_unique(&mut cw, item.clone());
         Ok(vec![format!(
             "removed {}{}",
             item.label(),
@@ -1000,18 +1000,18 @@ impl HeadlessSession {
         let cw = self.world().resource::<ConstructedCity>();
         let mut lines = Vec::new();
         for &res in UniformResource::ALL {
-            let total = place::total_uniform(cw, res);
+            let total = crate::storage::total_uniform(cw, res);
             if total > 0 {
                 lines.push(format!("{}: {total}", res.label()));
             }
         }
         // Unique resources are stored separately (racks and bookcases,
         // not bins), but they're inventory just the same.
-        let tools = place::total_tools_of(cw, ToolKind::CarpentersTools);
+        let tools = crate::storage::total_tools_of(cw, ToolKind::CarpentersTools);
         if tools > 0 {
             lines.push(format!("Carpenter's tools: {tools}"));
         }
-        let books = place::total_book_count(cw);
+        let books = crate::storage::total_book_count(cw);
         if books > 0 {
             lines.push(format!("Books: {books}"));
         }

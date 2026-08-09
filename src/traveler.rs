@@ -290,12 +290,12 @@ impl TravelerVisit {
         }
         for &(res, _, _granted, from_storage) in &self.demands {
             if from_storage > 0 {
-                crate::place::consume_uniform(constructed, res, from_storage);
+                crate::storage::consume_uniform(constructed, res, from_storage);
             }
         }
         match &self.reward {
             ResolvedReward::Tool(kind) => {
-                crate::place::deposit_tool(constructed, *kind);
+                crate::storage::deposit_tool(constructed, *kind);
             }
             ResolvedReward::Resource(..) => {}
             ResolvedReward::Book {
@@ -308,7 +308,7 @@ impl TravelerVisit {
                 // book can later be lost with its bookcase. `affordable`
                 // already required shelf room, so the deposit should succeed.
                 idea_state.learn(*idea, *segments);
-                crate::place::deposit_unique(
+                crate::storage::deposit_unique(
                     constructed,
                     UniqueResource::Book {
                         title: title.clone(),

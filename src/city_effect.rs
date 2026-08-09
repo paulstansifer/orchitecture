@@ -286,7 +286,11 @@ pub struct Eat {
 impl Eat {
     pub fn apply(&self, ctx: &mut EffectContext) {
         if self.from_storage > 0 {
-            place::consume_uniform(ctx.constructed, UniformResource::Potato, self.from_storage);
+            crate::storage::consume_uniform(
+                ctx.constructed,
+                UniformResource::Potato,
+                self.from_storage,
+            );
         }
         // Prorate any shortfall evenly across the population rather than
         // fully feeding some individuals and starving others.
@@ -325,7 +329,7 @@ impl Workshop {
     pub fn apply(&self, constructed: &mut ConstructedCity) {
         for (res, qty) in &self.input_draws {
             if *qty > 0 {
-                place::consume_uniform(constructed, *res, *qty);
+                crate::storage::consume_uniform(constructed, *res, *qty);
             }
         }
     }
@@ -387,7 +391,7 @@ impl CityEffect {
                         // out of the player's stored potatoes; the inflow portion
                         // was farms' own delivery and needs no withdrawal.
                         if *paid_from_storage > 0 {
-                            place::consume_uniform(
+                            crate::storage::consume_uniform(
                                 ctx.constructed,
                                 UniformResource::Potato,
                                 *paid_from_storage,
@@ -395,7 +399,7 @@ impl CityEffect {
                         }
                         if *paid > 0 {
                             if let FarmProduction::Specialized(prev) = ctx.farms[i].production {
-                                place::deposit_tool(ctx.constructed, prev);
+                                crate::storage::deposit_tool(ctx.constructed, prev);
                             }
                             ctx.farms[i].production = match new_production {
                                 NewProduction::RandomRegular => {
@@ -525,7 +529,7 @@ impl MonthEffects {
     /// a farm respecializing away from a tool returns its previous one, or an
     /// invited-and-affordable traveler's reward is a tool. Read-only preview
     /// of what `CityEffect::apply` would do, for the UI's "will receive any"
-    /// row-visibility check (see `place::deposit_tool`).
+    /// row-visibility check (see `crate::storage::deposit_tool`).
     pub fn tools_incoming(&self, farms: &FarmsResource) -> bool {
         self.effects.iter().any(|e| match e {
             CityEffect::Market {
@@ -592,7 +596,7 @@ fn compute_workshop_effect(
                 let spec = kind.specialization();
                 let desired = (kind.rate() * staffing * efficiency).round() as u32;
                 let room = output_room.entry(spec.output).or_insert_with(|| {
-                    place::storage_free_capacity(constructed, spec.output).floor() as u32
+                    crate::storage::storage_free_capacity(constructed, spec.output).floor() as u32
                 });
                 let want = desired.min(*room);
                 if want == 0 {
@@ -671,7 +675,7 @@ pub fn compute_month_effects(
     // A snapshot of pre-existing storage. `compute_month_effects` never mutates
     // `constructed`, so this is stable for the whole computation and is reused
     // by the leftover-distribution pass below rather than re-scanned.
-    let storage_snapshot = place::storage_totals(constructed);
+    let storage_snapshot = crate::storage::storage_totals(constructed);
     let mut pool = Pool::new(storage_snapshot.clone());
     // Invited farms deliver their stockpiles into the pool up front, so the
     // claimants below can take from that inflow in priority order.
@@ -701,11 +705,14 @@ pub fn compute_month_effects(
         // reward the city has nowhere to put.
         let reward_deliverable = match &offer.reward {
             ResolvedReward::Tool(_) => {
-                place::rack_free_capacity(constructed, crate::resource::RackContents::Tools) >= 1.0
+                crate::storage::rack_free_capacity(
+                    constructed,
+                    crate::resource::RackContents::Tools,
+                ) >= 1.0
             }
             ResolvedReward::Resource(..) => true,
             ResolvedReward::Book { .. } => {
-                place::book_free_capacity(constructed) >= place::book_volume()
+                crate::storage::book_free_capacity(constructed) >= crate::storage::book_volume()
             }
         };
         let affordable = reward_deliverable
@@ -811,13 +818,13 @@ pub fn compute_month_effects(
     let known_farm_output = known_farm_plentifulness(farms);
     let storage_free_capacity: HashMap<UniformResource, f32> = incoming_leftover
         .iter()
-        .map(|&(r, _)| (r, place::storage_free_capacity(constructed, r)))
+        .map(|&(r, _)| (r, crate::storage::storage_free_capacity(constructed, r)))
         .collect();
     let leftover = distribute_incoming_resources(
         &incoming_leftover,
         &storage_snapshot,
         &storage_free_capacity,
-        place::storage_overall_free_capacity(constructed),
+        crate::storage::storage_overall_free_capacity(constructed),
         &known_farm_output,
     );
 
@@ -1417,7 +1424,7 @@ mod tests {
     /// Regression test for a bug where a `Tool` reward's "Invite" checkbox
     /// was enabled purely on demand affordability, ignoring whether there was
     /// any rack room to actually receive the tool: `TravelerVisit::apply`
-    /// deposits `Tool` rewards via `place::deposit_tool`, which silently
+    /// deposits `Tool` rewards via `crate::storage::deposit_tool`, which silently
     /// no-ops without room, so the reward vanished with no warning. Unlike a
     /// `Resource` reward (see `plank_reward_pays_off_pending_furniture_with_no_storage_room_yet`
     /// below), a `Tool` reward has no fallback path into this month's pool, so
@@ -1473,7 +1480,10 @@ mod tests {
         let bin_id = crate::eorf::find_structure_by_name(&infos, "bin").expect("bin exists");
         let mut cw = ConstructedCity::new(infos);
         cw.road_forbidden_zone = false;
-        assert!(crate::place::storage_ids(&cw).is_empty(), "no storage yet");
+        assert!(
+            crate::storage::storage_ids(&cw).is_empty(),
+            "no storage yet"
+        );
 
         let mut pending = crate::city::ProposedCity::new();
         pending.room_plop(
@@ -1605,7 +1615,7 @@ mod tests {
             });
         }
         assert_eq!(
-            crate::place::storage_totals(&cw).get(&Potato).copied(),
+            crate::storage::storage_totals(&cw).get(&Potato).copied(),
             Some(10),
             "20 stored - 10 paid = 10 remaining",
         );

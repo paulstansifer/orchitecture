@@ -436,7 +436,7 @@ pub fn construct(
                     if let Some(cost) = cell_cost(&removed, &cw.eorfs, material_list) {
                         for (res, qty) in cost {
                             if res.refundable() && qty > 0 {
-                                crate::place::deposit_uniform_with_capacity(cw, res, qty as u32);
+                                crate::storage::deposit_uniform_with_capacity(cw, res, qty as u32);
                             }
                         }
                     }
@@ -539,7 +539,7 @@ impl Construction {
         }
         for (&res, &qty) in &self.from_storage {
             if qty > 0 {
-                crate::place::consume_uniform(constructed, res, qty);
+                crate::storage::consume_uniform(constructed, res, qty);
             }
         }
     }
@@ -1056,7 +1056,7 @@ mod tests {
         );
         construct(&mut cw, &mut pw, &material_list);
 
-        let totals = crate::place::storage_totals(&cw);
+        let totals = crate::storage::storage_totals(&cw);
         check!(totals.get(&UniformResource::Fieldstone) == Some(&8));
         check!(!totals.contains_key(&UniformResource::Lime));
     }

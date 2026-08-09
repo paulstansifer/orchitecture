@@ -43,7 +43,7 @@ pub fn farm_menu_view(
     let current_event = farms.farm_event(menu_i);
     let is_specialized = matches!(farms[menu_i].production, FarmProduction::Specialized(_));
     let carpenters_tools_in_storage =
-        crate::place::total_tools_of(inputs.constructed, ToolKind::CarpentersTools) >= 1;
+        crate::storage::total_tools_of(inputs.constructed, ToolKind::CarpentersTools) >= 1;
 
     // Breakdowns via the same shared full-month compute path.
     let market_lines = farm_breakdown(farms, menu_i, FarmEvent::Market, None, inputs);

@@ -359,7 +359,7 @@ impl ConstructedCity {
     fn evict_furniture_slots(&mut self, cube: IVec3) {
         if let Some(installed) = self.furniture_slots.remove(&cube) {
             for item in installed.into_iter().flatten() {
-                crate::place::deposit_unique(self, item);
+                crate::storage::deposit_unique(self, item);
             }
         }
     }

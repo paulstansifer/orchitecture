@@ -45,6 +45,7 @@ pub mod serialization;
 pub mod simulation;
 pub mod sparse3d;
 pub mod starter_town;
+pub mod storage;
 pub mod surroundings;
 pub mod traveler;
 pub mod ui;

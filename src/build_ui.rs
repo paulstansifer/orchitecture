@@ -116,10 +116,10 @@ fn bottom_controls_ui(
                 );
                 world.constructed.mutate_if(crate::place::sync_places);
                 for &res in crate::resource::UniformResource::ALL {
-                    crate::place::deposit_uniform_with_capacity(world.constructed.mutate(), res, 20);
+                    crate::storage::deposit_uniform_with_capacity(world.constructed.mutate(), res, 20);
                 }
                 for _ in 0..20 {
-                    crate::place::deposit_tool(
+                    crate::storage::deposit_tool(
                         world.constructed.mutate(),
                         crate::resource::ToolKind::CarpentersTools,
                     );
@@ -452,7 +452,7 @@ fn clicked_furniture_ui(
         }
     }
 
-    if crate::place::cube_is_storage_bin(constructed, cube) {
+    if crate::storage::cube_is_storage_bin(constructed, cube) {
         ui.label("Restricted to:");
         let current = constructed.bin_resource_restrictions.get(&cube).copied();
         // `None` is a real choice here ("any resource"), unlike a rack's
@@ -482,7 +482,7 @@ fn clicked_furniture_ui(
         }
     }
 
-    if crate::place::cube_is_rack(constructed, cube) {
+    if crate::storage::cube_is_rack(constructed, cube) {
         ui.label("Holds:");
         let current = constructed
             .rack_restrictions
@@ -520,7 +520,7 @@ fn clicked_furniture_ui(
                         constructed
                             .mutate()
                             .set_slot(cube, slot_idx, slot_count, None);
-                        crate::place::deposit_unique(constructed.mutate(), item);
+                        crate::storage::deposit_unique(constructed.mutate(), item);
                     }
                 }
                 None => {
@@ -559,7 +559,7 @@ fn install_menu_window(
     };
     let kind = slot.kind;
     let slot_count = slots.len();
-    let available = crate::place::available_uniques_of_kind(constructed, kind);
+    let available = crate::storage::available_uniques_of_kind(constructed, kind);
 
     let mut keep_open = true;
     let mut chosen: Option<crate::resource::UniqueResource> = None;
@@ -589,7 +589,7 @@ fn install_menu_window(
         });
 
     if let Some(item) = chosen {
-        if crate::place::withdraw_unique(constructed.mutate(), &item) {
+        if crate::storage::withdraw_unique(constructed.mutate(), &item) {
             constructed
                 .mutate()
                 .set_slot(cube, slot_idx, slot_count, Some(item));
