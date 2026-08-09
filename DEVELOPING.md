@@ -23,6 +23,10 @@ The player can also influence the surrounding farms by changing their specialtie
 
 Game parts:
   * main.rs: initialization
+  * simulation.rs: `SimulationPlugin` — the change-detection-gated systems that keep
+    derived state (idea progress, places, navigation, assignments, work) in step with
+    the city grid. Added by *both* main.rs and the headless harness, so the two can't
+    drift; anything added here must stay headless-safe (no rendering, assets, or egui).
   * camera.rs: 3rd-person camera
   * ui.rs: UI
   * idea.rs: `Idea`s are arranged in a DAG and gained piecemeal from books.
@@ -45,7 +49,15 @@ City grid and related concepts:
     formed from nearby Furniture/nested-`Place` requirements (see `sync_places`,
     run after every edit) — e.g. a bedroom formed around a pallet. A `Place`'s
     location is its core (first) requirement's location, resolved recursively
-    through `Porf` (Place-or-Furniture) requirements.
+    through `Porf` (Place-or-Furniture) requirements. Owns how places *form*;
+    what they *hold* is storage.rs.
+  * storage.rs: inventory and capacity accounting over the places with
+    `Place::public_storage` set (see `storage_ids`) — totals, deposits and
+    withdrawals, and free capacity. Three `StorageKind`s run in parallel:
+    `Bulk` (bins, holding `UniformResource`s, optionally restricted per-cube to
+    one resource), `Rack` (tools/rugs, dedicated per-cube via `RackContents`),
+    and `Book` (bookcases, no per-cube dedication). Each has a per-place
+    capacity ceiling, a per-place free capacity, and a city-wide sum.
   * serialization.rs: text format for `Sparse3D<Cell>`
   * pathing.rs: route-finding and connectedness over the city grid, via `bevy_northstar`
   * flood_fill.rs: generic multi-source flood fill over a cubic grid, plus
@@ -128,6 +140,17 @@ run normally:
 ```
 sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev librsvg2-bin
 ```
+
+Without them the build fails deep inside `alsa-sys` with a pkg-config error that
+names none of this project, which is a confusing way to lose ten minutes.
+
+Claude Code sessions do this automatically: `.claude/settings.json` registers a
+`SessionStart` hook running `.claude/install-build-deps.sh`, which installs the
+four packages above (plus `openscad`/`assimp-utils`, best-effort, for mesh
+regeneration) the first time a container needs them. It exits immediately when
+they're already present, and does nothing at all where there's no `apt-get`
+(macOS) or no passwordless sudo — so it's a convenience, not a dependency. The
+CI test workflow installs the same four packages.
 
 # Headless testing mode
 

@@ -436,7 +436,7 @@ pub fn construct(
                     if let Some(cost) = cell_cost(&removed, &cw.eorfs, material_list) {
                         for (res, qty) in cost {
                             if res.refundable() && qty > 0 {
-                                crate::place::deposit_uniform_with_capacity(cw, res, qty as u32);
+                                crate::storage::deposit_uniform_with_capacity(cw, res, qty as u32);
                             }
                         }
                     }
@@ -539,7 +539,7 @@ impl Construction {
         }
         for (&res, &qty) in &self.from_storage {
             if qty > 0 {
-                crate::place::consume_uniform(constructed, res, qty);
+                crate::storage::consume_uniform(constructed, res, qty);
             }
         }
     }
@@ -1056,7 +1056,7 @@ mod tests {
         );
         construct(&mut cw, &mut pw, &material_list);
 
-        let totals = crate::place::storage_totals(&cw);
+        let totals = crate::storage::storage_totals(&cw);
         check!(totals.get(&UniformResource::Fieldstone) == Some(&8));
         check!(!totals.contains_key(&UniformResource::Lime));
     }
@@ -1380,6 +1380,38 @@ mod tests {
 
         check!(pw.proposed_changes.iter().count() == 0);
         check!(pw.undo_record.is_empty());
+    }
+
+    /// The per-cube placement records belong to the grid being replaced, so a
+    /// load must not leave the outgoing city's restrictions, dedications,
+    /// priorities or installed resources behind for whatever furniture next
+    /// lands on those coordinates.
+    #[test]
+    fn load_clears_per_cube_placement_state() {
+        use crate::resource::{RackContents, ToolKind, UniformResource, UniqueResource};
+        use crate::sparse3d::Sparse3D;
+
+        let (mut cw, mut pw) = make_world();
+        let cube = IVec3::new(4, 0, 4);
+        cw.furniture_restrictions
+            .insert(cube, crate::place::ParentRestriction::Excluded);
+        cw.bin_resource_restrictions
+            .insert(cube, UniformResource::Potato);
+        cw.rack_restrictions.insert(cube, RackContents::Rugs);
+        cw.work_priorities
+            .insert(cube, crate::work::WorkPriority::VeryHigh);
+        cw.furniture_slots.insert(
+            cube,
+            vec![Some(UniqueResource::Tool(ToolKind::CarpentersTools))],
+        );
+
+        load_from_offline(&mut cw, &mut pw, Sparse3D::new());
+
+        check!(cw.furniture_restrictions.is_empty());
+        check!(cw.bin_resource_restrictions.is_empty());
+        check!(cw.rack_restrictions.is_empty());
+        check!(cw.work_priorities.is_empty());
+        check!(cw.furniture_slots.is_empty());
     }
 
     // ── smoke ─────────────────────────────────────────────────────────────────

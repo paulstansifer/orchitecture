@@ -171,7 +171,7 @@ pub fn month_panel_view(
     material_list: &MaterialList,
     sandbox_enabled: bool,
 ) -> MonthPanelView {
-    let station_totals = crate::place::place_resource_totals(constructed);
+    let station_totals = crate::storage::place_resource_totals(constructed);
 
     // Remaining construction need (non-sandbox only).
     let remaining_need: Vec<(UniformResource, u32)> = if pending.num_changes() > 0
@@ -184,9 +184,9 @@ pub fn month_panel_view(
     let remaining_need_map: HashMap<UniformResource, u32> =
         remaining_need.iter().copied().collect();
 
-    let has_storage = !crate::place::storage_ids(constructed).is_empty();
+    let has_storage = !crate::storage::storage_ids(constructed).is_empty();
     let blocked_construction = crate::construction::construction_blocked(&remaining_need);
-    let dedicated_ceilings = crate::place::storage_dedicated_ceilings(constructed);
+    let dedicated_ceilings = crate::storage::storage_dedicated_ceilings(constructed);
 
     let eat = effects.effects.iter().find_map(|e| match e {
         CityEffect::Eat(eat) => Some(eat),
@@ -259,9 +259,9 @@ pub fn month_panel_view(
     // Uncommitted (shared, undedicated) storage capacity: how much is free
     // right now, and how much this month's projected leftover inflow will
     // consume, mirroring `ResourceRow::storage_delta`'s "preview" math.
-    let shared_ceiling = crate::place::storage_shared_ceiling(constructed);
-    let storage_totals_now = crate::place::storage_totals(constructed);
-    let uncommitted_now = crate::place::uncommitted_free_capacity(
+    let shared_ceiling = crate::storage::storage_shared_ceiling(constructed);
+    let storage_totals_now = crate::storage::storage_totals(constructed);
+    let uncommitted_now = crate::storage::uncommitted_free_capacity(
         shared_ceiling,
         &dedicated_ceilings,
         &storage_totals_now,
@@ -272,7 +272,7 @@ pub fn month_panel_view(
         let entry = storage_totals_after.entry(res).or_insert(0);
         *entry = (*entry as i64 + delta).max(0) as u32;
     }
-    let uncommitted_after = crate::place::uncommitted_free_capacity(
+    let uncommitted_after = crate::storage::uncommitted_free_capacity(
         shared_ceiling,
         &dedicated_ceilings,
         &storage_totals_after,
@@ -298,18 +298,20 @@ pub fn month_panel_view(
         // built), since it stays stable regardless of how full the place
         // currently is.
         let ceiling = match category {
-            UniqueCategory::Tools => crate::place::rack_capacity(constructed, RackContents::Tools),
-            UniqueCategory::Rugs => crate::place::rack_capacity(constructed, RackContents::Rugs),
-            UniqueCategory::Books => crate::place::book_capacity(constructed),
+            UniqueCategory::Tools => {
+                crate::storage::rack_capacity(constructed, RackContents::Tools)
+            }
+            UniqueCategory::Rugs => crate::storage::rack_capacity(constructed, RackContents::Rugs),
+            UniqueCategory::Books => crate::storage::book_capacity(constructed),
         };
         let incoming = category == UniqueCategory::Tools && tools_incoming;
         if ceiling <= 0.0 && !incoming {
             return None;
         }
         let current = match category {
-            UniqueCategory::Tools => crate::place::total_tool_count(constructed),
-            UniqueCategory::Rugs => crate::place::total_rug_count(constructed),
-            UniqueCategory::Books => crate::place::total_book_count(constructed),
+            UniqueCategory::Tools => crate::storage::total_tool_count(constructed),
+            UniqueCategory::Rugs => crate::storage::total_rug_count(constructed),
+            UniqueCategory::Books => crate::storage::total_book_count(constructed),
         };
         // The capacity actually shown is bounded by free room right now, not
         // just the nominal ceiling: a rack sharing its place's volume with
@@ -320,10 +322,10 @@ pub fn month_panel_view(
         // leaving no actual room for a tool.
         let free = match category {
             UniqueCategory::Tools => {
-                crate::place::rack_free_capacity(constructed, RackContents::Tools)
+                crate::storage::rack_free_capacity(constructed, RackContents::Tools)
             }
             UniqueCategory::Rugs => {
-                crate::place::rack_free_capacity(constructed, RackContents::Rugs)
+                crate::storage::rack_free_capacity(constructed, RackContents::Rugs)
             }
             UniqueCategory::Books => ceiling - current as f32,
         };
@@ -668,7 +670,7 @@ mod tests {
             restriction: ParentRestriction::Unrestricted,
         });
         assert_eq!(
-            crate::place::rack_free_capacity(&cw, RackContents::Tools),
+            crate::storage::rack_free_capacity(&cw, RackContents::Tools),
             2.0,
             "a full Bulk pool must not eat into Rack's own capacity"
         );

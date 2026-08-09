@@ -34,11 +34,12 @@ use crate::construction;
 use crate::eorf::{load_structure_info, EorfId};
 use crate::evaluation::compute_outdoorsness;
 use crate::materials::{BuildMaterialId, MaterialList};
-use crate::pathing::{rebuild_navigation_grid, NavigationGrid};
+use crate::pathing::NavigationGrid;
 use crate::place;
-use crate::population::{assign_places, sync_assignments, Population};
+use crate::population::{assign_places, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
+use crate::simulation::{SimulationPlugin, SimulationSystems};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::surroundings::farmstead::{
     farm_breakdown, FarmEvent, FarmId, FarmProduction, FarmsResource, GameClock, NewProduction,
@@ -170,26 +171,10 @@ impl HeadlessSession {
             .run_system_once(setup_travelers)
             .expect("setup_travelers");
 
-        app.add_systems(
-            Update,
-            (
-                crate::idea::sync_idea_progress.run_if(resource_changed::<crate::idea::IdeaState>),
-                place::sync_places_system.run_if(resource_changed::<ConstructedCity>),
-                rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
-                sync_assignments
-                    .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
-                crate::work::sync_work
-                    .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
-            )
-                .chain(),
-        );
-        app.add_systems(
-            Update,
-            report_changes_system
-                .after(rebuild_navigation_grid)
-                .after(sync_assignments)
-                .after(crate::work::sync_work),
-        );
+        // The same change-gated systems the game runs, from the same place --
+        // see `simulation.rs` for why this must not be re-declared here.
+        app.add_plugins(SimulationPlugin);
+        app.add_systems(Update, report_changes_system.after(SimulationSystems));
 
         // Settle the initial world (nav grid, home assignment) before the first
         // user-issued `tick`, mirroring the game's first frame after Startup.
@@ -457,14 +442,14 @@ impl HeadlessSession {
             .and_then(parse_uniform_resource)?;
         let qty = parse_usize(args.get(1).copied().unwrap_or(""))? as u32;
         let mut cw = self.world().resource_mut::<ConstructedCity>();
-        let cur_amt = crate::place::total_uniform(&cw, resource);
+        let cur_amt = crate::storage::total_uniform(&cw, resource);
         let mut descr = vec![];
         if qty > cur_amt {
             let depositied =
-                crate::place::deposit_uniform_with_capacity(&mut cw, resource, qty - cur_amt);
+                crate::storage::deposit_uniform_with_capacity(&mut cw, resource, qty - cur_amt);
             descr.push(format!("{depositied} deposited"));
         } else {
-            let withdrawn = crate::place::consume_uniform(&mut cw, resource, cur_amt - qty);
+            let withdrawn = crate::storage::consume_uniform(&mut cw, resource, cur_amt - qty);
             descr.push(format!("{withdrawn} withdrawn"));
         }
         Ok(descr)
@@ -496,7 +481,7 @@ impl HeadlessSession {
 
     fn cmd_deposit_tool(&mut self) -> Result<Vec<String>, String> {
         let mut cw = self.world().resource_mut::<ConstructedCity>();
-        if place::deposit_tool(&mut cw, ToolKind::CarpentersTools) {
+        if crate::storage::deposit_tool(&mut cw, ToolKind::CarpentersTools) {
             Ok(vec!["deposited carpenter's tools".to_string()])
         } else {
             Err("no rack storage with room for a tool".to_string())
@@ -554,11 +539,11 @@ impl HeadlessSession {
             return Err("slot already filled".to_string());
         }
         let kind = slot.kind;
-        let item = place::available_uniques_of_kind(&cw, kind)
+        let item = crate::storage::available_uniques_of_kind(&cw, kind)
             .into_iter()
             .next()
             .ok_or_else(|| format!("no {} available in storage", kind.label()))?;
-        place::withdraw_unique(&mut cw, &item);
+        crate::storage::withdraw_unique(&mut cw, &item);
         let label = item.label();
         cw.set_slot(cube, slot_idx, slots.len(), Some(item));
         Ok(vec![format!("installed {label}")])
@@ -587,7 +572,7 @@ impl HeadlessSession {
             .cloned()
             .ok_or_else(|| "slot is empty".to_string())?;
         cw.set_slot(cube, slot_idx, slot_count, None);
-        let deposited = place::deposit_unique(&mut cw, item.clone());
+        let deposited = crate::storage::deposit_unique(&mut cw, item.clone());
         Ok(vec![format!(
             "removed {}{}",
             item.label(),
@@ -1015,18 +1000,18 @@ impl HeadlessSession {
         let cw = self.world().resource::<ConstructedCity>();
         let mut lines = Vec::new();
         for &res in UniformResource::ALL {
-            let total = place::total_uniform(cw, res);
+            let total = crate::storage::total_uniform(cw, res);
             if total > 0 {
                 lines.push(format!("{}: {total}", res.label()));
             }
         }
         // Unique resources are stored separately (racks and bookcases,
         // not bins), but they're inventory just the same.
-        let tools = place::total_tools_of(cw, ToolKind::CarpentersTools);
+        let tools = crate::storage::total_tools_of(cw, ToolKind::CarpentersTools);
         if tools > 0 {
             lines.push(format!("Carpenter's tools: {tools}"));
         }
-        let books = place::total_book_count(cw);
+        let books = crate::storage::total_book_count(cw);
         if books > 0 {
             lines.push(format!("Books: {books}"));
         }
@@ -1239,9 +1224,11 @@ fn advance_month_system(
     mut headless_rng: ResMut<HeadlessRng>,
     sandbox: Res<SandboxFlag>,
 ) -> Vec<String> {
-    // The graphical app keeps assignments current via change-detection systems,
-    // so a month's worker effects see up-to-date staffing. The headless harness
-    // has no such systems, so refresh work assignment inline *before* advancing.
+    // The harness runs the same `SimulationPlugin` systems the game does, but
+    // only on `tick` -- mutating commands deliberately don't advance the
+    // schedule (see the module docs). So an `advance` issued straight after an
+    // edit would otherwise compute the month's worker effects against stale
+    // staffing; refresh it inline first.
     crate::work::assign_work(&mut population.individuals, &constructed);
 
     let outcome = crate::month::advance_month(
@@ -1277,8 +1264,8 @@ fn advance_month_system(
         lines.push("construction: completed".to_string());
     }
 
-    // The graphical app runs place assignment via a separate change-detection
-    // system; the headless harness does it inline here.
+    // Likewise, so that a `query` issued before the next `tick` reports the
+    // post-month assignment rather than the pre-month one.
     assign_places(
         crate::place::AssignmentFlavor::Sleep,
         &mut population.individuals,

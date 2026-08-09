@@ -36,7 +36,7 @@ use orchitecture_lib::{
     gi_material::GiPlugin,
     global_illumination::update_global_illumination,
     grid_preview::GridPreviewPlugin,
-    idea::{sync_idea_progress, IdeaState},
+    idea::IdeaState,
     idea_ui::{announce_new_knowledge, idea_ui_system, IdeaWindowState},
     input::{
         building_input_system, cursor_system, recolor_new_mesh_children, spawn_cursors,
@@ -53,9 +53,8 @@ use orchitecture_lib::{
         resize_pixel_canvas_system, spawn_pixel_canvas, walk_camera_system, PixelCanvas,
         WalkCameraState,
     },
-    pathing::rebuild_navigation_grid,
-    place::{spawn_initial_places, sync_places_system},
-    population::{spawn_population, sync_assignments, Population},
+    place::spawn_initial_places,
+    population::spawn_population,
     qnn::ModelPlugin,
     resource_icons::spawn_resource_icons,
     scene::spawn_scene,
@@ -64,6 +63,7 @@ use orchitecture_lib::{
         update_accessible_range, update_hover_highlight, update_selection_ring, HoveredFurniture,
         RingMaterial,
     },
+    simulation::SimulationPlugin,
     surroundings::{
         enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
         GameClock,
@@ -72,7 +72,6 @@ use orchitecture_lib::{
     ui::{shared_ui_system, update_economy_cache, MonthEffectsCache},
     walk_input::walk_input_system,
     walk_ui::walk_ui_system,
-    work::sync_work,
 };
 
 fn configure_fonts_once(mut contexts: EguiContexts, mut done: Local<bool>) {
@@ -137,6 +136,9 @@ fn main() {
     app.add_plugins(ChangeFrequencyDiagnosticsPlugin);
     app.add_plugins(GiPlugin)
         .add_plugins(ModelPlugin)
+        // The change-detection-gated simulation systems, shared verbatim with
+        // the headless harness so the two can't drift.
+        .add_plugins(SimulationPlugin)
         .add_plugins(DebugVoxelsPlugin)
         .add_plugins(MaterialPlugin::<RingMaterial>::default())
         .init_state::<GameMode>()
@@ -217,21 +219,9 @@ fn main() {
                 propagate_render_layers_system.after(update_cutaway_system),
                 sync_cutaway_shadow_material.after(update_cutaway_system),
                 update_global_illumination.run_if(resource_changed::<ConstructedCity>),
-                (
-                    // Refreshes the understood-segment cache on `ConstructedCity`
-                    // before place formation reads it, so learning a segment
-                    // unlocks a gated place on the same frame.
-                    sync_idea_progress.run_if(resource_changed::<IdeaState>),
-                    sync_places_system.run_if(resource_changed::<ConstructedCity>),
-                    rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
-                    sync_assignments.run_if(
-                        resource_changed::<ConstructedCity>.or(resource_changed::<Population>),
-                    ),
-                    sync_work.run_if(
-                        resource_changed::<ConstructedCity>.or(resource_changed::<Population>),
-                    ),
-                )
-                    .chain(),
+                // The change-gated simulation step itself lives in
+                // `SimulationPlugin`, added below and shared with the headless
+                // harness.
                 (
                     update_selection_ring,
                     animate_selection_rings,

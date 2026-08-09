@@ -16,7 +16,6 @@ use crate::city::{Cell, CityMut, ConstructedCity, ProposedCity, ViewableWorld};
 use crate::city_effect::{compute_month_effects, EffectContext};
 use crate::construction::{remaining_construction_need, tick_construction};
 use crate::materials::MaterialList;
-use crate::place;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::sparse3d::SlotCoord;
@@ -131,14 +130,14 @@ pub fn advance_month(
     // allows) or was already accounted as lost.
     for (res, flow) in &effects.leftover {
         if flow.stored > 0 {
-            place::deposit_uniform_with_capacity(constructed, *res, flow.stored);
+            crate::storage::deposit_uniform_with_capacity(constructed, *res, flow.stored);
         }
     }
     // Fieldstone earmarked for paving but not actually spent (every candidate
     // route was already fully paved) still goes to the player, same as any
     // other unclaimed inflow.
     if paving_leftover > 0 {
-        place::deposit_uniform_with_capacity(
+        crate::storage::deposit_uniform_with_capacity(
             constructed,
             UniformResource::Fieldstone,
             paving_leftover,

@@ -1,26 +1,28 @@
-rust-scripts/target/*
-rust-scripts/Cargo.lock
-export/
+# Build output
+target/
+dist/
 
-*.uid
+# Generated at build time by build.rs — read the sources in buildables/ and
+# sprites/ instead, and DEVELOPING.md for how they're produced.
+assets/generated/
 
-fonts/*
-models/*
+# Binary mesh/lib assets there's nothing useful to read in. The hand-modeled
+# Wings3D sources (buildables/*.wings) and their exported .glb are binary too.
 *.glb
-*.import
-*.png
-*.res
-*.tmp
-*.fla
-*.bin
-*.ttf
-
 *.gltf
+*.wings
+*.ttf
+*.png
 
-training/
+# Neural-net weights and training data
+assets/static/models/
+training-log.txt
+fake_training/
 
-.vscode/*
-.godot/*
+# Temporary files from Wings3D
+buildables/*~
+buildables/#*#
 
+.vscode/
 LICENSE.md
 license.txt

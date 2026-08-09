@@ -179,6 +179,10 @@ pub enum StorageKind {
 }
 
 impl RackContents {
+    /// Every dedication, in the order the UI offers them. Mirrors
+    /// `UniformResource::ALL` and `WorkPriority::ALL`.
+    pub const ALL: [RackContents; 2] = [RackContents::Tools, RackContents::Rugs];
+
     pub fn label(self) -> &'static str {
         match self {
             RackContents::Tools => "Tools",
@@ -392,7 +396,7 @@ pub struct ResourceFlow {
 /// function only ever handles the "what happens to the rest" question.
 ///
 /// Bins can be individually restricted to one resource (see
-/// `place::place_capacity_ceiling`), so `storage_free_capacity` entries for
+/// `storage::Stored::admitted_at`), so `storage_free_capacity` entries for
 /// different resources may draw on disjoint dedicated bins *and* on shared
 /// unrestricted bins at the same time. When combined leftover exceeds
 /// capacity, resources are bumped out starting from the most "plentiful"
@@ -402,7 +406,7 @@ pub struct ResourceFlow {
 /// The overall budget is the *sum* of each contending resource's free
 /// capacity (dedicated bins are additive), capped by `overall_free_capacity`
 /// — the room-wide, resource-agnostic remaining volume (see
-/// `place::storage_overall_free_capacity`) — so resources sharing the same
+/// `crate::storage::storage_overall_free_capacity`) — so resources sharing the same
 /// unrestricted bins can't have their free capacity double-counted.
 pub fn distribute_incoming_resources(
     incoming: &[(UniformResource, u32)],
