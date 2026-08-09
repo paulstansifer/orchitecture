@@ -1,24 +1,38 @@
-# Project
+# Orchitecture
 
-This is a construction-oriented game.
+A construction-oriented city-building game: Rust, the Bevy game engine, and Burn
+for the convolutional nets that evaluate structures.
+
+**`DEVELOPING.md` is the authoritative guide** — it carries the code map (what
+lives in which module), how generated assets are produced, the headless testing
+protocol, and the profiling workflow. Read it before making changes; keep it
+updated when you move things around. `AGENTS.md` is a symlink to it.
 
 ## Notes
-  - `replace_in_file` always seems to fail due to a "diff edit mismatch". Use `write_to_file` instead.
-  - Never use comments like "// Added new import" or "// Updated to new type" that explain how code is changing in any context.
+  - Never use comments like "// Added new import" or "// Updated to new type"
+    that explain how code is changing rather than what it does.
 
 ## Tech Stack
-  - Godot
-  - GDScript, particularly for code that interacts with the Godot scene tree
-  - Rust, particularly for complex tasks
+  - Rust (edition 2021)
+  - Bevy for the ECS, rendering, and scheduling; `bevy_egui` for UI
+  - Burn for the quality neural net (`src/qnn/`)
+  - OpenSCAD + Wings3D for mesh sources in `buildables/`, compiled by `build.rs`
   - GitHub for version control
 
 ## Project Structure
-/scripts            # Scripts written in GDScript
-/rust-scripts
-  /src              # Scripts written in Rust
-/scenes/main.tscn   # The main scene of the game
+/src                # All Rust source; see DEVELOPING.md's code map
+/buildables         # OpenSCAD (.scad) and Wings3D (.wings/.glb) mesh sources
+/assets/static      # Checked-in assets: shaders, QNN weights, training data
+/assets/generated   # Produced by build.rs — never edit by hand
+/sprites            # SVG sources for resource icons
+/build.rs           # Compiles meshes and sprites into assets/generated
 
-## Compiling
-  - to check that GDScript files build, run `/snap/bin/godot-4 --check-only --script <path to script> --display-driver headless`
-  - to check that the Rust files build, run `(cd rust-scripts && cargo build)`
-  - to run Rust tests, run `(cd rust-scripts && cargo test)`
+## Building and testing
+  - Check: `cargo check --lib`
+  - Test: `cargo test --lib`
+  - Run: `cargo run --bin game`
+  - Headless REPL (scripted/LLM-driven verification): `cargo run --bin headless`,
+    then send `help`
+  - On a minimal Linux image, tests need these first:
+    `sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev librsvg2-bin`
+    (add `openscad assimp-utils` to regenerate meshes)

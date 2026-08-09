@@ -23,6 +23,10 @@ The player can also influence the surrounding farms by changing their specialtie
 
 Game parts:
   * main.rs: initialization
+  * simulation.rs: `SimulationPlugin` — the change-detection-gated systems that keep
+    derived state (idea progress, places, navigation, assignments, work) in step with
+    the city grid. Added by *both* main.rs and the headless harness, so the two can't
+    drift; anything added here must stay headless-safe (no rendering, assets, or egui).
   * camera.rs: 3rd-person camera
   * ui.rs: UI
   * idea.rs: `Idea`s are arranged in a DAG and gained piecemeal from books.

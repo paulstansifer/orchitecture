@@ -131,7 +131,7 @@ pub struct Place {
     pub requirements: Vec<PlaceReq>,
     /// Whether this place provides storage using whatever storage-capable
     /// furniture (bins, racks, wagons, ...) it contains -- see
-    /// `EorfInfo::storage_capacity`, `storage_ids`, `rack_storage_ids`.
+    /// `EorfInfo::storage_capacity`, `storage_ids`.
     /// `false` means no storage at all, regardless of furniture (e.g. a
     /// dining room that happens to be near some bins).
     #[serde(default)]
@@ -1128,7 +1128,7 @@ pub fn sync_places_system(mut constructed: ResMut<ConstructedCity>) {
 
 /// Total number of tools of `kind` held across all rack storage places.
 pub fn total_tools_of(cw: &ConstructedCity, kind: ToolKind) -> u32 {
-    rack_storage_ids(cw)
+    storage_ids(cw)
         .into_iter()
         .map(|id| cw.placed_places[id].contents.tool_count_of(kind) as u32)
         .sum()
@@ -1136,7 +1136,7 @@ pub fn total_tools_of(cw: &ConstructedCity, kind: ToolKind) -> u32 {
 
 /// Total number of tools (of any kind) held across all rack storage places.
 pub fn total_tool_count(cw: &ConstructedCity) -> u32 {
-    rack_storage_ids(cw)
+    storage_ids(cw)
         .into_iter()
         .map(|id| cw.placed_places[id].contents.tool_count() as u32)
         .sum()
@@ -1144,7 +1144,7 @@ pub fn total_tool_count(cw: &ConstructedCity) -> u32 {
 
 /// Total number of rugs held across all rack storage places.
 pub fn total_rug_count(cw: &ConstructedCity) -> u32 {
-    rack_storage_ids(cw)
+    storage_ids(cw)
         .into_iter()
         .map(|id| cw.placed_places[id].contents.rug_count() as u32)
         .sum()
@@ -1178,7 +1178,7 @@ pub fn book_capacity(cw: &ConstructedCity) -> f32 {
 /// Total capacity (not just free room) dedicated to `contents` across all
 /// rack storage places -- for display, alongside `rack_free_capacity`.
 pub fn rack_capacity(cw: &ConstructedCity, contents: RackContents) -> f32 {
-    rack_storage_ids(cw)
+    storage_ids(cw)
         .into_iter()
         .map(|id| rack_capacity_ceiling(cw, &cw.placed_places[id], contents))
         .sum()
@@ -1187,7 +1187,7 @@ pub fn rack_capacity(cw: &ConstructedCity, contents: RackContents) -> f32 {
 /// Remove one tool of `kind` from the first rack storage place that holds one.
 /// Returns `true` if a tool was removed.
 pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
-    for id in rack_storage_ids(cw) {
+    for id in storage_ids(cw) {
         if cw.placed_places[id]
             .contents
             .remove_unique(&UniqueResource::Tool(kind))
@@ -1202,7 +1202,7 @@ pub fn consume_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
 /// `Tools` with room for it. Returns `true` on success (`false` if there's no
 /// such rack, or none with room).
 pub fn deposit_tool(cw: &mut ConstructedCity, kind: ToolKind) -> bool {
-    for id in rack_storage_ids(cw) {
+    for id in storage_ids(cw) {
         if rack_free_capacity_for(cw, &cw.placed_places[id], RackContents::Tools) >= 1.0 {
             cw.placed_places[id]
                 .contents
@@ -1264,7 +1264,7 @@ fn deposit_into_rack(
     item: UniqueResource,
     contents: RackContents,
 ) -> bool {
-    for id in rack_storage_ids(cw) {
+    for id in storage_ids(cw) {
         if rack_free_capacity_for(cw, &cw.placed_places[id], contents) >= 1.0 {
             cw.placed_places[id].contents.add_unique(item);
             return true;
@@ -1365,12 +1365,6 @@ pub fn storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
         .collect()
 }
 
-/// Same set as `storage_ids`, kept as a separate name for callers concerned
-/// specifically with rack (`UniqueResource`) storage.
-pub fn rack_storage_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
-    storage_ids(cw)
-}
-
 /// Per-cube capacity ceiling for `contents` within `pp`: the `Rack` storage
 /// capacity of every fulfillment dedicated to `contents` (racks have no
 /// "unrestricted" option -- an unset cube defaults to `RackContents::Tools`).
@@ -1414,7 +1408,7 @@ fn rack_free_capacity_for(
 /// Free volume available for `contents` (Tools or Rugs) across all rack
 /// storage places.
 pub fn rack_free_capacity(cw: &ConstructedCity, contents: RackContents) -> f32 {
-    rack_storage_ids(cw)
+    storage_ids(cw)
         .into_iter()
         .map(|id| rack_free_capacity_for(cw, &cw.placed_places[id], contents))
         .sum()
@@ -2627,7 +2621,7 @@ mod tests {
     #[test]
     fn bins_never_hold_tools_or_rugs() {
         // A plain bin-backed storage room has no rack fulfillments at all, so
-        // it's never returned by `rack_storage_ids` and can't receive a tool.
+        // it's never returned by `storage_ids` and can't receive a tool.
         let mut cw = grid_with_storage_bins(
             storage_place_def(),
             &[b(0, 0)],

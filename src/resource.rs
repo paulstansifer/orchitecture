@@ -179,6 +179,10 @@ pub enum StorageKind {
 }
 
 impl RackContents {
+    /// Every dedication, in the order the UI offers them. Mirrors
+    /// `UniformResource::ALL` and `WorkPriority::ALL`.
+    pub const ALL: [RackContents; 2] = [RackContents::Tools, RackContents::Rugs];
+
     pub fn label(self) -> &'static str {
         match self {
             RackContents::Tools => "Tools",

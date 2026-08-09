@@ -34,11 +34,12 @@ use crate::construction;
 use crate::eorf::{load_structure_info, EorfId};
 use crate::evaluation::compute_outdoorsness;
 use crate::materials::{BuildMaterialId, MaterialList};
-use crate::pathing::{rebuild_navigation_grid, NavigationGrid};
+use crate::pathing::NavigationGrid;
 use crate::place;
-use crate::population::{assign_places, sync_assignments, Population};
+use crate::population::{assign_places, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
+use crate::simulation::{SimulationPlugin, SimulationSystems};
 use crate::sparse3d::{Facing, Slot, SlotCoord};
 use crate::surroundings::farmstead::{
     farm_breakdown, FarmEvent, FarmId, FarmProduction, FarmsResource, GameClock, NewProduction,
@@ -170,26 +171,10 @@ impl HeadlessSession {
             .run_system_once(setup_travelers)
             .expect("setup_travelers");
 
-        app.add_systems(
-            Update,
-            (
-                crate::idea::sync_idea_progress.run_if(resource_changed::<crate::idea::IdeaState>),
-                place::sync_places_system.run_if(resource_changed::<ConstructedCity>),
-                rebuild_navigation_grid.run_if(resource_changed::<ConstructedCity>),
-                sync_assignments
-                    .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
-                crate::work::sync_work
-                    .run_if(resource_changed::<ConstructedCity>.or(resource_changed::<Population>)),
-            )
-                .chain(),
-        );
-        app.add_systems(
-            Update,
-            report_changes_system
-                .after(rebuild_navigation_grid)
-                .after(sync_assignments)
-                .after(crate::work::sync_work),
-        );
+        // The same change-gated systems the game runs, from the same place --
+        // see `simulation.rs` for why this must not be re-declared here.
+        app.add_plugins(SimulationPlugin);
+        app.add_systems(Update, report_changes_system.after(SimulationSystems));
 
         // Settle the initial world (nav grid, home assignment) before the first
         // user-issued `tick`, mirroring the game's first frame after Startup.
@@ -1239,9 +1224,11 @@ fn advance_month_system(
     mut headless_rng: ResMut<HeadlessRng>,
     sandbox: Res<SandboxFlag>,
 ) -> Vec<String> {
-    // The graphical app keeps assignments current via change-detection systems,
-    // so a month's worker effects see up-to-date staffing. The headless harness
-    // has no such systems, so refresh work assignment inline *before* advancing.
+    // The harness runs the same `SimulationPlugin` systems the game does, but
+    // only on `tick` -- mutating commands deliberately don't advance the
+    // schedule (see the module docs). So an `advance` issued straight after an
+    // edit would otherwise compute the month's worker effects against stale
+    // staffing; refresh it inline first.
     crate::work::assign_work(&mut population.individuals, &constructed);
 
     let outcome = crate::month::advance_month(
@@ -1277,8 +1264,8 @@ fn advance_month_system(
         lines.push("construction: completed".to_string());
     }
 
-    // The graphical app runs place assignment via a separate change-detection
-    // system; the headless harness does it inline here.
+    // Likewise, so that a `query` issued before the next `tick` reports the
+    // post-month assignment rather than the pre-month one.
     assign_places(
         crate::place::AssignmentFlavor::Sleep,
         &mut population.individuals,

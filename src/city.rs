@@ -364,27 +364,47 @@ impl ConstructedCity {
         }
     }
 
-    /// Sets a cell, clearing any furniture/bin/rack restriction recorded for the
-    /// cube it occupied (the restriction belongs to the previous occupant).
+    /// Forgets every per-cube record belonging to the placement at `cube`
+    /// (parent restriction, bin/rack dedication, work priority), returning any
+    /// installed resources to storage first. All of it belongs to that
+    /// specific placement, so none of it may outlive the cell.
+    ///
+    /// The single place that knows the full list of per-cube side tables --
+    /// keep it that way, so a new one can't be added without every removal
+    /// path picking it up. See also [`Self::clear_all_placement_state`].
+    fn clear_placement_state_at(&mut self, cube: IVec3) {
+        self.furniture_restrictions.remove(&cube);
+        self.bin_resource_restrictions.remove(&cube);
+        self.rack_restrictions.remove(&cube);
+        self.work_priorities.remove(&cube);
+        self.evict_furniture_slots(cube);
+    }
+
+    /// Wholesale counterpart to [`Self::clear_placement_state_at`], for swapping
+    /// out the entire grid: nothing in `contents` survives, so no per-cube
+    /// record may either. Installed resources are dropped rather than returned
+    /// to storage, since the storage they'd return to is being replaced too.
+    fn clear_all_placement_state(&mut self) {
+        self.furniture_restrictions.clear();
+        self.bin_resource_restrictions.clear();
+        self.rack_restrictions.clear();
+        self.work_priorities.clear();
+        self.furniture_slots.clear();
+    }
+
+    /// Sets a cell, clearing any per-cube placement record for the cube it
+    /// occupied (the record belongs to the previous occupant).
     pub fn set_cell(&mut self, loc: SlotCoord, cell: Cell) {
         if loc.slot == Slot::Room {
-            self.furniture_restrictions.remove(&loc.cube);
-            self.bin_resource_restrictions.remove(&loc.cube);
-            self.rack_restrictions.remove(&loc.cube);
-            self.work_priorities.remove(&loc.cube);
-            self.evict_furniture_slots(loc.cube);
+            self.clear_placement_state_at(loc.cube);
         }
         self.contents.set(loc, cell);
     }
 
-    /// Removes a cell, clearing any furniture/bin/rack restriction recorded for it.
+    /// Removes a cell, clearing any per-cube placement record for it.
     pub fn take_cell(&mut self, loc: SlotCoord) -> Option<Cell> {
         if loc.slot == Slot::Room {
-            self.furniture_restrictions.remove(&loc.cube);
-            self.bin_resource_restrictions.remove(&loc.cube);
-            self.rack_restrictions.remove(&loc.cube);
-            self.work_priorities.remove(&loc.cube);
-            self.evict_furniture_slots(loc.cube);
+            self.clear_placement_state_at(loc.cube);
         }
         self.contents.take(loc)
     }
@@ -439,10 +459,17 @@ impl ConstructedCity {
         crate::eorf::find_structure_by_name(&self.eorfs, name)
     }
 
+    /// Swaps the whole grid out for `new_contents`, returning the per-slot
+    /// changes for the caller to reflect into the ECS. Every per-cube placement
+    /// record goes with the old grid -- otherwise the outgoing city's bin
+    /// restrictions, rack dedications, work priorities and installed resources
+    /// would be inherited by whatever furniture happens to land on the same
+    /// coordinates.
     pub fn replace_contents(
         &mut self,
         new_contents: Sparse3D<Cell>,
     ) -> Vec<(SlotCoord, Option<Cell>)> {
+        self.clear_all_placement_state();
         let mut changes: Vec<(SlotCoord, Option<Cell>)> = Vec::new();
         for (loc, _) in self.contents.iter() {
             changes.push((loc, None));

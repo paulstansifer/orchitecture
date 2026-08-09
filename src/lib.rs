@@ -42,6 +42,7 @@ pub mod road;
 pub mod scene;
 pub mod selection;
 pub mod serialization;
+pub mod simulation;
 pub mod sparse3d;
 pub mod starter_town;
 pub mod surroundings;

@@ -1382,6 +1382,38 @@ mod tests {
         check!(pw.undo_record.is_empty());
     }
 
+    /// The per-cube placement records belong to the grid being replaced, so a
+    /// load must not leave the outgoing city's restrictions, dedications,
+    /// priorities or installed resources behind for whatever furniture next
+    /// lands on those coordinates.
+    #[test]
+    fn load_clears_per_cube_placement_state() {
+        use crate::resource::{RackContents, ToolKind, UniformResource, UniqueResource};
+        use crate::sparse3d::Sparse3D;
+
+        let (mut cw, mut pw) = make_world();
+        let cube = IVec3::new(4, 0, 4);
+        cw.furniture_restrictions
+            .insert(cube, crate::place::ParentRestriction::Excluded);
+        cw.bin_resource_restrictions
+            .insert(cube, UniformResource::Potato);
+        cw.rack_restrictions.insert(cube, RackContents::Rugs);
+        cw.work_priorities
+            .insert(cube, crate::work::WorkPriority::VeryHigh);
+        cw.furniture_slots.insert(
+            cube,
+            vec![Some(UniqueResource::Tool(ToolKind::CarpentersTools))],
+        );
+
+        load_from_offline(&mut cw, &mut pw, Sparse3D::new());
+
+        check!(cw.furniture_restrictions.is_empty());
+        check!(cw.bin_resource_restrictions.is_empty());
+        check!(cw.rack_restrictions.is_empty());
+        check!(cw.work_priorities.is_empty());
+        check!(cw.furniture_slots.is_empty());
+    }
+
     // ── smoke ─────────────────────────────────────────────────────────────────
 
     #[test]
