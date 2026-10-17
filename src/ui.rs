@@ -157,7 +157,17 @@ pub fn shared_ui_system(
             heading_label!(ui, "Travelers");
             travelers_section(ui, &view, &mut traveler_state, &mut focus_idea);
 
-            next_mode = mode_buttons(ui, &current_mode, &mut toggle_ideas);
+            ideas_button(ui, &mut toggle_ideas);
+        });
+
+    egui::Area::new(egui::Id::new("mode_switcher"))
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 1.0))
+        .show(ctx, |ui| {
+            let mut frame = egui::Frame::window(ui.style());
+            frame.shadow.offset = [0, 3];
+            frame.show(ui, |ui| {
+                next_mode = mode_buttons(ui, &current_mode);
+            });
         });
 
     // ── Apply deferred actions ────────────────────────────────────────────────
@@ -453,31 +463,30 @@ fn travelers_section(
     }
 }
 
-/// Mode buttons pushed to the bottom of the panel: every mode but the
-/// current one, each switchable to directly, plus the Ideas window toggle
-/// (which isn't a mode -- the window floats over whichever one you're in).
-/// Returns the mode just clicked, if any; sets `toggle_ideas` if that button
-/// was clicked.
-fn mode_buttons(
-    ui: &mut egui::Ui,
-    current_mode: &State<GameMode>,
-    toggle_ideas: &mut bool,
-) -> Option<GameMode> {
+/// The Ideas window toggle, pushed to the bottom of the side panel. (It isn't
+/// a mode -- the window floats over whichever one you're in.) Sets
+/// `toggle_ideas` if clicked.
+fn ideas_button(ui: &mut egui::Ui, toggle_ideas: &mut bool) {
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+        if ui.button("Ideas").clicked() {
+            *toggle_ideas = true;
+        }
+    });
+}
+
+/// Mode switcher shown at the top center of the screen: a row of buttons with
+/// the current mode highlighted. Returns the mode just clicked, if any.
+fn mode_buttons(ui: &mut egui::Ui, current_mode: &State<GameMode>) -> Option<GameMode> {
     const MODE_BUTTONS: [(GameMode, &str); 3] = [
         (GameMode::Build, "Build"),
         (GameMode::Walk, "Walk Around"),
         (GameMode::Surroundings, "Surroundings"),
     ];
     let mut next_mode = None;
-    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-        if ui.button("Ideas").clicked() {
-            *toggle_ideas = true;
-        }
+    ui.horizontal(|ui| {
         for (mode, label) in MODE_BUTTONS {
-            if mode == *current_mode.get() {
-                continue;
-            }
-            if ui.button(label).clicked() {
+            let is_current = mode == *current_mode.get();
+            if ui.selectable_label(is_current, label).clicked() && !is_current {
                 next_mode = Some(mode);
             }
         }
