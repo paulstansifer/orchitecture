@@ -852,10 +852,13 @@ fn build_footer(
         ui.label(format!("Direction: {}", build_state.cur_dir));
     }
 
-    if let Some((order, interest)) = build_state.evaluation {
+    if let Some(eval) = build_state.evaluation {
         ui.separator();
-        ui.label(format!("Order: {:.3}", order));
-        ui.label(format!("Interest:  {:.3}", interest));
+        ui.label(format!("Order: {:.3}", eval.order));
+        ui.label(format!("Interest:  {:.3}", eval.interest));
+        ui.label(format!("Illumination: {:.3}", eval.illumination));
+        ui.label(format!("Outsideness: {:.3}", eval.outdoorsness));
+        ui.label(format!("Spaciousness: {:.3}", eval.spaciousness));
     }
 
     if !population.individuals.is_empty() {

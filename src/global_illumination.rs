@@ -29,7 +29,7 @@ fn boundary_transmission(
     match contents.get(SlotCoord::boundary(from, to)) {
         None => 1.0,
         Some(cell) => match structures[cell.id.as_usize()].name.as_str() {
-            "wall" | "floor" => 0.0,
+            "wall" | "floor" | "roof" => 0.0,
             "window" | "doorway" => 0.75,
             _ => 1.0,
         },
@@ -48,7 +48,7 @@ fn boundary_transmission(
 /// voxel's coordinates for stable, view-independent variation:
 /// - open air: × ≈0.60  (range 0.50–0.70)
 /// - window/doorway: × ≈0.30  (range 0.25–0.35)
-/// - wall/floor: blocked (× 0.0)
+/// - wall/floor/roof: blocked (× 0.0)
 ///
 /// Per cell, the illuminance is the strongest (max) level reaching it from
 /// any seed — see `flood_fill` for why a max combine is used instead of

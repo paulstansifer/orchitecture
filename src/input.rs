@@ -161,6 +161,23 @@ fn drag_preview_rect(
     }
 }
 
+/// Sightline distance (in cells) used to gauge spaciousness for the `V`-key
+/// cursor readout. Matches the value used by places.ron's own `Spaciousness`
+/// quality factors.
+const EVALUATION_SIGHTLINE_MAX: u8 = 4;
+
+/// Ratings shown for the `V` key: the QNN model's order/interest scores
+/// alongside the same illumination, outdoorsness, and spaciousness measures
+/// used by `Place` quality factors, all read at the cursor's location.
+#[derive(Clone, Copy)]
+pub struct VantageRatings {
+    pub order: f32,
+    pub interest: f32,
+    pub illumination: f32,
+    pub outdoorsness: f32,
+    pub spaciousness: f32,
+}
+
 /// Shared game state for the build tool.
 #[derive(Resource, Default)]
 pub struct BuildState {
@@ -177,8 +194,8 @@ pub struct BuildState {
     /// `WallPlop`'s rotation state on `ZLoWall`s: unflipped (`NegZ`) or
     /// flipped 180° (`PosZ`). See `wall_plop_flip_x`.
     pub wall_plop_flip_z: bool,
-    /// Latest evaluation results (order, interest).
-    pub evaluation: Option<(f32, f32)>,
+    /// Latest evaluation results.
+    pub evaluation: Option<VantageRatings>,
     /// Selected material (`BuildMaterialId`, index into `MaterialList::materials`) per structure type.
     pub material_per_type:
         std::collections::HashMap<crate::materials::ElementType, BuildMaterialId>,
@@ -442,16 +459,36 @@ fn handle_evaluate(
     let Some(holder) = &model_state.holder else {
         return;
     };
-    let holder = holder.lock().unwrap();
-    let metrics = crate::qnn::compute_metrics(
-        &holder,
+    let metrics = {
+        let holder = holder.lock().unwrap();
+        crate::qnn::compute_metrics(
+            &holder,
+            &constructed.contents,
+            &constructed.eorfs,
+            world_pos,
+        )
+    };
+    if metrics.len() < 2 {
+        return;
+    }
+
+    let origin = world_pos.round().as_ivec3();
+    let outdoorsness =
+        crate::evaluation::compute_outdoorsness(&constructed.contents, &constructed.eorfs);
+    let illuminance = crate::global_illumination::compute_sky_illuminance(
         &constructed.contents,
         &constructed.eorfs,
-        world_pos,
     );
-    if metrics.len() >= 2 {
-        build_state.evaluation = Some((metrics[0], metrics[1]));
-    }
+    let spaciousness =
+        crate::evaluation::compute_spaciousness(constructed, origin, EVALUATION_SIGHTLINE_MAX);
+
+    build_state.evaluation = Some(VantageRatings {
+        order: metrics[0],
+        interest: metrics[1],
+        illumination: illuminance.get(&origin).copied().unwrap_or(0.0),
+        outdoorsness: outdoorsness.get(&origin).copied().unwrap_or(0.0),
+        spaciousness,
+    });
 }
 
 /// Left-click/drag: places or removes structures along the drag, then commits the edit.
