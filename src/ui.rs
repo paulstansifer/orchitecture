@@ -57,13 +57,14 @@ pub fn update_economy_cache(
     pending: Res<ProposedCity>,
     population: Res<Population>,
     traveler_state: Res<TravelerState>,
+    venues: Res<crate::surroundings::attendance::MarketVenues>,
     material_list: Res<MaterialList>,
     sandbox: Res<SandboxMode>,
 ) {
     // Populate the farms' lazy adjacency/road caches (read by the economy
     // computation) through `bypass`, so building them doesn't mark
     // `FarmsResource` changed — the road graph only needs (re)building when
-    // absent; `advance_month` keeps its distances current after that.
+    // absent (paving clears it).
     let farms = farms.bypass();
     farms.ensure_adjacency();
     if farms.roads.is_none() {
@@ -74,6 +75,7 @@ pub fn update_economy_cache(
         pending: &pending,
         population: &population,
         traveler_state: &traveler_state,
+        venues: &venues,
         material_list: &material_list,
         sandbox_enabled: sandbox.enabled,
     };
@@ -138,6 +140,7 @@ pub fn shared_ui_system(
             ui.add_space(2.0);
 
             go_advance_month = advance_controls(ui, &view, ctx, wait_id);
+            farms_section(ui, &view);
 
             ui.separator();
             ui.heading("Resources");
@@ -232,17 +235,13 @@ fn advance_controls(
                 });
                 ui.vertical(|ui| {
                     ui.set_min_width(0.0);
-                    if view.market_stand_count == 0 {
-                        label!(ui, "No market stalls");
-                    } else {
-                        label!(
-                            ui,
-                            format!(
-                                "{}/{} farms invited",
-                                view.invited_count, view.market_stand_count
-                            )
-                        );
-                    }
+                    label!(
+                        ui,
+                        format!(
+                            "{}/{} farms coming",
+                            view.coming_count, view.stand_count
+                        )
+                    );
                 });
             });
         }
@@ -252,7 +251,7 @@ fn advance_controls(
                 ctx.data_mut(|d| d.insert_temp(wait_id, true));
             }
             if confirmed {
-                label!(ui, col_format!(problem, "There's no ongoing construction, and no farms are invited to the next market. Wait anyways?"));
+                label!(ui, col_format!(problem, "No construction to wait for and no farms are coming to the market. Wait anyways?"));
                 if ui.button("Advance Month").clicked() {
                     go_advance_month = true;
                 }
@@ -454,13 +453,31 @@ fn travelers_section(
                     traveler.affordable || traveler_state.invited,
                     egui::Checkbox::new(&mut traveler_state.invited, "Invite"),
                 );
-                if !traveler.affordable {
+                if !traveler.has_room {
+                    note_label!(ui, "(no good-enough room in an inn)");
+                } else if !traveler.affordable {
                     note_label!(ui, "(insufficient resources)");
                 }
             });
     } else {
         label!(ui, "(no traveler this month)");
     }
+}
+
+/// Which farms are coming to market this month and why the others aren't,
+/// collapsed by default.
+fn farms_section(ui: &mut egui::Ui, view: &MonthPanelView) {
+    egui::CollapsingHeader::new("Farms")
+        .default_open(false)
+        .show(ui, |ui| {
+            for line in &view.farms_coming {
+                label!(ui, line.as_str());
+            }
+            ui.separator();
+            for line in &view.farms_absent {
+                label!(ui, line.as_str());
+            }
+        });
 }
 
 /// The Ideas window toggle, pushed to the bottom of the side panel. (It isn't
@@ -514,8 +531,7 @@ mod tests {
             circle_pos: Vec2::ZERO,
             traveler_reveals: Vec::new(),
             neighbors: Vec::new(),
-            road_trips: Vec::new(),
-            road_paved: Vec::new(),
+            paved_roads: Vec::new(),
             roads: None,
         });
         world.insert_resource(ConstructedCity::new(Vec::new()));
@@ -528,6 +544,7 @@ mod tests {
         });
         world.insert_resource(MaterialList::default());
         world.insert_resource(SandboxMode::default());
+        world.init_resource::<crate::surroundings::attendance::MarketVenues>();
 
         assert!(world.resource::<MonthEffectsCache>().0.is_none());
         world.run_system_once(update_economy_cache).unwrap();

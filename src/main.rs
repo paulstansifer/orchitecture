@@ -65,6 +65,7 @@ use orchitecture_lib::{
         RingMaterial,
     },
     surroundings::{
+        attendance::{sync_market_venues, MarketVenues},
         enter_surroundings_mode, exit_surroundings_mode, generate_farms, surroundings_ui_system,
         GameClock,
     },
@@ -153,6 +154,7 @@ fn main() {
         .insert_resource(HoveredFurniture::default())
         .insert_resource(GameClock::default())
         .init_resource::<MonthEffectsCache>()
+        .init_resource::<MarketVenues>()
         .init_resource::<IdeaState>()
         .init_resource::<IdeaWindowState>()
         .insert_resource(MaterialList::load())
@@ -230,6 +232,8 @@ fn main() {
                     sync_work.run_if(
                         resource_changed::<ConstructedCity>.or(resource_changed::<Population>),
                     ),
+                    // After place formation: guest rooms are inn bedrooms.
+                    sync_market_venues.run_if(resource_changed::<ConstructedCity>),
                 )
                     .chain(),
                 (

@@ -79,6 +79,17 @@
                 worker_visit_duration: 1.0,
             ),
         ],
+        // Only matters for inn bedrooms, whose guests are visiting the market.
+        quality_factors: [
+            (
+                aspect: MarketDistance,
+                strength: 1.0,
+                range: (
+                    start: 0.25,
+                    end: 1.0
+                )
+            ),
+        ],
         assignable_for: Some(Sleep),
     ),
     (

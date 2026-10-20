@@ -468,6 +468,10 @@ pub struct ProposedCity {
     /// (`reset()`) or a batch completes (`construct()`). See
     /// `construction::remaining_construction_need`.
     pub resource_progress: HashMap<UniformResource, u32>,
+    /// Paved roads in the surroundings that are part of the current project,
+    /// paid for (in fieldstone) along with it and finished when it completes
+    /// (see `construction::commit_proposed_roads`).
+    pub proposed_roads: Vec<crate::surroundings::road_network::RoadSegment>,
 }
 
 impl Default for ProposedCity {
@@ -483,11 +487,13 @@ impl ProposedCity {
             undo_record: Vec::new(),
             redo_record: Vec::new(),
             resource_progress: HashMap::new(),
+            proposed_roads: Vec::new(),
         }
     }
 
+    /// Size of the current project: proposed cell changes plus proposed roads.
     pub fn num_changes(&self) -> usize {
-        self.proposed_changes.iter().count()
+        self.proposed_changes.iter().count() + self.proposed_roads.len()
     }
 }
 

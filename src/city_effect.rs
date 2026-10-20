@@ -4,22 +4,19 @@
 //! them and recording every movement in one [`MonthLedger`]. That ledger is the
 //! single source of truth behind the UI's per-resource tooltip and
 //! [`MonthEffects::storage_delta`]; the `CityEffect`s themselves only carry out
-//! the structural side effects a ledger entry can't express (setting a boost,
-//! growing the population, rerolling production, committing construction). Both
+//! the structural side effects a ledger entry can't express (depositing a
+//! traveler's reward, committing construction). Both
 //! real execution (`month::advance_month`) and the UI preview share the one
 //! `compute_month_effects` computation.
 //!
 //! ## Sequencing
 //! The [`Pool`] tracks two amounts per resource for the month: `inflow` (this
-//! month's fresh delivery — invited farms' stockpiles up front, plus a
-//! traveler's reward) and `storage` (a snapshot of pre-existing stock). Ordered
-//! claimants take from `inflow` first, then (if storage-eligible) from what's
-//! left of `storage`: Eat, then TravelerVisit, then farms' own market
-//! participation (Boost/Reroll/Specialize/Adopt), then Construction, then
-//! Workshops. Because Eat and the traveler claim before farms resolve their own
-//! boosts, population feeding and a traveler's demands (and its reward, which
-//! joins the same pool) take priority over what farms get to do with their own
-//! harvest. Workshops resolve last, after construction, so they process only
+//! month's fresh delivery — the production of every farm coming to market (see
+//! `surroundings::attendance`) up front, plus a traveler's reward) and
+//! `storage` (a snapshot of pre-existing stock). Ordered claimants take from
+//! `inflow` first, then (if storage-eligible) from what's left of `storage`:
+//! Eat, then TravelerVisit, then Construction, then Workshops. Workshops
+//! resolve last, after construction, so they process only
 //! what those claimants left behind; their outputs join the same pool but are
 //! capped at the free storage capacity for the output (they block on back
 //! pressure rather than overproduce into loss). Whatever's left of `inflow`
@@ -34,11 +31,12 @@ use crate::construction::{
 };
 use crate::materials::MaterialList;
 use crate::place;
-use crate::population::{Individual, Population};
+use crate::place::PlacedPlaceId;
+use crate::population::Population;
 use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResource};
+use crate::surroundings::attendance::{plan_attendance, AttendancePlan, MarketVenues};
 use crate::surroundings::farmstead::{
-    known_farm_plentifulness, FarmId, FarmProduction, FarmsResource, MarketModeEffect,
-    NewProduction, ADOPT_PENALTY, MARKET_BOOST,
+    compute_production, known_farm_plentifulness, FarmId, FarmsResource, ProductionPlan,
 };
 use crate::traveler::{ResolvedReward, TravelerState, TravelerVisit};
 
@@ -52,9 +50,6 @@ pub enum LedgerSource {
     Market,
     Eat,
     Traveler,
-    /// Half of whatever Fieldstone survives market transactions is spent
-    /// paving its own delivery routes — see `pave_fieldstone_routes`.
-    Paving,
     Construction,
     /// Staffed workshops converting stored/inflow inputs into outputs, resolved
     /// after construction — see `Workshop` and `compute_workshop_effect`.
@@ -65,11 +60,10 @@ impl LedgerSource {
     /// Every variant. `LEDGER_SOURCE_ORDER` must be a permutation of this (see
     /// `ledger_source_order_is_complete`); the exhaustive `tag()` match below
     /// forces this list to be updated whenever a variant is added.
-    pub const ALL: [LedgerSource; 6] = [
+    pub const ALL: [LedgerSource; 5] = [
         LedgerSource::Market,
         LedgerSource::Eat,
         LedgerSource::Traveler,
-        LedgerSource::Paving,
         LedgerSource::Construction,
         LedgerSource::Workshop,
     ];
@@ -79,7 +73,6 @@ impl LedgerSource {
             LedgerSource::Market => "market",
             LedgerSource::Eat => "eat",
             LedgerSource::Traveler => "traveler",
-            LedgerSource::Paving => "paving",
             LedgerSource::Construction => "construction",
             LedgerSource::Workshop => "workshop",
         }
@@ -88,12 +81,11 @@ impl LedgerSource {
 
 /// Display order for the per-resource tooltip: the same order the effects are
 /// resolved in (Eat and the traveler get first dibs, then farms' own market
-/// participation, then road paving, then construction).
+/// deliveries, then construction).
 const LEDGER_SOURCE_ORDER: [LedgerSource; LedgerSource::ALL.len()] = [
     LedgerSource::Eat,
     LedgerSource::Traveler,
     LedgerSource::Market,
-    LedgerSource::Paving,
     LedgerSource::Construction,
     LedgerSource::Workshop,
 ];
@@ -342,16 +334,16 @@ impl Workshop {
     }
 }
 
-/// One instance per invited farm's market participation, plus the three
-/// singleton kinds. There is no separate `FarmMarketEffect` type — the
-/// `Market` variant carries everything a farm's effect needs directly.
+/// One instance per farm coming to market, plus the singleton kinds. There is
+/// no separate `FarmMarketEffect` type — the `Market` variant carries
+/// everything a farm's visit needs directly.
 pub enum CityEffect {
     Market {
         farm_idx: FarmId,
-        travel_cost: u32,
-        potato_contributed: u32,
-        inedible_contributed: (UniformResource, u32),
-        effect: MarketModeEffect,
+        /// The guest room the farmer stays in, if they needed one.
+        room: Option<PlacedPlaceId>,
+        potatoes: u32,
+        inedible: (UniformResource, u32),
     },
     Eat(Eat),
     TravelerVisit(TravelerVisit),
@@ -363,63 +355,11 @@ impl CityEffect {
     /// Real execution: mutates city state. The resource accounting lives in the
     /// [`MonthLedger`] instead (built by `compute_month_effects`); this only
     /// carries out the structural side effects a ledger entry can't express
-    /// (setting a boost, growing the population, rerolling production, depositing
-    /// a tool, committing construction, zeroing sold stockpiles).
+    /// (depositing a tool or book, committing construction).
     pub fn apply(&self, ctx: &mut EffectContext) {
         match self {
-            CityEffect::Market {
-                farm_idx, effect, ..
-            } => {
-                let i = *farm_idx;
-                match effect {
-                    MarketModeEffect::Boost => ctx.farms[i].boost += MARKET_BOOST,
-                    MarketModeEffect::Adopt => {
-                        ctx.farms[i].boost -= ADOPT_PENALTY;
-                        ctx.population.individuals.push(Individual::default());
-                    }
-                    MarketModeEffect::Reconfigure {
-                        paid,
-                        paid_from_storage,
-                        new_production,
-                    } => {
-                        ctx.farms[i].boost = 0;
-                        // Physically withdraw the portion of the cost that came
-                        // out of the player's stored potatoes; the inflow portion
-                        // was farms' own delivery and needs no withdrawal.
-                        if *paid_from_storage > 0 {
-                            place::consume_uniform(
-                                ctx.constructed,
-                                UniformResource::Potato,
-                                *paid_from_storage,
-                            );
-                        }
-                        if *paid > 0 {
-                            if let FarmProduction::Specialized(prev) = ctx.farms[i].production {
-                                place::deposit_tool(ctx.constructed, prev);
-                            }
-                            ctx.farms[i].production = match new_production {
-                                NewProduction::RandomRegular => {
-                                    let current = ctx.farms[i].produced_resource();
-                                    let options: Vec<UniformResource> =
-                                        UniformResource::inedible_farmables()
-                                            .iter()
-                                            .copied()
-                                            .filter(|&r| r != current)
-                                            .collect();
-                                    use rand::Rng as _;
-                                    FarmProduction::Regular(
-                                        options[ctx.rng.random_range(0..options.len())],
-                                    )
-                                }
-                                NewProduction::Tool(tool) => FarmProduction::Specialized(*tool),
-                            };
-                        }
-                    }
-                }
-                // Invited farms sold their stockpiles into the pool.
-                ctx.farms[i].potato_stockpile = 0;
-                ctx.farms[i].inedible_stockpile = 0;
-            }
+            // A farm's delivery is pure resource movement: nothing to do here.
+            CityEffect::Market { .. } => {}
             CityEffect::Eat(e) => e.apply(ctx),
             CityEffect::TravelerVisit(t) => t.apply(ctx.constructed, ctx.farms, ctx.idea_state),
             CityEffect::Construction(c) => c.apply(ctx.pending, ctx.constructed),
@@ -429,22 +369,7 @@ impl CityEffect {
 
     pub fn describe(&self) -> String {
         match self {
-            CityEffect::Market { effect, .. } => match effect {
-                MarketModeEffect::Boost => {
-                    format!("A farm trades at the market: +{MARKET_BOOST} production.")
-                }
-                MarketModeEffect::Reconfigure {
-                    new_production: NewProduction::RandomRegular,
-                    ..
-                } => "A farm re-rolls its produced resource.".to_string(),
-                MarketModeEffect::Reconfigure {
-                    new_production: NewProduction::Tool(tool),
-                    ..
-                } => format!("A farm specializes using a {}.", tool.label()),
-                MarketModeEffect::Adopt => {
-                    "A farm adopts a family, growing the population.".to_string()
-                }
-            },
+            CityEffect::Market { .. } => "A farm trades at the market.".to_string(),
             CityEffect::Eat(e) => e.describe(),
             CityEffect::TravelerVisit(t) => t.describe(),
             CityEffect::Construction(c) => c.describe(),
@@ -456,9 +381,13 @@ impl CityEffect {
 /// Precomputed outcome of `compute_month_effects`, threaded through both the
 /// read-only preview (ui.rs) and the real execution (month.rs).
 pub struct MonthEffects {
-    /// One `Market` entry per invited farm, plus `Eat`, an optional
+    /// One `Market` entry per farm coming to market, plus `Eat`, an optional
     /// `TravelerVisit`, and an optional `Construction`.
     pub effects: Vec<CityEffect>,
+    /// Which farms come, which don't and why, and who stays in which room.
+    pub attendance: AttendancePlan,
+    /// This month's farm production, coming to market or not.
+    pub production: ProductionPlan,
     /// This month's market inflow, before any claims — i.e. what the old
     /// `player_gains` meant.
     pub player_gains: Vec<(UniformResource, u32)>,
@@ -467,10 +396,6 @@ pub struct MonthEffects {
     pub leftover: HashMap<UniformResource, ResourceFlow>,
     /// The single accounting record of every resource movement this month.
     pub ledger: MonthLedger,
-    /// Fieldstone diverted to road paving this month (half of whatever
-    /// survived market transactions). Applied to the road network separately
-    /// via `FarmsResource::pave_fieldstone_routes`.
-    pub fieldstone_for_paving: u32,
 }
 
 impl MonthEffects {
@@ -492,11 +417,7 @@ impl MonthEffects {
         stored - self.ledger.storage_draw_for(res) as i64
     }
 
-    /// Per-farm market participation, projected out of this month's effects and
-    /// keyed by farm — the same shape `farmstead::compute_market` produces in
-    /// isolation, but reflecting the full monthly pipeline (feeding and a
-    /// traveler claim ahead of farms, so a reconfigure's affordability here
-    /// accounts for that contention). Drives the farm previews.
+    /// Per-farm market deliveries, keyed by farm.
     pub fn market_effects(&self) -> BTreeMap<FarmId, &CityEffect> {
         self.effects
             .iter()
@@ -522,17 +443,11 @@ impl MonthEffects {
     }
 
     /// Whether this month's effects will deposit a tool into rack storage --
-    /// a farm respecializing away from a tool returns its previous one, or an
-    /// invited-and-affordable traveler's reward is a tool. Read-only preview
+    /// an invited-and-affordable traveler's reward is a tool. Read-only preview
     /// of what `CityEffect::apply` would do, for the UI's "will receive any"
     /// row-visibility check (see `place::deposit_tool`).
-    pub fn tools_incoming(&self, farms: &FarmsResource) -> bool {
+    pub fn tools_incoming(&self) -> bool {
         self.effects.iter().any(|e| match e {
-            CityEffect::Market {
-                farm_idx,
-                effect: MarketModeEffect::Reconfigure { paid, .. },
-                ..
-            } => *paid > 0 && matches!(farms[*farm_idx].production, FarmProduction::Specialized(_)),
             CityEffect::TravelerVisit(t) => {
                 t.invited && t.affordable && matches!(t.reward, ResolvedReward::Tool(_))
             }
@@ -627,6 +542,7 @@ pub struct MonthInputs<'a> {
     pub pending: &'a ProposedCity,
     pub population: &'a Population,
     pub traveler_state: &'a TravelerState,
+    pub venues: &'a MarketVenues,
     pub material_list: &'a MaterialList,
     pub sandbox_enabled: bool,
 }
@@ -640,22 +556,18 @@ impl MonthInputs<'_> {
             self.pending,
             self.population,
             self.traveler_state,
+            self.venues,
             self.material_list,
             self.sandbox_enabled,
         )
     }
 }
 
-/// Computes the full set of this month's effects, in claim-priority order:
-/// Eat, then TravelerVisit, then market delivery (farms' own participation),
-/// then Construction. Every resource movement is threaded through a single
-/// [`Pool`] — claimants take from this month's inflow first and pre-existing
-/// storage second, and each claim/contribution is recorded in the pool's
-/// [`MonthLedger`]. Eat and a traveler's visit claim ahead of farms' own
-/// Boost/Reroll/Specialize/Adopt participation, so population feeding and a
-/// traveler's demands (and its reward, which joins the same pool) take priority
-/// over what farms get to do with their own harvest. Pure — takes everything by
-/// shared reference, mutates nothing outside its own `Pool`.
+/// Computes the full set of this month's effects: plans which farms come to
+/// market (`attendance::plan_attendance`) and what every farm produces, then
+/// resolves everything against that (see [`compute_month_effects_with`]).
+/// Pure — takes everything by shared reference. `farms`' road network should
+/// already be built (`FarmsResource::ensure_roads`).
 #[allow(clippy::too_many_arguments)]
 pub fn compute_month_effects(
     farms: &FarmsResource,
@@ -663,21 +575,66 @@ pub fn compute_month_effects(
     pending: &ProposedCity,
     population: &Population,
     traveler_state: &TravelerState,
+    venues: &MarketVenues,
     material_list: &MaterialList,
     sandbox_enabled: bool,
 ) -> MonthEffects {
-    use crate::surroundings::farmstead::{resolve_market, seed_market};
+    let attendance = plan_attendance(farms, venues, traveler_state);
+    let production = compute_production(farms);
+    compute_month_effects_with(
+        farms,
+        attendance,
+        production,
+        constructed,
+        pending,
+        population,
+        traveler_state,
+        material_list,
+        sandbox_enabled,
+    )
+}
 
+/// The rest of [`compute_month_effects`], given this month's attendance and
+/// production, in claim-priority order: Eat, then TravelerVisit, then
+/// Construction, then Workshops. Every resource movement is threaded through
+/// a single [`Pool`] — claimants take from this month's inflow first and
+/// pre-existing storage second, and each claim/contribution is recorded in the
+/// pool's [`MonthLedger`].
+#[allow(clippy::too_many_arguments)]
+pub fn compute_month_effects_with(
+    farms: &FarmsResource,
+    attendance: AttendancePlan,
+    production: ProductionPlan,
+    constructed: &ConstructedCity,
+    pending: &ProposedCity,
+    population: &Population,
+    traveler_state: &TravelerState,
+    material_list: &MaterialList,
+    sandbox_enabled: bool,
+) -> MonthEffects {
     // A snapshot of pre-existing storage. `compute_month_effects` never mutates
     // `constructed`, so this is stable for the whole computation and is reused
     // by the leftover-distribution pass below rather than re-scanned.
     let storage_snapshot = place::storage_totals(constructed);
     let mut pool = Pool::new(storage_snapshot.clone());
-    // Invited farms deliver their stockpiles into the pool up front, so the
-    // claimants below can take from that inflow in priority order.
-    let invited = seed_market(farms, &mut pool);
 
+    // Every farm coming to market delivers this month's production into the
+    // pool up front, so the claimants below can take from that inflow in
+    // priority order.
     let mut effects: Vec<CityEffect> = Vec::new();
+    for id in attendance.coming() {
+        let i = id.index();
+        let potatoes = production.potatoes[i];
+        let inedible = (farms[id].produced_resource(), production.inedible[i]);
+        pool.contribute(LedgerSource::Market, UniformResource::Potato, potatoes);
+        pool.contribute(LedgerSource::Market, inedible.0, inedible.1);
+        effects.push(CityEffect::Market {
+            farm_idx: id,
+            room: attendance.get(id).and_then(|a| a.room),
+            potatoes,
+            inedible,
+        });
+    }
 
     // 1. Eat.
     let desired_potato = population.individuals.len() as u32 * POTATOES_PER_INDIVIDUAL;
@@ -708,7 +665,9 @@ pub fn compute_month_effects(
                 place::book_free_capacity(constructed) >= place::book_volume()
             }
         };
+        let has_room = attendance.traveler_has_room;
         let affordable = reward_deliverable
+            && has_room
             && offer
                 .demands
                 .iter()
@@ -743,34 +702,16 @@ pub fn compute_month_effects(
             reward: offer.reward.clone(),
             path: offer.path.clone(),
             affordable,
+            has_room,
             invited: invited_traveler,
         }));
-    }
-
-    // 3. Market: farms' own Boost/Reroll/Specialize/Adopt participation,
-    // against whatever's left of the pool's inflow after Eat and the traveler.
-    // `resolve_market` returns a `BTreeMap`, so this is already in canonical
-    // (by farm id) order rather than shuffling from frame to frame.
-    effects.extend(resolve_market(farms, &invited, &mut pool).into_values());
-
-    // Half of whatever Fieldstone survived market transactions is diverted to
-    // paving its own delivery routes, before the player ever sees it as a gain
-    // or spends it on construction/storage. `pave_fieldstone_routes` (called
-    // separately, once the pool's effects are applied) does the actual paving.
-    let fieldstone_for_paving = pool.inflow_available(UniformResource::Fieldstone) / 2;
-    if fieldstone_for_paving > 0 {
-        pool.claim(
-            LedgerSource::Paving,
-            UniformResource::Fieldstone,
-            fieldstone_for_paving,
-        );
     }
 
     // Whatever inflow farms left in the pool is the player's gains, and this
     // month's inflow for Construction and the leftover-distribution pass below.
     let player_gains = pool.gains();
 
-    // 4. Construction: inflow first, then leftover storage.
+    // 3. Construction: inflow first, then leftover storage.
     if pending.num_changes() > 0 {
         let remaining_need: HashMap<UniformResource, u32> = if sandbox_enabled {
             HashMap::new()
@@ -823,10 +764,11 @@ pub fn compute_month_effects(
 
     MonthEffects {
         effects,
+        attendance,
+        production,
         player_gains,
         leftover,
         ledger: pool.ledger,
-        fieldstone_for_paving,
     }
 }
 
@@ -837,36 +779,76 @@ mod tests {
     use crate::place::{ParentRestriction, ParticularPlace};
     use crate::population::Individual;
     use crate::resource::{Approximation, Inventory, StorageKind, UniformResource::*};
-    use crate::surroundings::farmstead::{FarmData, FarmEvent};
+    use crate::surroundings::attendance::FarmAttendance;
+    use crate::surroundings::farmstead::tests::mk_farm;
     use crate::traveler::{IndividualTraveler, ResolvedReward};
-    use bevy::prelude::Vec2;
 
-    fn mk_farm(potato: u32) -> FarmData {
-        FarmData {
-            seed: Vec2::ZERO,
-            polygon: Vec::new(),
-            area: 5.0,
-            fertility: 1.0,
-            production: FarmProduction::Regular(Straw),
-            potato_stockpile: potato,
-            inedible_stockpile: 0,
-            boost: 0,
-            invited: true,
-            event: FarmEvent::Market,
+    /// Farms that all come to market, bypassing attendance planning and
+    /// production so a test can say exactly what each one delivers.
+    struct TestMarket {
+        farms: FarmsResource,
+        attendance: AttendancePlan,
+        production: ProductionPlan,
+    }
+
+    /// One `(potatoes, straw)` delivery per farm, every farm coming.
+    fn farms_with(deliveries: Vec<(u32, u32)>) -> TestMarket {
+        let n = deliveries.len();
+        let farms = crate::surroundings::farmstead::tests::farms_with(
+            (0..n).map(|_| mk_farm(Straw, 5.0)).collect(),
+            vec![vec![]; n],
+        );
+        let attendance = AttendancePlan {
+            farms: (0..n)
+                .map(|i| {
+                    let attending = FarmAttendance {
+                        travel_cost: Some(0.0),
+                        needs_room: false,
+                        absences: vec![],
+                        room: None,
+                    };
+                    (FarmId::new(i), attending)
+                })
+                .collect(),
+            stands: n,
+            // Tests that care about rooms set this themselves.
+            traveler_has_room: true,
+            traveler_room: None,
+        };
+        let production = ProductionPlan {
+            potatoes: deliveries.iter().map(|d| d.0).collect(),
+            inedible: deliveries.iter().map(|d| d.1).collect(),
+            supplies: vec![],
+        };
+        TestMarket {
+            farms,
+            attendance,
+            production,
         }
     }
 
-    fn farms_with(farms: Vec<FarmData>) -> FarmsResource {
-        let n = farms.len();
-        FarmsResource {
-            farms,
-            circle_pos: Vec2::ZERO,
-            traveler_reveals: Vec::new(),
-            neighbors: vec![Vec::new(); n],
-            road_trips: Vec::new(),
-            road_paved: Vec::new(),
-            roads: None,
-        }
+    /// Shadows the real `compute_month_effects` so tests can hand it a
+    /// [`TestMarket`] in place of the farms.
+    fn compute_month_effects(
+        market: &TestMarket,
+        constructed: &ConstructedCity,
+        pending: &ProposedCity,
+        population: &Population,
+        traveler_state: &TravelerState,
+        material_list: &MaterialList,
+        sandbox_enabled: bool,
+    ) -> MonthEffects {
+        compute_month_effects_with(
+            &market.farms,
+            market.attendance.clone(),
+            market.production.clone(),
+            constructed,
+            pending,
+            population,
+            traveler_state,
+            material_list,
+            sandbox_enabled,
+        )
     }
 
     fn population(n: usize) -> Population {
@@ -944,7 +926,7 @@ mod tests {
 
     #[test]
     fn eat_outranks_traveler_for_potato_when_scarce() {
-        let farms = farms_with(vec![mk_farm(10)]); // exactly enough for Eat, not both
+        let farms = farms_with(vec![(10, 0)]); // exactly enough for Eat, not both
         let cw = ConstructedCity::new(Vec::new());
         let pending = ProposedCity::new();
         let pop = population(2); // desired = 10 potatoes
@@ -956,6 +938,7 @@ mod tests {
             demands: vec![(Potato, 10)],
             reward: ResolvedReward::Resource(Timber, 1),
             path: Vec::new(),
+            required_quality: 0.0,
         });
 
         let material_list = MaterialList::default();
@@ -1022,10 +1005,15 @@ mod tests {
         };
         let effects = MonthEffects {
             effects: vec![],
+            attendance: AttendancePlan::default(),
+            production: ProductionPlan {
+                potatoes: vec![],
+                inedible: vec![],
+                supplies: vec![],
+            },
             player_gains: Vec::new(),
             leftover,
             ledger,
-            fieldstone_for_paving: 0,
         };
 
         // Timber: leftover deposit already includes the traveler reward.
@@ -1273,9 +1261,7 @@ mod tests {
         // storage. For every resource, the ledger's net inflow change plus what
         // was drawn from pre-existing storage must equal what ended up in
         // leftover (stored + lost) — nothing is created or destroyed.
-        let mut farm = mk_farm(10);
-        farm.inedible_stockpile = 8; // produces Straw (see `mk_farm`)
-        let farms = farms_with(vec![farm]);
+        let farms = farms_with(vec![(10, 8)]);
 
         let mut inv = Inventory::new([(StorageKind::Bulk, 100.0)]);
         inv.add_uniform(Potato, 20);
@@ -1360,6 +1346,7 @@ mod tests {
             demands: vec![(Timber, 10)],
             reward: ResolvedReward::Resource(Plank, 1),
             path: Vec::new(),
+            required_quality: 0.0,
         });
 
         let material_list = MaterialList::default();
@@ -1382,7 +1369,7 @@ mod tests {
 
     #[test]
     fn traveler_not_invited_is_never_active_even_if_affordable() {
-        let farms = farms_with(vec![mk_farm(20)]);
+        let farms = farms_with(vec![(20, 0)]);
         let cw = ConstructedCity::new(Vec::new());
         let pending = ProposedCity::new();
         let pop = population(0);
@@ -1394,6 +1381,7 @@ mod tests {
             demands: vec![(Potato, 5)],
             reward: ResolvedReward::Resource(Timber, 1),
             path: Vec::new(),
+            required_quality: 0.0,
         });
 
         let material_list = MaterialList::default();
@@ -1438,6 +1426,7 @@ mod tests {
             demands: vec![], // trivially affordable
             reward: ResolvedReward::Tool(ToolKind::CarpentersTools),
             path: Vec::new(),
+            required_quality: 0.0,
         });
 
         let material_list = MaterialList::default();
@@ -1501,6 +1490,7 @@ mod tests {
             demands: vec![], // trivially affordable
             reward: ResolvedReward::Resource(Plank, 5),
             path: Vec::new(),
+            required_quality: 0.0,
         });
 
         let effects = compute_month_effects(
@@ -1540,109 +1530,6 @@ mod tests {
         assert_eq!(effects.leftover.get(&Plank).map(|f| f.lost), Some(2));
     }
 
-    /// A reconfiguring farm can cover the 10-potato cost from the player's
-    /// stored potatoes when this month's market inflow is short, and executing
-    /// the effect physically withdraws that portion from storage.
-    #[test]
-    fn reconfigure_pays_from_stored_potatoes_when_inflow_short() {
-        use rand::{rngs::StdRng, SeedableRng};
-
-        // One invited farm, set to re-roll. A reconfiguring farm contributes no
-        // potatoes to the pool, so this month's potato inflow is 0.
-        let mut farm = mk_farm(0);
-        farm.event = FarmEvent::Reconfigure(NewProduction::RandomRegular);
-        let mut farms = farms_with(vec![farm]);
-
-        // The player has 20 stored potatoes to draw on.
-        let mut inv = Inventory::new([(StorageKind::Bulk, 100.0)]);
-        inv.add_uniform(Potato, 20);
-        let mut cw = grid_with_storage(inv);
-        let pending = ProposedCity::new();
-        let pop = population(0); // no eating, so nothing claims potatoes first
-
-        let material_list = MaterialList::default();
-        let effects = compute_month_effects(
-            &farms,
-            &cw,
-            &pending,
-            &pop,
-            &no_traveler(),
-            &material_list,
-            false,
-        );
-
-        let market = effects
-            .effects
-            .iter()
-            .find_map(|e| match e {
-                CityEffect::Market { effect, .. } => Some(*effect),
-                _ => None,
-            })
-            .expect("a Market effect should be present");
-        assert!(
-            matches!(
-                market,
-                MarketModeEffect::Reconfigure {
-                    paid: 10,
-                    paid_from_storage: 10,
-                    ..
-                }
-            ),
-            "the whole 10-potato cost should be drawn from storage",
-        );
-
-        // Executing the effect withdraws those 10 potatoes from storage.
-        let mut population = pop;
-        let mut rng = StdRng::seed_from_u64(0);
-        for effect in effects.all() {
-            effect.apply(&mut EffectContext {
-                constructed: &mut cw,
-                pending: &mut ProposedCity::new(),
-                population: &mut population,
-                farms: &mut farms,
-                idea_state: &mut crate::idea::IdeaState::default(),
-                rng: &mut rng,
-            });
-        }
-        assert_eq!(
-            crate::place::storage_totals(&cw).get(&Potato).copied(),
-            Some(10),
-            "20 stored - 10 paid = 10 remaining",
-        );
-    }
-
-    /// With neither market inflow nor stored potatoes enough to cover the cost,
-    /// a reconfigure falls back to an ordinary boost.
-    #[test]
-    fn reconfigure_falls_back_to_boost_when_unaffordable() {
-        let mut farm = mk_farm(0);
-        farm.event = FarmEvent::Reconfigure(NewProduction::RandomRegular);
-        let farms = farms_with(vec![farm]);
-
-        let mut inv = Inventory::new([(StorageKind::Bulk, 100.0)]);
-        inv.add_uniform(Potato, 5); // not enough, even from storage
-        let cw = grid_with_storage(inv);
-        let pending = ProposedCity::new();
-        let pop = population(0);
-
-        let material_list = MaterialList::default();
-        let effects = compute_month_effects(
-            &farms,
-            &cw,
-            &pending,
-            &pop,
-            &no_traveler(),
-            &material_list,
-            false,
-        );
-
-        let market = effects.effects.iter().find_map(|e| match e {
-            CityEffect::Market { effect, .. } => Some(*effect),
-            _ => None,
-        });
-        assert!(matches!(market, Some(MarketModeEffect::Boost)));
-    }
-
     /// A potato shortfall is prorated evenly across the population, rather
     /// than fully feeding some individuals and starving others.
     #[test]
@@ -1652,7 +1539,7 @@ mod tests {
         let mut cw = ConstructedCity::new(Vec::new());
         let mut pending = crate::city::ProposedCity::new();
         let mut population = population(4); // needs 4 * 5 = 20 potato
-        let mut farms = farms_with(vec![]);
+        let mut market = farms_with(vec![]);
         let mut rng = StdRng::seed_from_u64(0);
 
         let eat = Eat {
@@ -1664,7 +1551,7 @@ mod tests {
             constructed: &mut cw,
             pending: &mut pending,
             population: &mut population,
-            farms: &mut farms,
+            farms: &mut market.farms,
             idea_state: &mut crate::idea::IdeaState::default(),
             rng: &mut rng,
         };

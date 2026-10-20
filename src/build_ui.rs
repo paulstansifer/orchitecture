@@ -17,6 +17,7 @@ use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
 use crate::sparse3d::{Slot, SlotCoord};
+use crate::surroundings::FarmsResource;
 
 /// Which tab the left-hand panel shows.
 #[derive(Default, Clone, Copy, PartialEq)]
@@ -75,6 +76,7 @@ fn bottom_controls_ui(
     structure_list: &EorfList,
     material_list: &MaterialList,
     sandbox: &mut SandboxMode,
+    farms: &mut Guarded<FarmsResource>,
     cutaway_mode: &mut CutawayMode,
     ui_state: &mut UiState,
 ) -> Option<MapLoadRequest> {
@@ -94,6 +96,7 @@ fn bottom_controls_ui(
                     commands,
                     world.constructed.mutate(),
                     &mut world.pending,
+                    farms.mutate(),
                     &mut world.assembled,
                     viewable,
                     structure_list,
@@ -251,12 +254,7 @@ fn place_chain_ui(
         return (Vec::new(), Vec::new());
     }
 
-    let outdoorsness =
-        crate::evaluation::compute_outdoorsness(&constructed.contents, &constructed.eorfs);
-    let illuminance = crate::global_illumination::compute_sky_illuminance(
-        &constructed.contents,
-        &constructed.eorfs,
-    );
+    let quality_inputs = crate::evaluation::QualityInputs::compute(constructed);
     for &idx in chain.iter().rev() {
         let (place_def_idx, place_name, fulfillments, totals) = {
             let ps = &constructed.placed_places[idx];
@@ -268,12 +266,8 @@ fn place_chain_ui(
                 ps.contents.uniform_totals(),
             )
         };
-        let (quality, breakdown) = crate::evaluation::evaluate_place_breakdown(
-            constructed,
-            idx,
-            &outdoorsness,
-            &illuminance,
-        );
+        let (quality, breakdown) =
+            crate::evaluation::evaluate_place_breakdown(constructed, idx, &quality_inputs);
         ui.label(egui::RichText::new(&place_name).heading());
         ui.label(format!("Quality: {:.3}", quality));
         for factor in &breakdown {
@@ -605,7 +599,8 @@ pub fn build_ui_system(
     mut ui_state: ResMut<UiState>,
     overlay_assets: Res<ProposalOverlayAssets>,
     mut cutaway_mode: ResMut<CutawayMode>,
-    mut sandbox: ResMut<SandboxMode>,
+    // Bundled to stay within Bevy's 16-parameter limit.
+    (mut sandbox, mut farms): (ResMut<SandboxMode>, Guarded<FarmsResource>),
     mut furniture_right_click: ResMut<FurnitureRightClick>,
     mut place_highlight: ResMut<crate::city::PlaceHighlight>,
     mut place_accessible_range: ResMut<crate::city::PlaceAccessibleRange>,
@@ -633,6 +628,7 @@ pub fn build_ui_system(
         &structure_list,
         &material_list,
         &mut sandbox,
+        &mut farms,
         &mut cutaway_mode,
         &mut ui_state,
     );

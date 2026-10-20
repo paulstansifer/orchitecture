@@ -176,7 +176,7 @@ impl GridSpace {
     }
 }
 
-/// A `reachable_within` frontier entry: ordered by `cost` alone (via a
+/// A `costs_within` frontier entry: ordered by `cost` alone (via a
 /// tie-break on position, for a total order `BinaryHeap` requires), so
 /// wrapping it in `Reverse` turns the heap into a min-priority queue.
 struct HeapEntry {
@@ -260,12 +260,31 @@ impl NavigationGrid {
             return Vec::new();
         }
 
-        let mut cost_from_start: HashMap<IVec3, u32> = HashMap::from([(from, 0)]);
-        let mut frontier = BinaryHeap::from([Reverse(HeapEntry {
-            cost: 0,
-            cube: from,
-            pos: start,
-        })]);
+        self.costs_within(&[(from, start)], max_cost)
+            .into_keys()
+            .collect()
+    }
+
+    /// Walking cost from the nearest of `sources` to every Room cube reachable
+    /// from any of them (each source itself at cost 0). Sources needn't be
+    /// passable themselves -- e.g. a piece of furniture you walk up to -- but
+    /// sources outside the grid are ignored.
+    pub fn distances_from(&self, sources: &[IVec3]) -> HashMap<IVec3, u32> {
+        let seeds: Vec<(IVec3, UVec3)> = sources
+            .iter()
+            .filter_map(|&cube| Some((cube, self.space.room_doubled(cube)?)))
+            .collect();
+        self.costs_within(&seeds, u32::MAX)
+    }
+
+    /// Multi-source Dijkstra over Room cubes, bounded by `max_cost`.
+    fn costs_within(&self, seeds: &[(IVec3, UVec3)], max_cost: u32) -> HashMap<IVec3, u32> {
+        let mut cost_from_start: HashMap<IVec3, u32> =
+            seeds.iter().map(|&(cube, _)| (cube, 0)).collect();
+        let mut frontier: BinaryHeap<Reverse<HeapEntry>> = seeds
+            .iter()
+            .map(|&(cube, pos)| Reverse(HeapEntry { cost: 0, cube, pos }))
+            .collect();
 
         while let Some(Reverse(HeapEntry { cost, cube, pos })) = frontier.pop() {
             if cost_from_start.get(&cube).is_some_and(|&best| cost > best) {
@@ -291,7 +310,7 @@ impl NavigationGrid {
             }
         }
 
-        cost_from_start.into_keys().collect()
+        cost_from_start
     }
 
     /// Room cubes directly reachable from `cube` in a single step: open

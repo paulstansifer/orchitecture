@@ -40,9 +40,8 @@ use crate::population::{assign_places, sync_assignments, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::surroundings::farmstead::{
-    farm_breakdown, FarmEvent, FarmId, FarmProduction, FarmsResource, GameClock, NewProduction,
-};
+use crate::surroundings::attendance::{plan_attendance, Absence, AttendancePlan, MarketVenues};
+use crate::surroundings::farmstead::{FarmId, FarmsResource, GameClock};
 use crate::traveler::{setup_travelers, TravelerState};
 
 const HELP_TEXT: &str = "\
@@ -55,10 +54,14 @@ Commands (space-separated tokens, one per line):
   sandbox on|off                                   toggle direct-build vs propose-then-construct
   advance [n]                                      advance the game clock by n months (default 1)
   tick                                             run one Bevy Update pass (change detection!)
-  invite <farm_idx> / uninvite <farm_idx>          toggle a farm's market invitation
+  pause <farm_idx> / unpause <farm_idx>            keep a farm home from market (or let it come again)
   invite_traveler / uninvite_traveler              accept or decline this month's traveler offer
-  farm_event <farm_idx> market|reroll|specialize|adopt   set a farm's next market action
-  set_production <farm_idx> <resource>             cheat: force a farm's produced resource
+  specialize <farm_idx>                            give a coming farm carpenter's tools from storage
+  unspecialize <farm_idx>                          take a farm's tool back into storage
+  pave <x1> <y1> <x2> <y2>                         propose (or, in sandbox, build) a paved road between
+                                                   the map corners nearest the two points
+  cancel_road <i>                                  drop the i-th proposed road from the project
+  set_production <farm_idx> <resource>             cheat: force a farm's own resource
   set_inventory <resource> <qty>                   cheat: adjust city inventory of a resource(if possible)
   deposit_tool                                     cheat: deposit a carpenter's tools into rack storage
   learn <idea> <count>                             cheat: learn an idea's first <count> segments
@@ -73,8 +76,10 @@ Commands (space-separated tokens, one per line):
   query valid_places <x> <y> <z>                   place types formable around a cube
   query ideas                                      per-idea learned/understood segments, and idea-gated places
   query population                                 each individual's home/work/fed/morale
-  query farms                                      list all farms
-  query farm <idx>                                 detailed farm info + market/production preview
+  query farms                                      list all farms, with this month's attendance
+  query farm <idx>                                 detailed farm info + attendance/production preview
+  query roads                                      road network summary, paved/proposed roads, farm costs
+  query rooms                                      inn guest rooms, their quality, and who's staying
   query outdoorness <x> <y> <z>                    outdoorsness (0.0-1.0) at a cube
   query month                                      current game-clock month
   query traveler                                   current traveler offer's origin/path, if any
@@ -251,13 +256,15 @@ impl HeadlessSession {
             "undo" => self.cmd_undo(),
             "redo" => self.cmd_redo(),
             "advance" => self.cmd_advance(args),
-            "invite" | "uninvite" => self.cmd_invite(cmd, args),
+            "pause" | "unpause" => self.cmd_pause(cmd, args),
             // The graphical UI sets this from the traveler panel's checkbox;
             // `advance` reads it when resolving the visit.
             "invite_traveler" | "uninvite_traveler" => self.cmd_invite_traveler(cmd),
-            "farm_event" => self.cmd_farm_event(args),
-            // Test-only cheat: force a farm's production, bypassing the normal
-            // Reconfigure-and-pay-cost flow (see `farm_event ... reroll`).
+            "specialize" => self.cmd_specialize(args),
+            "unspecialize" => self.cmd_unspecialize(args),
+            "pave" => self.cmd_pave(args),
+            "cancel_road" => self.cmd_cancel_road(args),
+            // Test-only cheat: farms' resources are otherwise fixed forever.
             "set_production" => self.cmd_set_production(args),
             "set_inventory" => self.cmd_set_inventory(args),
             "set_priority" => self.cmd_set_priority(args),
@@ -391,16 +398,123 @@ impl HeadlessSession {
         Ok(lines)
     }
 
-    fn cmd_invite(&mut self, cmd: &str, args: &[&str]) -> Result<Vec<String>, String> {
+    fn cmd_pause(&mut self, cmd: &str, args: &[&str]) -> Result<Vec<String>, String> {
         let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-        let invited = cmd == "invite";
-        let farms = &mut self.world().resource_mut::<FarmsResource>();
+        let paused = cmd == "pause";
+        let mut farms = self.world().resource_mut::<FarmsResource>();
         let farm = farms
             .farms
             .get_mut(idx)
             .ok_or_else(|| format!("no such farm: {idx}"))?;
-        farm.invited = invited;
-        Ok(vec![format!("farm {idx} invited={invited}")])
+        farm.paused = paused;
+        Ok(vec![format!("farm {idx} paused={paused}")])
+    }
+
+    /// This month's attendance, planned against the current state (venues
+    /// computed fresh, as `advance` does).
+    fn attendance(&mut self) -> AttendancePlan {
+        let world = self.world();
+        world.resource_mut::<FarmsResource>().ensure_adjacency();
+        world.resource_mut::<FarmsResource>().ensure_roads();
+        let venues = MarketVenues::compute(world.resource::<ConstructedCity>());
+        plan_attendance(
+            world.resource::<FarmsResource>(),
+            &venues,
+            world.resource::<TravelerState>(),
+        )
+    }
+
+    fn cmd_specialize(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
+        let id = FarmId::new(idx);
+        if idx >= self.world().resource::<FarmsResource>().farms.len() {
+            return Err(format!("no such farm: {idx}"));
+        }
+        let coming = self.attendance().is_coming(id);
+        let tool = ToolKind::CarpentersTools;
+        self.world()
+            .resource_scope(|world, mut farms: Mut<FarmsResource>| {
+                let mut cw = world.resource_mut::<ConstructedCity>();
+                let blocker = crate::surroundings::farmstead::specialize_blocker(
+                    &farms, &cw, id, tool, coming,
+                );
+                if let Some(blocker) = blocker {
+                    return Err(blocker.to_string());
+                }
+                crate::surroundings::farmstead::specialize(&mut farms, &mut cw, id, tool, coming);
+                Ok(vec![format!("farm {idx} tool={}", tool.label())])
+            })
+    }
+
+    fn cmd_unspecialize(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
+        let id = FarmId::new(idx);
+        if idx >= self.world().resource::<FarmsResource>().farms.len() {
+            return Err(format!("no such farm: {idx}"));
+        }
+        self.world()
+            .resource_scope(|world, mut farms: Mut<FarmsResource>| {
+                let mut cw = world.resource_mut::<ConstructedCity>();
+                if let Some(blocker) =
+                    crate::surroundings::farmstead::unspecialize_blocker(&farms, &cw, id)
+                {
+                    return Err(blocker.to_string());
+                }
+                crate::surroundings::farmstead::unspecialize(&mut farms, &mut cw, id);
+                Ok(vec![format!("farm {idx} tool=none")])
+            })
+    }
+
+    fn cmd_pave(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 4 {
+            return Err("usage: pave <x1> <y1> <x2> <y2>".to_string());
+        }
+        let num = |s: &str| s.parse::<f32>().map_err(|_| format!("not a number: {s}"));
+        let from = Vec2::new(num(args[0])?, num(args[1])?);
+        let to = Vec2::new(num(args[2])?, num(args[3])?);
+        let sandbox = self.world().resource::<SandboxFlag>().0;
+        self.world()
+            .resource_scope(|world, mut farms: Mut<FarmsResource>| {
+                let mut pending = world.resource_mut::<ProposedCity>();
+                let network = farms.road_network_with(&pending.proposed_roads);
+                let corner = |p: Vec2| {
+                    network
+                        .nearest_corner_within(p, f32::INFINITY)
+                        .ok_or_else(|| "no corners".to_string())
+                };
+                let (a, b) = (corner(from)?, corner(to)?);
+                let seg = crate::surroundings::farmstead::propose_road(
+                    &mut farms,
+                    &mut pending,
+                    &network,
+                    a,
+                    b,
+                    sandbox,
+                )
+                .map_err(str::to_string)?;
+                Ok(vec![format!(
+                    "{} road ({:.1},{:.1})-({:.1},{:.1}) fieldstone={}",
+                    if sandbox { "paved" } else { "proposed" },
+                    seg.a.x,
+                    seg.a.y,
+                    seg.b.x,
+                    seg.b.y,
+                    seg.fieldstone_cost(),
+                )])
+            })
+    }
+
+    fn cmd_cancel_road(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        let i = parse_usize(args.first().copied().unwrap_or(""))?;
+        let mut pending = self.world().resource_mut::<ProposedCity>();
+        if i >= pending.proposed_roads.len() {
+            return Err(format!("no such proposed road: {i}"));
+        }
+        pending.proposed_roads.remove(i);
+        Ok(vec![format!(
+            "proposed_roads={}",
+            pending.proposed_roads.len()
+        )])
     }
 
     fn cmd_invite_traveler(&mut self, cmd: &str) -> Result<Vec<String>, String> {
@@ -411,26 +525,6 @@ impl HeadlessSession {
         }
         traveler_state.invited = invited;
         Ok(vec![format!("traveler invited={invited}")])
-    }
-
-    fn cmd_farm_event(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
-        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-        let event = match args.get(1).copied() {
-            Some("market") => FarmEvent::Market,
-            Some("reroll") => FarmEvent::Reconfigure(NewProduction::RandomRegular),
-            Some("specialize") => {
-                FarmEvent::Reconfigure(NewProduction::Tool(ToolKind::CarpentersTools))
-            }
-            Some("adopt") => FarmEvent::Adopt,
-            _ => return Err("usage: farm_event <idx> market|reroll|specialize|adopt".to_string()),
-        };
-        let mut farms = self.world().resource_mut::<FarmsResource>();
-        if idx >= farms.farms.len() {
-            return Err(format!("no such farm: {idx}"));
-        }
-        farms.ensure_adjacency();
-        farms.set_farm_event(FarmId::new(idx), event);
-        Ok(vec!["ok".to_string()])
     }
 
     fn cmd_set_production(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
@@ -445,8 +539,8 @@ impl HeadlessSession {
             .farms
             .get_mut(idx)
             .ok_or_else(|| format!("no such farm: {idx}"))?;
-        farm.production = FarmProduction::Regular(resource);
-        Ok(vec![format!("farm {idx} produces={}", resource.label())])
+        farm.resource = resource;
+        Ok(vec![format!("farm {idx} resource={}", resource.label())])
     }
 
     fn cmd_set_inventory(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
@@ -644,7 +738,7 @@ impl HeadlessSession {
         let Some((&sub, args)) = args.split_first() else {
             return Err(
                 "usage: query <cell|structures|places|place|valid_places|ideas|\
-                 population|farms|farm|roads|outdoorness|month|traveler|inventory|proposals|\
+                 population|farms|farm|rooms|roads|outdoorness|month|traveler|inventory|proposals|\
                  changed|path|connected> ..."
                     .to_string(),
             );
@@ -660,6 +754,7 @@ impl HeadlessSession {
             "population" => self.query_population(),
             "farms" => self.query_farms(),
             "farm" => self.query_farm(args),
+            "rooms" => self.query_rooms(),
             "roads" => self.query_roads(),
             "outdoorness" => self.query_outdoorness(args),
             "month" => self.query_month(),
@@ -795,10 +890,19 @@ impl HeadlessSession {
             Some(id) => {
                 let ps = &cw.placed_places[id];
                 let info = &cw.places[ps.place];
+                let parents: Vec<String> = place::containing_chain(cw, cube)
+                    .into_iter()
+                    .skip(1)
+                    .map(|p| {
+                        let name = &cw.places[cw.placed_places[p].place].name;
+                        format!("{}#{p}", name.replace(' ', "_"))
+                    })
+                    .collect();
                 let mut lines = vec![format!(
-                    "id={id} type={} structures={}",
+                    "id={id} type={} structures={} within=[{}]",
                     info.name.replace(' ', "_"),
-                    ps.fulfillments.len()
+                    ps.fulfillments.len(),
+                    parents.join(",")
                 )];
                 for (res, qty) in ps.contents.uniform_totals() {
                     lines.push(format!("  {}: {qty}", res.label()));
@@ -898,6 +1002,7 @@ impl HeadlessSession {
     }
 
     fn query_farms(&mut self) -> Result<Vec<String>, String> {
+        let attendance = self.attendance();
         let farms = self.world().resource::<FarmsResource>();
         Ok(farms
             .farms
@@ -905,16 +1010,17 @@ impl HeadlessSession {
             .enumerate()
             .map(|(i, f)| {
                 format!(
-                    "{i} pos=({:.1},{:.1}) area={:.1} produces={} potatoes={} \
-                     inedible={} boost={} invited={}",
+                    "{i} pos=({:.1},{:.1}) area={:.1} produces={} capacity={} tool={} \
+                     paused={} required_quality={:.2} {}",
                     f.seed.x,
                     f.seed.y,
                     f.area,
                     f.produced_resource().label(),
-                    f.potato_stockpile,
-                    f.inedible_stockpile,
-                    f.boost,
-                    f.invited
+                    f.production_capacity(),
+                    f.tool.map_or("none", |t| t.label()),
+                    f.paused,
+                    f.required_quality,
+                    describe_attendance(&attendance, FarmId::new(i)),
                 )
             })
             .collect())
@@ -922,36 +1028,94 @@ impl HeadlessSession {
 
     fn query_farm(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
         let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-        self.world()
-            .run_system_once_with(query_farm_system, idx)
-            .map_err(|e| e.to_string())?
+        let attendance = self.attendance();
+        let farms = self.world().resource::<FarmsResource>();
+        if idx >= farms.farms.len() {
+            return Err(format!("no such farm: {idx}"));
+        }
+        let id = FarmId::new(idx);
+        let f = &farms[id];
+        let plan = crate::surroundings::farmstead::compute_production(farms);
+        let mut lines = vec![
+            format!(
+                "farm {idx} resource={} tool={} paused={} required_quality={:.2}",
+                f.resource.label(),
+                f.tool.map_or("none", |t| t.label()),
+                f.paused,
+                f.required_quality,
+            ),
+            describe_attendance(&attendance, id),
+            format!(
+                "production: {} Potato, {} {}",
+                plan.potatoes[idx],
+                plan.inedible[idx],
+                f.produced_resource().label()
+            ),
+        ];
+        for &(from, to, qty) in &plan.supplies {
+            if from == id || to == id {
+                lines.push(format!("supply: farm {from} -> farm {to}: {qty}"));
+            }
+        }
+        Ok(lines)
+    }
+
+    fn query_rooms(&mut self) -> Result<Vec<String>, String> {
+        let attendance = self.attendance();
+        let venues = MarketVenues::compute(self.world().resource::<ConstructedCity>());
+        let mut lines = vec![format!("stands={}", venues.stands)];
+        for room in &venues.rooms {
+            let guest = if attendance.traveler_room == Some(room.id) {
+                "traveler".to_string()
+            } else {
+                attendance
+                    .farms
+                    .iter()
+                    .find(|(_, a)| a.room == Some(room.id))
+                    .map_or("empty".to_string(), |(id, _)| format!("farm {id}"))
+            };
+            lines.push(format!("room {} quality={:.3} guest={guest}", room.id, room.quality));
+        }
+        Ok(lines)
     }
 
     fn query_roads(&mut self) -> Result<Vec<String>, String> {
-        let mut farms = self.world().resource_mut::<FarmsResource>();
-        farms.ensure_roads();
+        self.world().resource_mut::<FarmsResource>().ensure_roads();
+        let world = self.world();
+        let farms = world.resource::<FarmsResource>();
+        let pending = world.resource::<ProposedCity>();
         let Some(roads) = farms.roads.as_ref() else {
             return Ok(vec!["(no roads)".to_string()]);
         };
-        // Summary plus a per-farm cheapest-delivery cost, so trip- and
-        // paving-driven road development is observable across `advance`s.
-        let developed = roads.edges.iter().filter(|e| e.trips >= 10).count();
-        let paved = roads.edges.iter().filter(|e| e.paved >= 1.0).count();
-        let paved_sum: f32 = roads.edges.iter().map(|e| e.paved).sum();
+        let paved_edges = roads.edges.iter().filter(|e| e.paved).count();
         let mut lines = vec![format!(
-            "nodes={} edges={} city_node={} developed_edges={} paved_edges={} paved_sum={paved_sum:.3}",
+            "nodes={} corners={} edges={} city_node={} paved_edges={}",
             roads.nodes.len(),
+            roads.corner_count,
             roads.edges.len(),
             roads.city_node,
-            developed,
-            paved,
+            paved_edges,
         )];
+        let segment = |seg: &crate::surroundings::road_network::RoadSegment| {
+            format!(
+                "({:.1},{:.1})-({:.1},{:.1}) fieldstone={}",
+                seg.a.x,
+                seg.a.y,
+                seg.b.x,
+                seg.b.y,
+                seg.fieldstone_cost()
+            )
+        };
+        for seg in &farms.paved_roads {
+            lines.push(format!("paved {}", segment(seg)));
+        }
+        for (i, seg) in pending.proposed_roads.iter().enumerate() {
+            lines.push(format!("proposed {i} {}", segment(seg)));
+        }
         for (i, f) in farms.farms.iter().enumerate() {
             if let Some((weight, corner)) = roads.farm_delivery(&f.polygon) {
-                let potatoes = (weight * 8.0 / 50.0f32.max(1.0)).round() as u32;
                 lines.push(format!(
-                    "{i} delivery_weight={weight:.1} potatoes={potatoes} corner_node={corner} \
-                     route_edges={}",
+                    "{i} travel_cost={weight:.1} corner_node={corner} route_edges={}",
                     roads.path_edges(corner).len(),
                 ));
             }
@@ -1194,36 +1358,6 @@ fn load_system(
     construction::load_from_offline(&mut cw, &mut pending, new_contents);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn query_farm_system(
-    In(idx): In<usize>,
-    mut farms: ResMut<FarmsResource>,
-    cw: Res<ConstructedCity>,
-    pending: Res<ProposedCity>,
-    population: Res<Population>,
-    traveler_state: Res<TravelerState>,
-    material_list: Res<MaterialList>,
-    sandbox: Res<SandboxFlag>,
-) -> Result<Vec<String>, String> {
-    if idx >= farms.farms.len() {
-        return Err(format!("no such farm: {idx}"));
-    }
-    let id = FarmId::new(idx);
-    farms.ensure_adjacency();
-    let event = farms.farm_event(id);
-    let inputs = crate::city_effect::MonthInputs {
-        constructed: &cw,
-        pending: &pending,
-        population: &population,
-        traveler_state: &traveler_state,
-        material_list: &material_list,
-        sandbox_enabled: sandbox.0,
-    };
-    let mut lines = vec![format!("farm {idx}")];
-    lines.extend(farm_breakdown(&mut farms, id, event, None, inputs));
-    Ok(lines)
-}
-
 /// Runs one month of game time: market, production, traveler resolution,
 /// feeding, and construction progress. Mirrors the "Advance Month" action in
 /// `ui.rs`'s `shared_ui_system`, minus anything visual.
@@ -1276,6 +1410,12 @@ fn advance_month_system(
     if outcome.construction_changes.is_some() {
         lines.push("construction: completed".to_string());
     }
+    let coming: Vec<String> = outcome
+        .attendance
+        .coming()
+        .map(|id| id.to_string())
+        .collect();
+    lines.push(format!("farms coming: [{}]", coming.join(" ")));
 
     // The graphical app runs place assignment via a separate change-detection
     // system; the headless harness does it inline here.
@@ -1287,6 +1427,35 @@ fn advance_month_system(
     crate::work::assign_work(&mut population.individuals, &constructed);
     lines.push(format!("month={}", clock.month()));
     lines
+}
+
+/// `coming`, `coming room=<id>`, or `absent=paused,too_far,...` (or `fogged`
+/// for a farm the player can't see).
+fn describe_attendance(plan: &AttendancePlan, id: FarmId) -> String {
+    let Some(a) = plan.get(id) else {
+        return "fogged".to_string();
+    };
+    let cost = a
+        .travel_cost
+        .map_or("none".to_string(), |c| format!("{c:.1}"));
+    if a.coming() {
+        match a.room {
+            Some(room) => format!("coming travel_cost={cost} room={room}"),
+            None => format!("coming travel_cost={cost}"),
+        }
+    } else {
+        let reasons: Vec<&str> = a
+            .absences
+            .iter()
+            .map(|r| match r {
+                Absence::Paused => "paused",
+                Absence::TooFar => "too_far",
+                Absence::NoStandsRemain => "no_stands",
+                Absence::NoRoomsRemain => "no_rooms",
+            })
+            .collect();
+        format!("absent={} travel_cost={cost}", reasons.join(","))
+    }
 }
 
 fn parse_ivec3(args: &[&str]) -> Result<IVec3, String> {
@@ -1384,6 +1553,32 @@ pub fn run() {
 /// exercising the resource-payment rework (propose, pay down incrementally
 /// via the market, force-commit, undo/redo) rather than calling internal
 /// systems directly.
+/// Builds (in sandbox mode) a small open-air inn -- a dining room, a kitchen,
+/// and two guest bedrooms -- with its west corner at `(x, 0, z)`, plus a
+/// market stand right beside the bedrooms so they're decent guest rooms.
+/// Ticks twice: the inn, cored on the dining room, only forms on the pass
+/// after its parts do.
+#[cfg(test)]
+pub(crate) fn build_inn(session: &mut HeadlessSession, x: i32, z: i32) {
+    let commands = [
+        format!("place {x} 0 {z} room table"),
+        format!("place {x} 0 {} xwall chair", z + 1),
+        format!("place {} 0 {} xwall chair", x + 1, z + 1),
+        format!("place {} 0 {z} room hearth", x + 2),
+        format!("place {} 0 {z} room table", x + 3),
+        format!("place {} 0 {} room pallet", x + 1, z + 2),
+        format!("place {} 0 {} room pallet", x + 2, z + 2),
+        format!("place {} 0 {} room market_stand", x + 1, z + 4),
+        "tick".to_string(),
+        "tick".to_string(),
+    ];
+    for cmd in commands {
+        session
+            .dispatch(&cmd)
+            .unwrap_or_else(|e| panic!("{cmd}: {e}"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1434,9 +1629,10 @@ mod tests {
             .collect()
     }
 
-    fn invite_all(session: &mut HeadlessSession, indices: &[usize]) {
+    fn set_paused(session: &mut HeadlessSession, indices: &[usize], paused: bool) {
+        let cmd = if paused { "pause" } else { "unpause" };
         for &idx in indices {
-            dispatch_ok(session, &format!("invite {idx}"));
+            dispatch_ok(session, &format!("{cmd} {idx}"));
         }
     }
 
@@ -1526,6 +1722,16 @@ mod tests {
     #[test]
     fn advance_withholds_construction_until_resources_are_delivered() {
         let mut session = HeadlessSession::new(5);
+        // Market stands (built for free while still in sandbox mode), so
+        // farms can come. With every farm paused, though, nothing arrives at
+        // the market, so nothing gets applied toward the cost.
+        for z in 0..3 {
+            dispatch_ok(&mut session, &format!("place 120 0 {} room market_stand", 100 + z));
+        }
+        dispatch_ok(&mut session, "tick");
+        let all: Vec<usize> = (0..dispatch_ok(&mut session, "query farms").len()).collect();
+        set_paused(&mut session, &all, true);
+
         dispatch_ok(&mut session, "sandbox off");
         dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
         dispatch_ok(&mut session, "set_inventory canvas 0");
@@ -1535,9 +1741,6 @@ mod tests {
             before[0],
             "pending_changes=1 remaining_need=[(Straw, 2), (Canvas, 2)]"
         );
-
-        // No farms invited: nothing arrives at the market, so nothing gets
-        // applied toward the cost.
         dispatch_ok(&mut session, "advance");
         let after = dispatch_ok(&mut session, "query proposals");
         assert_eq!(
@@ -1545,8 +1748,7 @@ mod tests {
             "remaining need shouldn't move without any market gains"
         );
 
-        // Invite every farm producing either needed resource and retry,
-        // re-inviting each month since invitations reset once the market runs.
+        // Let every farm producing either needed resource come, and retry.
         let straw = farms_producing(&mut session, "Straw");
         let canvas = farms_producing(&mut session, "Canvas");
         assert!(
@@ -1554,10 +1756,10 @@ mod tests {
             "expected at least one farm producing each of straw and canvas"
         );
 
+        set_paused(&mut session, &straw, false);
+        set_paused(&mut session, &canvas, false);
         let mut completed = false;
         for _ in 0..8 {
-            invite_all(&mut session, &straw);
-            invite_all(&mut session, &canvas);
             let lines = dispatch_ok(&mut session, "advance");
             if lines.iter().any(|l| l == "construction: completed") {
                 completed = true;
@@ -1579,7 +1781,7 @@ mod tests {
         // The starting camp's wagon provides some storage, so leftover
         // resources beyond what construction consumed were stockpiled there
         // rather than lost. Exact amounts depend on which farms happened to
-        // be invited across the retry loop above, so just check something
+        // come across the retry loop above, so just check something
         // landed in storage instead of everything being lost.
         assert_ne!(
             dispatch_ok(&mut session, "query inventory"),

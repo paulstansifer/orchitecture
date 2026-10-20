@@ -7,7 +7,7 @@ Orchitecture uses the Bevy game engine, and uses Burn to the convolutional neura
 
 The player starts with three market stalls at an empty crossroads.
 
-The player makes construction plans, then invites farms from the surrounding countryside to participate in the market; the farms trade for resources they want (temporarily increasing their future surplus); the leftovers go to the player, who can use them to construct buildings. Sometimes "traveler"s come, trading more exotic resources, like tools and planks, for market resources. The population of the city starts at 1; each occupant needs food and shelter.
+The player makes construction plans; every month, each farm the player can see from the surrounding countryside comes to the market, as long as it can get a market stand, isn't too far away, and (if it's far enough to stay the night) can get a good-enough guest room at an inn. What the farms bring goes to the player, who can use it to construct buildings. Sometimes "traveler"s come, trading more exotic resources, like tools and planks, for market resources. The population of the city starts at 1; each occupant needs food and shelter.
 
 The player builds things that can, for example:
   * store excess resources
@@ -17,7 +17,7 @@ The player builds things that can, for example:
 
 Depending on the kind of place, various aspects of the architecture may matter; almost everything works better indoors, some buildings are more inspiring if built from finer materials or with spacious architecture, or (this is where the neural nets come in) with more interesting, coherent architecture. Eventually, the crossroads becomes a proper city, with a library, a city hall, a hospital, and schools.
 
-The player can also influence the surrounding farms by changing their specialties, giving them tools (so they can produce more advanced resources).
+The player can also influence the surrounding farms by giving them tools (so they can produce more advanced resources), pausing them, and paving roads (so distant farms can reach the market).
 
 # Code map
 
@@ -54,6 +54,19 @@ City grid and related concepts:
   * evaluation.rs: `compute_outdoorsness` — flood-fills how "outdoors" each cell
     is, from sky-visible cells (see global_illumination.rs for the analogous
     light computation)
+
+Surroundings (the countryside map; `surroundings/`):
+  * farmstead.rs: `FarmsResource`/`FarmData` (fixed resource, optional tool, paused flag,
+    required guest-room quality), monthly `compute_production`, giving/taking back tools,
+    and proposing paved roads (`road_blocker`, `propose_road`).
+  * attendance.rs: `plan_attendance` decides which visible farms come to market each
+    month (stands, travel cost, guest rooms; nearest first, each taking the worst room
+    that satisfies it) and why the rest don't (`Absence`). `MarketVenues` caches the
+    city's stand count and inn guest rooms with their quality.
+  * road_network.rs: the road graph over Voronoi farm borders (unpaved) plus the
+    player's paved `RoadSegment`s, which split edges where they cross.
+  * map.rs: farm generation and fog of war.
+  * ui.rs / ui_view.rs: the map UI (farm panels, road-building mode) and its view-model.
 
 3D autotile system (makes meshes responsive to nearby structures):
   * autotile/parser.rs: Parse the "structures.autotile" file...
@@ -138,9 +151,9 @@ real change-detection-gated systems (`rebuild_navigation_grid`, `sync_homes`) �
 for scripted (e.g. LLM-driven) verification of non-graphical changes, including
 change-detection behavior itself. Send `help` as the first command for the full list:
 placing/removing structures and boxes, propose-then-construct with sandbox on/off,
-undo/redo, advancing time, inviting/configuring farms, querying cells, structures,
-places, farms, outdoorsness, inventory, pathfinding, and the raw serialized city
-(`dump`).
+undo/redo, advancing time, pausing farms and giving them tools, paving roads, querying
+cells, structures, places, farms, guest rooms, roads, outdoorsness, inventory,
+pathfinding, and the raw serialized city (`dump`).
 
 Mutating commands only mutate resources; they don't advance the schedule. Call
 `tick` to run one `Update` pass — that's when `resource_changed`-gated systems

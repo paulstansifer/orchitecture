@@ -32,6 +32,10 @@ pub enum QualityAspect {
     /// Scaled so complete darkness (0.0 illuminance) scores 0.25 and full
     /// light (1.0 illuminance) scores 1.25. See `raw_score`.
     Light,
+    /// How short the walk is from this place to the nearest market stand:
+    /// 1.0 right next to one, falling linearly to 0.0 at
+    /// `MARKET_DISTANCE_ZERO` steps (or with no reachable stand at all).
+    MarketDistance,
 }
 
 impl QualityAspect {
@@ -45,6 +49,7 @@ impl QualityAspect {
             QualityAspect::Indoors => "Indoors".to_string(),
             QualityAspect::NumberOf { porf_name } => format!("Number of {porf_name}"),
             QualityAspect::Light => "Light".to_string(),
+            QualityAspect::MarketDistance => "Distance to market".to_string(),
         }
     }
 }
@@ -237,6 +242,58 @@ pub fn compute_spaciousness(cw: &ConstructedCity, origin: IVec3, sightline_max: 
     total / SPACIOUSNESS_RAYS as f32
 }
 
+/// Walking distance (in nav-cost steps) at which `MarketDistance` scores 0.
+pub const MARKET_DISTANCE_ZERO: f32 = 40.0;
+
+/// City-wide maps that quality evaluation reads, computed once and shared
+/// across every place evaluated against the same city state.
+#[derive(Default)]
+pub struct QualityInputs {
+    /// See [`compute_outdoorsness`].
+    pub outdoorsness: HashMap<IVec3, f32>,
+    /// See `global_illumination::compute_sky_illuminance`.
+    pub illuminance: HashMap<IVec3, f32>,
+    /// Walking distance from each reachable room cube to the nearest market
+    /// stand. See [`compute_market_distance`].
+    pub market_distance: HashMap<IVec3, u32>,
+}
+
+impl QualityInputs {
+    pub fn compute(cw: &ConstructedCity) -> Self {
+        QualityInputs {
+            outdoorsness: compute_outdoorsness(&cw.contents, &cw.eorfs),
+            illuminance: crate::global_illumination::compute_sky_illuminance(
+                &cw.contents,
+                &cw.eorfs,
+            ),
+            market_distance: compute_market_distance(cw),
+        }
+    }
+}
+
+/// Walking distance from every reachable room cube to the nearest market
+/// stand (each stand's own cube is 0).
+pub fn compute_market_distance(cw: &ConstructedCity) -> HashMap<IVec3, u32> {
+    let stands = crate::place::market_stand_cubes(cw);
+    if stands.is_empty() {
+        return HashMap::new();
+    }
+    crate::pathing::build_navigation_grid(cw).distances_from(&stands)
+}
+
+/// Steps from `origin` to the nearest market stand. Furniture (a bed, say)
+/// may itself be impassable, so a cube the walk never entered falls back to
+/// its best horizontal neighbor, one step further.
+fn market_steps(market_distance: &HashMap<IVec3, u32>, origin: IVec3) -> Option<u32> {
+    market_distance.get(&origin).copied().or_else(|| {
+        [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z]
+            .iter()
+            .filter_map(|&d| market_distance.get(&(origin + d)))
+            .min()
+            .map(|&d| d + 1)
+    })
+}
+
 /// The raw (pre-normalization) score for one `QualityAspect` of the place at
 /// `placed_places[idx]`, located at `origin`. `None` means the aspect isn't
 /// applicable here (e.g. `Subplaces` with no nested places) and should
@@ -246,9 +303,13 @@ fn raw_score(
     id: PlacedPlaceId,
     origin: IVec3,
     aspect: &QualityAspect,
-    outdoorsness: &HashMap<IVec3, f32>,
-    illuminance: &HashMap<IVec3, f32>,
+    inputs: &QualityInputs,
 ) -> Option<f32> {
+    let QualityInputs {
+        outdoorsness,
+        illuminance,
+        market_distance,
+    } = inputs;
     match aspect {
         // TODO: derive from the place's actual floor area.
         QualityAspect::FloorArea => Some(1.0),
@@ -265,9 +326,7 @@ fn raw_score(
                 .fulfillments
                 .iter()
                 .filter_map(|f| match f {
-                    FulfilledPorf::Place(inner) => {
-                        Some(evaluate_place(cw, *inner, outdoorsness, illuminance))
-                    }
+                    FulfilledPorf::Place(inner) => Some(evaluate_place(cw, *inner, inputs)),
                     FulfilledPorf::Furniture(_) => None,
                 })
                 .collect();
@@ -279,6 +338,10 @@ fn raw_score(
         // Scaled so complete darkness (0.0) scores 0.25 and full light (1.0)
         // scores 1.25.
         QualityAspect::Light => Some(0.25 + illuminance.get(&origin).copied().unwrap_or(0.0)),
+        QualityAspect::MarketDistance => Some(match market_steps(market_distance, origin) {
+            Some(steps) => (1.0 - steps as f32 / MARKET_DISTANCE_ZERO).max(0.0),
+            None => 0.0,
+        }),
     }
 }
 
@@ -296,14 +359,13 @@ pub struct QualityFactorResult {
 }
 
 /// Overall quality of the place at `placed_places[idx]`, together with each
-/// `QualityFactor`'s individual contribution. `outdoorsness` should be
-/// computed once (via `compute_outdoorsness`) and shared across all place
+/// `QualityFactor`'s individual contribution. `inputs` should be computed
+/// once (via `QualityInputs::compute`) and shared across all place
 /// evaluations rather than recomputed per place.
 pub fn evaluate_place_breakdown(
     cw: &ConstructedCity,
     id: PlacedPlaceId,
-    outdoorsness: &HashMap<IVec3, f32>,
-    illuminance: &HashMap<IVec3, f32>,
+    inputs: &QualityInputs,
 ) -> (f32, Vec<QualityFactorResult>) {
     let origin = place_location(cw, id);
     let def = &cw.places[cw.placed_places[id].place];
@@ -312,7 +374,7 @@ pub fn evaluate_place_breakdown(
         .quality_factors
         .iter()
         .map(|factor| {
-            let raw = raw_score(cw, id, origin, &factor.aspect, outdoorsness, illuminance);
+            let raw = raw_score(cw, id, origin, &factor.aspect, inputs);
             let (clamped, contribution) = match raw {
                 Some(raw) => {
                     let clamped = raw.clamp(factor.range.start, factor.range.end);
@@ -336,15 +398,10 @@ pub fn evaluate_place_breakdown(
 
 /// Overall quality of the place at `placed_places[idx]`: the product of every
 /// `QualityFactor`'s range-clamped raw score raised to its `strength`.
-/// `outdoorsness` should be computed once (via `compute_outdoorsness`) and
-/// shared across all place evaluations rather than recomputed per place.
-pub fn evaluate_place(
-    cw: &ConstructedCity,
-    id: PlacedPlaceId,
-    outdoorsness: &HashMap<IVec3, f32>,
-    illuminance: &HashMap<IVec3, f32>,
-) -> f32 {
-    evaluate_place_breakdown(cw, id, outdoorsness, illuminance).0
+/// `inputs` should be computed once (via `QualityInputs::compute`) and shared
+/// across all place evaluations rather than recomputed per place.
+pub fn evaluate_place(cw: &ConstructedCity, id: PlacedPlaceId, inputs: &QualityInputs) -> f32 {
+    evaluate_place_breakdown(cw, id, inputs).0
 }
 
 #[cfg(test)]
@@ -361,7 +418,7 @@ mod tests {
     use crate::resource::{Inventory, StorageKind};
     use crate::sparse3d::{Facing, RelSlot, Slot, SlotCoord};
 
-    use super::{QualityAspect, QualityFactor};
+    use super::{QualityAspect, QualityFactor, QualityInputs};
 
     use super::{compute_outdoorsness, compute_spaciousness, evaluate_place};
 
@@ -427,7 +484,7 @@ mod tests {
         }]);
         let idx = place_at(&mut cw, def, IVec3::new(0, 0, 0));
 
-        let score = evaluate_place(&cw, idx, &Default::default(), &Default::default());
+        let score = evaluate_place(&cw, idx, &Default::default());
         // One bin (the core itself); within the 0.0..2.0 clamp range, so the
         // raw score of 1.0 passes through unchanged.
         check!(score == 1.0);
@@ -447,7 +504,7 @@ mod tests {
 
         // No nested places -> the factor contributes no multiplier, so the
         // (otherwise-empty) product stays 1.0 rather than being dragged to 0.
-        let score = evaluate_place(&cw, idx, &Default::default(), &Default::default());
+        let score = evaluate_place(&cw, idx, &Default::default());
         check!(score == 1.0);
     }
 
@@ -466,7 +523,7 @@ mod tests {
             range: 2.0..3.0,
         }]);
         let idx_low = place_at(&mut cw, low, IVec3::new(10, 0, 10));
-        check!(evaluate_place(&cw, idx_low, &Default::default(), &Default::default()) == 2.0);
+        check!(evaluate_place(&cw, idx_low, &Default::default()) == 2.0);
 
         // A range of 0.0..0.5 is entirely below the raw score of 1, so it
         // clamps down to 0.5.
@@ -478,7 +535,7 @@ mod tests {
             range: 0.0..0.5,
         }]);
         let idx_high = place_at(&mut cw, high, IVec3::new(20, 0, 20));
-        check!(evaluate_place(&cw, idx_high, &Default::default(), &Default::default()) == 0.5);
+        check!(evaluate_place(&cw, idx_high, &Default::default()) == 0.5);
     }
 
     #[test]
@@ -494,11 +551,12 @@ mod tests {
         let origin = IVec3::new(0, 0, 0);
         let idx = place_at(&mut cw, def, origin);
 
-        let dark = HashMap::from([(origin, 0.0)]);
-        check!(evaluate_place(&cw, idx, &Default::default(), &dark) == 0.25);
-
-        let bright = HashMap::from([(origin, 1.0)]);
-        check!(evaluate_place(&cw, idx, &Default::default(), &bright) == 1.25);
+        let lit = |level: f32| QualityInputs {
+            illuminance: HashMap::from([(origin, level)]),
+            ..Default::default()
+        };
+        check!(evaluate_place(&cw, idx, &lit(0.0)) == 0.25);
+        check!(evaluate_place(&cw, idx, &lit(1.0)) == 1.25);
     }
 
     #[test]

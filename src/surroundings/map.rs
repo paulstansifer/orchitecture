@@ -16,6 +16,10 @@ pub const FOG_MAX_ALPHA: u8 = 215;
 // Farm UI is shown only when the centroid's fog alpha is below this value.
 pub const REVEAL_THRESHOLD: u8 = 64;
 
+/// Range each farm's `required_quality` (the least guest-room quality it'll
+/// stay in) is rolled from at generation.
+const FARM_REQUIRED_QUALITY: std::ops::Range<f32> = 0.3..0.9;
+
 fn segment_dist(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
     let len_sq = ab.dot(ab);
@@ -242,22 +246,17 @@ pub fn build_farms_resource(rng: &mut impl rand::Rng) -> FarmsResource {
         resource_acres[res_idx] += area;
 
         let fertility = rng.random_range(0.75..1.25_f32);
-
-        let base_production = area.round() as u32;
-        let startup_months = rng.random_range(1..=3);
-        let initial_stockpiles = base_production * startup_months;
+        let required_quality = rng.random_range(FARM_REQUIRED_QUALITY);
 
         farms.push(FarmData {
             seed,
             polygon,
             area,
             fertility,
-            production: crate::surroundings::farmstead::FarmProduction::Regular(resource),
-            potato_stockpile: initial_stockpiles,
-            inedible_stockpile: initial_stockpiles,
-            boost: 0,
-            invited: false,
-            event: crate::surroundings::farmstead::FarmEvent::Market,
+            resource,
+            tool: None,
+            paused: false,
+            required_quality,
         });
     }
 
@@ -279,8 +278,7 @@ pub fn build_farms_resource(rng: &mut impl rand::Rng) -> FarmsResource {
         circle_pos,
         traveler_reveals: Vec::new(),
         neighbors,
-        road_trips: Vec::new(),
-        road_paved: Vec::new(),
+        paved_roads: Vec::new(),
         roads: None,
     }
 }

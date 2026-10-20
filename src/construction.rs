@@ -401,12 +401,15 @@ impl ProposedCity {
     /// Entity cleanup is the caller's responsibility.
     pub fn reset(&mut self) {
         self.proposed_changes = Sparse3D::new();
+        self.proposed_roads.clear();
         self.resource_progress.clear();
     }
 }
 
 /// Commits all proposed changes into real contents. Returns real-cell deltas for `apply_changes`.
 /// Clears `proposed_changes`; entity cleanup is the caller's responsibility.
+/// Proposed roads live in the surroundings rather than the city, so callers
+/// that complete a whole project follow up with [`commit_proposed_roads`].
 ///
 /// The undo record is *preserved*: because it stores absolute prior cell states,
 /// undo can still revert committed changes by proposing their inverse.
@@ -472,6 +475,14 @@ pub fn tick_construction(
     None
 }
 
+/// Finishes the project's proposed roads, paving them in `farms`' road network.
+pub fn commit_proposed_roads(
+    pending: &mut ProposedCity,
+    farms: &mut crate::surroundings::FarmsResource,
+) {
+    farms.add_paved_roads(pending.proposed_roads.drain(..));
+}
+
 /// Reflects a completed construction (the `real_changes` from [`tick_construction`])
 /// into the ECS: clears proposal ghosts and proposed-cut entities, then syncs the
 /// newly-committed cells to real geometry.
@@ -490,15 +501,18 @@ pub fn apply_construction_completion(
 /// Commits all pending proposals immediately (bypassing the monthly payment
 /// schedule) and reflects them into the ECS — e.g. when switching into
 /// sandbox mode, whose edits are always committed.
+#[allow(clippy::too_many_arguments)]
 pub fn commit_pending_construction(
     commands: &mut Commands,
     constructed: &mut ConstructedCity,
     pending: &mut ProposedCity,
+    farms: &mut crate::surroundings::FarmsResource,
     assembled: &mut AssembledCity,
     viewable: &mut ViewableWorld,
     structure_list: &EorfList,
     material_list: &crate::materials::MaterialList,
 ) {
+    commit_proposed_roads(pending, farms);
     let real_changes = construct(constructed, pending, material_list);
     apply_construction_completion(commands, assembled, viewable, structure_list, real_changes);
 }
@@ -642,8 +656,36 @@ pub fn construction_cost(
     result
 }
 
-/// Resource cost still owed to complete the current proposed construction:
-/// `construction_cost(...)` (unchanged, total cost) minus
+/// Total resource cost of the whole current project: its proposed cells
+/// (`construction_cost`) plus fieldstone for its proposed roads.
+pub fn project_cost(
+    pending: &ProposedCity,
+    structure_infos: &[crate::eorf::EorfInfo],
+    material_list: &crate::materials::MaterialList,
+) -> Vec<(UniformResource, u32)> {
+    let mut cost = construction_cost(&pending.proposed_changes, structure_infos, material_list);
+    let fieldstone: u32 = pending
+        .proposed_roads
+        .iter()
+        .map(|r| r.fieldstone_cost())
+        .sum();
+    if fieldstone > 0 {
+        match cost
+            .iter_mut()
+            .find(|(r, _)| *r == UniformResource::Fieldstone)
+        {
+            Some((_, qty)) => *qty += fieldstone,
+            None => {
+                cost.push((UniformResource::Fieldstone, fieldstone));
+                cost.sort_by_key(|(r, _)| *r);
+            }
+        }
+    }
+    cost
+}
+
+/// Resource cost still owed to complete the current project:
+/// `project_cost(...)` (unchanged, total cost) minus
 /// `pending.resource_progress` already applied, floored at zero. Drops zero
 /// entries. Empty when there's nothing pending.
 pub fn remaining_construction_need(
@@ -651,7 +693,7 @@ pub fn remaining_construction_need(
     structure_infos: &[crate::eorf::EorfInfo],
     material_list: &crate::materials::MaterialList,
 ) -> Vec<(UniformResource, u32)> {
-    construction_cost(&pending.proposed_changes, structure_infos, material_list)
+    project_cost(pending, structure_infos, material_list)
         .into_iter()
         .filter_map(|(res, total)| {
             let progress = pending.resource_progress.get(&res).copied().unwrap_or(0);
@@ -684,7 +726,7 @@ pub fn construction_progress_fraction(
     structure_infos: &[crate::eorf::EorfInfo],
     material_list: &crate::materials::MaterialList,
 ) -> Option<f32> {
-    let total_cost = construction_cost(&pending.proposed_changes, structure_infos, material_list);
+    let total_cost = project_cost(pending, structure_infos, material_list);
     if total_cost.is_empty() {
         return None;
     }

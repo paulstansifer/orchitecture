@@ -14,6 +14,10 @@ pub const TRAVELER_CAPACITY: usize = 1;
 /// without hard-coding a particular shape or distance for "far away".
 const MAX_TRAVELER_TRAVEL_COST: f32 = 250.0;
 
+/// Range a traveler's `required_quality` (the least guest-room quality it
+/// will stay in) is rolled from. Deliberately easy to meet for now.
+const TRAVELER_REQUIRED_QUALITY: std::ops::Range<f32> = 0.1..0.4;
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TravelerDemand {
     /// One option is chosen at random when rolling an offer.
@@ -100,6 +104,9 @@ pub struct IndividualTraveler {
     pub reward: ResolvedReward,
     /// Path from the traveler's starting position toward the map origin.
     pub path: Vec<Vec2>,
+    /// The least guest-room quality this traveler will stay in (see
+    /// `attendance::plan_attendance`).
+    pub required_quality: f32,
 }
 
 #[derive(Resource, Serialize, Deserialize)]
@@ -241,6 +248,7 @@ pub fn roll_traveler_offer(
             demands,
             reward,
             path,
+            required_quality: rng.random_range(TRAVELER_REQUIRED_QUALITY),
         });
         break;
     }
@@ -262,7 +270,12 @@ pub struct TravelerVisit {
     pub demands: Vec<(UniformResource, u32, u32, u32)>,
     pub reward: ResolvedReward,
     pub path: Vec<Vec2>,
+    /// Whether the visit can go ahead: every demand can be met, the reward
+    /// has somewhere to go, and there's a room good enough for the traveler.
     pub affordable: bool,
+    /// Whether a guest room meets the traveler's `required_quality` (already
+    /// folded into `affordable`; kept separately to explain a refusal).
+    pub has_room: bool,
     pub invited: bool,
 }
 
@@ -360,6 +373,8 @@ mod tests {
         dispatch(&mut session, "place 100 0 102 xwall chair");
         dispatch(&mut session, "place 100 0 103 room bin");
         dispatch(&mut session, "tick");
+        // And the traveler needs somewhere to stay.
+        crate::headless::build_inn(&mut session, 110, 100);
 
         // Advance until the bookseller turns up (they're behind two other
         // configs in a first-match-wins roll, so it takes a few months).
@@ -412,9 +427,9 @@ mod tests {
     }
 
     /// A chain of `squares` unit-length squares along the x-axis, city at the
-    /// origin corner. Every edge has `trips == 0` (untouched, factor
-    /// `FIELD_FACTOR == 5.0`), so the node `n` squares from the city costs
-    /// `n * 5.0` to reach -- a predictable cost gradient to sample against.
+    /// origin corner. Every edge is an unpaved road, so the node `n` squares
+    /// from the city costs `n * UNPAVED_FACTOR` to reach -- a predictable cost
+    /// gradient to sample against.
     fn chain_network(squares: usize) -> RoadNetwork {
         let sq = |x: f32| {
             vec![
@@ -425,9 +440,7 @@ mod tests {
             ]
         };
         let polygons: Vec<Vec<Vec2>> = (0..squares).map(|i| sq(i as f32)).collect();
-        let mut roads = RoadNetwork::build(&polygons, Vec2::ZERO);
-        roads.recompute_dist();
-        roads
+        RoadNetwork::build(&polygons, Vec2::ZERO, &[])
     }
 
     fn book_seller() -> Traveler {
@@ -449,7 +462,7 @@ mod tests {
     #[test]
     fn a_book_reward_resolves_to_a_concrete_idea_and_segment_set() {
         let ideas = crate::idea::load_idea_info();
-        let roads = chain_network(60);
+        let roads = chain_network(100);
         let mut rng = StdRng::seed_from_u64(11);
 
         for _ in 0..50 {
@@ -483,7 +496,7 @@ mod tests {
     #[test]
     fn a_book_spec_honours_its_idea_list_and_coverage() {
         let ideas = crate::idea::load_idea_info();
-        let roads = chain_network(60);
+        let roads = chain_network(100);
         let mut rng = StdRng::seed_from_u64(21);
 
         let mut config = book_seller();
@@ -514,7 +527,7 @@ mod tests {
     #[test]
     fn a_coverage_range_varies_between_offers() {
         let ideas = crate::idea::load_idea_info();
-        let roads = chain_network(60);
+        let roads = chain_network(100);
         let mut rng = StdRng::seed_from_u64(33);
 
         let mut config = book_seller();
@@ -584,6 +597,7 @@ mod tests {
             },
             path: vec![],
             affordable: true,
+            has_room: true,
             invited: true,
         };
         visit.apply(&mut constructed, &mut farms, &mut idea_state);
@@ -608,6 +622,7 @@ mod tests {
             },
             path: vec![],
             affordable: true,
+            has_room: true,
             invited: false,
         };
         visit.apply(&mut constructed, &mut farms, &mut idea_state);
@@ -616,10 +631,10 @@ mod tests {
 
     #[test]
     fn sample_traveler_origin_respects_view_radius_and_travel_cost() {
-        // 60 unit edges each costing 5.0: nodes range from 0 up to 300,
+        // 100 unit edges each costing 3.0: nodes range from 0 up to 300,
         // straddling MAX_TRAVELER_TRAVEL_COST (250), so both acceptance and
         // rejection get exercised.
-        let roads = chain_network(60);
+        let roads = chain_network(100);
         let mut rng = StdRng::seed_from_u64(1);
 
         for _ in 0..50 {
@@ -645,8 +660,8 @@ mod tests {
     /// appearing at the literal edge of the map.
     #[test]
     fn sample_traveler_origin_falls_back_to_the_cheapest_node_when_none_fit_the_budget() {
-        let roads = chain_network(60);
-        let view_radius = 55.0;
+        let roads = chain_network(100);
+        let view_radius = 85.0;
         let mut rng = StdRng::seed_from_u64(1);
 
         let expected = (0..roads.nodes.len())

@@ -16,7 +16,7 @@ use crate::traveler::{ResolvedReward, TravelerState};
 /// Whether "Advance Month" is offered, and if so, whether it's currently
 /// blocked by unpaid construction cost.
 pub enum AdvanceState {
-    /// There's a project, invited farms, or an invited traveler this month.
+    /// There's a project, farms coming to market, or an invited traveler this month.
     Active { blocked: bool },
     /// Nothing is pending; the UI should ask "Wait anyways?" before offering
     /// to advance.
@@ -114,7 +114,10 @@ impl RewardView {
 pub struct TravelerOfferView {
     pub demands: Vec<(UniformResource, u32)>,
     pub reward: RewardView,
+    /// Whether the visit can go ahead (including having a room).
     pub affordable: bool,
+    /// Whether a guest room is good enough for this traveler.
+    pub has_room: bool,
 }
 
 /// Everything the shared resource panel needs to render, computed once per
@@ -124,8 +127,12 @@ pub struct MonthPanelView {
     pub advance: AdvanceState,
     pub has_project: bool,
     pub construction_progress: Option<f32>,
-    pub market_stand_count: usize,
-    pub invited_count: usize,
+    pub stand_count: usize,
+    pub coming_count: usize,
+    /// One line per visible farm coming to market this month...
+    pub farms_coming: Vec<String>,
+    /// ...and one per visible farm that isn't, with its reasons.
+    pub farms_absent: Vec<String>,
     pub has_storage: bool,
     pub rows: Vec<ResourceRow>,
     pub uncommitted_storage: UncommittedStorageRow,
@@ -285,7 +292,7 @@ pub fn month_panel_view(
     // Tools/Rugs/Books rows: shown when the player has any storage capacity
     // for that category, or will receive one this month. Tools and Rugs are
     // rack-backed; Books are bookcase-backed.
-    let tools_incoming = effects.tools_incoming(farms);
+    let tools_incoming = effects.tools_incoming();
     let rack_rows: Vec<UniqueResourceRow> = [
         UniqueCategory::Tools,
         UniqueCategory::Rugs,
@@ -337,8 +344,8 @@ pub fn month_panel_view(
     .collect();
 
     let has_project = pending.num_changes() > 0;
-    let has_farms_invited = farms.invited_count() > 0;
-    let advance = if has_project || has_farms_invited || traveler_state.invited {
+    let coming_count = effects.attendance.coming_count();
+    let advance = if has_project || coming_count > 0 || traveler_state.invited {
         AdvanceState::Active {
             blocked: has_project && blocked_construction,
         }
@@ -353,7 +360,29 @@ pub fn month_panel_view(
             demands: offer.demands.clone(),
             reward: reward_view(&offer.reward, &constructed.ideas),
             affordable: effects.traveler_affordable(),
+            has_room: effects.attendance.traveler_has_room,
         });
+
+    let farm_name = |id: crate::surroundings::farmstead::FarmId| {
+        format!(
+            "Farm {id} ({})",
+            farms[id].produced_resource().label()
+        )
+    };
+    let mut farms_coming = Vec::new();
+    let mut farms_absent = Vec::new();
+    for (&id, attendance) in &effects.attendance.farms {
+        if attendance.coming() {
+            farms_coming.push(farm_name(id));
+        } else {
+            let reasons: Vec<String> = attendance
+                .absences
+                .iter()
+                .map(|a| format!("{} {}", a.icon(), a.label()))
+                .collect();
+            farms_absent.push(format!("{}: {}", farm_name(id), reasons.join("; ")));
+        }
+    }
 
     MonthPanelView {
         month,
@@ -364,8 +393,10 @@ pub fn month_panel_view(
             &constructed.eorfs,
             material_list,
         ),
-        market_stand_count: crate::place::market_stand_count(constructed),
-        invited_count: farms.invited_count(),
+        stand_count: effects.attendance.stands,
+        coming_count,
+        farms_coming,
+        farms_absent,
         has_storage,
         rows,
         uncommitted_storage,
@@ -382,7 +413,8 @@ mod tests {
     use crate::materials::MaterialList;
     use crate::population::{Individual, Population};
     use crate::resource::UniformResource::*;
-    use crate::surroundings::farmstead::{FarmData, FarmEvent, FarmsResource};
+    use crate::surroundings::attendance::MarketVenues;
+    use crate::surroundings::farmstead::{FarmData, FarmsResource};
     use bevy::math::Vec2;
 
     /// Test helper: run the month pipeline, then build the panel view from it —
@@ -405,6 +437,7 @@ mod tests {
             pending,
             population,
             traveler_state,
+            &MarketVenues::new(10, vec![]),
             material_list,
             sandbox_enabled,
         );
@@ -420,32 +453,26 @@ mod tests {
         )
     }
 
-    fn mk_farm(invited: bool) -> FarmData {
+    /// A unit-square farm at the city, coming to market unless paused.
+    fn mk_farm(coming: bool) -> FarmData {
         FarmData {
-            seed: Vec2::ZERO,
-            polygon: Vec::new(),
-            area: 5.0,
-            fertility: 1.0,
-            production: crate::surroundings::farmstead::FarmProduction::Regular(Straw),
-            potato_stockpile: 10,
-            inedible_stockpile: 4,
-            boost: 0,
-            invited,
-            event: FarmEvent::Market,
+            seed: Vec2::new(0.5, 0.5),
+            polygon: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(1.0, 0.0),
+                Vec2::new(1.0, 1.0),
+                Vec2::new(0.0, 1.0),
+            ],
+            paused: !coming,
+            ..crate::surroundings::farmstead::tests::mk_farm(Straw, 5.0)
         }
     }
 
     fn farms_with(farms: Vec<FarmData>) -> FarmsResource {
         let n = farms.len();
-        FarmsResource {
-            farms,
-            circle_pos: Vec2::ZERO,
-            traveler_reveals: Vec::new(),
-            neighbors: vec![Vec::new(); n],
-            road_trips: Vec::new(),
-            road_paved: Vec::new(),
-            roads: None,
-        }
+        let mut fr = crate::surroundings::farmstead::tests::farms_with(farms, vec![vec![]; n]);
+        fr.ensure_roads();
+        fr
     }
 
     fn no_traveler() -> TravelerState {
@@ -702,10 +729,10 @@ mod tests {
         );
     }
 
-    /// An invited farm makes the panel active and reports the market gain in
-    /// the resource row for the produced resource.
+    /// A farm coming to market makes the panel active and reports the market
+    /// gain in the resource row for the produced resource.
     #[test]
-    fn invited_farm_reports_market_row() {
+    fn coming_farm_reports_market_row() {
         let farms = farms_with(vec![mk_farm(true)]);
         let cw = ConstructedCity::new(Vec::new());
         let pending = crate::city::ProposedCity::new();
@@ -731,7 +758,9 @@ mod tests {
             view.advance,
             AdvanceState::Active { blocked: false }
         ));
-        assert_eq!(view.invited_count, 1);
+        assert_eq!(view.coming_count, 1);
+        assert_eq!(view.farms_coming.len(), 1);
+        assert!(view.farms_absent.is_empty());
         // No storage places exist, so nothing is retained; the row for the
         // farm's wanted/produced resources should still show up.
         assert!(view.rows.iter().any(|r| r.resource == Straw));

@@ -227,6 +227,12 @@ impl PlacedPlaceId {
     pub fn shadow(&self) -> f32 {
         self.0 as f32
     }
+
+    /// An arbitrary id, for tests that don't need a real `PlacedPlaces`.
+    #[cfg(test)]
+    pub fn new_for_test(id: u32) -> Self {
+        PlacedPlaceId(id)
+    }
 }
 
 impl std::fmt::Display for PlacedPlaceId {
@@ -436,10 +442,26 @@ fn fulfillment_location(cw: &ConstructedCity, f: &FulfilledPorf) -> IVec3 {
 /// walls visits every wall slot exactly once across the grid.)
 const FURNITURE_SLOTS: [Slot; 3] = [Slot::Room, Slot::XLoWall, Slot::ZLoWall];
 
+/// Sorts furniture candidates nearest-first (to the closest of `anchors`),
+/// then by position, so place formation -- which claims the first few free
+/// candidates -- is deterministic and prefers what's closest. (Candidates are
+/// gathered from hash sets, whose order varies from run to run.)
+fn sort_nearest_first(found: &mut [SlotCoord], anchors: &[IVec3]) {
+    let slot_rank = |slot: Slot| FURNITURE_SLOTS.iter().position(|&s| s == slot);
+    found.sort_by_key(|loc| {
+        let dist = anchors
+            .iter()
+            .map(|&a| manhattan2d(a, loc.cube) + (a.y - loc.cube.y).abs())
+            .min()
+            .unwrap_or(0);
+        (dist, loc.cube.x, loc.cube.y, loc.cube.z, slot_rank(loc.slot))
+    });
+}
+
 /// All furniture named `name` within navigable reach (see
 /// `reachable_near_anchors`) of any of `anchors`, at whatever slot they
-/// occupy (room or wall). Includes furniture at an anchor itself when it
-/// qualifies.
+/// occupy (room or wall), nearest first. Includes furniture at an anchor
+/// itself when it qualifies.
 fn furniture_of_name_near(
     cw: &ConstructedCity,
     nav: &NavigationGrid,
@@ -458,6 +480,7 @@ fn furniture_of_name_near(
             }
         }
     }
+    sort_nearest_first(&mut found, anchors);
     found
 }
 
@@ -497,14 +520,16 @@ fn furniture_with_installed_tool_near(
     furniture_name: &str,
 ) -> Vec<SlotCoord> {
     let reachable = reachable_near_anchors(nav, anchors);
-    all_furniture_with_installed_tool(cw, kind, furniture_name)
+    let mut found: Vec<SlotCoord> = all_furniture_with_installed_tool(cw, kind, furniture_name)
         .into_iter()
         .filter(|cube| reachable.contains(cube))
         .map(|cube| SlotCoord {
             cube,
             slot: Slot::Room,
         })
-        .collect()
+        .collect();
+    sort_nearest_first(&mut found, anchors);
+    found
 }
 
 /// All furniture (anywhere) named `furniture_name` with a `Tool(kind)`
@@ -1061,14 +1086,17 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
     }
 
     // Collect every candidate core, across every place definition, in a
-    // stable scan order.
-    let mut candidates: Vec<(IVec3, usize)> = Vec::new();
+    // stable scan order. A place-cored candidate (e.g. an inn, cored on its
+    // dining room) also carries the core place's id: its cube always belongs
+    // to that core place, so whether it's free is a question of whether the
+    // core place is already nested in something, not of who owns the cube.
+    let mut candidates: Vec<(IVec3, usize, Option<PlacedPlaceId>)> = Vec::new();
     for place_idx in 0..cw.places.len() {
         let Some(core_req) = cw.places[place_idx].requirements.first() else {
             continue;
         };
         let parent_name = &cw.places[place_idx].name;
-        let cubes: Vec<IVec3> = match &core_req.requirement {
+        let cubes: Vec<(IVec3, Option<PlacedPlaceId>)> = match &core_req.requirement {
             Porf::Furniture(name) => all_furniture_named(cw, name)
                 .into_iter()
                 .filter(|cube| {
@@ -1076,6 +1104,7 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
                         .get(cube)
                         .is_none_or(|r| r.allows(parent_name))
                 })
+                .map(|cube| (cube, None))
                 .collect(),
             Porf::Place(name) => cw
                 .placed_places
@@ -1083,7 +1112,7 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
                 .filter(|(_, pp)| {
                     cw.places[pp.place].name == *name && pp.restriction.allows(parent_name)
                 })
-                .map(|(id, _)| place_location(cw, id))
+                .map(|(id, _)| (place_location(cw, id), Some(id)))
                 .collect(),
             Porf::InstalledTool(kind, furniture_name) => {
                 all_furniture_with_installed_tool(cw, *kind, furniture_name)
@@ -1093,15 +1122,24 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
                             .get(cube)
                             .is_none_or(|r| r.allows(parent_name))
                     })
+                    .map(|cube| (cube, None))
                     .collect()
             }
         };
-        candidates.extend(cubes.into_iter().map(|cube| (cube, place_idx)));
+        candidates.extend(
+            cubes
+                .into_iter()
+                .map(|(cube, core)| (cube, place_idx, core)),
+        );
     }
-    candidates.sort_by_key(|(cube, place_idx)| (cube.x, cube.y, cube.z, *place_idx));
+    candidates.sort_by_key(|(cube, place_idx, _)| (cube.x, cube.y, cube.z, *place_idx));
 
-    for (cube, place_idx) in candidates {
-        if place_id_at(cw, cube).is_some() {
+    for (cube, place_idx, core) in candidates {
+        let taken = match core {
+            Some(core) => owner_of(cw, &FulfilledPorf::Place(core)).is_some(),
+            None => place_id_at(cw, cube).is_some(),
+        };
+        if taken {
             continue;
         }
         if plan_assignment_with_nav(cw, &nav, cube, place_idx).is_some() {
@@ -1473,9 +1511,48 @@ pub fn count_furniture_named_in_places(
 }
 
 /// Number of market stands placed across all market places — each stand can
-/// host one invited farm per month, so this is the invite capacity.
+/// host one visiting farm per month.
 pub fn market_stand_count(cw: &ConstructedCity) -> usize {
     count_furniture_named_in_places(cw, "market stand", "market")
+}
+
+/// Cubes of every market stand placed in a market place.
+pub fn market_stand_cubes(cw: &ConstructedCity) -> Vec<IVec3> {
+    cw.placed_places
+        .iter()
+        .filter(|(_, pp)| cw.places[pp.place].name == "market")
+        .flat_map(|(_, pp)| pp.fulfillments.iter())
+        .filter_map(|f| match f {
+            FulfilledPorf::Furniture(loc) => cw
+                .contents
+                .get(*loc)
+                .is_some_and(|cell| cw.eorfs[cell.id.as_usize()].name == "market stand")
+                .then_some(loc.cube),
+            FulfilledPorf::Place(_) => None,
+        })
+        .collect()
+}
+
+/// Every bedroom nested directly in an inn: the guest rooms that visiting
+/// farmers and travelers stay in (and that residents therefore don't sleep in;
+/// see `population::assign_places`). Ascending by id.
+pub fn inn_room_ids(cw: &ConstructedCity) -> Vec<PlacedPlaceId> {
+    let mut rooms: Vec<PlacedPlaceId> = cw
+        .placed_places
+        .iter()
+        .filter(|(_, pp)| cw.places[pp.place].name == "inn")
+        .flat_map(|(_, pp)| pp.fulfillments.iter())
+        .filter_map(|f| match f {
+            FulfilledPorf::Place(id) => cw
+                .placed_places
+                .get(*id)
+                .is_some_and(|room| cw.places[room.place].name == "bedroom")
+                .then_some(*id),
+            FulfilledPorf::Furniture(_) => None,
+        })
+        .collect();
+    rooms.sort();
+    rooms
 }
 
 /// Total quantity of `res` held across all storage places.
@@ -2234,6 +2311,30 @@ mod tests {
         assert!(
             population[0].contains("home=none"),
             "expected the individual to be evicted: {population:?}"
+        );
+    }
+
+    /// A place cored on another place (an inn, cored on its dining room)
+    /// must still form even though its core cube already belongs to that
+    /// inner place -- and once it does, its bedrooms are guest rooms that
+    /// residents don't sleep in.
+    #[test]
+    fn an_inn_forms_around_its_dining_room() {
+        use crate::headless::HeadlessSession;
+
+        let mut session = HeadlessSession::new(1);
+        crate::headless::build_inn(&mut session, 100, 100);
+        let dining = session.dispatch("query place 100 0 100").unwrap();
+        assert!(
+            dining[0].contains("within=[inn#"),
+            "the dining room should be nested in an inn: {dining:?}"
+        );
+        let bedroom = session.dispatch("query place 101 0 102").unwrap();
+        assert!(bedroom[0].contains("type=bedroom") && bedroom[0].contains("within=[inn#"));
+        let population = session.dispatch("query population").unwrap();
+        assert!(
+            population[0].contains("home=none"),
+            "inn bedrooms are for guests: {population:?}"
         );
     }
 

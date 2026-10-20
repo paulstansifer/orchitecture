@@ -84,11 +84,14 @@ pub fn assign_places(
 ) -> bool {
     use std::collections::HashSet;
 
+    // An inn's bedrooms are reserved for guests (see `place::inn_room_ids`).
+    let guest_rooms: HashSet<PlacedPlaceId> = crate::place::inn_room_ids(cw).into_iter().collect();
     let eligible: HashSet<PlacedPlaceId> = cw
         .placed_places
         .iter()
         .filter(|(_, pp)| cw.places[pp.place].assignable_for == Some(flavor))
         .map(|(id, _)| id)
+        .filter(|id| !guest_rooms.contains(id))
         .collect();
 
     let mut claimed: HashSet<PlacedPlaceId> = HashSet::new();

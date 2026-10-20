@@ -1,3 +1,4 @@
+pub mod attendance;
 pub mod farmstead;
 pub mod map;
 pub mod road_network;

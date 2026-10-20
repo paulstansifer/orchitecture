@@ -14,15 +14,14 @@ use bevy::prelude::{Commands, Message, MessageReader, Res, ResMut};
 
 use crate::city::{Cell, CityMut, ConstructedCity, ProposedCity, ViewableWorld};
 use crate::city_effect::{compute_month_effects, EffectContext};
-use crate::construction::{remaining_construction_need, tick_construction};
+use crate::construction::{commit_proposed_roads, remaining_construction_need, tick_construction};
 use crate::materials::MaterialList;
 use crate::place;
 use crate::population::Population;
 use crate::resource::UniformResource;
 use crate::sparse3d::SlotCoord;
-use crate::surroundings::farmstead::{
-    apply_production, compute_production, reset_farm_events, FarmsResource, GameClock,
-};
+use crate::surroundings::attendance::MarketVenues;
+use crate::surroundings::farmstead::{FarmsResource, GameClock};
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::traveler::{roll_traveler_offer, TravelerState};
 
@@ -37,17 +36,19 @@ pub struct MonthOutcome {
     /// `Some(real_changes)` when construction completed this month; feed this to
     /// [`crate::construction::apply_construction_completion`] if you have an ECS.
     pub construction_changes: Option<Vec<(SlotCoord, Option<Cell>)>>,
+    /// Which farms came to market this month, and why the others didn't.
+    pub attendance: crate::surroundings::attendance::AttendancePlan,
 }
 
 /// Advances the game by one month, mutating the game resources in place.
 ///
-/// Sequence: compute this month's effects (market participation per invited
-/// farm, population feeding, a traveler's visit, construction's material
+/// Sequence: compute this month's effects (which farms come to market and what
+/// they bring, population feeding, a traveler's visit, construction's material
 /// absorption — see [`crate::city_effect`]) against the current state, apply
-/// every one of them, then produce next month's stockpiles, clear farm
-/// invites, roll a fresh traveler offer, deposit whatever's left of this
-/// month's inflow into storage, and tick construction (which completes once
-/// fully paid, unconditionally in sandbox mode).
+/// every one of them, roll a fresh traveler offer, deposit whatever's left of
+/// this month's inflow into storage, and tick construction (which completes
+/// once fully paid, unconditionally in sandbox mode, finishing any proposed
+/// roads along with it).
 #[allow(clippy::too_many_arguments)]
 pub fn advance_month(
     clock: &mut GameClock,
@@ -65,12 +66,16 @@ pub fn advance_month(
     farms.ensure_adjacency();
     farms.ensure_roads();
 
+    // Computed fresh rather than read from the `MarketVenues` resource, so a
+    // month advance never acts on a stale copy.
+    let venues = MarketVenues::compute(constructed);
     let effects = compute_month_effects(
         farms,
         constructed,
         pending,
         population,
         traveler_state,
+        &venues,
         material_list,
         sandbox_enabled,
     );
@@ -89,27 +94,6 @@ pub fn advance_month(
         for effect in &effects.effects {
             effect.apply(&mut ctx);
         }
-    }
-
-    // Roads develop where traffic flowed this month: every invited farm's
-    // delivery route, plus an accepted traveler's route. Must run before the
-    // `invited` flags are cleared below.
-    let traveler_start = effects
-        .traveler_visit()
-        .filter(|t| t.invited && t.affordable)
-        .and_then(|t| t.path.first().copied());
-    farms.record_road_trips(traveler_start);
-    // Half of whatever Fieldstone survived market transactions paves its own
-    // delivery routes; also must run before `invited` is cleared below.
-    let paving_leftover = farms.pave_fieldstone_routes(effects.fieldstone_for_paving);
-
-    // Invited farms' per-cycle events are spent; reset for next month.
-    reset_farm_events(farms);
-
-    let plan = compute_production(farms, rng);
-    apply_production(farms, &plan);
-    for farm in &mut farms.farms {
-        farm.invited = false;
     }
 
     let traveler_accepted = effects
@@ -134,41 +118,21 @@ pub fn advance_month(
             place::deposit_uniform_with_capacity(constructed, *res, flow.stored);
         }
     }
-    // Fieldstone earmarked for paving but not actually spent (every candidate
-    // route was already fully paved) still goes to the player, same as any
-    // other unclaimed inflow.
-    if paving_leftover > 0 {
-        place::deposit_uniform_with_capacity(
-            constructed,
-            UniformResource::Fieldstone,
-            paving_leftover,
-        );
-    }
 
     // Construction completes once fully paid off (sandbox mode bypasses the
     // resource requirement, as it always has).
     let fully_paid = sandbox_enabled
         || remaining_construction_need(pending, &constructed.eorfs, material_list).is_empty();
     let construction_changes = tick_construction(pending, constructed, fully_paid, material_list);
-
-    let mut market_gains = effects.player_gains;
-    if paving_leftover > 0 {
-        match market_gains
-            .iter_mut()
-            .find(|(res, _)| *res == UniformResource::Fieldstone)
-        {
-            Some((_, qty)) => *qty += paving_leftover,
-            None => {
-                market_gains.push((UniformResource::Fieldstone, paving_leftover));
-                market_gains.sort_by_key(|&(res, _)| res);
-            }
-        }
+    if construction_changes.is_some() {
+        commit_proposed_roads(pending, farms);
     }
 
     MonthOutcome {
-        market_gains,
+        market_gains: effects.player_gains,
         traveler_accepted,
         construction_changes,
+        attendance: effects.attendance,
     }
 }
 
