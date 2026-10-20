@@ -7,19 +7,19 @@ Orchitecture uses the Bevy game engine, and uses Burn to the convolutional neura
 
 The player starts with three market stalls at an empty crossroads.
 
-The player makes construction plans; every month, each farm the player can see from the surrounding countryside comes to the market, as long as it can get a market stand, isn't too far away, and (if it's far enough to stay the night) can get a good-enough guest room at an inn. What the farms bring goes to the player, who can use it to construct buildings. Sometimes "traveler"s come, trading more exotic resources, like tools and planks, for market resources. The population of the city starts at 1; each occupant needs food and shelter.
+The player makes construction plans; every month, each farm the player can see from the surrounding countryside comes to the market, as long as it can get a market stand, isn't too far away, and (if it's far enough to stay the night) can get a good-enough guest room at an inn. When stands or rooms are scarce, farms bringing what the ongoing construction project needs go first, then farms bringing what there's storage room for, then the rest (nearest first within each group). What the farms bring goes to the player, who can use it to construct buildings. Sometimes "traveler"s come, trading more exotic resources, like tools and planks, for market resources. The population of the city starts at 1; each occupant needs food and shelter.
 
 The player builds things that can, for example:
-  * store excess resources
+  * store excess resources (every bin is dedicated to one kind of good, and holds nothing until the player assigns it one)
   * attract travelers
   * house additional city inhabitants and meet their needs
   * operate as workshops to process resources
 
 Depending on the kind of place, various aspects of the architecture may matter; almost everything works better indoors, some buildings are more inspiring if built from finer materials or with spacious architecture, or (this is where the neural nets come in) with more interesting, coherent architecture. Eventually, the crossroads becomes a proper city, with a library, a city hall, a hospital, and schools.
 
-The player can also influence the surrounding farms by giving them tools (so they can produce more advanced resources), pausing them, and paving roads (so distant farms can reach the market).
+The player can also influence the surrounding farms by giving them tools (so they can produce more advanced resources) and paving roads (so distant farms can reach the market).
 
-# Code map
+## Code map
 
 Game parts:
   * main.rs: initialization
@@ -56,13 +56,15 @@ City grid and related concepts:
     light computation)
 
 Surroundings (the countryside map; `surroundings/`):
-  * farmstead.rs: `FarmsResource`/`FarmData` (fixed resource, optional tool, paused flag,
+  * farmstead.rs: `FarmsResource`/`FarmData` (fixed resource, optional tool,
     required guest-room quality), monthly `compute_production`, giving/taking back tools,
     and proposing paved roads (`road_blocker`, `propose_road`).
   * attendance.rs: `plan_attendance` decides which visible farms come to market each
-    month (stands, travel cost, guest rooms; nearest first, each taking the worst room
-    that satisfies it) and why the rest don't (`Absence`). `MarketVenues` caches the
-    city's stand count and inn guest rooms with their quality.
+    month (stands, travel cost, guest rooms) and why the rest don't (`Absence`). Farms are
+    prioritized by what the project needs (`MarketDemand`), then by storage room for
+    their goods, then everyone else; nearest first within each tier, each taking the
+    worst room that satisfies it. `MarketVenues` caches the city's stand count and inn
+    guest rooms with their quality.
   * road_network.rs: the road graph over Voronoi farm borders (unpaved) plus the
     player's paved `RoadSegment`s, which split edges where they cross.
   * map.rs: farm generation and fog of war.
@@ -142,7 +144,7 @@ run normally:
 sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev librsvg2-bin
 ```
 
-# Headless testing mode
+## Headless testing mode
 
 `cargo run --bin headless [-- --seed <n>]` starts a line-oriented stdin/stdout REPL
 over a real Bevy `App` (via `MinimalPlugins` â€” no window, renderer, or GPU), driving
@@ -151,7 +153,7 @@ real change-detection-gated systems (`rebuild_navigation_grid`, `sync_homes`) â€
 for scripted (e.g. LLM-driven) verification of non-graphical changes, including
 change-detection behavior itself. Send `help` as the first command for the full list:
 placing/removing structures and boxes, propose-then-construct with sandbox on/off,
-undo/redo, advancing time, pausing farms and giving them tools, paving roads, querying
+undo/redo, advancing time, assigning bins to resources, giving farms tools, paving roads, querying
 cells, structures, places, farms, guest rooms, roads, outdoorsness, inventory,
 pathfinding, and the raw serialized city (`dump`).
 
@@ -163,7 +165,7 @@ snapshot). See `src/headless.rs` for the implementation and protocol details.
 
 Headless commands can also be used for testing; see `src/place.rs` for an example.
 
-# Profiling
+## Profiling
 
 Two levels, depending on whether you just need a number or need to know which
 system is slow:
@@ -214,3 +216,6 @@ system is slow:
   of a `ResMut<T>` marks it changed regardless of whether anything was
   actually written, which egui code especially trips over by binding widgets
   straight to resource fields.
+
+## Other notes
+Do not worry about save file backwards-compatibility! It's a long time before that matters.
