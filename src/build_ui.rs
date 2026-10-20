@@ -106,8 +106,7 @@ fn bottom_controls_ui(
 
             ui.separator();
             if ui.button("Starter town").clicked() {
-                let new_contents =
-                    crate::starter_town::build_starter_town(&world.constructed.eorfs);
+                let new_city = crate::starter_town::build_starter_town(&world.constructed.eorfs);
                 crate::map_files::load_map(
                     commands,
                     world.constructed.mutate(),
@@ -115,7 +114,7 @@ fn bottom_controls_ui(
                     &mut world.assembled,
                     viewable,
                     structure_list,
-                    new_contents,
+                    new_city,
                 );
                 world.constructed.mutate_if(crate::place::sync_places);
                 for &res in crate::resource::UniformResource::ALL {
@@ -436,9 +435,17 @@ fn clicked_furniture_ui(
     }
 
     if crate::place::cube_is_storage_bin(constructed, cube) {
-        ui.label("Restricted to:");
+        ui.label("Stores:");
         let current = constructed.bin_resource_restrictions.get(&cube).copied();
-        if let Some(new) = bin_restriction_dropdown(ui, ("bin-restriction", eorf_idx), current) {
+        let new = ui
+            .horizontal(|ui| {
+                if current.is_none() {
+                    ui.label("⚠").on_hover_text("Assign a kind of good to go here!");
+                }
+                bin_restriction_dropdown(ui, ("bin-restriction", eorf_idx), current)
+            })
+            .inner;
+        if let Some(new) = new {
             let restrictions = &mut constructed.mutate().bin_resource_restrictions;
             match new {
                 Some(res) => {
@@ -994,9 +1001,10 @@ fn restriction_dropdown(
     (chosen != *current).then_some(chosen)
 }
 
-/// Dropdown for a bin's `UniformResource` restriction: "Any resource", or one
-/// specific resource. Absence means unrestricted. See `restriction_dropdown`
-/// for why this takes/returns by value instead of binding `&mut` in place.
+/// Dropdown for which `UniformResource` a bin is dedicated to: "Unused" (the
+/// default; absence from the map) or one specific resource. See
+/// `restriction_dropdown` for why this takes/returns by value instead of
+/// binding `&mut` in place.
 fn bin_restriction_dropdown(
     ui: &mut egui::Ui,
     id_source: impl std::hash::Hash,
@@ -1005,11 +1013,11 @@ fn bin_restriction_dropdown(
     use crate::resource::UniformResource;
 
     let mut chosen = current;
-    let current_label = current.map(|r| r.label()).unwrap_or("Any resource");
+    let current_label = current.map(|r| r.label()).unwrap_or("Unused");
     egui::ComboBox::from_id_salt(id_source)
         .selected_text(current_label)
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut chosen, None, "Any resource");
+            ui.selectable_value(&mut chosen, None, "Unused");
             for &res in UniformResource::ALL {
                 ui.selectable_value(&mut chosen, Some(res), res.label());
             }

@@ -7,13 +7,12 @@ use bevy_egui::egui;
 use bevy_file_dialog::prelude::*;
 
 use crate::city::{
-    apply_changes, clear_proposal_entities, clear_proposed_cut_entities, AssembledCity, Cell,
+    apply_changes, clear_proposal_entities, clear_proposed_cut_entities, AssembledCity,
     ConstructedCity, ProposedCity, ViewableWorld,
 };
 use crate::construction::load_from_offline;
 use crate::eorf::{EorfInfo, EorfList};
-use crate::serialization;
-use crate::sparse3d::Sparse3D;
+use crate::serialization::{self, LoadedCity};
 
 /// Expands a list of map names into the `(name, contents)` table, including
 /// each `assets/static/training/{name}.txt` at compile time.
@@ -62,9 +61,9 @@ fn find_bundled(name: &str) -> Option<&'static str> {
 
 /// Loads a map by dropdown name: a bundled map on any platform, or (on
 /// native) a user-created file in `USER_DIR`. `None` if unavailable.
-pub fn load_named_map(name: &str, eorfs: &[EorfInfo]) -> Option<Sparse3D<Cell>> {
+pub fn load_named_map(name: &str, eorfs: &[EorfInfo]) -> Option<LoadedCity> {
     if let Some(content) = find_bundled(name) {
-        return serialization::load_from_str(content, eorfs).ok();
+        return serialization::load_city_from_str(content, eorfs).ok();
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -87,11 +86,11 @@ pub fn load_map(
     assembled: &mut AssembledCity,
     viewable: &mut ViewableWorld,
     structure_list: &EorfList,
-    new_contents: Sparse3D<Cell>,
+    new_city: LoadedCity,
 ) {
     clear_proposal_entities(commands, assembled);
     clear_proposed_cut_entities(commands, viewable);
-    let changes = load_from_offline(constructed, pending, new_contents);
+    let changes = load_from_offline(constructed, pending, new_city);
     apply_changes(commands, assembled, structure_list, changes);
 }
 
@@ -142,7 +141,7 @@ pub fn handle_file_load(
 ) {
     for ev in ev_loaded.read() {
         if let Ok(content) = std::str::from_utf8(&ev.contents) {
-            if let Ok(new_contents) = serialization::load_from_str(content, &constructed.eorfs) {
+            if let Ok(new_city) = serialization::load_city_from_str(content, &constructed.eorfs) {
                 load_map(
                     &mut commands,
                     &mut constructed,
@@ -150,7 +149,7 @@ pub fn handle_file_load(
                     &mut assembled,
                     &mut viewable,
                     &structure_list,
-                    new_contents,
+                    new_city,
                 );
             }
         }
@@ -167,12 +166,13 @@ pub enum MapLoadRequest {
 }
 
 impl MapLoadRequest {
-    pub fn resolve(self, eorfs: &[EorfInfo]) -> Option<Sparse3D<Cell>> {
+    pub fn resolve(self, eorfs: &[EorfInfo]) -> Option<LoadedCity> {
         match self {
             MapLoadRequest::Named(name) => load_named_map(&name, eorfs),
             MapLoadRequest::Example(idx) => crate::example_structures::make_structures()
                 .into_iter()
-                .nth(idx),
+                .nth(idx)
+                .map(LoadedCity::from),
         }
     }
 }
@@ -193,7 +193,11 @@ pub fn map_file_controls_ui(
 
     ui.separator();
     if ui.button("Save").clicked() {
-        if let Ok(bytes) = serialization::serialize(&constructed.contents, &constructed.eorfs) {
+        if let Ok(bytes) = serialization::serialize_city(
+            &constructed.contents,
+            &constructed.bin_resource_restrictions,
+            &constructed.eorfs,
+        ) {
             commands
                 .dialog()
                 .add_filter("Orchitecture Map", &["txt"])

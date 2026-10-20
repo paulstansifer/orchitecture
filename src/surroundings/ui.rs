@@ -269,7 +269,6 @@ struct CornerHover {
 
 /// Something a farm panel's buttons asked for.
 enum FarmAction {
-    TogglePause(FarmId),
     Specialize(FarmId),
     Unspecialize(FarmId),
 }
@@ -454,10 +453,6 @@ pub fn surroundings_ui_system(
     // ── Apply deferred actions ────────────────────────────────────────────────
     for action in actions {
         match action {
-            FarmAction::TogglePause(id) => {
-                let farm = &mut farms.mutate()[id];
-                farm.paused = !farm.paused;
-            }
             FarmAction::Specialize(id) => {
                 let coming = effects.attendance.is_coming(id);
                 specialize(
@@ -639,13 +634,6 @@ fn farm_info_panel(
                     }
 
                     ui.horizontal(|ui| {
-                        if ui
-                            .add(egui::Button::selectable(view.paused, "⏸"))
-                            .on_hover_text("HUMANIZE: Stay home from market")
-                            .clicked()
-                        {
-                            action = Some(FarmAction::TogglePause(id));
-                        }
                         if view.tool.is_some() {
                             if ui
                                 .add_enabled(

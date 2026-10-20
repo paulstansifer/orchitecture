@@ -40,7 +40,9 @@ use crate::population::{assign_places, sync_assignments, Population};
 use crate::resource::{ToolKind, UniformResource};
 use crate::serialization;
 use crate::sparse3d::{Facing, Slot, SlotCoord};
-use crate::surroundings::attendance::{plan_attendance, Absence, AttendancePlan, MarketVenues};
+use crate::surroundings::attendance::{
+    plan_attendance, Absence, AttendancePlan, MarketDemand, MarketVenues,
+};
 use crate::surroundings::farmstead::{FarmId, FarmsResource, GameClock};
 use crate::traveler::{setup_travelers, TravelerState};
 
@@ -54,7 +56,6 @@ Commands (space-separated tokens, one per line):
   sandbox on|off                                   toggle direct-build vs propose-then-construct
   advance [n]                                      advance the game clock by n months (default 1)
   tick                                             run one Bevy Update pass (change detection!)
-  pause <farm_idx> / unpause <farm_idx>            keep a farm home from market (or let it come again)
   invite_traveler / uninvite_traveler              accept or decline this month's traveler offer
   specialize <farm_idx>                            give a coming farm carpenter's tools from storage
   unspecialize <farm_idx>                          take a farm's tool back into storage
@@ -62,6 +63,7 @@ Commands (space-separated tokens, one per line):
                                                    the map corners nearest the two points
   cancel_road <i>                                  drop the i-th proposed road from the project
   set_production <farm_idx> <resource>             cheat: force a farm's own resource
+  assign_bin <x> <y> <z> <resource>|unused         dedicate a storage bin to a resource (bins start out unused)
   set_inventory <resource> <qty>                   cheat: adjust city inventory of a resource(if possible)
   deposit_tool                                     cheat: deposit a carpenter's tools into rack storage
   learn <idea> <count>                             cheat: learn an idea's first <count> segments
@@ -256,7 +258,6 @@ impl HeadlessSession {
             "undo" => self.cmd_undo(),
             "redo" => self.cmd_redo(),
             "advance" => self.cmd_advance(args),
-            "pause" | "unpause" => self.cmd_pause(cmd, args),
             // The graphical UI sets this from the traveler panel's checkbox;
             // `advance` reads it when resolving the visit.
             "invite_traveler" | "uninvite_traveler" => self.cmd_invite_traveler(cmd),
@@ -266,6 +267,7 @@ impl HeadlessSession {
             "cancel_road" => self.cmd_cancel_road(args),
             // Test-only cheat: farms' resources are otherwise fixed forever.
             "set_production" => self.cmd_set_production(args),
+            "assign_bin" => self.cmd_assign_bin(args),
             "set_inventory" => self.cmd_set_inventory(args),
             "set_priority" => self.cmd_set_priority(args),
             "deposit_tool" => self.cmd_deposit_tool(),
@@ -398,28 +400,27 @@ impl HeadlessSession {
         Ok(lines)
     }
 
-    fn cmd_pause(&mut self, cmd: &str, args: &[&str]) -> Result<Vec<String>, String> {
-        let idx = parse_usize(args.first().copied().unwrap_or(""))?;
-        let paused = cmd == "pause";
-        let mut farms = self.world().resource_mut::<FarmsResource>();
-        let farm = farms
-            .farms
-            .get_mut(idx)
-            .ok_or_else(|| format!("no such farm: {idx}"))?;
-        farm.paused = paused;
-        Ok(vec![format!("farm {idx} paused={paused}")])
-    }
-
     /// This month's attendance, planned against the current state (venues
     /// computed fresh, as `advance` does).
     fn attendance(&mut self) -> AttendancePlan {
         let world = self.world();
         world.resource_mut::<FarmsResource>().ensure_adjacency();
         world.resource_mut::<FarmsResource>().ensure_roads();
-        let venues = MarketVenues::compute(world.resource::<ConstructedCity>());
+        let constructed = world.resource::<ConstructedCity>();
+        let venues = MarketVenues::compute(constructed);
+        let demand = MarketDemand::compute(
+            constructed,
+            world.resource::<ProposedCity>(),
+            world.resource::<MaterialList>(),
+            world.resource::<SandboxFlag>().0,
+        );
+        let farms = world.resource::<FarmsResource>();
+        let production = crate::surroundings::farmstead::compute_production(farms);
         plan_attendance(
-            world.resource::<FarmsResource>(),
+            farms,
+            &production,
             &venues,
+            &demand,
             world.resource::<TravelerState>(),
         )
     }
@@ -541,6 +542,27 @@ impl HeadlessSession {
             .ok_or_else(|| format!("no such farm: {idx}"))?;
         farm.resource = resource;
         Ok(vec![format!("farm {idx} resource={}", resource.label())])
+    }
+
+    fn cmd_assign_bin(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
+        if args.len() < 4 {
+            return Err("usage: assign_bin <x> <y> <z> <resource>|unused".to_string());
+        }
+        let cube = parse_ivec3(&args[0..3])?;
+        let assignment = match args[3] {
+            "unused" => None,
+            name => Some(parse_uniform_resource(name)?),
+        };
+        let mut cw = self.world().resource_mut::<ConstructedCity>();
+        if !place::cube_is_storage_bin(&cw, cube) {
+            return Err(format!("no storage bin at {cube}"));
+        }
+        let restrictions = &mut cw.bin_resource_restrictions;
+        match assignment {
+            Some(res) => restrictions.insert(cube, res),
+            None => restrictions.remove(&cube),
+        };
+        Ok(vec![format!("bin at {cube} -> {}", args[3])])
     }
 
     fn cmd_set_inventory(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
@@ -695,7 +717,8 @@ impl HeadlessSession {
 
     fn cmd_dump(&mut self) -> Result<Vec<String>, String> {
         let cw = self.world().resource::<ConstructedCity>();
-        let bytes = serialization::serialize(&cw.contents, &cw.eorfs).map_err(|e| e.to_string())?;
+        let bytes = serialization::serialize_city(&cw.contents, &cw.bin_resource_restrictions, &cw.eorfs)
+            .map_err(|e| e.to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
         Ok(text.lines().map(str::to_string).collect())
     }
@@ -703,7 +726,11 @@ impl HeadlessSession {
     fn cmd_save(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
         let path = args.first().ok_or("usage: save <path>")?;
         let cw = self.world().resource::<ConstructedCity>();
-        serialization::save(&cw.contents, &cw.eorfs, &std::path::PathBuf::from(path))
+        let city = serialization::LoadedCity {
+            contents: cw.contents.clone(),
+            bin_assignments: cw.bin_resource_restrictions.clone(),
+        };
+        serialization::save(&city, &cw.eorfs, &std::path::PathBuf::from(path))
             .map_err(|e| e.to_string())?;
         Ok(vec![format!("saved to {path}")])
     }
@@ -1011,14 +1038,13 @@ impl HeadlessSession {
             .map(|(i, f)| {
                 format!(
                     "{i} pos=({:.1},{:.1}) area={:.1} produces={} capacity={} tool={} \
-                     paused={} required_quality={:.2} {}",
+                     required_quality={:.2} {}",
                     f.seed.x,
                     f.seed.y,
                     f.area,
                     f.produced_resource().label(),
                     f.production_capacity(),
                     f.tool.map_or("none", |t| t.label()),
-                    f.paused,
                     f.required_quality,
                     describe_attendance(&attendance, FarmId::new(i)),
                 )
@@ -1038,10 +1064,9 @@ impl HeadlessSession {
         let plan = crate::surroundings::farmstead::compute_production(farms);
         let mut lines = vec![
             format!(
-                "farm {idx} resource={} tool={} paused={} required_quality={:.2}",
+                "farm {idx} resource={} tool={} required_quality={:.2}",
                 f.resource.label(),
                 f.tool.map_or("none", |t| t.label()),
-                f.paused,
                 f.required_quality,
             ),
             describe_attendance(&attendance, id),
@@ -1351,11 +1376,11 @@ fn redo_system(cw: Res<ConstructedCity>, mut pending: ResMut<ProposedCity>) -> u
 }
 
 fn load_system(
-    In(new_contents): In<crate::sparse3d::Sparse3D<Cell>>,
+    In(new_city): In<serialization::LoadedCity>,
     mut cw: ResMut<ConstructedCity>,
     mut pending: ResMut<ProposedCity>,
 ) {
-    construction::load_from_offline(&mut cw, &mut pending, new_contents);
+    construction::load_from_offline(&mut cw, &mut pending, new_city);
 }
 
 /// Runs one month of game time: market, production, traveler resolution,
@@ -1429,7 +1454,7 @@ fn advance_month_system(
     lines
 }
 
-/// `coming`, `coming room=<id>`, or `absent=paused,too_far,...` (or `fogged`
+/// `coming`, `coming room=<id>`, or `absent=too_far,...` (or `fogged`
 /// for a farm the player can't see).
 fn describe_attendance(plan: &AttendancePlan, id: FarmId) -> String {
     let Some(a) = plan.get(id) else {
@@ -1448,7 +1473,6 @@ fn describe_attendance(plan: &AttendancePlan, id: FarmId) -> String {
             .absences
             .iter()
             .map(|r| match r {
-                Absence::Paused => "paused",
                 Absence::TooFar => "too_far",
                 Absence::NoStandsRemain => "no_stands",
                 Absence::NoRoomsRemain => "no_rooms",
@@ -1629,13 +1653,6 @@ mod tests {
             .collect()
     }
 
-    fn set_paused(session: &mut HeadlessSession, indices: &[usize], paused: bool) {
-        let cmd = if paused { "pause" } else { "unpause" };
-        for &idx in indices {
-            dispatch_ok(session, &format!("{cmd} {idx}"));
-        }
-    }
-
     /// `pallet` (a furniture piece with a fixed, material-independent cost of
     /// 2 straw + 2 canvas, both directly farmable) is used throughout as the
     /// cheapest structure whose cost can actually be paid off by the market --
@@ -1720,44 +1737,45 @@ mod tests {
     }
 
     #[test]
-    fn advance_withholds_construction_until_resources_are_delivered() {
+    fn advance_pays_for_construction_with_the_farms_it_needs() {
         let mut session = HeadlessSession::new(5);
-        // Market stands (built for free while still in sandbox mode), so
-        // farms can come. With every farm paused, though, nothing arrives at
-        // the market, so nothing gets applied toward the cost.
+        // Market stands (built for free while still in sandbox mode), but
+        // fewer than the number of farms, so who gets one matters.
         for z in 0..3 {
             dispatch_ok(&mut session, &format!("place 120 0 {} room market_stand", 100 + z));
         }
+        // Storage for the goods the pallet needs, and potatoes: every bin
+        // is dedicated to one resource.
+        for x in 100..103 {
+            dispatch_ok(&mut session, &format!("place {x} 0 90 room bin"));
+        }
         dispatch_ok(&mut session, "tick");
-        let all: Vec<usize> = (0..dispatch_ok(&mut session, "query farms").len()).collect();
-        set_paused(&mut session, &all, true);
+        for (i, res) in ["Straw", "Canvas", "Potato"].iter().enumerate() {
+            dispatch_ok(&mut session, &format!("assign_bin {} 0 90 {res}", 100 + i));
+        }
 
         dispatch_ok(&mut session, "sandbox off");
         dispatch_ok(&mut session, &format!("place {PALLET_CELL} pallet"));
         dispatch_ok(&mut session, "set_inventory canvas 0");
         dispatch_ok(&mut session, "set_inventory straw 0");
-        let before = dispatch_ok(&mut session, "query proposals");
         assert_eq!(
-            before[0],
+            dispatch_ok(&mut session, "query proposals")[0],
             "pending_changes=1 remaining_need=[(Straw, 2), (Canvas, 2)]"
         );
-        dispatch_ok(&mut session, "advance");
-        let after = dispatch_ok(&mut session, "query proposals");
-        assert_eq!(
-            after, before,
-            "remaining need shouldn't move without any market gains"
-        );
 
-        // Let every farm producing either needed resource come, and retry.
-        let straw = farms_producing(&mut session, "Straw");
-        let canvas = farms_producing(&mut session, "Canvas");
+        // Farms growing what the project needs get stands ahead of nearer
+        // farms that don't.
+        let farms = dispatch_ok(&mut session, "query farms");
+        let coming = |idx: usize| farms[idx].contains(" coming ");
+        let needed: Vec<usize> = farms_producing(&mut session, "Straw")
+            .into_iter()
+            .chain(farms_producing(&mut session, "Canvas"))
+            .collect();
         assert!(
-            !straw.is_empty() && !canvas.is_empty(),
-            "expected at least one farm producing each of straw and canvas"
+            needed.iter().any(|&idx| coming(idx)),
+            "expected a farm growing straw or canvas to be coming:\n{farms:#?}"
         );
 
-        set_paused(&mut session, &straw, false);
-        set_paused(&mut session, &canvas, false);
         let mut completed = false;
         for _ in 0..8 {
             let lines = dispatch_ok(&mut session, "advance");
@@ -1778,11 +1796,9 @@ mod tests {
             "pending_changes=0 remaining_need=[]"
         );
 
-        // The starting camp's wagon provides some storage, so leftover
-        // resources beyond what construction consumed were stockpiled there
-        // rather than lost. Exact amounts depend on which farms happened to
-        // come across the retry loop above, so just check something
-        // landed in storage instead of everything being lost.
+        // Leftover resources beyond what construction consumed were
+        // stockpiled in the assigned bins rather than lost. Exact amounts
+        // depend on which farms came, so just check something landed.
         assert_ne!(
             dispatch_ok(&mut session, "query inventory"),
             vec!["(empty)".to_string()]

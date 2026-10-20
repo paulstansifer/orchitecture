@@ -25,7 +25,6 @@ impl ActionView {
 /// Everything a visible farm's info panel needs to render.
 pub struct FarmPanelView {
     pub coming: bool,
-    pub paused: bool,
     pub potatoes: u32,
     pub produced: (UniformResource, u32),
     pub absences: Vec<Absence>,
@@ -66,7 +65,6 @@ pub fn farm_panel_view(
     let tool = ToolKind::CarpentersTools;
     Some(FarmPanelView {
         coming,
-        paused: farm.paused,
         potatoes: effects.production.potatoes[id.index()],
         produced: (
             farm.produced_resource(),

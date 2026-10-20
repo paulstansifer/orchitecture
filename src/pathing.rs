@@ -725,7 +725,9 @@ mod tests {
     #[test]
     fn simple_balcony_training_map_stairs_connect_to_the_balcony_floor() {
         let mut city = test_city();
-        city.contents = crate::map_files::load_named_map("simple_balcony", &city.eorfs).unwrap();
+        city.contents = crate::map_files::load_named_map("simple_balcony", &city.eorfs)
+            .unwrap()
+            .contents;
         let nav = build_navigation_grid(&city);
         // The two ground-floor stairs (facing PosX, at x=0 and x=4, z=3) should
         // each land one level up on the opposite (north, -Z) side, at z=2 --
@@ -744,7 +746,9 @@ mod tests {
         // `simple_balcony_training_map_stairs_connect_to_the_balcony_floor`
         // does, with the same real surrounding walls/floors (also rotated).
         let mut city = test_city();
-        let contents = crate::map_files::load_named_map("simple_balcony", &city.eorfs).unwrap();
+        let contents = crate::map_files::load_named_map("simple_balcony", &city.eorfs)
+            .unwrap()
+            .contents;
         city.contents = contents.rotate(Rotation::Clockwise);
         let nav = build_navigation_grid(&city);
         // Rotating (x,y,z) -> (-z,y,x) carries the original stairs/landing

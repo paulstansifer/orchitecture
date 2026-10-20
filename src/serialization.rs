@@ -6,7 +6,30 @@ use std::collections::HashMap;
 use crate::city::Cell;
 use crate::eorf::{EorfId, EorfInfo};
 use crate::materials::BuildMaterialId;
+use crate::resource::UniformResource;
 use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, Sparse3D};
+
+/// Prefix of the trailer lines recording which resource each bin is dedicated
+/// to: `bin x,y,z=<json resource>`, with coordinates relative to the saved
+/// grid's minimum corner, like the extended cell lines.
+const BIN_PREFIX: &str = "bin ";
+
+/// A city's grid plus the per-bin resource assignments that go with it (keyed
+/// by cube, in the same frame as the grid's own coordinates).
+#[derive(Clone, Debug, Default)]
+pub struct LoadedCity {
+    pub contents: Sparse3D<Cell>,
+    pub bin_assignments: HashMap<IVec3, UniformResource>,
+}
+
+impl From<Sparse3D<Cell>> for LoadedCity {
+    fn from(contents: Sparse3D<Cell>) -> Self {
+        LoadedCity {
+            contents,
+            bin_assignments: HashMap::new(),
+        }
+    }
+}
 
 pub fn serialize_slot(
     id: EorfId,
@@ -146,6 +169,9 @@ where
         if line.starts_with("~*~*~") {
             // Start of evaluated cells data
             for line in lines_it {
+                if line.starts_with(BIN_PREFIX) {
+                    continue;
+                }
                 let (pos, slot, cell) = extended_deserialize_at(line).map_err(E::from)?;
                 let loc = RelSlotCoord::new(pos.x, pos.y, pos.z, slot);
                 grid.set(loc, cell);
@@ -213,14 +239,66 @@ pub fn serialize(contents: &Sparse3D<Cell>, structures: &[EorfInfo]) -> Result<V
     Ok(serialized.into_bytes())
 }
 
-pub fn save(
+/// Like [`serialize`], but also records the bins' resource assignments.
+pub fn serialize_city(
     contents: &Sparse3D<Cell>,
+    bin_assignments: &HashMap<IVec3, UniformResource>,
+    structures: &[EorfInfo],
+) -> Result<Vec<u8>> {
+    let mut text = String::from_utf8(serialize(contents, structures)?)?;
+    let min = contents.bounding_box().0;
+    let mut bins: Vec<_> = bin_assignments.iter().collect();
+    bins.sort_by_key(|(cube, _)| (cube.y, cube.z, cube.x));
+    for (cube, res) in bins {
+        let p = *cube - min;
+        text.push_str(&format!(
+            "{BIN_PREFIX}{},{},{}={}\n",
+            p.x,
+            p.y,
+            p.z,
+            serde_json::to_string(res)?
+        ));
+    }
+    Ok(text.into_bytes())
+}
+
+pub fn save(
+    city: &LoadedCity,
     structures: &[EorfInfo],
     path: &std::path::PathBuf,
 ) -> Result<()> {
-    let bytes = serialize(contents, structures)?;
+    let bytes = serialize_city(&city.contents, &city.bin_assignments, structures)?;
     std::fs::write(path, bytes)?;
     Ok(())
+}
+
+fn parse_bin_line(line: &str) -> Result<(IVec3, UniformResource)> {
+    let (coords, res) = line
+        .trim_start_matches(BIN_PREFIX)
+        .split_once('=')
+        .ok_or_else(|| anyhow::anyhow!("Invalid bin line: '{line}'"))?;
+    let c: Vec<i32> = coords
+        .split(',')
+        .map(|n| n.parse::<i32>())
+        .collect::<Result<_, _>>()?;
+    let [x, y, z] = c[..] else {
+        return Err(anyhow::anyhow!("Invalid bin coordinates: '{line}'"));
+    };
+    Ok((IVec3::new(x, y, z), serde_json::from_str(res)?))
+}
+
+/// Loads a grid and its bin assignments.
+pub fn load_city_from_str(content: &str, structures: &[EorfInfo]) -> Result<LoadedCity> {
+    let contents = load_from_str(content, structures)?;
+    let bin_assignments = content
+        .lines()
+        .filter(|l| l.starts_with(BIN_PREFIX))
+        .map(parse_bin_line)
+        .collect::<Result<_>>()?;
+    Ok(LoadedCity {
+        contents,
+        bin_assignments,
+    })
 }
 
 pub fn load_from_str(content: &str, structures: &[EorfInfo]) -> Result<Sparse3D<Cell>> {
@@ -248,9 +326,9 @@ pub fn load_from_str(content: &str, structures: &[EorfInfo]) -> Result<Sparse3D<
     )
 }
 
-pub fn load(path: &std::path::PathBuf, structures: &[EorfInfo]) -> Result<Sparse3D<Cell>> {
+pub fn load(path: &std::path::PathBuf, structures: &[EorfInfo]) -> Result<LoadedCity> {
     let content = std::fs::read_to_string(path)?;
-    load_from_str(&content, structures)
+    load_city_from_str(&content, structures)
 }
 
 #[cfg(test)]
@@ -351,6 +429,33 @@ mod tests {
             evaluation: None,
             build_material: crate::materials::BuildMaterialId::default(),
         }
+    }
+
+    #[test]
+    fn round_trip_keeps_bin_assignments() {
+        use bevy::math::IVec3;
+
+        use crate::resource::UniformResource::{Lime, Potato};
+
+        let structures = make_structures();
+        let mut grid = super::super::sparse3d::Sparse3D::new();
+        // Two rooms with a gap, so the saved grid's origin isn't the world's.
+        grid.set(RelSlotCoord::new(2, 0, 3, RelSlot::Room), cell(0));
+        grid.set(RelSlotCoord::new(4, 0, 3, RelSlot::Room), cell(0));
+        let bins: HashMap<IVec3, _> = [(IVec3::new(2, 0, 3), Potato), (IVec3::new(4, 0, 3), Lime)]
+            .into_iter()
+            .collect();
+
+        let bytes = super::serialize_city(&grid, &bins, &structures).unwrap();
+        let restored =
+            super::load_city_from_str(std::str::from_utf8(&bytes).unwrap(), &structures).unwrap();
+
+        // Both are relative to the grid's minimum corner, which is (2, 0, 3).
+        check!(restored.contents.size() == 2);
+        let expected: HashMap<IVec3, _> = [(IVec3::new(0, 0, 0), Potato), (IVec3::new(2, 0, 0), Lime)]
+            .into_iter()
+            .collect();
+        check!(restored.bin_assignments == expected);
     }
 
     #[test]

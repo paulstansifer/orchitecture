@@ -47,16 +47,6 @@ pub struct ResourceRow {
     pub dedicated_capacity: Option<u32>,
 }
 
-/// The always-shown row measuring free *uncommitted* (shared, undedicated)
-/// storage capacity — room not earmarked for any particular resource.
-pub struct UncommittedStorageRow {
-    /// Free shared capacity right now.
-    pub available: u32,
-    /// Projected change to `available` this month (negative = this month's
-    /// leftover inflow will consume some of it).
-    pub delta: i64,
-}
-
 /// A category of `UniqueResource` shown in its own storage row. `Tools` and
 /// `Rugs` are rack-backed (per-cube dedicated); `Books` are bookcase-backed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -135,7 +125,6 @@ pub struct MonthPanelView {
     pub farms_absent: Vec<String>,
     pub has_storage: bool,
     pub rows: Vec<ResourceRow>,
-    pub uncommitted_storage: UncommittedStorageRow,
     pub rack_rows: Vec<UniqueResourceRow>,
     pub traveler: Option<TravelerOfferView>,
 }
@@ -263,32 +252,6 @@ pub fn month_panel_view(
         })
         .collect();
 
-    // Uncommitted (shared, undedicated) storage capacity: how much is free
-    // right now, and how much this month's projected leftover inflow will
-    // consume, mirroring `ResourceRow::storage_delta`'s "preview" math.
-    let shared_ceiling = crate::place::storage_shared_ceiling(constructed);
-    let storage_totals_now = crate::place::storage_totals(constructed);
-    let uncommitted_now = crate::place::uncommitted_free_capacity(
-        shared_ceiling,
-        &dedicated_ceilings,
-        &storage_totals_now,
-    );
-    let mut storage_totals_after = storage_totals_now.clone();
-    for &res in UniformResource::ALL {
-        let delta = effects.storage_delta(res);
-        let entry = storage_totals_after.entry(res).or_insert(0);
-        *entry = (*entry as i64 + delta).max(0) as u32;
-    }
-    let uncommitted_after = crate::place::uncommitted_free_capacity(
-        shared_ceiling,
-        &dedicated_ceilings,
-        &storage_totals_after,
-    );
-    let uncommitted_storage = UncommittedStorageRow {
-        available: uncommitted_now.round() as u32,
-        delta: uncommitted_after.round() as i64 - uncommitted_now.round() as i64,
-    };
-
     // Tools/Rugs/Books rows: shown when the player has any storage capacity
     // for that category, or will receive one this month. Tools and Rugs are
     // rack-backed; Books are bookcase-backed.
@@ -399,7 +362,6 @@ pub fn month_panel_view(
         farms_absent,
         has_storage,
         rows,
-        uncommitted_storage,
         rack_rows,
         traveler,
     }
@@ -453,8 +415,8 @@ mod tests {
         )
     }
 
-    /// A unit-square farm at the city, coming to market unless paused.
-    fn mk_farm(coming: bool) -> FarmData {
+    /// A unit-square farm at the city.
+    fn mk_farm() -> FarmData {
         FarmData {
             seed: Vec2::new(0.5, 0.5),
             polygon: vec![
@@ -463,7 +425,6 @@ mod tests {
                 Vec2::new(1.0, 1.0),
                 Vec2::new(0.0, 1.0),
             ],
-            paused: !coming,
             ..crate::surroundings::farmstead::tests::mk_farm(Straw, 5.0)
         }
     }
@@ -487,7 +448,7 @@ mod tests {
     /// ask "Wait?" rather than offer to advance directly.
     #[test]
     fn nothing_pending_means_wait() {
-        let farms = farms_with(vec![mk_farm(false)]);
+        let farms = farms_with(vec![]);
         let cw = ConstructedCity::new(Vec::new());
         let pending = crate::city::ProposedCity::new();
         let pop = Population {
@@ -733,7 +694,7 @@ mod tests {
     /// gain in the resource row for the produced resource.
     #[test]
     fn coming_farm_reports_market_row() {
-        let farms = farms_with(vec![mk_farm(true)]);
+        let farms = farms_with(vec![mk_farm()]);
         let cw = ConstructedCity::new(Vec::new());
         let pending = crate::city::ProposedCity::new();
         let pop = Population {

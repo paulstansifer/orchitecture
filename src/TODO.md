@@ -1,5 +1,3 @@
-  * No unassigned storage, and attendance prioritizes what you have space for. 
- 
   * More architectural details?
   * Probably pull some things out of build.rs
   * Finished goods:

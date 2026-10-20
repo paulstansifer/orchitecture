@@ -16,7 +16,7 @@ use crate::surroundings::farmstead::{FarmsResource, GameClock};
 use crate::traveler::TravelerState;
 use crate::ui_util::{icon, resource_icon_cell, signed_delta};
 use crate::ui_view::{
-    month_panel_view, AdvanceState, MonthPanelView, ResourceRow, UncommittedStorageRow,
+    month_panel_view, AdvanceState, MonthPanelView, ResourceRow,
     UniqueCategory, UniqueResourceRow,
 };
 use crate::{col_format, heading_label, label, note_label};
@@ -106,7 +106,6 @@ pub fn shared_ui_system(
     let icon_textures_lg = resource_icons.texture_ids_large(&mut contexts);
     let tool_texture_lg = resource_icons.tool_texture_id_large(&mut contexts);
     let book_texture_lg = resource_icons.book_texture_id_large(&mut contexts);
-    let unassigned_texture_lg = resource_icons.unassigned_storage_texture_id_large(&mut contexts);
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -151,7 +150,6 @@ pub fn shared_ui_system(
                 ui,
                 &view,
                 &icon_textures_lg,
-                unassigned_texture_lg,
                 tool_texture_lg,
                 book_texture_lg,
             );
@@ -261,13 +259,12 @@ fn advance_controls(
     go_advance_month
 }
 
-/// The resource grid: one row per tracked resource, plus the uncommitted
-/// storage row and the Tools/Rugs/Books rack rows.
+/// The resource grid: one row per tracked resource, plus the Tools/Rugs/Books
+/// rack rows.
 fn resource_grid(
     ui: &mut egui::Ui,
     view: &MonthPanelView,
     icon_textures_lg: &HashMap<UniformResource, egui::TextureId>,
-    unassigned_texture_lg: egui::TextureId,
     tool_texture_lg: egui::TextureId,
     book_texture_lg: egui::TextureId,
 ) {
@@ -279,9 +276,6 @@ fn resource_grid(
                 resource_row_cells(ui, row, view.has_storage, icon_textures_lg);
                 ui.end_row();
             }
-
-            uncommitted_row(ui, &view.uncommitted_storage, unassigned_texture_lg);
-            ui.end_row();
 
             // Tools/Rugs/Books: UniqueResource categories held in storage,
             // shown when there's capacity for them or the player will
@@ -365,19 +359,6 @@ fn resource_row_cells(
     } else {
         ui.label("");
     }
-}
-
-/// Uncommitted (shared, undedicated) storage row: free capacity not
-/// dedicated to any particular resource, plus this month's projected change.
-fn uncommitted_row(
-    ui: &mut egui::Ui,
-    uncommitted: &UncommittedStorageRow,
-    unassigned_texture_lg: egui::TextureId,
-) {
-    icon(ui, unassigned_texture_lg, LARGE_SIZE);
-    let delta = signed_delta(uncommitted.delta, " +", " –");
-    label!(ui, format!("/{}", uncommitted.available), delta);
-    ui.label("");
 }
 
 /// One Tools/Rugs/Books rack row.

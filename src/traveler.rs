@@ -366,13 +366,19 @@ mod tests {
         };
 
         // A bookroom (2 bookcases + a chair) is the only thing that gives books
-        // anywhere to go; without it every book offer is unaffordable. The bin
-        // is for the potatoes/canvas the bookseller wants in trade.
+        // anywhere to go; without it every book offer is unaffordable. The bins
+        // (each dedicated to one good) are for the potatoes/canvas/straw the
+        // bookseller might want in trade.
         dispatch(&mut session, "place 100 0 100 room bookcase");
         dispatch(&mut session, "place 100 0 101 room bookcase");
         dispatch(&mut session, "place 100 0 102 xwall chair");
-        dispatch(&mut session, "place 100 0 103 room bin");
+        for z in 103..=105 {
+            dispatch(&mut session, &format!("place 100 0 {z} room bin"));
+        }
         dispatch(&mut session, "tick");
+        for (z, res) in [(103, "Potato"), (104, "Canvas"), (105, "Straw")] {
+            dispatch(&mut session, &format!("assign_bin 100 0 {z} {res}"));
+        }
         // And the traveler needs somewhere to stay.
         crate::headless::build_inn(&mut session, 110, 100);
 

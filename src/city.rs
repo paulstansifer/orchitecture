@@ -301,9 +301,9 @@ pub struct ConstructedCity {
     /// `set_cell`/`take_cell` whenever the furniture there is overwritten or
     /// removed, since the restriction belongs to that specific placement.
     pub furniture_restrictions: HashMap<IVec3, crate::place::ParentRestriction>,
-    /// Per-bin `UniformResource` restriction, keyed by the cube the bin is
-    /// placed at. Set in the UI; absent means unrestricted (any resource may
-    /// be stored there). Cleared via `set_cell`/`take_cell` whenever the
+    /// Per-bin `UniformResource` dedication, keyed by the cube the bin is
+    /// placed at. Set in the UI; absent means the bin is unused (it holds
+    /// nothing until assigned a resource). Cleared via `set_cell`/`take_cell` whenever the
     /// furniture there is overwritten or removed, since the restriction
     /// belongs to that specific placement.
     pub bin_resource_restrictions: HashMap<IVec3, UniformResource>,

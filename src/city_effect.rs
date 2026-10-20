@@ -34,7 +34,9 @@ use crate::place;
 use crate::place::PlacedPlaceId;
 use crate::population::Population;
 use crate::resource::{distribute_incoming_resources, ResourceFlow, UniformResource};
-use crate::surroundings::attendance::{plan_attendance, AttendancePlan, MarketVenues};
+use crate::surroundings::attendance::{
+    plan_attendance, AttendancePlan, MarketDemand, MarketVenues,
+};
 use crate::surroundings::farmstead::{
     compute_production, known_farm_plentifulness, FarmId, FarmsResource, ProductionPlan,
 };
@@ -579,8 +581,9 @@ pub fn compute_month_effects(
     material_list: &MaterialList,
     sandbox_enabled: bool,
 ) -> MonthEffects {
-    let attendance = plan_attendance(farms, venues, traveler_state);
     let production = compute_production(farms);
+    let demand = MarketDemand::compute(constructed, pending, material_list, sandbox_enabled);
+    let attendance = plan_attendance(farms, &production, venues, &demand, traveler_state);
     compute_month_effects_with(
         farms,
         attendance,
@@ -1103,14 +1106,37 @@ mod tests {
                 build_material: BuildMaterialId::default(),
             },
         );
+        // A second bin, so Plank output has somewhere to go: every bin is
+        // dedicated to one resource.
+        let plank_bin_cube = IVec3::new(1, 0, 0);
+        cw.contents.set(
+            SlotCoord {
+                cube: plank_bin_cube,
+                slot: Slot::Room,
+            },
+            Cell {
+                id: EorfId(0),
+                facing: Facing::default(),
+                evaluation: None,
+                build_material: BuildMaterialId::default(),
+            },
+        );
+        cw.bin_resource_restrictions.insert(bin_cube, Timber);
+        cw.bin_resource_restrictions.insert(plank_bin_cube, Plank);
         let mut inv = Inventory::new([(StorageKind::Bulk, cap)]);
         inv.add_uniform(Timber, timber);
         cw.placed_places.insert(ParticularPlace {
             place: 0,
-            fulfillments: vec![FulfilledPorf::Furniture(SlotCoord {
-                cube: bin_cube,
-                slot: Slot::Room,
-            })],
+            fulfillments: vec![
+                FulfilledPorf::Furniture(SlotCoord {
+                    cube: bin_cube,
+                    slot: Slot::Room,
+                }),
+                FulfilledPorf::Furniture(SlotCoord {
+                    cube: plank_bin_cube,
+                    slot: Slot::Room,
+                }),
+            ],
             contents: inv,
             restriction: ParentRestriction::Unrestricted,
         });

@@ -52,8 +52,6 @@ pub struct FarmData {
     /// processes its neighbors' `resource` into the tool's output instead of
     /// growing its own (see `compute_production`).
     pub tool: Option<ToolKind>,
-    /// The player has asked this farm to stay home.
-    pub paused: bool,
     /// The least guest-room quality this farm will put up with when it needs
     /// a room (see `attendance::plan_attendance`). Rolled at generation.
     pub required_quality: f32,
@@ -445,7 +443,6 @@ pub(crate) mod tests {
             fertility: 1.0,
             resource,
             tool: None,
-            paused: false,
             required_quality: 0.5,
         }
     }

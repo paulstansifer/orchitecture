@@ -522,16 +522,26 @@ pub fn commit_pending_construction(
 pub fn load_from_offline(
     cw: &mut ConstructedCity,
     pw: &mut ProposedCity,
-    new_contents: Sparse3D<Cell>,
+    new_city: impl Into<crate::serialization::LoadedCity>,
 ) -> Vec<(SlotCoord, Option<Cell>)> {
+    let crate::serialization::LoadedCity {
+        contents: new_contents,
+        bin_assignments,
+    } = new_city.into();
     pw.proposed_changes = Sparse3D::new();
     pw.undo_record.clear();
     pw.redo_record.clear();
     pw.resource_progress.clear();
     // Shift the building into the no-road semiplane (south of the E-W road).
     let z_shift = -new_contents.bounding_box().1.z;
-    let shifted = new_contents.translate(IVec3::new(0, 0, z_shift));
-    cw.replace_contents(shifted)
+    let shift = IVec3::new(0, 0, z_shift);
+    let shifted = new_contents.translate(shift);
+    let changes = cw.replace_contents(shifted);
+    cw.bin_resource_restrictions = bin_assignments
+        .into_iter()
+        .map(|(cube, res)| (cube + shift, res))
+        .collect();
+    changes
 }
 
 /// The pending construction project's absorption of resources this month:
@@ -1041,6 +1051,8 @@ mod tests {
             },
         );
 
+        cw.bin_resource_restrictions
+            .insert(IVec3::new(5, 0, 5), UniformResource::Fieldstone);
         cw.places = vec![Place {
             name: "storage room".to_string(),
             requirements: vec![],

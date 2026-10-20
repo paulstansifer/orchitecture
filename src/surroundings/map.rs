@@ -255,7 +255,6 @@ pub fn build_farms_resource(rng: &mut impl rand::Rng) -> FarmsResource {
             fertility,
             resource,
             tool: None,
-            paused: false,
             required_quality,
         });
     }

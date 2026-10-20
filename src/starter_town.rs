@@ -6,9 +6,10 @@
 use bevy::math::IVec3;
 
 use crate::build_helpers::Builder;
-use crate::city::Cell;
 use crate::eorf::EorfInfo;
-use crate::sparse3d::{RelSlot, Sparse3D};
+use crate::resource::UniformResource;
+use crate::serialization::LoadedCity;
+use crate::sparse3d::RelSlot;
 
 fn v(x: i32, y: i32, z: i32) -> IVec3 {
     IVec3::new(x, y, z)
@@ -29,13 +30,22 @@ fn build_box_with_door(builder: &mut Builder, corner_a: IVec3, corner_b: IVec3, 
 /// Builds the starter town: a storage room (5 bins, 3 racks), a bookroom (2
 /// bookcases, 1 chair), three bedrooms (1 pallet each) -- each in its own box
 /// building with a door -- plus 4 open-air market stands.
-pub fn build_starter_town(eorfs: &[EorfInfo]) -> Sparse3D<Cell> {
+pub fn build_starter_town(eorfs: &[EorfInfo]) -> LoadedCity {
     let mut builder = Builder::new(eorfs);
 
-    // Storage room: 5 bins, 3 racks.
+    // Storage room: 5 bins, each dedicated to a different good, 3 racks.
     build_box_with_door(&mut builder, v(0, 0, 0), v(4, 0, 3), 3);
-    for x in 0..=4 {
+    let bin_goods = [
+        UniformResource::Potato,
+        UniformResource::Timber,
+        UniformResource::Straw,
+        UniformResource::Lime,
+        UniformResource::Fieldstone,
+    ];
+    let mut bin_assignments = std::collections::HashMap::new();
+    for (x, res) in (0..).zip(bin_goods) {
         builder.room_plop(v(x, 0, 1), "bin");
+        bin_assignments.insert(v(x, 0, 1), res);
     }
     for x in 1..=3 {
         builder.room_plop(v(x, 0, 2), "rack");
@@ -72,5 +82,8 @@ pub fn build_starter_town(eorfs: &[EorfInfo]) -> Sparse3D<Cell> {
 
     build_box_with_door(&mut builder, v(17, 1, 12), v(18, 1, 14), 17);
 
-    builder.get()
+    LoadedCity {
+        contents: builder.get(),
+        bin_assignments,
+    }
 }
