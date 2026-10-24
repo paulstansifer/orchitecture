@@ -63,19 +63,19 @@ Commands (space-separated tokens, one per line):
                                                    the map corners nearest the two points
   cancel_road <i>                                  drop the i-th proposed road from the project
   set_production <farm_idx> <resource>             cheat: force a farm's own resource
-  assign_bin <x> <y> <z> <resource>|unused         dedicate a storage bin to a resource (bins start out unused)
+  assign_bin <x> <y> <z> [slot] <resource>|unused  dedicate a storage bin to a resource (bins start out unused)
   set_inventory <resource> <qty>                   cheat: adjust city inventory of a resource(if possible)
   deposit_tool                                     cheat: deposit a carpenter's tools into rack storage
   learn <idea> <count>                             cheat: learn an idea's first <count> segments
-  set_priority <x> <y> <z> <level>                 set a workplace's priority (very_low|low|medium|high|very_high)
-  install <x> <y> <z> <slot_idx>                   install the first available matching resource into a slot
-  uninstall <x> <y> <z> <slot_idx>                 remove an installed resource, returning it to storage
+  set_priority <x> <y> <z> [slot] <level>          set a workplace's priority (very_low|low|medium|high|very_high)
+  install <x> <y> <z> [slot] <slot_idx>            install the first available matching resource into a slot
+  uninstall <x> <y> <z> [slot] <slot_idx>          remove an installed resource, returning it to storage
   query cell <x> <y> <z> <slot>                    inspect a grid location
   query structures                                 list placeable structures
   query places                                     list place types (Places form automatically)
-  query slots <x> <y> <z>                          list a furniture's slots and their contents
-  query place <x> <y> <z>                          inspect the place owning a cube
-  query valid_places <x> <y> <z>                   place types formable around a cube
+  query slots <x> <y> <z> [slot]                   list a furniture's slots and their contents
+  query place <x> <y> <z> [slot]                   inspect the place owning a piece of furniture
+  query valid_places <x> <y> <z> [slot]            place types formable around a piece of furniture
   query ideas                                      per-idea learned/understood segments, and idea-gated places
   query population                                 each individual's home/work/fed/morale
   query farms                                      list all farms, with this month's attendance
@@ -95,7 +95,7 @@ Commands (space-separated tokens, one per line):
   reset [seed]                                     start a brand-new session
   help                                             this text
   quit / exit                                      end the session
-Slots: room|floor|xwall|zwall. Facings: negx|negz|posx|posz (or 0-3). Eorf names use
+Slots: room|floor|xwall|zwall; an optional [slot] defaults to room. Facings: negx|negz|posx|posz (or 0-3). Eorf names use
 underscores for spaces (e.g. market_stand). Pathfinding queries read `NavigationGrid`, which
 is only rebuilt by a `tick` after the city changes.";
 
@@ -545,24 +545,22 @@ impl HeadlessSession {
     }
 
     fn cmd_assign_bin(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
-        if args.len() < 4 {
-            return Err("usage: assign_bin <x> <y> <z> <resource>|unused".to_string());
-        }
-        let cube = parse_ivec3(&args[0..3])?;
-        let assignment = match args[3] {
-            "unused" => None,
+        const USAGE: &str = "usage: assign_bin <x> <y> <z> [slot] <resource>|unused";
+        let (loc, rest) = parse_loc(args).map_err(|_| USAGE.to_string())?;
+        let assignment = match rest.first().ok_or(USAGE)? {
+            &"unused" => None,
             name => Some(parse_uniform_resource(name)?),
         };
         let mut cw = self.world().resource_mut::<ConstructedCity>();
-        if !place::cube_is_storage_bin(&cw, cube) {
-            return Err(format!("no storage bin at {cube}"));
+        if !place::is_storage_bin(&cw, loc) {
+            return Err(format!("no storage bin at {}", loc.cube));
         }
         let restrictions = &mut cw.bin_resource_restrictions;
         match assignment {
-            Some(res) => restrictions.insert(cube, res),
-            None => restrictions.remove(&cube),
+            Some(res) => restrictions.insert(loc, res),
+            None => restrictions.remove(&loc),
         };
-        Ok(vec![format!("bin at {cube} -> {}", args[3])])
+        Ok(vec![format!("bin at {} -> {}", loc.cube, rest[0])])
     }
 
     fn cmd_set_inventory(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
@@ -587,13 +585,10 @@ impl HeadlessSession {
     }
 
     fn cmd_set_priority(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
-        if args.len() < 4 {
-            return Err(
-                "usage: set_priority <x> <y> <z> <very_low|low|medium|high|very_high>".to_string(),
-            );
-        }
-        let cube = parse_ivec3(&args[0..3])?;
-        let prio = match args[3] {
+        const USAGE: &str =
+            "usage: set_priority <x> <y> <z> [slot] <very_low|low|medium|high|very_high>";
+        let (loc, rest) = parse_loc(args).map_err(|_| USAGE.to_string())?;
+        let prio = match *rest.first().ok_or(USAGE)? {
             "very_low" => crate::work::WorkPriority::VeryLow,
             "low" => crate::work::WorkPriority::Low,
             "medium" => crate::work::WorkPriority::Medium,
@@ -602,12 +597,16 @@ impl HeadlessSession {
             other => return Err(format!("unknown priority level {other:?}")),
         };
         let mut cw = self.world().resource_mut::<ConstructedCity>();
-        let core = match place::place_id_at(&cw, cube) {
+        let core = match place::place_id_at(&cw, loc) {
             Some(id) => place::place_location(&cw, id),
             None => return Err("no place there".to_string()),
         };
         cw.work_priorities.insert(core, prio);
-        Ok(vec![format!("priority at {core} = {}", prio.label())])
+        Ok(vec![format!(
+            "priority at {} = {}",
+            core.cube,
+            prio.label()
+        )])
     }
 
     fn cmd_deposit_tool(&mut self) -> Result<Vec<String>, String> {
@@ -646,15 +645,9 @@ impl HeadlessSession {
     }
 
     fn cmd_install(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
-        if args.len() < 4 {
-            return Err("usage: install <x> <y> <z> <slot_idx>".to_string());
-        }
-        let cube = parse_ivec3(&args[0..3])?;
-        let slot_idx = parse_usize(args[3])?;
-        let loc = SlotCoord {
-            cube,
-            slot: Slot::Room,
-        };
+        const USAGE: &str = "usage: install <x> <y> <z> [slot] <slot_idx>";
+        let (loc, rest) = parse_loc(args).map_err(|_| USAGE.to_string())?;
+        let slot_idx = parse_usize(rest.first().ok_or(USAGE)?)?;
         let mut cw = self.world().resource_mut::<ConstructedCity>();
         let eorf_idx = cw
             .contents
@@ -666,7 +659,7 @@ impl HeadlessSession {
         let slot = slots
             .get(slot_idx)
             .ok_or_else(|| format!("no slot {slot_idx} on this furniture"))?;
-        if cw.slot_contents(cube, slot_idx).is_some() {
+        if cw.slot_contents(loc, slot_idx).is_some() {
             return Err("slot already filled".to_string());
         }
         let kind = slot.kind;
@@ -676,20 +669,14 @@ impl HeadlessSession {
             .ok_or_else(|| format!("no {} available in storage", kind.label()))?;
         place::withdraw_unique(&mut cw, &item);
         let label = item.label();
-        cw.set_slot(cube, slot_idx, slots.len(), Some(item));
+        cw.set_slot(loc, slot_idx, slots.len(), Some(item));
         Ok(vec![format!("installed {label}")])
     }
 
     fn cmd_uninstall(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
-        if args.len() < 4 {
-            return Err("usage: uninstall <x> <y> <z> <slot_idx>".to_string());
-        }
-        let cube = parse_ivec3(&args[0..3])?;
-        let slot_idx = parse_usize(args[3])?;
-        let loc = SlotCoord {
-            cube,
-            slot: Slot::Room,
-        };
+        const USAGE: &str = "usage: uninstall <x> <y> <z> [slot] <slot_idx>";
+        let (loc, rest) = parse_loc(args).map_err(|_| USAGE.to_string())?;
+        let slot_idx = parse_usize(rest.first().ok_or(USAGE)?)?;
         let mut cw = self.world().resource_mut::<ConstructedCity>();
         let eorf_idx = cw
             .contents
@@ -699,10 +686,10 @@ impl HeadlessSession {
             .as_usize();
         let slot_count = cw.eorfs[eorf_idx].slots.len();
         let item = cw
-            .slot_contents(cube, slot_idx)
+            .slot_contents(loc, slot_idx)
             .cloned()
             .ok_or_else(|| "slot is empty".to_string())?;
-        cw.set_slot(cube, slot_idx, slot_count, None);
+        cw.set_slot(loc, slot_idx, slot_count, None);
         let deposited = place::deposit_unique(&mut cw, item.clone());
         Ok(vec![format!(
             "removed {}{}",
@@ -828,14 +815,8 @@ impl HeadlessSession {
     }
 
     fn query_slots(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
-        if args.len() < 3 {
-            return Err("usage: query slots <x> <y> <z>".to_string());
-        }
-        let cube = parse_ivec3(&args[0..3])?;
-        let loc = SlotCoord {
-            cube,
-            slot: Slot::Room,
-        };
+        let (loc, _) =
+            parse_loc(args).map_err(|_| "usage: query slots <x> <y> <z> [slot]".to_string())?;
         let cw = self.world().resource::<ConstructedCity>();
         let eorf_idx = cw
             .contents
@@ -852,7 +833,7 @@ impl HeadlessSession {
             .enumerate()
             .map(|(i, slot)| {
                 let contents = cw
-                    .slot_contents(cube, i)
+                    .slot_contents(loc, i)
                     .map(|item| item.label())
                     .unwrap_or_else(|| "empty".to_string());
                 format!("{i} {}: {contents}", slot.kind.label())
@@ -908,17 +889,15 @@ impl HeadlessSession {
     }
 
     fn query_place(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
-        if args.len() < 3 {
-            return Err("usage: query place <x> <y> <z>".to_string());
-        }
-        let cube = parse_ivec3(&args[0..3])?;
+        let (loc, _) =
+            parse_loc(args).map_err(|_| "usage: query place <x> <y> <z> [slot]".to_string())?;
         let cw = self.world().resource::<ConstructedCity>();
-        match place::place_id_at(cw, cube) {
+        match place::place_id_at(cw, loc) {
             None => Ok(vec!["none".to_string()]),
             Some(id) => {
                 let ps = &cw.placed_places[id];
                 let info = &cw.places[ps.place];
-                let parents: Vec<String> = place::containing_chain(cw, cube)
+                let parents: Vec<String> = place::containing_chain(cw, loc)
                     .into_iter()
                     .skip(1)
                     .map(|p| {
@@ -945,12 +924,10 @@ impl HeadlessSession {
     }
 
     fn query_valid_places(&mut self, args: &[&str]) -> Result<Vec<String>, String> {
-        if args.len() < 3 {
-            return Err("usage: query valid_places <x> <y> <z>".to_string());
-        }
-        let cube = parse_ivec3(&args[0..3])?;
+        let (loc, _) = parse_loc(args)
+            .map_err(|_| "usage: query valid_places <x> <y> <z> [slot]".to_string())?;
         let cw = self.world().resource::<ConstructedCity>();
-        let ids = place::valid_places_for(cw, cube);
+        let ids = place::valid_places_for(cw, loc);
         if ids.is_empty() {
             Ok(vec!["(none)".to_string()])
         } else {
@@ -1494,6 +1471,25 @@ fn parse_ivec3(args: &[&str]) -> Result<IVec3, String> {
     ))
 }
 
+/// Parses `<x> <y> <z> [slot]` from the front of `args` (the slot defaults to
+/// `room`), returning the location and whatever arguments follow it.
+fn parse_loc<'a>(args: &'a [&'a str]) -> Result<(SlotCoord, &'a [&'a str]), String> {
+    if args.len() < 3 {
+        return Err("expected <x> <y> <z> [slot]".to_string());
+    }
+    let cube = parse_ivec3(&args[0..3])?;
+    match args.get(3).map(|s| parse_slot(s)) {
+        Some(Ok(slot)) => Ok((SlotCoord { cube, slot }, &args[4..])),
+        _ => Ok((
+            SlotCoord {
+                cube,
+                slot: Slot::Room,
+            },
+            &args[3..],
+        )),
+    }
+}
+
 fn parse_i32(s: &str) -> Result<i32, String> {
     s.parse().map_err(|_| format!("not an integer: {s}"))
 }
@@ -1584,8 +1580,8 @@ pub fn run() {
 /// Builds (in sandbox mode) a small open-air inn -- a dining room, a kitchen,
 /// and two guest bedrooms -- with its west corner at `(x, 0, z)`, plus a
 /// market stand right beside the bedrooms so they're decent guest rooms.
-/// Ticks twice: the inn, cored on the dining room, only forms on the pass
-/// after its parts do.
+/// Ticks once: the inn, cored on the dining room, forms in the same pass as
+/// its parts.
 #[cfg(test)]
 pub(crate) fn build_inn(session: &mut HeadlessSession, x: i32, z: i32) {
     let commands = [
@@ -1597,7 +1593,6 @@ pub(crate) fn build_inn(session: &mut HeadlessSession, x: i32, z: i32) {
         format!("place {} 0 {} room pallet", x + 1, z + 2),
         format!("place {} 0 {} room pallet", x + 2, z + 2),
         format!("place {} 0 {} room market_stand", x + 1, z + 4),
-        "tick".to_string(),
         "tick".to_string(),
     ];
     for cmd in commands {

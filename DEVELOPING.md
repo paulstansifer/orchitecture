@@ -43,9 +43,13 @@ City grid and related concepts:
     material) or `Furniture` (fixed cost, no cutaway mesh).
   * place.rs: `Place`s (formerly "stations") are automatically, deterministically
     formed from nearby Furniture/nested-`Place` requirements (see `sync_places`,
-    run after every edit) — e.g. a bedroom formed around a pallet. A `Place`'s
-    location is its core (first) requirement's location, resolved recursively
-    through `Porf` (Place-or-Furniture) requirements.
+    run after every edit) — e.g. a bedroom formed around a pallet. They're
+    re-formed from scratch each time, so the result never depends on build order:
+    more specific cores pick first, each place claims just its minimums, then
+    leftovers go to the nearest place that can use them. A `Place`'s location is
+    its core (first) requirement's `SlotCoord`, resolved recursively through `Porf`
+    (Place-or-Furniture) requirements. Furniture is always identified by its full
+    `SlotCoord` (cube *and* slot), never a bare cube.
   * serialization.rs: text format for `Sparse3D<Cell>`
   * pathing.rs: route-finding and connectedness over the city grid, via `bevy_northstar`
   * flood_fill.rs: generic multi-source flood fill over a cubic grid, plus

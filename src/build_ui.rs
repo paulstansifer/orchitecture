@@ -16,7 +16,7 @@ use crate::map_files::{load_map, map_file_controls_ui, MapLoadRequest};
 use crate::materials::MaterialList;
 use crate::population::Population;
 use crate::resource_icons::{ResourceIcons, LARGE_SIZE};
-use crate::sparse3d::{Slot, SlotCoord};
+use crate::sparse3d::SlotCoord;
 use crate::surroundings::FarmsResource;
 
 /// Which tab the left-hand panel shows.
@@ -172,10 +172,7 @@ fn places_list_ui(
     // per-instance buttons below can jump to its hierarchy.
     let mut instances: Vec<Vec<SlotCoord>> = vec![Vec::new(); constructed.places.len()];
     for (id, pp) in constructed.placed_places.iter() {
-        instances[pp.place].push(SlotCoord {
-            cube: crate::place::place_location(constructed, id),
-            slot: Slot::Room,
-        });
+        instances[pp.place].push(crate::place::place_location(constructed, id));
     }
     for place_idx in 0..constructed.places.len() {
         let name = constructed.places[place_idx].name.clone();
@@ -228,26 +225,26 @@ fn place_hierarchy_ui(
     ui.separator();
 
     let (mut highlight, accessible_range) =
-        place_chain_ui(ui, constructed, population, icon_textures, loc.cube);
+        place_chain_ui(ui, constructed, population, icon_textures, loc);
     clicked_furniture_ui(ui, constructed, loc, &mut highlight, open_install_menu);
 
     (highlight, accessible_range)
 }
 
-/// Renders the ancestor chain of places containing `cube` (`containing_chain` returns
+/// Renders the ancestor chain of places containing `loc` (`containing_chain` returns
 /// innermost first; displayed outermost first), each with its quality breakdown,
 /// nesting-restriction dropdown, structure counts, contents, and (for workplaces) a
 /// priority control plus current staffing. Returns the innermost place's furniture
-/// locations to highlight in 3D, and its accessible range -- both empty if `cube`
+/// locations to highlight in 3D, and its accessible range -- both empty if `loc`
 /// isn't part of any place.
 fn place_chain_ui(
     ui: &mut egui::Ui,
     constructed: &mut Guarded<'_, ConstructedCity>,
     population: &Population,
     icon_textures: &std::collections::HashMap<crate::resource::UniformResource, egui::TextureId>,
-    cube: bevy::math::IVec3,
+    loc: SlotCoord,
 ) -> (Vec<SlotCoord>, Vec<bevy::math::IVec3>) {
-    let chain = crate::place::containing_chain(constructed, cube);
+    let chain = crate::place::containing_chain(constructed, loc);
     if chain.is_empty() {
         ui.label("Not part of any place.");
         return (Vec::new(), Vec::new());
@@ -393,8 +390,8 @@ fn place_chain_ui(
 /// Renders the clicked furniture's own details (below the containing-place chain):
 /// nesting/storage-bin/rack restriction dropdowns, and any installable slots with
 /// Install/Remove buttons. Pushes `loc` onto `highlight` if the chain above didn't
-/// already cover it -- e.g. `WallPlop` furniture never fulfills a place (fulfillments
-/// are Room-slot only), so it wouldn't otherwise get a highlight ring.
+/// already cover it -- e.g. furniture that isn't part of any place, which wouldn't
+/// otherwise get a highlight ring.
 fn clicked_furniture_ui(
     ui: &mut egui::Ui,
     constructed: &mut Guarded<'_, ConstructedCity>,
@@ -402,7 +399,6 @@ fn clicked_furniture_ui(
     highlight: &mut Vec<SlotCoord>,
     open_install_menu: &mut Option<(SlotCoord, usize)>,
 ) {
-    let cube = loc.cube;
     let Some(cell) = constructed.contents.get(loc) else {
         return;
     };
@@ -421,22 +417,19 @@ fn clicked_furniture_ui(
         ui.label("Nestable within:");
         let current = constructed
             .furniture_restrictions
-            .get(&cube)
+            .get(&loc)
             .cloned()
             .unwrap_or_default();
         if let Some(new) =
             restriction_dropdown(ui, ("furniture-restriction", eorf_idx), &current, &eligible)
         {
-            constructed
-                .mutate()
-                .furniture_restrictions
-                .insert(cube, new);
+            constructed.mutate().furniture_restrictions.insert(loc, new);
         }
     }
 
-    if crate::place::cube_is_storage_bin(constructed, cube) {
+    if crate::place::is_storage_bin(constructed, loc) {
         ui.label("Stores:");
-        let current = constructed.bin_resource_restrictions.get(&cube).copied();
+        let current = constructed.bin_resource_restrictions.get(&loc).copied();
         let new = ui
             .horizontal(|ui| {
                 if current.is_none() {
@@ -450,24 +443,24 @@ fn clicked_furniture_ui(
             let restrictions = &mut constructed.mutate().bin_resource_restrictions;
             match new {
                 Some(res) => {
-                    restrictions.insert(cube, res);
+                    restrictions.insert(loc, res);
                 }
                 None => {
-                    restrictions.remove(&cube);
+                    restrictions.remove(&loc);
                 }
             }
         }
     }
 
-    if crate::place::cube_is_rack(constructed, cube) {
+    if crate::place::is_rack(constructed, loc) {
         ui.label("Holds:");
         let current = constructed
             .rack_restrictions
-            .get(&cube)
+            .get(&loc)
             .copied()
             .unwrap_or_default();
         if let Some(new) = rack_restriction_dropdown(ui, ("rack-restriction", eorf_idx), current) {
-            constructed.mutate().rack_restrictions.insert(cube, new);
+            constructed.mutate().rack_restrictions.insert(loc, new);
         }
     }
 
@@ -478,14 +471,14 @@ fn clicked_furniture_ui(
         ui.label("Slots:");
         let slot_count = slots.len();
         for (slot_idx, slot) in slots.iter().enumerate() {
-            let installed = constructed.slot_contents(cube, slot_idx).cloned();
+            let installed = constructed.slot_contents(loc, slot_idx).cloned();
             ui.horizontal(|ui| match installed {
                 Some(item) => {
                     ui.label(format!("{}: {}", slot.kind.label(), item.label()));
                     if ui.button("Remove").clicked() {
                         constructed
                             .mutate()
-                            .set_slot(cube, slot_idx, slot_count, None);
+                            .set_slot(loc, slot_idx, slot_count, None);
                         crate::place::deposit_unique(constructed.mutate(), item);
                     }
                 }
@@ -511,7 +504,6 @@ fn install_menu_window(
     let Some((loc, slot_idx)) = ui_state.install_menu else {
         return;
     };
-    let cube = loc.cube;
     // The furniture (or its slot) may have vanished since the menu was opened.
     let Some(cell) = constructed.contents.get(loc) else {
         ui_state.install_menu = None;
@@ -532,9 +524,10 @@ fn install_menu_window(
     egui::Window::new(format!("Install {}", kind.label()))
         .id(egui::Id::new((
             "install_menu",
-            cube.x,
-            cube.y,
-            cube.z,
+            loc.cube.x,
+            loc.cube.y,
+            loc.cube.z,
+            loc.slot,
             slot_idx,
         )))
         .collapsible(false)
@@ -558,7 +551,7 @@ fn install_menu_window(
         if crate::place::withdraw_unique(constructed.mutate(), &item) {
             constructed
                 .mutate()
-                .set_slot(cube, slot_idx, slot_count, Some(item));
+                .set_slot(loc, slot_idx, slot_count, Some(item));
         }
         ui_state.install_menu = None;
     } else if !keep_open {

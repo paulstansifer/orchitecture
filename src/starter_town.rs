@@ -9,7 +9,7 @@ use crate::build_helpers::Builder;
 use crate::eorf::EorfInfo;
 use crate::resource::UniformResource;
 use crate::serialization::LoadedCity;
-use crate::sparse3d::RelSlot;
+use crate::sparse3d::{RelSlot, Slot, SlotCoord};
 
 fn v(x: i32, y: i32, z: i32) -> IVec3 {
     IVec3::new(x, y, z)
@@ -45,7 +45,11 @@ pub fn build_starter_town(eorfs: &[EorfInfo]) -> LoadedCity {
     let mut bin_assignments = std::collections::HashMap::new();
     for (x, res) in (0..).zip(bin_goods) {
         builder.room_plop(v(x, 0, 1), "bin");
-        bin_assignments.insert(v(x, 0, 1), res);
+        let bin = SlotCoord {
+            cube: v(x, 0, 1),
+            slot: Slot::Room,
+        };
+        bin_assignments.insert(bin, res);
     }
     for x in 1..=3 {
         builder.room_plop(v(x, 0, 2), "rack");

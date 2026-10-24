@@ -7,19 +7,20 @@ use crate::city::Cell;
 use crate::eorf::{EorfId, EorfInfo};
 use crate::materials::BuildMaterialId;
 use crate::resource::UniformResource;
-use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, Sparse3D};
+use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, SlotCoord, Sparse3D};
 
 /// Prefix of the trailer lines recording which resource each bin is dedicated
-/// to: `bin x,y,z=<json resource>`, with coordinates relative to the saved
-/// grid's minimum corner, like the extended cell lines.
+/// to: `bin x,y,z,<json slot>=<json resource>`, with coordinates relative to
+/// the saved grid's minimum corner, like the extended cell lines. The slot may
+/// be omitted (`bin x,y,z=...`), meaning `Slot::Room`.
 const BIN_PREFIX: &str = "bin ";
 
 /// A city's grid plus the per-bin resource assignments that go with it (keyed
-/// by cube, in the same frame as the grid's own coordinates).
+/// by slot, in the same frame as the grid's own coordinates).
 #[derive(Clone, Debug, Default)]
 pub struct LoadedCity {
     pub contents: Sparse3D<Cell>,
-    pub bin_assignments: HashMap<IVec3, UniformResource>,
+    pub bin_assignments: HashMap<SlotCoord, UniformResource>,
 }
 
 impl From<Sparse3D<Cell>> for LoadedCity {
@@ -242,20 +243,21 @@ pub fn serialize(contents: &Sparse3D<Cell>, structures: &[EorfInfo]) -> Result<V
 /// Like [`serialize`], but also records the bins' resource assignments.
 pub fn serialize_city(
     contents: &Sparse3D<Cell>,
-    bin_assignments: &HashMap<IVec3, UniformResource>,
+    bin_assignments: &HashMap<SlotCoord, UniformResource>,
     structures: &[EorfInfo],
 ) -> Result<Vec<u8>> {
     let mut text = String::from_utf8(serialize(contents, structures)?)?;
     let min = contents.bounding_box().0;
     let mut bins: Vec<_> = bin_assignments.iter().collect();
-    bins.sort_by_key(|(cube, _)| (cube.y, cube.z, cube.x));
-    for (cube, res) in bins {
-        let p = *cube - min;
+    bins.sort_by_key(|(loc, _)| (loc.cube.y, loc.cube.z, loc.cube.x, loc.slot as u8));
+    for (loc, res) in bins {
+        let p = loc.cube - min;
         text.push_str(&format!(
-            "{BIN_PREFIX}{},{},{}={}\n",
+            "{BIN_PREFIX}{},{},{},{}={}\n",
             p.x,
             p.y,
             p.z,
+            serde_json::to_string(&loc.slot)?,
             serde_json::to_string(res)?
         ));
     }
@@ -268,19 +270,20 @@ pub fn save(city: &LoadedCity, structures: &[EorfInfo], path: &std::path::PathBu
     Ok(())
 }
 
-fn parse_bin_line(line: &str) -> Result<(IVec3, UniformResource)> {
-    let (coords, res) = line
+fn parse_bin_line(line: &str) -> Result<(SlotCoord, UniformResource)> {
+    let (location, res) = line
         .trim_start_matches(BIN_PREFIX)
         .split_once('=')
         .ok_or_else(|| anyhow::anyhow!("Invalid bin line: '{line}'"))?;
-    let c: Vec<i32> = coords
-        .split(',')
-        .map(|n| n.parse::<i32>())
-        .collect::<Result<_, _>>()?;
-    let [x, y, z] = c[..] else {
-        return Err(anyhow::anyhow!("Invalid bin coordinates: '{line}'"));
+    let fields: Vec<&str> = location.split(',').collect();
+    let (coords, slot) = match fields[..] {
+        [x, y, z] => ([x, y, z], Slot::Room),
+        [x, y, z, slot] => ([x, y, z], serde_json::from_str(slot)?),
+        _ => return Err(anyhow::anyhow!("Invalid bin location: '{line}'")),
     };
-    Ok((IVec3::new(x, y, z), serde_json::from_str(res)?))
+    let [x, y, z] = coords.map(str::parse::<i32>);
+    let cube = IVec3::new(x?, y?, z?);
+    Ok((SlotCoord { cube, slot }, serde_json::from_str(res)?))
 }
 
 /// Loads a grid and its bin assignments.
@@ -334,7 +337,7 @@ mod tests {
 
     use crate::city::Cell;
     use crate::eorf::{EorfId, EorfInfo, PlacementStyle, StructureEmbedding};
-    use crate::sparse3d::{Facing, RelSlot, RelSlotCoord};
+    use crate::sparse3d::{Facing, RelSlot, RelSlotCoord, Slot, SlotCoord};
 
     use super::{deserialize, load_from_str, serialize};
 
@@ -438,7 +441,11 @@ mod tests {
         // Two rooms with a gap, so the saved grid's origin isn't the world's.
         grid.set(RelSlotCoord::new(2, 0, 3, RelSlot::Room), cell(0));
         grid.set(RelSlotCoord::new(4, 0, 3, RelSlot::Room), cell(0));
-        let bins: HashMap<IVec3, _> = [(IVec3::new(2, 0, 3), Potato), (IVec3::new(4, 0, 3), Lime)]
+        let room = |x, y, z| SlotCoord {
+            cube: IVec3::new(x, y, z),
+            slot: Slot::Room,
+        };
+        let bins: HashMap<SlotCoord, _> = [(room(2, 0, 3), Potato), (room(4, 0, 3), Lime)]
             .into_iter()
             .collect();
 
@@ -448,10 +455,9 @@ mod tests {
 
         // Both are relative to the grid's minimum corner, which is (2, 0, 3).
         check!(restored.contents.size() == 2);
-        let expected: HashMap<IVec3, _> =
-            [(IVec3::new(0, 0, 0), Potato), (IVec3::new(2, 0, 0), Lime)]
-                .into_iter()
-                .collect();
+        let expected: HashMap<SlotCoord, _> = [(room(0, 0, 0), Potato), (room(2, 0, 0), Lime)]
+            .into_iter()
+            .collect();
         check!(restored.bin_assignments == expected);
     }
 

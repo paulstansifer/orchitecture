@@ -265,6 +265,24 @@ impl NavigationGrid {
             .collect()
     }
 
+    /// Walking cost from the nearest of `sources` to every Room cube within
+    /// `max_cost` of one of them -- the multi-source counterpart of
+    /// `reachable_within` (so, like it, sources that aren't passable
+    /// themselves reach nothing, not even themselves).
+    pub fn costs_from_within(&self, sources: &[IVec3], max_cost: u32) -> HashMap<IVec3, u32> {
+        let seeds: Vec<(IVec3, UVec3)> = sources
+            .iter()
+            .filter_map(|&cube| Some((cube, self.space.room_doubled(cube)?)))
+            .filter(|&(_, pos)| {
+                matches!(
+                    self.grid.nav(pos),
+                    Some(Nav::Passable(_)) | Some(Nav::Portal(_))
+                )
+            })
+            .collect();
+        self.costs_within(&seeds, max_cost)
+    }
+
     /// Walking cost from the nearest of `sources` to every Room cube reachable
     /// from any of them (each source itself at cost 0). Sources needn't be
     /// passable themselves -- e.g. a piece of furniture you walk up to -- but

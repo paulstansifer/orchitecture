@@ -367,7 +367,7 @@ pub fn evaluate_place_breakdown(
     id: PlacedPlaceId,
     inputs: &QualityInputs,
 ) -> (f32, Vec<QualityFactorResult>) {
-    let origin = place_location(cw, id);
+    let origin = place_location(cw, id).cube;
     let def = &cw.places[cw.placed_places[id].place];
     let mut overall = 1.0;
     let results = def

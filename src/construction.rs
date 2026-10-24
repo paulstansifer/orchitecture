@@ -539,7 +539,13 @@ pub fn load_from_offline(
     let changes = cw.replace_contents(shifted);
     cw.bin_resource_restrictions = bin_assignments
         .into_iter()
-        .map(|(cube, res)| (cube + shift, res))
+        .map(|(loc, res)| {
+            let shifted = SlotCoord {
+                cube: loc.cube + shift,
+                slot: loc.slot,
+            };
+            (shifted, res)
+        })
         .collect();
     changes
 }
@@ -1051,8 +1057,13 @@ mod tests {
             },
         );
 
-        cw.bin_resource_restrictions
-            .insert(IVec3::new(5, 0, 5), UniformResource::Fieldstone);
+        cw.bin_resource_restrictions.insert(
+            SlotCoord {
+                cube: IVec3::new(5, 0, 5),
+                slot: Slot::Room,
+            },
+            UniformResource::Fieldstone,
+        );
         cw.places = vec![Place {
             name: "storage room".to_string(),
             requirements: vec![],

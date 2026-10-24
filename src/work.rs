@@ -171,7 +171,7 @@ pub fn installed_tool_in(cw: &ConstructedCity, id: PlacedPlaceId) -> Option<Tool
     let pp = cw.placed_places.get(id)?;
     for f in &pp.fulfillments {
         if let FulfilledPorf::Furniture(loc) = f {
-            if let Some(slots) = cw.furniture_slots.get(&loc.cube) {
+            if let Some(slots) = cw.furniture_slots.get(loc) {
                 for item in slots.iter().flatten() {
                     if let UniqueResource::Tool(kind) = item {
                         return Some(*kind);
@@ -209,16 +209,17 @@ mod tests {
         let mut cw = ConstructedCity::new(Vec::new());
         cw.places = vec![workplace_def()];
         for (prio, cube) in workplaces {
+            let core = SlotCoord {
+                cube: *cube,
+                slot: Slot::Room,
+            };
             cw.placed_places.insert(ParticularPlace {
                 place: 0,
-                fulfillments: vec![FulfilledPorf::Furniture(SlotCoord {
-                    cube: *cube,
-                    slot: Slot::Room,
-                })],
+                fulfillments: vec![FulfilledPorf::Furniture(core)],
                 contents: Inventory::new([]),
                 restriction: ParentRestriction::Unrestricted,
             });
-            cw.work_priorities.insert(*cube, *prio);
+            cw.work_priorities.insert(core, *prio);
         }
         cw
     }
@@ -235,7 +236,7 @@ mod tests {
     fn id_at(cw: &ConstructedCity, x: i32) -> PlacedPlaceId {
         cw.placed_places
             .iter()
-            .find(|(id, _)| place_location(cw, *id) == cube(x))
+            .find(|(id, _)| place_location(cw, *id).cube == cube(x))
             .map(|(id, _)| id)
             .unwrap()
     }

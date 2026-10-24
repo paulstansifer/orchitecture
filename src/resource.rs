@@ -374,6 +374,12 @@ impl Inventory {
             }
         }
     }
+
+    /// Everything this inventory holds, consuming it -- for moving the
+    /// contents of a place that dissolved or changed shape back into storage.
+    pub fn into_entries(self) -> Vec<InventoryEntry> {
+        self.contents
+    }
 }
 
 /// Outcome of distributing one month's leftover (post-claims) incoming

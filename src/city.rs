@@ -296,36 +296,36 @@ pub struct ConstructedCity {
     /// output) can gate on idea progress without threading a second resource
     /// through their signatures.
     pub understood: Vec<u64>,
-    /// Per-instance `ParentRestriction` for furniture, keyed by the cube it's
-    /// placed at. Set in the UI; absent means `Unrestricted`. Cleared via
+    /// Per-instance `ParentRestriction` for furniture, keyed by the slot it's
+    /// placed in. Set in the UI; absent means `Unrestricted`. Cleared via
     /// `set_cell`/`take_cell` whenever the furniture there is overwritten or
     /// removed, since the restriction belongs to that specific placement.
-    pub furniture_restrictions: HashMap<IVec3, crate::place::ParentRestriction>,
-    /// Per-bin `UniformResource` dedication, keyed by the cube the bin is
-    /// placed at. Set in the UI; absent means the bin is unused (it holds
+    pub furniture_restrictions: HashMap<SlotCoord, crate::place::ParentRestriction>,
+    /// Per-bin `UniformResource` dedication, keyed by the slot the bin is
+    /// placed in. Set in the UI; absent means the bin is unused (it holds
     /// nothing until assigned a resource). Cleared via `set_cell`/`take_cell` whenever the
     /// furniture there is overwritten or removed, since the restriction
     /// belongs to that specific placement.
-    pub bin_resource_restrictions: HashMap<IVec3, UniformResource>,
-    /// Per-rack `RackContents` dedication, keyed by the cube the rack is
-    /// placed at. Set in the UI; absent means `RackContents::Tools` (a rack
+    pub bin_resource_restrictions: HashMap<SlotCoord, UniformResource>,
+    /// Per-rack `RackContents` dedication, keyed by the slot the rack is
+    /// placed in. Set in the UI; absent means `RackContents::Tools` (a rack
     /// has no "unrestricted" option, unlike a bin). Cleared via
     /// `set_cell`/`take_cell` whenever the furniture there is overwritten or
     /// removed, since the dedication belongs to that specific placement.
-    pub rack_restrictions: HashMap<IVec3, crate::resource::RackContents>,
-    /// Per-instance installed-resource slots, keyed by the cube the slotted
-    /// furniture is placed at. The vector runs parallel to the furniture type's
+    pub rack_restrictions: HashMap<SlotCoord, crate::resource::RackContents>,
+    /// Per-instance installed-resource slots, keyed by the slot the slotted
+    /// furniture is placed in. The vector runs parallel to the furniture type's
     /// `EorfInfo::slots`; a `Some` entry is an installed `UniqueResource`
     /// (withdrawn from public storage). Absent means every slot is empty. When
     /// the furniture is overwritten or removed, `set_cell`/`take_cell` return
     /// any installed resources to storage before clearing the entry.
-    pub furniture_slots: HashMap<IVec3, Vec<Option<UniqueResource>>>,
-    /// Per-workplace `WorkPriority`, keyed by the workplace place's core cube
+    pub furniture_slots: HashMap<SlotCoord, Vec<Option<UniqueResource>>>,
+    /// Per-workplace `WorkPriority`, keyed by the workplace place's core slot
     /// (`place::place_location`). Set in the UI; absent means the default
     /// (`WorkPriority::Medium`). Cleared via `set_cell`/`take_cell` whenever the
     /// core furniture there is overwritten or removed, since the priority
     /// belongs to that specific workplace. See `work::assign_work`.
-    pub work_priorities: HashMap<IVec3, crate::work::WorkPriority>,
+    pub work_priorities: HashMap<SlotCoord, crate::work::WorkPriority>,
 }
 
 impl ConstructedCity {
@@ -353,73 +353,71 @@ impl ConstructedCity {
         }
     }
 
-    /// Return any resources installed in the furniture at `cube`'s slots to
-    /// public storage, and forget the slot entry. Called before a Room-slot
-    /// cell is overwritten or removed so installed items aren't destroyed.
-    fn evict_furniture_slots(&mut self, cube: IVec3) {
-        if let Some(installed) = self.furniture_slots.remove(&cube) {
+    /// Return any resources installed in the furniture at `loc`'s slots to
+    /// public storage, and forget the slot entry. Called before a cell is
+    /// overwritten or removed so installed items aren't destroyed.
+    fn evict_furniture_slots(&mut self, loc: SlotCoord) {
+        if let Some(installed) = self.furniture_slots.remove(&loc) {
             for item in installed.into_iter().flatten() {
                 crate::place::deposit_unique(self, item);
             }
         }
     }
 
+    /// Forget every per-placement setting recorded for `loc` (they belong to
+    /// its previous occupant), returning any installed resources to storage.
+    fn clear_placement_settings(&mut self, loc: SlotCoord) {
+        self.furniture_restrictions.remove(&loc);
+        self.bin_resource_restrictions.remove(&loc);
+        self.rack_restrictions.remove(&loc);
+        self.work_priorities.remove(&loc);
+        self.evict_furniture_slots(loc);
+    }
+
     /// Sets a cell, clearing any furniture/bin/rack restriction recorded for the
-    /// cube it occupied (the restriction belongs to the previous occupant).
+    /// slot it occupied (the restriction belongs to the previous occupant).
     pub fn set_cell(&mut self, loc: SlotCoord, cell: Cell) {
-        if loc.slot == Slot::Room {
-            self.furniture_restrictions.remove(&loc.cube);
-            self.bin_resource_restrictions.remove(&loc.cube);
-            self.rack_restrictions.remove(&loc.cube);
-            self.work_priorities.remove(&loc.cube);
-            self.evict_furniture_slots(loc.cube);
-        }
+        self.clear_placement_settings(loc);
         self.contents.set(loc, cell);
     }
 
     /// Removes a cell, clearing any furniture/bin/rack restriction recorded for it.
     pub fn take_cell(&mut self, loc: SlotCoord) -> Option<Cell> {
-        if loc.slot == Slot::Room {
-            self.furniture_restrictions.remove(&loc.cube);
-            self.bin_resource_restrictions.remove(&loc.cube);
-            self.rack_restrictions.remove(&loc.cube);
-            self.work_priorities.remove(&loc.cube);
-            self.evict_furniture_slots(loc.cube);
-        }
+        self.clear_placement_settings(loc);
         self.contents.take(loc)
     }
 
-    /// The resource installed in slot `slot_idx` of the furniture at `cube`, if
+    /// The resource installed in slot `slot_idx` of the furniture at `loc`, if
     /// any.
-    pub fn slot_contents(&self, cube: IVec3, slot_idx: usize) -> Option<&UniqueResource> {
+    pub fn slot_contents(&self, loc: SlotCoord, slot_idx: usize) -> Option<&UniqueResource> {
         self.furniture_slots
-            .get(&cube)
+            .get(&loc)
             .and_then(|v| v.get(slot_idx))
             .and_then(|o| o.as_ref())
     }
 
     /// Set (or clear, with `None`) the resource in slot `slot_idx` of the
-    /// furniture at `cube`. `slot_count` is the furniture type's slot count, so
+    /// furniture at `loc`. `slot_count` is the furniture type's slot count, so
     /// the backing vector can be sized correctly. Does not touch storage --
     /// callers withdraw/deposit around this. The entry is dropped when every
     /// slot ends up empty, so `furniture_slots` stays absent-means-empty.
     pub fn set_slot(
         &mut self,
-        cube: IVec3,
+        loc: SlotCoord,
         slot_idx: usize,
         slot_count: usize,
         item: Option<UniqueResource>,
     ) {
         let v = self
             .furniture_slots
-            .entry(cube)
+            .entry(loc)
             .or_insert_with(|| vec![None; slot_count]);
         if v.len() < slot_count {
             v.resize(slot_count, None);
         }
         v[slot_idx] = item;
         if v.iter().all(Option::is_none) {
-            self.furniture_slots.remove(&cube);
+            self.furniture_slots.remove(&loc);
         }
     }
 
@@ -757,7 +755,7 @@ pub fn apply_changes(
             // TODO(installed-slots): when installed-resource assets exist, spawn a
             // child entity per installed `UniqueResource` here -- one per filled
             // `EorfInfo::slots` entry (looked up in `ConstructedCity::furniture_slots`
-            // by `loc.cube`) with a child `Transform` at the slot's
+            // by `loc`) with a child `Transform` at the slot's
             // `FurnitureSlot::render_offset`, parented to `entity` and pushed into
             // the `cell_entities` vec below. The parent's rotation then applies
             // automatically. (Requires threading the slot data into `apply_changes`.)

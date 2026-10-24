@@ -1121,8 +1121,13 @@ mod tests {
                 build_material: BuildMaterialId::default(),
             },
         );
-        cw.bin_resource_restrictions.insert(bin_cube, Timber);
-        cw.bin_resource_restrictions.insert(plank_bin_cube, Plank);
+        let room = |cube| SlotCoord {
+            cube,
+            slot: Slot::Room,
+        };
+        cw.bin_resource_restrictions.insert(room(bin_cube), Timber);
+        cw.bin_resource_restrictions
+            .insert(room(plank_bin_cube), Plank);
         let mut inv = Inventory::new([(StorageKind::Bulk, cap)]);
         inv.add_uniform(Timber, timber);
         cw.placed_places.insert(ParticularPlace {
@@ -1153,7 +1158,7 @@ mod tests {
             restriction: ParentRestriction::Unrestricted,
         });
         cw.furniture_slots.insert(
-            core,
+            room(core),
             vec![Some(UniqueResource::Tool(ToolKind::CarpentersTools))],
         );
 
