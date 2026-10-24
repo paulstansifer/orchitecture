@@ -23,11 +23,11 @@ use std::collections::{BTreeMap, HashMap};
 use bevy::prelude::*;
 
 use crate::city::ConstructedCity;
-use crate::evaluation::{evaluate_place, QualityInputs};
-use crate::place::PlacedPlaceId;
-use crate::materials::MaterialList;
-use crate::resource::UniformResource;
 use crate::city::ProposedCity;
+use crate::evaluation::{evaluate_place, QualityInputs};
+use crate::materials::MaterialList;
+use crate::place::PlacedPlaceId;
+use crate::resource::UniformResource;
 use crate::surroundings::farmstead::{FarmId, FarmsResource, ProductionPlan};
 use crate::surroundings::map::CIRCLE_REVEAL_RADIUS;
 use crate::surroundings::road_network::UNPAVED_FACTOR;
@@ -470,9 +470,19 @@ mod tests {
             project_need: [(Timber, 1)].into(),
             storage_room: [(Canvas, 100), (Timber, 100)].into(),
         };
-        let plan_for = |stands| plan(&fr, &MarketVenues::new(stands, vec![]), &demand, &no_traveler());
+        let plan_for = |stands| {
+            plan(
+                &fr,
+                &MarketVenues::new(stands, vec![]),
+                &demand,
+                &no_traveler(),
+            )
+        };
         // Project first (Timber, farm 3), then storage (Canvas, farm 2).
-        assert_eq!(plan_for(1).coming().collect::<Vec<_>>(), vec![FarmId::new(3)]);
+        assert_eq!(
+            plan_for(1).coming().collect::<Vec<_>>(),
+            vec![FarmId::new(3)]
+        );
         assert_eq!(
             plan_for(2).coming().collect::<Vec<_>>(),
             vec![FarmId::new(2), FarmId::new(3)]

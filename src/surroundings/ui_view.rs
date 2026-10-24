@@ -91,9 +91,9 @@ mod tests {
     use crate::materials::MaterialList;
     use crate::population::Population;
     use crate::resource::UniformResource::Straw;
+    use crate::surroundings::attendance::MarketVenues;
     use crate::surroundings::farmstead::tests::{farms_with, mk_farm};
     use crate::surroundings::farmstead::FarmData;
-    use crate::surroundings::attendance::MarketVenues;
     use crate::traveler::TravelerState;
     use bevy::math::Vec2;
 
@@ -135,13 +135,8 @@ mod tests {
     fn a_coming_farm_shows_its_production() {
         let fr = one_farm();
         let cw = ConstructedCity::new(Vec::new());
-        let view = farm_panel_view(
-            &fr,
-            &cw,
-            &effects(&fr, &cw, 1),
-            FarmId::new(0),
-        )
-        .expect("the farm is visible");
+        let view = farm_panel_view(&fr, &cw, &effects(&fr, &cw, 1), FarmId::new(0))
+            .expect("the farm is visible");
         assert!(view.coming);
         assert_eq!(view.potatoes, fr.farms[0].production_capacity());
         assert_eq!(view.produced, (Straw, fr.farms[0].production_capacity()));
@@ -155,13 +150,7 @@ mod tests {
     fn a_farm_without_a_stand_explains_why_and_cant_be_given_a_tool() {
         let fr = one_farm();
         let cw = ConstructedCity::new(Vec::new());
-        let view = farm_panel_view(
-            &fr,
-            &cw,
-            &effects(&fr, &cw, 0),
-            FarmId::new(0),
-        )
-        .unwrap();
+        let view = farm_panel_view(&fr, &cw, &effects(&fr, &cw, 0), FarmId::new(0)).unwrap();
         assert!(!view.coming);
         assert_eq!(view.absences, vec![Absence::NoStandsRemain]);
         assert!(view.reasons.iter().any(|l| l.contains("stands")));

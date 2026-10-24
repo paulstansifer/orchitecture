@@ -454,7 +454,13 @@ fn sort_nearest_first(found: &mut [SlotCoord], anchors: &[IVec3]) {
             .map(|&a| manhattan2d(a, loc.cube) + (a.y - loc.cube.y).abs())
             .min()
             .unwrap_or(0);
-        (dist, loc.cube.x, loc.cube.y, loc.cube.z, slot_rank(loc.slot))
+        (
+            dist,
+            loc.cube.x,
+            loc.cube.y,
+            loc.cube.z,
+            slot_rank(loc.slot),
+        )
     });
 }
 
@@ -2527,7 +2533,10 @@ mod tests {
         let inv = Inventory::new([(StorageKind::Bulk, 20.0)]);
         let mut cw = grid_with_storage_bins(storage_place_def(), &[b(0, 0)], inv);
         assert_eq!(storage_free_capacity(&cw, UniformResource::Timber), 0.0);
-        assert_eq!(deposit_uniform_with_capacity(&mut cw, UniformResource::Timber, 5), 0);
+        assert_eq!(
+            deposit_uniform_with_capacity(&mut cw, UniformResource::Timber, 5),
+            0
+        );
         assert!(storage_dedicated_ceilings(&cw).is_empty());
     }
 

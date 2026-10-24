@@ -327,10 +327,7 @@ pub fn month_panel_view(
         });
 
     let farm_name = |id: crate::surroundings::farmstead::FarmId| {
-        format!(
-            "Farm {id} ({})",
-            farms[id].produced_resource().label()
-        )
+        format!("Farm {id} ({})", farms[id].produced_resource().label())
     };
     let mut farms_coming = Vec::new();
     let mut farms_absent = Vec::new();

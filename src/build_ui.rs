@@ -440,7 +440,8 @@ fn clicked_furniture_ui(
         let new = ui
             .horizontal(|ui| {
                 if current.is_none() {
-                    ui.label("⚠").on_hover_text("Assign a kind of good to go here!");
+                    ui.label("⚠")
+                        .on_hover_text("Assign a kind of good to go here!");
                 }
                 bin_restriction_dropdown(ui, ("bin-restriction", eorf_idx), current)
             })

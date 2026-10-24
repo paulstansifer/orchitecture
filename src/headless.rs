@@ -717,8 +717,9 @@ impl HeadlessSession {
 
     fn cmd_dump(&mut self) -> Result<Vec<String>, String> {
         let cw = self.world().resource::<ConstructedCity>();
-        let bytes = serialization::serialize_city(&cw.contents, &cw.bin_resource_restrictions, &cw.eorfs)
-            .map_err(|e| e.to_string())?;
+        let bytes =
+            serialization::serialize_city(&cw.contents, &cw.bin_resource_restrictions, &cw.eorfs)
+                .map_err(|e| e.to_string())?;
         let text = String::from_utf8(bytes).map_err(|e| e.to_string())?;
         Ok(text.lines().map(str::to_string).collect())
     }
@@ -1099,7 +1100,10 @@ impl HeadlessSession {
                     .find(|(_, a)| a.room == Some(room.id))
                     .map_or("empty".to_string(), |(id, _)| format!("farm {id}"))
             };
-            lines.push(format!("room {} quality={:.3} guest={guest}", room.id, room.quality));
+            lines.push(format!(
+                "room {} quality={:.3} guest={guest}",
+                room.id, room.quality
+            ));
         }
         Ok(lines)
     }
@@ -1742,7 +1746,10 @@ mod tests {
         // Market stands (built for free while still in sandbox mode), but
         // fewer than the number of farms, so who gets one matters.
         for z in 0..3 {
-            dispatch_ok(&mut session, &format!("place 120 0 {} room market_stand", 100 + z));
+            dispatch_ok(
+                &mut session,
+                &format!("place 120 0 {} room market_stand", 100 + z),
+            );
         }
         // Storage for the goods the pallet needs, and potatoes: every bin
         // is dedicated to one resource.

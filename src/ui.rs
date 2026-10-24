@@ -16,8 +16,7 @@ use crate::surroundings::farmstead::{FarmsResource, GameClock};
 use crate::traveler::TravelerState;
 use crate::ui_util::{icon, resource_icon_cell, signed_delta};
 use crate::ui_view::{
-    month_panel_view, AdvanceState, MonthPanelView, ResourceRow,
-    UniqueCategory, UniqueResourceRow,
+    month_panel_view, AdvanceState, MonthPanelView, ResourceRow, UniqueCategory, UniqueResourceRow,
 };
 use crate::{col_format, heading_label, label, note_label};
 
@@ -235,10 +234,7 @@ fn advance_controls(
                     ui.set_min_width(0.0);
                     label!(
                         ui,
-                        format!(
-                            "{}/{} farms coming",
-                            view.coming_count, view.stand_count
-                        )
+                        format!("{}/{} farms coming", view.coming_count, view.stand_count)
                     );
                 });
             });

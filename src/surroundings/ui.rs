@@ -12,8 +12,7 @@ use crate::{label, note_label};
 
 use super::attendance::{MAX_TRAVEL_COST, ROOM_CUTOFF};
 use super::farmstead::{
-    propose_road, road_blocker, specialize, unspecialize, FarmId, FarmsResource,
-    SurroundingsState,
+    propose_road, road_blocker, specialize, unspecialize, FarmId, FarmsResource, SurroundingsState,
 };
 use super::map::fog_alpha_at;
 use super::road_network::{RoadNetwork, RoadSegment};
@@ -196,7 +195,12 @@ fn distance_color(network: &RoadNetwork, polygon: &[Vec2]) -> egui::Color32 {
 }
 
 /// Paved roads, solid if built and dashed if only proposed.
-fn draw_paved_roads(painter: &egui::Painter, view: &MapView, roads: &[RoadSegment], proposed: bool) {
+fn draw_paved_roads(
+    painter: &egui::Painter,
+    view: &MapView,
+    roads: &[RoadSegment],
+    proposed: bool,
+) {
     use egui::{Shape, Stroke};
 
     let stroke = Stroke::new(PAVED_ROAD_WIDTH, PAVED_ROAD_COLOR);
@@ -371,18 +375,14 @@ pub fn surroundings_ui_system(
                                 road_blocker(&farms, network, node, other_corner(network, node))
                                     .is_none()
                             }
-                            Some(start) => road_blocker(
-                                &farms,
-                                network,
-                                network.nearest_node(start),
-                                node,
-                            )
-                            .is_none(),
+                            Some(start) => {
+                                road_blocker(&farms, network, network.nearest_node(start), node)
+                                    .is_none()
+                            }
                         };
                         // Before the first click, only corners a road can
                         // start from are worth pointing out.
-                        (valid || state.road_start.is_some())
-                            .then_some(CornerHover { node, valid })
+                        (valid || state.road_start.is_some()).then_some(CornerHover { node, valid })
                     });
 
                 if let Some(start) = state.road_start {
@@ -539,12 +539,7 @@ pub fn surroundings_ui_system(
 /// `node` would work as a road's *start* without a real end in mind yet. (Its
 /// only end-specific check is that the two differ.)
 fn other_corner(network: &RoadNetwork, node: usize) -> usize {
-    if node == 0 {
-        1
-    } else {
-        0
-    }
-    .min(network.corner_count.saturating_sub(1))
+    if node == 0 { 1 } else { 0 }.min(network.corner_count.saturating_sub(1))
 }
 
 /// The road-building toggle and its hint, in the map's top-left corner.

@@ -262,11 +262,7 @@ pub fn serialize_city(
     Ok(text.into_bytes())
 }
 
-pub fn save(
-    city: &LoadedCity,
-    structures: &[EorfInfo],
-    path: &std::path::PathBuf,
-) -> Result<()> {
+pub fn save(city: &LoadedCity, structures: &[EorfInfo], path: &std::path::PathBuf) -> Result<()> {
     let bytes = serialize_city(&city.contents, &city.bin_assignments, structures)?;
     std::fs::write(path, bytes)?;
     Ok(())
@@ -452,9 +448,10 @@ mod tests {
 
         // Both are relative to the grid's minimum corner, which is (2, 0, 3).
         check!(restored.contents.size() == 2);
-        let expected: HashMap<IVec3, _> = [(IVec3::new(0, 0, 0), Potato), (IVec3::new(2, 0, 0), Lime)]
-            .into_iter()
-            .collect();
+        let expected: HashMap<IVec3, _> =
+            [(IVec3::new(0, 0, 0), Potato), (IVec3::new(2, 0, 0), Lime)]
+                .into_iter()
+                .collect();
         check!(restored.bin_assignments == expected);
     }
 
