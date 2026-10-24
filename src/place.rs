@@ -40,9 +40,11 @@ impl AssignmentFlavor {
     }
 }
 
-/// Restricts which `Place` kinds may claim a Furniture/Place kind to fulfill
-/// one of their requirements. Attached to the Furniture/Place *kind* (an
-/// `EorfInfo`/`PlaceInfo`), not to any particular placed instance.
+/// Restricts which `Place` kinds may claim a particular piece of furniture or
+/// placed place to fulfill one of their requirements. Attached to the
+/// individual instance, not its kind: furniture's lives in
+/// `ConstructedCity::furniture_restrictions` (keyed by cube), and a placed
+/// place's in `ParticularPlace::restriction`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub enum ParentRestriction {
     /// May be claimed by any `Place` kind that requires it. (Default.)
@@ -442,12 +444,17 @@ fn fulfillment_location(cw: &ConstructedCity, f: &FulfilledPorf) -> IVec3 {
 /// walls visits every wall slot exactly once across the grid.)
 const FURNITURE_SLOTS: [Slot; 3] = [Slot::Room, Slot::XLoWall, Slot::ZLoWall];
 
+/// Position of `slot` in `FURNITURE_SLOTS`, for deterministic tie-breaking
+/// between furniture sharing a cube.
+fn slot_rank(slot: Slot) -> Option<usize> {
+    FURNITURE_SLOTS.iter().position(|&s| s == slot)
+}
+
 /// Sorts furniture candidates nearest-first (to the closest of `anchors`),
 /// then by position, so place formation -- which claims the first few free
 /// candidates -- is deterministic and prefers what's closest. (Candidates are
 /// gathered from hash sets, whose order varies from run to run.)
 fn sort_nearest_first(found: &mut [SlotCoord], anchors: &[IVec3]) {
-    let slot_rank = |slot: Slot| FURNITURE_SLOTS.iter().position(|&s| s == slot);
     found.sort_by_key(|loc| {
         let dist = anchors
             .iter()
@@ -1005,22 +1012,18 @@ pub fn unassign_place(cw: &mut ConstructedCity, id: PlacedPlaceId) {
     cw.placed_places.remove(id);
 }
 
-/// The cubes of all furniture named `name` anywhere in the grid (unbounded,
+/// Every piece of furniture named `name` anywhere in the grid (unbounded,
 /// unlike `furniture_of_name_near`) -- used by `sync_places` to enumerate
 /// candidate cores without a "clicked cube" to search near.
 ///
 /// Furniture at *any* slot qualifies (room-plopped or wall-mounted), so a place
-/// may be cored on wall-slot furniture. Only the cube is returned: it seeds
-/// `choose_core`, which re-resolves the exact (slot-aware) core via
-/// `candidates_near`. A cube hosting the named furniture in more than one slot
-/// appears once per occurrence, which is harmless -- the first to form a place
-/// there makes the rest no-ops (see the `place_id_at` guard in `sync_places`).
-fn all_furniture_named(cw: &ConstructedCity, name: &str) -> Vec<IVec3> {
+/// may be cored on wall-slot furniture.
+fn all_furniture_named(cw: &ConstructedCity, name: &str) -> Vec<SlotCoord> {
     cw.contents
         .iter()
         .filter_map(|(loc, cell)| {
             let info = &cw.eorfs[cell.id.as_usize()];
-            (info.is_furniture() && info.name == name).then_some(loc.cube)
+            (info.is_furniture() && info.name == name).then_some(loc)
         })
         .collect()
 }
@@ -1092,25 +1095,28 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
     }
 
     // Collect every candidate core, across every place definition, in a
-    // stable scan order. A place-cored candidate (e.g. an inn, cored on its
-    // dining room) also carries the core place's id: its cube always belongs
-    // to that core place, so whether it's free is a question of whether the
-    // core place is already nested in something, not of who owns the cube.
-    let mut candidates: Vec<(IVec3, usize, Option<PlacedPlaceId>)> = Vec::new();
+    // stable scan order. Each candidate is the exact fulfillment that would
+    // serve as the core -- the furniture's full `SlotCoord`, or (for a
+    // place-cored kind like an inn, cored on its dining room) the core place's
+    // id -- so whether it's free is a question of whether that fulfillment is
+    // already owned, not of whether anything else in its cube is (a free
+    // wall-mounted chair can core a place even when the cube's room-slot
+    // furniture is already claimed).
+    let mut candidates: Vec<(IVec3, usize, FulfilledPorf)> = Vec::new();
     for place_idx in 0..cw.places.len() {
         let Some(core_req) = cw.places[place_idx].requirements.first() else {
             continue;
         };
         let parent_name = &cw.places[place_idx].name;
-        let cubes: Vec<(IVec3, Option<PlacedPlaceId>)> = match &core_req.requirement {
+        let cores: Vec<FulfilledPorf> = match &core_req.requirement {
             Porf::Furniture(name) => all_furniture_named(cw, name)
                 .into_iter()
-                .filter(|cube| {
+                .filter(|loc| {
                     cw.furniture_restrictions
-                        .get(cube)
+                        .get(&loc.cube)
                         .is_none_or(|r| r.allows(parent_name))
                 })
-                .map(|cube| (cube, None))
+                .map(FulfilledPorf::Furniture)
                 .collect(),
             Porf::Place(name) => cw
                 .placed_places
@@ -1118,7 +1124,7 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
                 .filter(|(_, pp)| {
                     cw.places[pp.place].name == *name && pp.restriction.allows(parent_name)
                 })
-                .map(|(id, _)| (place_location(cw, id), Some(id)))
+                .map(|(id, _)| FulfilledPorf::Place(id))
                 .collect(),
             Porf::InstalledTool(kind, furniture_name) => {
                 all_furniture_with_installed_tool(cw, *kind, furniture_name)
@@ -1128,24 +1134,31 @@ pub fn sync_places(cw: &mut ConstructedCity) -> bool {
                             .get(cube)
                             .is_none_or(|r| r.allows(parent_name))
                     })
-                    .map(|cube| (cube, None))
+                    .map(|cube| {
+                        FulfilledPorf::Furniture(SlotCoord {
+                            cube,
+                            slot: Slot::Room,
+                        })
+                    })
                     .collect()
             }
         };
         candidates.extend(
-            cubes
+            cores
                 .into_iter()
-                .map(|(cube, core)| (cube, place_idx, core)),
+                .map(|core| (fulfillment_location(cw, &core), place_idx, core)),
         );
     }
-    candidates.sort_by_key(|(cube, place_idx, _)| (cube.x, cube.y, cube.z, *place_idx));
+    candidates.sort_by_key(|(cube, place_idx, core)| {
+        let slot = match core {
+            FulfilledPorf::Furniture(loc) => slot_rank(loc.slot),
+            FulfilledPorf::Place(_) => None,
+        };
+        (cube.x, cube.y, cube.z, *place_idx, slot)
+    });
 
     for (cube, place_idx, core) in candidates {
-        let taken = match core {
-            Some(core) => owner_of(cw, &FulfilledPorf::Place(core)).is_some(),
-            None => place_id_at(cw, cube).is_some(),
-        };
-        if taken {
+        if owner_of(cw, &core).is_some() {
             continue;
         }
         if plan_assignment_with_nav(cw, &nav, cube, place_idx).is_some() {
@@ -2069,6 +2082,40 @@ mod tests {
         assert_eq!(cw.places[pp.place].name, "nook");
         // The place is cored on the wall chair itself.
         assert_eq!(pp.fulfillments, vec![FulfilledPorf::Furniture(core)]);
+    }
+
+    #[test]
+    fn wall_core_forms_even_when_its_cubes_room_furniture_is_claimed() {
+        // A bin (room slot) and a chair (wall slot) share a cube. The bin's
+        // storage room forms first (same cube, lower place index); the chair
+        // must still be free to core its own nook, since "already claimed" is
+        // judged per slot, not per cube.
+        let mut nook = place_def(1, None);
+        nook.name = "nook".to_string();
+        nook.requirements[0].requirement = Porf::Furniture("chair".to_string());
+        let mut cw = grid_with_bins(place_def(1, None), &[b(2, 2)]);
+        cw.places.push(nook);
+        let chair = SlotCoord {
+            cube: b(2, 2),
+            slot: Slot::XLoWall,
+        };
+        put(&mut cw, chair, "chair");
+
+        sync_places(&mut cw);
+
+        let mut formed: Vec<(&str, &[FulfilledPorf])> = cw
+            .placed_places
+            .iter()
+            .map(|(_, pp)| (cw.places[pp.place].name.as_str(), &pp.fulfillments[..]))
+            .collect();
+        formed.sort_by_key(|(name, _)| *name);
+        assert_eq!(
+            formed,
+            vec![
+                ("nook", &[FulfilledPorf::Furniture(chair)][..]),
+                ("storage room", &[f(b(2, 2))][..]),
+            ]
+        );
     }
 
     #[test]
