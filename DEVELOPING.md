@@ -132,6 +132,11 @@ Wings3D-sourced meshes are opaque pre-baked glTF, so they don't support baked
 rotation/translation (`:90`, `:+x`) or CSG (`,`/`*`) in `structures.autotile`, and
 get no cutaway (`-cut-y-pos`) variant.
 
+Only faces whose authored color (material color × vertex color) is exactly white
+take on the building material's color (wood, stone, ...); every other face keeps
+the color it was given in Wings3D. (See `bake_authored_colors` in `input.rs` and
+`gi.wgsl`. OpenSCAD meshes are uncolored, so they're recolored all over.)
+
 The checked-in .gtlf files are programmatically-generated from the OpenSCAD files (eventually, this should be part of the build process). To regenerate them:
 ```
 for f in buildables/*.scad; do dest="$(echo "$f" | sed 's/.scad/.gltf/')"; openscad "$f" -o /tmp/tmp.stl && assimp export /tmp/tmp.stl "$dest"; done;

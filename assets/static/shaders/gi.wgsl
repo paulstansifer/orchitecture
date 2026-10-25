@@ -148,6 +148,15 @@ fn sample_gi(p: vec3<f32>) -> f32 {
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
+#ifdef VERTEX_COLORS
+    // Vertex colors are the mesh's authored colors (see `bake_authored_colors` in
+    // src/gi_material.rs). Only exactly-white faces take the building material's
+    // color (which `pbr_input` already holds, as material * white); any other face
+    // keeps its own color.
+    if any(in.color.rgb < vec3<f32>(0.999)) {
+        pbr_input.material.base_color = vec4<f32>(in.color.rgb, pbr_input.material.base_color.a);
+    }
+#endif
     pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
 
     var out: FragmentOutput;

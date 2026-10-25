@@ -1,4 +1,5 @@
 use bevy::input::mouse::AccumulatedMouseScroll;
+use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -746,6 +747,73 @@ pub fn update_room_cursor_mesh(
         commands
             .entity(cursor_entities.room)
             .insert(SceneRoot(handle));
+    }
+}
+
+/// Bakes each newly seen structure mesh's glTF material color into its vertex
+/// colors, so they hold its whole authored color, before `recolor_new_mesh_children`
+/// swaps that material out. `gi.wgsl` then gives the building material's color only
+/// to exactly-white faces; the rest keep their authored color. (OpenSCAD meshes
+/// have no vertex colors and a white material, so they're left alone and recolored
+/// all over.) A mesh asset is shared by every instance of its structure -- real,
+/// ghost, or cursor -- so each is baked just once.
+///
+/// Must run before `recolor_new_mesh_children`, while the glTF material is still on.
+pub fn bake_authored_colors(
+    cursor_entities: Res<CursorEntities>,
+    owners_q: Query<
+        (),
+        Or<(
+            With<GridCellMarker>,
+            With<ProposalGhostMarker>,
+            With<CutCellMarker>,
+        )>,
+    >,
+    child_of_q: Query<&ChildOf>,
+    new_meshes: Query<
+        (Entity, &Mesh3d, &MeshMaterial3d<StandardMaterial>),
+        Added<MeshMaterial3d<StandardMaterial>>,
+    >,
+    std_materials: Res<Assets<StandardMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut baked: Local<std::collections::HashSet<AssetId<Mesh>>>,
+) {
+    for (entity, mesh3d, material) in &new_meshes {
+        if baked.contains(&mesh3d.id()) {
+            continue;
+        }
+        let is_structure =
+            std::iter::successors(Some(entity), |&e| child_of_q.get(e).ok().map(|c| c.0))
+                .any(|e| e == cursor_entities.room || owners_q.contains(e));
+        if !is_structure {
+            continue;
+        }
+        let Some(tint) = std_materials
+            .get(&material.0)
+            .map(|m| m.base_color.to_linear())
+        else {
+            continue;
+        };
+        let Some(mesh) = meshes.get_mut(&mesh3d.0) else {
+            continue;
+        };
+        baked.insert(mesh3d.id());
+        let tint = tint.to_f32_array();
+        match mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
+            Some(VertexAttributeValues::Float32x4(colors)) => {
+                for color in colors {
+                    for (c, t) in color.iter_mut().zip(tint) {
+                        *c *= t;
+                    }
+                }
+            }
+            Some(other) => warn!("unexpected vertex color format {other:?}; not baking"),
+            None if tint != [1.0; 4] => {
+                let n = mesh.count_vertices();
+                mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![tint; n]);
+            }
+            None => {}
+        }
     }
 }
 
