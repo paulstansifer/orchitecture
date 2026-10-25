@@ -106,6 +106,16 @@ Not very important, for non-user-constructed buildings:
 `build.rs` also warns about any `buildables/*.scad` that no autotile rule or
 structure references.
 
+The game also runs on the web (`trunk serve`/`trunk build`), where there is no
+filesystem: `std::fs` calls compile fine but silently fail at runtime. So game
+code must never inspect `buildables/` or `assets/generated/` on disk. Embed data
+with `include_str!`/`include_bytes!`, load assets through the `AssetServer`, and
+get facts about generated assets (which meshes are Wings3D-sourced, which
+`.gltf`s exist or are empty sentinels) from `src/generated.rs`, which `build.rs`
+fills in at compile time. Native-only file access (user map files, the headless
+REPL, training) must be behind `#[cfg(not(target_arch = "wasm32"))]` or a
+native-only binary/feature.
+
 ## Wings3D-sourced meshes
 
 A mesh can also come from a hand-modeled `buildables/{name}.wings` file instead of

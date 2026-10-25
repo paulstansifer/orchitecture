@@ -707,8 +707,25 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
 /// was written to place that asymmetric range correctly. Shifting a Wings3D
 /// mesh's local Z by -1 before that same rotation (i.e. adding
 /// `rotation * (0,0,-1)` to the translation) makes it land the same way.
-pub fn wings_offset(rotation: Quat) -> Vec3 {
+fn wings_offset(rotation: Quat) -> Vec3 {
     rotation * Vec3::new(0.0, 0.0, -1.0)
+}
+
+/// `cell_transform` for structure `id`'s own (non-autotile) mesh, including the
+/// `wings_offset` correction for Wings3D-sourced meshes. Every spawn site for a
+/// structure's fallback mesh should go through this, so none forgets the offset.
+pub fn structure_transform(
+    structure_list: &EorfList,
+    id: EorfId,
+    slot: Slot,
+    facing: Facing,
+    cube: IVec3,
+) -> Transform {
+    let mut transform = cell_transform(slot, facing, cube);
+    if structure_list.is_wings(id) {
+        transform.translation += wings_offset(transform.rotation);
+    }
+    transform
 }
 
 /// Snaps a continuous ground-plane position to the nearest wall boundary for
@@ -744,10 +761,8 @@ pub fn apply_changes(
         // Clear autotile state so the per-frame system unconditionally re-evaluates.
         assembled.autotile_results.remove(&loc);
         if let Some(cell) = new_cell {
-            let mut transform = cell_transform(loc.slot, cell.facing, loc.cube);
-            if structure_list.is_wings(cell.id) {
-                transform.translation += wings_offset(transform.rotation);
-            }
+            let transform =
+                structure_transform(structure_list, cell.id, loc.slot, cell.facing, loc.cube);
             let handle = structure_list.scene_handle(cell.id).clone();
             let entity = commands
                 .spawn((SceneRoot(handle), transform, GridCellMarker { loc }))

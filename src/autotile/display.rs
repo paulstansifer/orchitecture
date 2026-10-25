@@ -5,8 +5,8 @@ use bevy::math::{Quat, Vec3};
 use bevy::prelude::{Commands, Res, ResMut, SceneRoot, Transform};
 
 use crate::city::{
-    cell_transform, get_proposed_or_real, AssembledCity, Cell, ConstructedCity, GridCellMarker,
-    Proposal, ProposalGhostMarker, ProposedCity,
+    cell_transform, get_proposed_or_real, structure_transform, AssembledCity, Cell,
+    ConstructedCity, GridCellMarker, Proposal, ProposalGhostMarker, ProposedCity,
 };
 use crate::eorf::{EorfId, EorfList};
 use crate::sparse3d::{Facing, SlotCoord};
@@ -108,7 +108,8 @@ fn apply_autotile_updates(
         }
         let new_entities = if use_fallback && new_results.is_empty() {
             let handle = structure_list.scene_handle(cell.id).clone();
-            let transform = cell_transform(loc.slot, cell.facing, loc.cube);
+            let transform =
+                structure_transform(structure_list, cell.id, loc.slot, cell.facing, loc.cube);
             vec![make_entity(commands, SceneRoot(handle), transform, loc)]
         } else {
             spawn_entities_from_results(

@@ -26,11 +26,7 @@ pub struct AutotileHandles {
 }
 
 fn gltf_is_empty(stem: &str, suffix: &str) -> bool {
-    let path = std::path::Path::new(crate::paths::MANIFEST_DIR)
-        .join(format!("assets/generated/autotile/{stem}{suffix}.gltf"));
-    std::fs::metadata(&path)
-        .map(|m| m.len() == 0)
-        .unwrap_or(false)
+    crate::generated::autotile_gltf(&format!("{stem}{suffix}")) == Some(false)
 }
 
 pub fn spawn_autotile_rules(mut commands: Commands) {

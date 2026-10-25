@@ -133,6 +133,8 @@ fn main() {
 
     // Now that we know every referenced .scad, warn about the ones nothing uses.
     warn_unreferenced_scad(&buildables, &referenced_scad);
+
+    write_generated_rs(&wings_stems, &out_dir);
 }
 
 // ─── Atomic mesh generation ────────────────────────────────────────────────
@@ -576,6 +578,38 @@ fn check_wings_exports(wings_files: &[PathBuf]) -> HashSet<String> {
     }
 
     stems
+}
+
+/// Write `$OUT_DIR/generated.rs` (`include!`d by `src/generated.rs`), recording
+/// what the game would otherwise have to find out by looking at `buildables/`
+/// and `assets/generated/` at runtime -- which it can't do in the wasm build:
+///   * `WINGS_STEMS`: stems whose mesh comes from a Wings3D `.glb` export.
+///   * `AUTOTILE_GLTFS`: every `{out_dir}/*.gltf` file stem, with whether it's
+///     non-empty (build.rs writes empty sentinels for invisible cut variants).
+///     Must run after all mesh generation.
+fn write_generated_rs(wings_stems: &HashSet<String>, out_dir: &Path) {
+    let mut stems: Vec<&String> = wings_stems.iter().collect();
+    stems.sort();
+
+    let mut gltfs: Vec<(String, bool)> = fs::read_dir(out_dir)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {e}", out_dir.display()))
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("gltf"))
+        .map(|p| {
+            let stem = p.file_stem().unwrap().to_string_lossy().into_owned();
+            let non_empty = fs::metadata(&p).map(|m| m.len() > 0).unwrap_or(false);
+            (stem, non_empty)
+        })
+        .collect();
+    gltfs.sort();
+
+    let src = format!(
+        "pub const WINGS_STEMS: &[&str] = &{stems:?};\n\
+         pub const AUTOTILE_GLTFS: &[(&str, bool)] = &{gltfs:?};\n"
+    );
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("generated.rs");
+    fs::write(&out, src).unwrap_or_else(|e| panic!("Failed to write {}: {e}", out.display()));
 }
 
 /// Copy a hand-exported `.glb` to a generated `.gltf` path if the `.glb` is newer.

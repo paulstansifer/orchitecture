@@ -17,6 +17,7 @@ pub mod evaluation;
 pub mod example_structures;
 pub mod flood_fill;
 pub mod game_mode;
+pub mod generated;
 pub mod gi_material;
 pub mod global_illumination;
 pub mod grid_preview;

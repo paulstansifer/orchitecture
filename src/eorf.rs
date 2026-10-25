@@ -147,8 +147,8 @@ pub struct Eorf {
     /// directly in game (Y-up) coordinates spanning `[0,1]` on every axis, while
     /// OpenSCAD meshes pick up a `rotate([-90,0,0])` Z-up-to-Y-up correction in
     /// `build.rs` that leaves their local Z spanning `[-1,0]` instead. Spawn
-    /// sites use this flag to shift Wings3D meshes into that same convention
-    /// (see `city::wings_offset`) rather than leaving them a cube off in -X.
+    /// sites shift Wings3D meshes into that same convention by placing them
+    /// with `city::structure_transform` rather than leaving them a cube off.
     pub is_wings: bool,
 }
 
@@ -273,19 +273,7 @@ pub fn structure_mesh_stem(name: &str) -> String {
 /// (sentinel) file for intentionally-invisible cut variants, so both are treated
 /// as "no mesh".
 fn autotile_gltf_present(stem: &str, suffix: &str) -> bool {
-    let path = std::path::Path::new(crate::paths::MANIFEST_DIR)
-        .join(format!("assets/generated/autotile/{stem}{suffix}.gltf"));
-    std::fs::metadata(&path)
-        .map(|m| m.len() > 0)
-        .unwrap_or(false)
-}
-
-/// True if `stem`'s mesh comes from a hand-modeled `buildables/{stem}.wings`
-/// export rather than a `{stem}.scad` compile. See `Eorf::is_wings`.
-fn is_wings_sourced(stem: &str) -> bool {
-    std::path::Path::new(crate::paths::MANIFEST_DIR)
-        .join(format!("buildables/{stem}.wings"))
-        .exists()
+    crate::generated::autotile_gltf(&format!("{stem}{suffix}")) == Some(true)
 }
 
 /// Startup system: loads structure infos and their fallback mesh handles from
@@ -310,7 +298,7 @@ pub fn spawn_structures(asset_server: Res<AssetServer>, mut structure_list: ResM
             info: info.clone(),
             mesh_handle,
             cut_handle,
-            is_wings: is_wings_sourced(&stem),
+            is_wings: crate::generated::is_wings_sourced(&stem),
         });
     }
 }

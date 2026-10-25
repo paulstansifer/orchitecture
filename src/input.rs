@@ -6,9 +6,9 @@ use crate::autotile::{spec_stem, AutotileHandles, AutotileRules, AutotiledMeshes
 use crate::camera::GameCamera;
 use crate::change_guard::Guarded;
 use crate::city::{
-    apply_changes, apply_proposal_changes, cell_transform, get_real_or_proposed, City, CityMut,
-    ConstructedCity, GridCellMarker, MaterialAssets, ProposalGhostMarker, ProposalOverlayAssets,
-    ProposedCutMarker,
+    apply_changes, apply_proposal_changes, get_real_or_proposed, structure_transform, City,
+    CityMut, ConstructedCity, GridCellMarker, MaterialAssets, ProposalGhostMarker,
+    ProposalOverlayAssets, ProposedCutMarker,
 };
 use crate::construction::construct;
 use crate::cutaway::{CutCellMarker, CutawayMode};
@@ -77,11 +77,8 @@ pub fn cursor_system(
                     let facing = Facing::from_number(build_state.wall_plop_dir(loc.slot) as u8);
                     (loc.slot, loc.cube, facing)
                 };
-                let tr = cell_transform(slot, facing, cube);
+                let tr = structure_transform(&structure_list, id, slot, facing, cube);
                 t.translation = tr.translation;
-                if structure_list.is_wings(id) {
-                    t.translation += crate::city::wings_offset(tr.rotation);
-                }
                 t.rotation = tr.rotation;
                 t.scale = Vec3::splat(0.999);
                 *vis = Visibility::Inherited;
