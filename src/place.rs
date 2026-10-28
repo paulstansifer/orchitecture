@@ -110,12 +110,18 @@ impl Porf {
     }
 }
 
+fn default_weight() -> f32 {
+    1.0
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PlaceReq {
     pub requirement: Porf,
     pub min: u8,
     pub max: Option<u8>,
+    #[serde(default = "default_weight")]
     pub worker_visit_weight: f32,
+    #[serde(default = "default_weight")]
     pub worker_visit_duration: f32,
 }
 
