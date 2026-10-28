@@ -18,6 +18,6 @@ pub struct SandboxMode {
 
 impl Default for SandboxMode {
     fn default() -> Self {
-        SandboxMode { enabled: true }
+        SandboxMode { enabled: false }
     }
 }
