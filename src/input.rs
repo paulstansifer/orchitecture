@@ -36,6 +36,11 @@ pub struct CursorEntities {
     pub cyan_mat: Handle<StandardMaterial>,
 }
 
+/// The slot the room cursor's object preview currently occupies (`None` while it
+/// isn't shown). Written by `cursor_system`; read by `hide_objects_under_cursor`.
+#[derive(Resource, Default, PartialEq)]
+pub struct ObjectCursorTarget(pub Option<SlotCoord>);
+
 pub fn cursor_system(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_q: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
@@ -44,6 +49,7 @@ pub fn cursor_system(
     structure_list: Res<EorfList>,
     cursor_entities: Res<CursorEntities>,
     mut cursors: Query<(&mut Transform, &mut Visibility)>,
+    mut target: ResMut<ObjectCursorTarget>,
 ) {
     let id = EorfId(build_state.selected_structure as u32);
     let is_room = constructed.structure_is_room_plop(id);
@@ -83,8 +89,12 @@ pub fn cursor_system(
                 t.rotation = tr.rotation;
                 t.scale = Vec3::splat(0.999);
                 *vis = Visibility::Inherited;
+                target.set_if_neq(ObjectCursorTarget(Some(SlotCoord { cube, slot })));
             }
-            None => *vis = Visibility::Hidden,
+            None => {
+                *vis = Visibility::Hidden;
+                target.set_if_neq(ObjectCursorTarget(None));
+            }
         }
     }
 
@@ -103,6 +113,57 @@ pub fn cursor_system(
             None => *vis = Visibility::Hidden,
         }
     }
+}
+
+/// Hides whatever already occupies the object preview's slot -- the real cell,
+/// its cutaway variant, and any proposal ghost/overlay there -- since plopping
+/// would replace it, and otherwise it hides the preview. Fully hidden (shadow
+/// included), unlike the cutaway's `CutawayHidden`. Runs in every mode so that
+/// leaving Build mode un-hides things.
+pub fn hide_objects_under_cursor(
+    target: Res<ObjectCursorTarget>,
+    mode: Res<State<crate::game_mode::GameMode>>,
+    assembled: Res<crate::city::AssembledCity>,
+    viewable: Res<crate::city::ViewableWorld>,
+    mut vis_q: Query<&mut Visibility>,
+    mut hidden: Local<Vec<Entity>>,
+) {
+    let loc = target
+        .0
+        .filter(|_| *mode.get() == crate::game_mode::GameMode::Build);
+    let wanted: Vec<Entity> = loc
+        .into_iter()
+        .flat_map(|loc| {
+            let cells = [
+                assembled.cell_entities.get(&loc),
+                assembled.proposal_entities.get(&loc),
+            ];
+            let cuts = [
+                viewable.cut_entities.get(&loc),
+                viewable.proposed_cut_entities.get(&loc),
+            ];
+            cells
+                .into_iter()
+                .flatten()
+                .chain(cuts.into_iter().flatten().map(|(_, entities)| entities))
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    for &entity in hidden.iter().filter(|e| !wanted.contains(e)) {
+        // Despawned entities (e.g. the cell the user just replaced) just drop out.
+        if let Ok(mut vis) = vis_q.get_mut(entity) {
+            *vis = Visibility::Inherited;
+        }
+    }
+    for &entity in &wanted {
+        if let Ok(mut vis) = vis_q.get_mut(entity) {
+            vis.set_if_neq(Visibility::Hidden);
+        }
+    }
+    *hidden = wanted;
 }
 
 /// Compute the center and scale of a flat preview slab for the given drag.
@@ -750,13 +811,19 @@ pub fn update_room_cursor_mesh(
     }
 }
 
-/// Bakes each newly seen structure mesh's glTF material color into its vertex
-/// colors, so they hold its whole authored color, before `recolor_new_mesh_children`
-/// swaps that material out. `gi.wgsl` then gives the building material's color only
-/// to exactly-white faces; the rest keep their authored color. (OpenSCAD meshes
-/// have no vertex colors and a white material, so they're left alone and recolored
-/// all over.) A mesh asset is shared by every instance of its structure -- real,
-/// ghost, or cursor -- so each is baked just once.
+/// Bakes each newly seen structure mesh's authored color into its vertex colors,
+/// before `recolor_new_mesh_children` swaps the glTF material out. `gi.wgsl` then
+/// gives the building material's color only to exactly-white faces; the rest keep
+/// their authored color. (OpenSCAD meshes have no vertex colors and a white
+/// material, so they're left alone and recolored all over.) A mesh asset is shared
+/// by every instance of its structure -- real, ghost, or cursor -- so each is baked
+/// just once.
+///
+/// The authored color is meant to be what Wings3D shows: its vertex colors if it
+/// has any (Wings3D draws those *instead of* the material color, though glTF says
+/// to multiply them), else its material color. And Wings3D exports both as the
+/// sRGB values picked in its UI, though glTF says they're linear, so they're
+/// converted here. (Pure white is the same either way.)
 ///
 /// Must run before `recolor_new_mesh_children`, while the glTF material is still on.
 pub fn bake_authored_colors(
@@ -788,9 +855,9 @@ pub fn bake_authored_colors(
         if !is_structure {
             continue;
         }
-        let Some(tint) = std_materials
+        let Some(material_color) = std_materials
             .get(&material.0)
-            .map(|m| m.base_color.to_linear())
+            .map(|m| m.base_color.to_linear().to_f32_array())
         else {
             continue;
         };
@@ -798,19 +865,21 @@ pub fn bake_authored_colors(
             continue;
         };
         baked.insert(mesh3d.id());
-        let tint = tint.to_f32_array();
+        let srgb_to_linear =
+            |[r, g, b, a]: [f32; 4]| LinearRgba::from(Srgba::new(r, g, b, a)).to_f32_array();
         match mesh.attribute_mut(Mesh::ATTRIBUTE_COLOR) {
             Some(VertexAttributeValues::Float32x4(colors)) => {
                 for color in colors {
-                    for (c, t) in color.iter_mut().zip(tint) {
-                        *c *= t;
-                    }
+                    *color = srgb_to_linear(*color);
                 }
             }
             Some(other) => warn!("unexpected vertex color format {other:?}; not baking"),
-            None if tint != [1.0; 4] => {
+            None if material_color != [1.0; 4] => {
                 let n = mesh.count_vertices();
-                mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![tint; n]);
+                mesh.insert_attribute(
+                    Mesh::ATTRIBUTE_COLOR,
+                    vec![srgb_to_linear(material_color); n],
+                );
             }
             None => {}
         }

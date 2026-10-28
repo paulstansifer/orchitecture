@@ -39,8 +39,9 @@ use orchitecture_lib::{
     idea::{sync_idea_progress, IdeaState},
     idea_ui::{announce_new_knowledge, idea_ui_system, IdeaWindowState},
     input::{
-        bake_authored_colors, building_input_system, cursor_system, recolor_new_mesh_children,
-        spawn_cursors, update_room_cursor_mesh, BuildState, CursorEntities,
+        bake_authored_colors, building_input_system, cursor_system, hide_objects_under_cursor,
+        recolor_new_mesh_children, spawn_cursors, update_room_cursor_mesh, BuildState,
+        CursorEntities, ObjectCursorTarget,
     },
     map_files::{discover_user_files, handle_file_load, handle_file_save, LoadDialog, SaveDialog},
     materials::MaterialList,
@@ -157,6 +158,7 @@ fn main() {
         .init_resource::<MarketVenues>()
         .init_resource::<IdeaState>()
         .init_resource::<IdeaWindowState>()
+        .init_resource::<ObjectCursorTarget>()
         .insert_resource(MaterialList::load())
         .insert_resource(DebugNav::default())
         .add_message::<AdvanceMonthRequested>()
@@ -245,6 +247,12 @@ fn main() {
             ),
         )
         .add_systems(Update, (handle_file_save, handle_file_load))
+        .add_systems(
+            Update,
+            hide_objects_under_cursor
+                .after(cursor_system)
+                .after(update_cutaway_system),
+        )
         .add_systems(Update, advance_month_system)
         // Pops the Ideas window open when the city learns something. Must run
         // *after* the month that did the learning: otherwise it first sees the
