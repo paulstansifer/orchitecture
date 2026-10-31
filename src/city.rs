@@ -664,7 +664,11 @@ pub fn cell_transform(slot: Slot, facing: Facing, cube: IVec3) -> Transform {
 
     let (rotation, translation) = match slot {
         Slot::Room | Slot::Floor => {
-            let facing_angle = (1.0 - facing as u8 as f32) * (-TAU / 4.0);
+            // `Facing` steps (NegX, NegZ, PosX, PosZ) go the same way as the autotile
+            // compiler's `rotate_offset` -- +X toward +Z. Bevy's `from_rotation_y` with a
+            // positive angle sends +X toward -Z, so the angle has to shrink as the facing
+            // number grows, or Z facings render mirrored.
+            let facing_angle = (facing as u8 as f32 - 3.0) * (-TAU / 4.0);
             let rotation = Quat::from_rotation_y(-TAU / 4.0 + facing_angle);
             // Rotate around the cell center rather than the cell corner, so the
             // desk stays in the same cell regardless of facing direction.
