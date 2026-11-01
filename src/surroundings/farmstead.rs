@@ -408,9 +408,9 @@ pub fn unspecialize_blocker(
 ) -> Option<&'static str> {
     use crate::resource::RackContents;
     if fr[id].tool.is_none() {
-        Some("HUMANIZE: Has no tool")
+        Some("Doesn't have a tool")
     } else if crate::place::rack_free_capacity(cw, RackContents::Tools) < 1.0 {
-        Some("HUMANIZE: No rack room to store the tool")
+        Some("No place in the city to store a tool")
     } else {
         None
     }

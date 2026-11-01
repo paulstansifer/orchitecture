@@ -408,6 +408,9 @@ fn clicked_furniture_ui(
     let eorf_idx = cell.id.as_usize();
     let furniture_name = constructed.eorfs[eorf_idx].name.clone();
     ui.label(egui::RichText::new(&furniture_name).heading());
+    if let Some(problem) = crate::place::furniture_problem(constructed, loc) {
+        ui.colored_label(ui.visuals().warn_fg_color, format!("⚠ {problem}"));
+    }
 
     let eligible = crate::place::eligible_parent_kinds(
         &constructed.places,

@@ -55,6 +55,7 @@ City grid and related concepts:
   * flood_fill.rs: generic multi-source flood fill over a cubic grid, plus
     `has_sky_above` (shared sky-visibility seed predicate); falloff/transmission
     are supplied by the caller
+  * chimney.rs: chminey rules (autotile can't yet support these things)
   * evaluation.rs: `compute_outdoorsness` — flood-fills how "outdoors" each cell
     is, from sky-visible cells (see global_illumination.rs for the analogous
     light computation)

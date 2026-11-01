@@ -149,9 +149,9 @@ impl Absence {
 
     pub fn label(self) -> &'static str {
         match self {
-            Absence::TooFar => "HUMANIZE: Too far away",
-            Absence::NoStandsRemain => "HUMANIZE: No market stands remain",
-            Absence::NoRoomsRemain => "No rooms remain.",
+            Absence::TooFar => "Too far away.",
+            Absence::NoStandsRemain => "Needs a market stand.",
+            Absence::NoRoomsRemain => "Needs a room.",
         }
     }
 }

@@ -1577,8 +1577,8 @@ pub fn run() {
 /// exercising the resource-payment rework (propose, pay down incrementally
 /// via the market, force-commit, undo/redo) rather than calling internal
 /// systems directly.
-/// Builds (in sandbox mode) a small open-air inn -- a dining room, a kitchen,
-/// and two guest bedrooms -- with its west corner at `(x, 0, z)`, plus a
+/// Builds (in sandbox mode) a small open-air inn -- a dining room, a kitchen
+/// (its hearth backed by a wall), and two guest bedrooms -- with its west corner at `(x, 0, z)`, plus a
 /// market stand right beside the bedrooms so they're decent guest rooms.
 /// Ticks once: the inn, cored on the dining room, forms in the same pass as
 /// its parts.
@@ -1589,6 +1589,8 @@ pub(crate) fn build_inn(session: &mut HeadlessSession, x: i32, z: i32) {
         format!("place {x} 0 {} xwall chair", z + 1),
         format!("place {} 0 {} xwall chair", x + 1, z + 1),
         format!("place {} 0 {z} room hearth", x + 2),
+        // The wall the hearth is built into (see `chimney::hearth_back_wall`).
+        format!("place {} 0 {} zwall wall", x + 2, z + 1),
         format!("place {} 0 {z} room table", x + 3),
         format!("place {} 0 {} room pallet", x + 1, z + 2),
         format!("place {} 0 {} room pallet", x + 2, z + 2),

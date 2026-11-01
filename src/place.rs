@@ -725,6 +725,12 @@ fn piece_key(p: &Piece) -> (i32, i32, i32, Option<usize>, Option<PlacedPlaceId>)
     (c.x, c.y, c.z, slot_rank(p.loc.slot), id)
 }
 
+/// Why the furniture at `loc` doesn't work, or `None` if it does. Broken furniture can't
+/// fulfill any place requirement, and the furniture panel shows the reason.
+pub fn furniture_problem(cw: &ConstructedCity, loc: SlotCoord) -> Option<String> {
+    crate::chimney::hearth_problem(&cw.contents, &cw.eorfs, loc)
+}
+
 /// Every piece anywhere fulfilling `req` that a place named `parent_name` is
 /// allowed to claim (see `ParentRestriction`), in `piece_key` order. Nested
 /// places are drawn from `formed`.
@@ -741,6 +747,7 @@ fn eligible_pieces(
                     .get(loc)
                     .is_none_or(|r| r.allows(parent_name))
             })
+            .filter(|&loc| furniture_problem(cw, loc).is_none())
             .map(|loc| Piece {
                 porf: FulfilledPorf::Furniture(loc),
                 loc,
@@ -1853,7 +1860,7 @@ mod tests {
                 placement_style: PlacementStyle::WallPlop,
                 x_char: None,
                 z_char: None,
-                embedding,
+                embedding: embedding.clone(),
                 kind: crate::eorf::FurnitureOrElement::Furniture(vec![(
                     crate::resource::UniformResource::Plank,
                     1,
@@ -1863,7 +1870,30 @@ mod tests {
                 placeable: true,
                 slots: vec![],
             },
+            // A hearth only works built into one (see `chimney::hearth_problem`).
+            EorfInfo {
+                name: "wall".to_string(),
+                placement_style: PlacementStyle::WallDrag,
+                x_char: None,
+                z_char: None,
+                embedding: StructureEmbedding {
+                    passable: 0.0,
+                    ..embedding
+                },
+                kind: crate::eorf::FurnitureOrElement::Element(
+                    crate::materials::ElementType::WallLike,
+                ),
+                vantage_evaluated: false,
+                storage_capacity: vec![],
+                placeable: true,
+                slots: vec![],
+            },
         ]
+    }
+
+    /// The wall a default-facing hearth at `cube` needs behind it.
+    fn hearth_wall(cube: IVec3) -> SlotCoord {
+        crate::chimney::hearth_back_wall(cube, Facing::default())
     }
 
     fn place_def(min: u8, max: Option<u8>) -> Place {
@@ -2407,6 +2437,7 @@ mod tests {
         let table_a = (r(b(0, 0)), "table");
         let chairs = [(chair_at(b(0, 1)), "chair"), (chair_at(b(1, 1)), "chair")];
         let hearth = (r(b(2, 0)), "hearth");
+        let wall = (hearth_wall(b(2, 0)), "wall");
         let table_b = (r(b(3, 0)), "table");
 
         let build = |order: Vec<(SlotCoord, &str)>| {
@@ -2417,8 +2448,8 @@ mod tests {
             }
             formed(&cw)
         };
-        let dining_first = build(vec![table_a, chairs[0], chairs[1], hearth, table_b]);
-        let kitchen_first = build(vec![hearth, table_b, table_a, chairs[0], chairs[1]]);
+        let dining_first = build(vec![table_a, chairs[0], chairs[1], wall, hearth, table_b]);
+        let kitchen_first = build(vec![hearth, wall, table_b, table_a, chairs[0], chairs[1]]);
 
         assert_eq!(dining_first, kitchen_first);
         assert_eq!(
@@ -2435,6 +2466,40 @@ mod tests {
                 ("kitchen".to_string(), vec![f(b(2, 0)), f(b(3, 0))]),
             ]
         );
+    }
+
+    #[test]
+    fn a_kitchen_needs_a_working_hearth() {
+        let places = vec![kind(
+            "kitchen",
+            &[
+                (furniture("hearth"), 1, Some(1)),
+                (furniture("table"), 1, Some(4)),
+            ],
+        )];
+        let mut cw = city_with(places);
+        put(&mut cw, r(b(0, 0)), "hearth");
+        put(&mut cw, r(b(1, 0)), "table");
+        sync_places(&mut cw);
+        assert_eq!(formed(&cw), vec![], "no wall behind the hearth");
+        assert!(furniture_problem(&cw, r(b(0, 0))).is_some());
+
+        put(&mut cw, hearth_wall(b(0, 0)), "wall");
+        sync_places(&mut cw);
+        assert_eq!(formed(&cw).len(), 1);
+        assert_eq!(furniture_problem(&cw, r(b(0, 0))), None);
+
+        // Anything in a floor slot above the chimney's top covers it; these
+        // tests' structures have no roof, so a bin stands in for one.
+        let chimney = crate::chimney::chimney_of(&cw.contents, &cw.eorfs, r(b(0, 0))).unwrap();
+        let over_top = SlotCoord {
+            cube: chimney.top.cube + IVec3::Y,
+            slot: Slot::Floor,
+        };
+        put(&mut cw, over_top, "bin");
+        sync_places(&mut cw);
+        assert_eq!(formed(&cw), vec![]);
+        assert!(furniture_problem(&cw, r(b(0, 0))).is_some());
     }
 
     #[test]

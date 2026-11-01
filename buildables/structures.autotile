@@ -41,10 +41,13 @@ H:
 --> railing     # by default, models meet at integer coordinates
 
 ==wall:wall==
-# TODO: handle the hearth-but-not-next-to-a-roof-edge case (rare, probably)
+V:  1=hearth:90
+ O .
+ 1@
+--> wall_around_hearth * u_shorten_under_roof
 H: 1=hearth:90
   1@
---> wall_around_hearth * u_shorten_under_roof # get out of the way of the hearth and roofline
+--> wall_around_hearth
 V:
  O .
   @

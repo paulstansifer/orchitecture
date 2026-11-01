@@ -7,6 +7,7 @@ pub mod camera;
 pub mod ceiling_lights;
 pub mod change_diagnostics;
 pub mod change_guard;
+pub mod chimney;
 pub mod city;
 pub mod city_effect;
 pub mod construction;

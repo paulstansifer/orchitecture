@@ -22,6 +22,7 @@ use orchitecture_lib::{
         camera_input_system, disable_auto_egui_primary_context, spawn_camera, CameraState,
         GameCamera,
     },
+    chimney::{chimney_display_system, load_chimney_assets},
     city::{
         spawn_grid, spawn_material_assets, spawn_proposal_overlay_assets, ConstructedCity,
         PlaceAccessibleRange, PlaceHighlight,
@@ -183,6 +184,7 @@ fn main() {
                     .chain()
                     .after(spawn_structures),
                 load_autotile_handles.after(spawn_autotile_rules),
+                load_chimney_assets,
                 generate_farms,
                 spawn_population,
                 setup_travelers,
@@ -254,6 +256,10 @@ fn main() {
                 .after(update_cutaway_system),
         )
         .add_systems(Update, advance_month_system)
+        .add_systems(
+            Update,
+            chimney_display_system.run_if(resource_changed::<ConstructedCity>),
+        )
         // Pops the Ideas window open when the city learns something. Must run
         // *after* the month that did the learning: otherwise it first sees the
         // gain a frame late, and egui gets one frame in between showing the new

@@ -59,7 +59,7 @@ pub fn farm_panel_view(
         .map(|a| a.label().to_string())
         .collect();
     if let (false, Some(q)) = (coming, required_quality) {
-        reasons.push(format!("HUMANIZE: Needs a room of quality {q:.2}"));
+        reasons.push(format!("No room of quality at least {q:.2}"));
     }
 
     let tool = ToolKind::CarpentersTools;
@@ -156,7 +156,7 @@ mod tests {
         assert!(view.reasons.iter().any(|l| l.contains("stands")));
         assert_eq!(
             view.specialize.blocker,
-            Some("HUMANIZE: Only farms coming to market can be given a tool")
+            Some("Farms need to be coming to the market to get a tool.")
         );
     }
 }

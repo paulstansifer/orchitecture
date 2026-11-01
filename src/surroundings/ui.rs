@@ -395,7 +395,7 @@ pub fn surroundings_ui_system(
                         painter.text(
                             pts[1] + egui::vec2(12.0, -12.0),
                             egui::Align2::LEFT_BOTTOM,
-                            format!("HUMANIZE: {cost} fieldstone"),
+                            format!("{cost} fieldstone"),
                             FontSizes::body(),
                             egui::Color32::WHITE,
                         );
@@ -553,7 +553,7 @@ fn road_toolbar(ctx: &egui::Context, panel_rect: egui::Rect, state: &mut Surroun
                 .corner_radius(4.0)
                 .show(ui, |ui| {
                     if ui
-                        .add(egui::Button::selectable(state.road_mode, "HUMANIZE: Pave roads"))
+                        .add(egui::Button::selectable(state.road_mode, "Pave roads"))
                         .clicked()
                     {
                         state.road_mode = !state.road_mode;
@@ -563,7 +563,7 @@ fn road_toolbar(ctx: &egui::Context, panel_rect: egui::Rect, state: &mut Surroun
                     if state.road_mode {
                         note_label!(
                             ui,
-                            "HUMANIZE: Click a corner on the city or a paved road, then any corner. \
+                            "Connect the city (or a road) to any corner. \
                              Right-click or Esc cancels."
                         );
                         if let Some(err) = state.road_error {
@@ -635,7 +635,7 @@ fn farm_info_panel(
                                     view.unspecialize.enabled(),
                                     egui::Button::selectable(true, "🔨"),
                                 )
-                                .on_hover_text("HUMANIZE: Take the carpenter's tools back (free)")
+                                .on_hover_text("Reclaim the tool.")
                                 .on_disabled_hover_text(view.unspecialize.blocker.unwrap_or(""))
                                 .clicked()
                             {
@@ -644,8 +644,7 @@ fn farm_info_panel(
                         } else if ui
                             .add_enabled(view.specialize.enabled(), egui::Button::new("🔨"))
                             .on_hover_text(format!(
-                                "HUMANIZE: Give carpenter's tools ({} potatoes): turns neighbors' \
-                                 timber into planks",
+                                "Give carpenter's tool ({} potatoes): will make neighboring timber into planks.",
                                 super::farmstead::SPECIALIZE_COST
                             ))
                             .on_disabled_hover_text(view.specialize.blocker.unwrap_or(""))
